@@ -217,7 +217,7 @@ func (c *Controller) interruptedStage(ctx context.Context, bp store.Blueprint) (
 		return "", "", fmt.Errorf("blueprint: start: load the need for interrupted %s: %w", interrupted.Stage, err)
 	}
 
-	if err := c.opts.Store.EndRun(ctx, interrupted.ID, store.RunInterrupted, "process restarted", 0, c.opts.Now().UTC()); err != nil {
+	if err := c.opts.Store.EndRun(ctx, interrupted.ID, store.RunInterrupted, "process restarted", store.RunUsage{}, c.opts.Now().UTC()); err != nil {
 		return "", "", fmt.Errorf("blueprint: mark interrupted: %w", err)
 	}
 

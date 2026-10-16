@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slice 0 is implemented (`architect serve`, controller, store, intake stage); the rest is design.
+Status: agreed design, 2026-10-15. Slice 0 is implemented (`architect serve`, controller, store, intake stage) and slice 1 is under way; the rest is design.
 
 ## Purpose
 
@@ -152,8 +152,8 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 
 | Table         | Holds                                                                                                                        |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| blueprints    | id, title, target CM projects, pack name and version, policy overrides, state, cost cap, CM playbook id after emission         |
-| stage_runs    | blueprint, stage, attempt, round, status, model, started, ended, cost                                                          |
+| blueprints    | id, title, target CM projects, pack name and version, policy overrides, state, cost cap, model price as CM sent it, CM playbook id after emission         |
+| stage_runs    | blueprint, stage, attempt, round, status, model, started, ended, cost, token buckets                                                          |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results, reviewer score                   |
 | questions     | append-only: run, number, text, options, answer, responder (`human`, `auto`), assumption flag, verified flag                   |
 | gates         | append-only: blueprint, stage, attempt, decision, feedback, responder, decided at                                             |
@@ -164,6 +164,8 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | emissions     | draft card id to CM project and card id; playbook id; created at                                                              |
 | outcomes      | per emitted card: final state, review attempts, parked reason, cost, finding text, proposed lesson                            |
 | lessons       | text, rationale, evidence card ids, scope (pack or project), state (`proposed`, `active`, `rejected`), decided by             |
+
+Schema bumps are one-way: an older binary refuses a newer file.
 
 **Audit.** Every action produces an event: blueprint created, run started
 (model, pack version, persona, config snapshot), tool call made, question

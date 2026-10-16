@@ -270,7 +270,7 @@ func TestMessage_FirstMessageIsTheNeedAndRunsIntake(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runs, 1)
 	assert.Equal(t, store.RunDone, runs[0].Status)
-	assert.InDelta(t, 0.5, runs[0].CostUSD, 1e-9)
+	assert.InDelta(t, 0.5, runs[0].Usage.CostUSD, 1e-9)
 
 	tr, err := st.GetTranscript(ctx, runs[0].ID)
 	require.NoError(t, err)
@@ -831,7 +831,7 @@ func TestMessage_CostCap(t *testing.T) {
 				Status: store.RunRunning, StartedAt: now,
 			})
 			require.NoError(t, err)
-			require.NoError(t, st.EndRun(ctx, prior, store.RunDone, "done", tt.spentUSD, now))
+			require.NoError(t, st.EndRun(ctx, prior, store.RunDone, "done", store.RunUsage{CostUSD: tt.spentUSD}, now))
 
 			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
 			c.Wait("BP1")

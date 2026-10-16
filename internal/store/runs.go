@@ -27,8 +27,18 @@ type Run struct {
 	Model       string
 	StartedAt   time.Time
 	EndedAt     *time.Time
-	CostUSD     float64
+	Usage       RunUsage
 	Reason      string
+}
+
+// RunUsage is what a run consumed: the four token buckets the harness
+// reports and the cost the ledger recorded for them.
+type RunUsage struct {
+	PromptTokens     int64
+	CompletionTokens int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+	CostUSD          float64
 }
 
 // StartRun inserts a run and returns its id.
@@ -49,10 +59,12 @@ func (s *Store) StartRun(ctx context.Context, r Run) (int64, error) {
 	return id, nil
 }
 
-// EndRun records how a run ended and what it cost.
-func (s *Store) EndRun(ctx context.Context, id int64, status, reason string, costUSD float64, endedAt time.Time) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE stage_runs SET status = ?, reason = ?, cost_usd = ?, ended_at = ?
-		WHERE id = ?`, status, reason, costUSD, endedAt.Unix(), id)
+// EndRun records how a run ended and what it consumed.
+func (s *Store) EndRun(ctx context.Context, id int64, status, reason string, usage RunUsage, endedAt time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE stage_runs SET status = ?, reason = ?, cost_usd = ?, ended_at = ?,
+		prompt_tokens = ?, completion_tokens = ?, cache_read_tokens = ?, cache_write_tokens = ? WHERE id = ?`,
+		status, reason, usage.CostUSD, endedAt.Unix(),
+		usage.PromptTokens, usage.CompletionTokens, usage.CacheReadTokens, usage.CacheWriteTokens, id)
 	if err != nil {
 		return fmt.Errorf("store: end run %d: %w", id, err)
 	}
@@ -67,7 +79,8 @@ func (s *Store) EndRun(ctx context.Context, id int64, status, reason string, cos
 // ListRuns returns a blueprint's runs oldest first.
 func (s *Store) ListRuns(ctx context.Context, blueprintID string) ([]Run, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, blueprint_id, stage, attempt, round, status, model,
-		started_at, ended_at, cost_usd, reason FROM stage_runs WHERE blueprint_id = ? ORDER BY id`, blueprintID)
+		started_at, ended_at, cost_usd, reason,
+		prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens FROM stage_runs WHERE blueprint_id = ? ORDER BY id`, blueprintID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list runs: %w", err)
 	}
@@ -84,7 +97,8 @@ func (s *Store) ListRuns(ctx context.Context, blueprintID string) ([]Run, error)
 		)
 
 		if err := rows.Scan(&r.ID, &r.BlueprintID, &r.Stage, &r.Attempt, &r.Round, &r.Status, &r.Model,
-			&startedAt, &endedAt, &r.CostUSD, &r.Reason); err != nil {
+			&startedAt, &endedAt, &r.Usage.CostUSD, &r.Reason,
+			&r.Usage.PromptTokens, &r.Usage.CompletionTokens, &r.Usage.CacheReadTokens, &r.Usage.CacheWriteTokens); err != nil {
 			return nil, fmt.Errorf("store: scan run: %w", err)
 		}
 

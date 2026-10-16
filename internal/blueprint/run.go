@@ -122,13 +122,13 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		// A submitted artifact is kept even when a cancel raced it.
 		version, err := au.artifact(bg, id, stageID, out.Artifact.Body, out.Artifact.Data)
 		if err != nil {
-			c.endRun(bg, runID, store.RunFailed, "store artifact failed", cost)
+			c.endRun(bg, runID, store.RunFailed, "store artifact failed", store.RunUsage{CostUSD: cost})
 			c.fail(bg, au, id, runID, err.Error())
 
 			return
 		}
 
-		c.endRun(bg, runID, store.RunDone, out.Result.Reason, cost)
+		c.endRun(bg, runID, store.RunDone, out.Result.Reason, store.RunUsage{CostUSD: cost})
 		c.setState(bg, id, StateIdle)
 		au.event(bg, Event{Kind: EventArtifact, BlueprintID: id, RunID: runID, Payload: map[string]any{
 			"stage": stageID, "version": version, "body": out.Artifact.Body, "data": out.Artifact.Data,
@@ -139,7 +139,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	case ctx.Err() != nil:
 		// The harness reports a cancelled run as an error; abort and End
 		// cancel, so this is a canceled run, not a failed one.
-		c.endRun(bg, runID, store.RunCanceled, "canceled", cost)
+		c.endRun(bg, runID, store.RunCanceled, "canceled", store.RunUsage{CostUSD: cost})
 		c.setState(bg, id, StateIdle)
 		au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
 			"stage": stageID, "status": store.RunCanceled, "cost_usd": cost,
@@ -150,7 +150,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			reason = "error"
 		}
 
-		c.endRun(bg, runID, store.RunFailed, reason, cost)
+		c.endRun(bg, runID, store.RunFailed, reason, store.RunUsage{CostUSD: cost})
 		c.setState(bg, id, StateFailed)
 		au.event(bg, Event{Kind: EventError, BlueprintID: id, RunID: runID, Payload: map[string]any{
 			"stage": stageID, "reason": reason, "message": runErr.Error(),
@@ -189,8 +189,8 @@ func (c *Controller) setState(ctx context.Context, id string, s State) {
 	}
 }
 
-func (c *Controller) endRun(ctx context.Context, runID int64, status, reason string, costUSD float64) {
-	if err := c.opts.Store.EndRun(ctx, runID, status, reason, costUSD, c.opts.Now().UTC()); err != nil {
+func (c *Controller) endRun(ctx context.Context, runID int64, status, reason string, usage store.RunUsage) {
+	if err := c.opts.Store.EndRun(ctx, runID, status, reason, usage, c.opts.Now().UTC()); err != nil {
 		c.opts.Logger.Error("blueprint: end run", "run", runID, "status", status, "error", err)
 	}
 }
