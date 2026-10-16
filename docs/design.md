@@ -367,7 +367,10 @@ release.
 The contract lives here: the default pack's `card.md` and `lists.yaml` plus
 `internal/contract`. The agent is the consumer and its prompts are the ground
 truth the lists are copied from. The mechanical rows run on every decomposition
-submit as the critique loop; the model-judged rows are the readiness stage.
+submit as the critique loop, against the project config read from CM again
+for that submit, so a fix made in CM during the run counts at the next
+submit; a submit made while CM cannot be read is refused without spending a
+round. The model-judged rows are the readiness stage.
 
 ## Interaction
 

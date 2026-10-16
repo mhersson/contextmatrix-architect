@@ -567,7 +567,7 @@ func TestPipeline_ReadinessPassesOnTheSecondRound(t *testing.T) {
 // validator accepts it, counting its submits; it gives up after a few, as
 // the run's turn cap would.
 func keepSubmitting(draft map[string]any, wantRejection string, submits *int) func(context.Context, stage.Input) (stage.Output, error) {
-	return func(_ context.Context, in stage.Input) (stage.Output, error) {
+	return func(ctx context.Context, in stage.Input) (stage.Output, error) {
 		for {
 			*submits++
 
@@ -575,7 +575,7 @@ func keepSubmitting(draft map[string]any, wantRejection string, submits *int) fu
 				return stage.Output{}, errors.New("the validator never accepted the draft")
 			}
 
-			if err := in.Validate(stage.Artifact{Body: "# Cards", Data: draft}); err != nil {
+			if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: draft}); err != nil {
 				if !strings.Contains(err.Error(), wantRejection) {
 					return stage.Output{}, fmt.Errorf("unexpected rejection: %w", err)
 				}
@@ -669,14 +669,14 @@ func TestPipeline_ContractPassingOnTheSecondSubmitIsNotStopped(t *testing.T) {
 	var submits int
 
 	script := happyScript()
-	script["decomposition"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+	script["decomposition"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
 		bad := goodCards()
 		bad["order"] = []any{}
 
 		for _, draft := range []map[string]any{bad, goodCards()} {
 			submits++
 
-			if err := in.Validate(stage.Artifact{Body: "# Cards", Data: draft}); err == nil {
+			if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: draft}); err == nil {
 				return done("# Cards", draft), nil
 			}
 		}
@@ -697,6 +697,94 @@ func TestPipeline_ContractPassingOnTheSecondSubmitIsNotStopped(t *testing.T) {
 	report, ok := rec.first(EventReport)
 	require.True(t, ok)
 	assert.Equal(t, true, report.Payload["ready"])
+}
+
+func TestPipeline_EverySubmitReadsTheProjectsAgain(t *testing.T) {
+	var fixed atomic.Bool
+
+	script := happyScript()
+	script["decomposition"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		draft := goodCards()
+
+		if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: draft}); err == nil || !strings.Contains(err.Error(), "type") {
+			return stage.Output{}, fmt.Errorf("the first submit fails on the card type: %v", err)
+		}
+
+		// The user adds the card type in ContextMatrix during the run.
+		fixed.Store(true)
+
+		if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: draft}); err != nil {
+			return stage.Output{}, fmt.Errorf("the same draft passes once ContextMatrix has the type: %w", err)
+		}
+
+		return done("# Cards", draft), nil
+	}
+
+	c, st, _, rec, _ := newPipeline(t, script)
+	c.opts.Projects = func(context.Context, string) ([]cm.Project, error) {
+		types := []string{"task"}
+		if fixed.Load() {
+			types = []string{"task", "feature"}
+		}
+
+		return []cm.Project{{Name: "alpha", Repo: "https://example.com/alpha.git", Verify: &cm.Verify{Command: "make test"}, Types: types}}, nil
+	}
+
+	drive(t, c, "BP1")
+
+	art, err := st.LatestArtifact(context.Background(), "BP1", "decomposition")
+	require.NoError(t, err)
+	assert.False(t, artifactStopped(art), "a fix made in ContextMatrix counts at the next submit")
+
+	report, ok := rec.first(EventReport)
+	require.True(t, ok)
+	assert.Equal(t, true, report.Payload["ready"])
+}
+
+func TestPipeline_ASubmitWhileContextMatrixCannotBeReadSpendsNoRound(t *testing.T) {
+	var down atomic.Bool
+
+	script := happyScript()
+	script["decomposition"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		bad := goodCards()
+		bad["order"] = []any{}
+
+		down.Store(true)
+
+		for range maxContractRounds {
+			if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: bad}); err == nil || !strings.Contains(err.Error(), "not judged") {
+				return stage.Output{}, fmt.Errorf("a submit while ContextMatrix is down is not judged: %v", err)
+			}
+		}
+
+		down.Store(false)
+
+		// Had the refusals spent rounds, this bad draft would be accepted.
+		if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: bad}); err == nil {
+			return stage.Output{}, errors.New("the first judged submit of a bad draft was accepted")
+		}
+
+		if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: goodCards()}); err != nil {
+			return stage.Output{}, fmt.Errorf("the good draft: %w", err)
+		}
+
+		return done("# Cards", goodCards()), nil
+	}
+
+	c, st, _, _, _ := newPipeline(t, script)
+	c.opts.Projects = func(ctx context.Context, key string) ([]cm.Project, error) {
+		if down.Load() {
+			return nil, errors.New("cm: list_projects: remote unreachable")
+		}
+
+		return listAlpha(ctx, key)
+	}
+
+	drive(t, c, "BP1")
+
+	art, err := st.LatestArtifact(context.Background(), "BP1", "decomposition")
+	require.NoError(t, err)
+	assert.False(t, artifactStopped(art))
 }
 
 func TestPipeline_RestartResumesAtTheNextStage(t *testing.T) {

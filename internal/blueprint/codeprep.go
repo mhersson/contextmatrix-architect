@@ -131,6 +131,48 @@ func safeSegment(s string) bool {
 	return s != "" && s != "." && !strings.ContainsAny(s, `/\`) && !strings.Contains(s, "..")
 }
 
+// contractView is the card contract's view of each target project: from a
+// project list, what ContextMatrix declares (repository, verify command,
+// card types and priorities, every other project's repositories), and from
+// the blueprint's trees under root, the primary tree the where check reads.
+// A target missing from the list is left out, so the contract reports its
+// cards.
+func contractView(projects []cm.Project, targets []string, root string) (map[string]contract.Project, error) {
+	byName := map[string]cm.Project{}
+	for _, p := range projects {
+		byName[p.Name] = p
+	}
+
+	out := map[string]contract.Project{}
+
+	for _, name := range targets {
+		p, ok := byName[name]
+		if !ok {
+			continue
+		}
+
+		ts, err := treesOf(p)
+		if err != nil {
+			return nil, err
+		}
+
+		cp := contract.Project{
+			HasVerify: p.Verify != nil && strings.TrimSpace(p.Verify.Command) != "",
+			Types:     p.Types, Priorities: p.Priorities,
+			ForeignRepos: foreignRepos(projects, name),
+		}
+
+		if len(ts) > 0 {
+			cp.HasRepo = true
+			cp.Root = filepath.Join(root, ts[0].name)
+		}
+
+		out[name] = cp
+	}
+
+	return out, nil
+}
+
 // prepareCode makes sure every target project's repositories are checked
 // out for the blueprint and recorded as sources. A tree checked out by an
 // earlier stage is reused at its recorded sha, so later stages and a
@@ -158,7 +200,7 @@ func (c *Controller) prepareCode(ctx context.Context, sess *session, bp store.Bl
 
 	// Every tree is named before anything is fetched, so a bad name fails
 	// the stage without a checkout.
-	facts := &codeFacts{root: c.opts.Workspace.TreeRoot(bp.ID), projects: map[string]contract.Project{}}
+	facts := &codeFacts{root: c.opts.Workspace.TreeRoot(bp.ID)}
 	owners := map[string]string{}
 	verifies := map[string]string{}
 
@@ -181,10 +223,6 @@ func (c *Controller) prepareCode(ctx context.Context, sess *session, bp store.Bl
 		}
 
 		verifies[name] = verify
-		cp := contract.Project{
-			HasVerify: verify != "", Types: p.Types, Priorities: p.Priorities,
-			ForeignRepos: foreignRepos(projects, name),
-		}
 
 		for _, t := range ts {
 			switch owner, taken := owners[t.name]; {
@@ -195,14 +233,7 @@ func (c *Controller) prepareCode(ctx context.Context, sess *session, bp store.Bl
 			}
 
 			owners[t.name] = name
-
-			if t.primary {
-				cp.HasRepo = true
-				cp.Root = filepath.Join(facts.root, t.name)
-			}
 		}
-
-		facts.projects[name] = cp
 
 		trees = append(trees, ts...)
 	}
@@ -270,6 +301,11 @@ func (c *Controller) prepareCode(ctx context.Context, sess *session, bp store.Bl
 			InstructionFile: info.InstructionFile, VerifyCommand: verifies[t.project], SourceTag: src.Tag(),
 			Empty: src.Version == "",
 		})
+	}
+
+	facts.projects, err = contractView(projects, bp.Projects, facts.root)
+	if err != nil {
+		return nil, err
 	}
 
 	return facts, nil

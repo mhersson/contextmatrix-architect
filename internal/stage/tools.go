@@ -82,7 +82,7 @@ func (t askHumanTool) Execute(ctx context.Context, args map[string]any) (tools.R
 }
 
 type submitArtifactTool struct {
-	validate func(Artifact) error
+	validate func(context.Context, Artifact) error
 }
 
 func (submitArtifactTool) Name() string   { return "submit_artifact" }
@@ -106,7 +106,7 @@ func (submitArtifactTool) Schema() llm.Tool {
 // Execute validates the submit: shape first, then the stage's validator. A
 // refusal is a tool error the model can correct within the same run, while a
 // decode failure after the terminal call would fail the stage.
-func (t submitArtifactTool) Execute(_ context.Context, args map[string]any) (tools.Result, error) {
+func (t submitArtifactTool) Execute(ctx context.Context, args map[string]any) (tools.Result, error) {
 	art := Artifact{Body: stringArg(args, "body")}
 
 	if strings.TrimSpace(art.Body) == "" {
@@ -123,7 +123,7 @@ func (t submitArtifactTool) Execute(_ context.Context, args map[string]any) (too
 	}
 
 	if t.validate != nil {
-		if err := t.validate(art); err != nil {
+		if err := t.validate(ctx, art); err != nil {
 			return tools.Result{}, fmt.Errorf("submit_artifact rejected: %w", err)
 		}
 	}
