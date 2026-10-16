@@ -43,6 +43,12 @@ const (
 	// EventReport is the pipeline's end: the final artifact and whether the
 	// cards are ready.
 	EventReport = "report"
+	// EventCardCreated records one card emission created, with CM's lint
+	// warnings; EventPlaybookCreated the playbook.
+	EventCardCreated     = "card_created"
+	EventPlaybookCreated = "playbook_created"
+	// EventEmitted says every card (and the playbook) exists in ContextMatrix.
+	EventEmitted = "emitted"
 	// EventEnded records that CM ended the session; the blueprint persists.
 	EventEnded = "session_ended"
 	// EventHarness wraps one raw harness JSONL line; the payload is the line.

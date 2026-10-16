@@ -140,6 +140,46 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		}
 
 		entry.Content = b.String()
+	case blueprint.EventCardCreated:
+		entry.Type = "system"
+
+		var b strings.Builder
+
+		fmt.Fprintf(&b, "Created %s (%s) in %s: %s.", str(p["card"]), str(p["draft"]), str(p["project"]), str(p["title"]))
+
+		for _, w := range stringsOf(p["warnings"]) {
+			b.WriteString("\nContextMatrix warned: " + w)
+		}
+
+		entry.Content = b.String()
+	case blueprint.EventPlaybookCreated:
+		entry.Type = "system"
+		entry.Content = fmt.Sprintf("Created playbook %s with %.0f entries.", str(p["playbook"]), num(p["entries"]))
+	case blueprint.EventEmitted:
+		entry.Type = "text"
+
+		var ids []string
+		for _, card := range anyMaps(p["cards"]) {
+			ids = append(ids, str(card["card"]))
+		}
+
+		var b strings.Builder
+
+		fmt.Fprintf(&b, "**Emitted** %d card(s) into ContextMatrix: %s.", len(ids), strings.Join(ids, ", "))
+
+		if pb := str(p["playbook"]); pb != "" {
+			fmt.Fprintf(&b, " Playbook: %s.", pb)
+		}
+
+		if manual := stringsOf(p["manual"]); len(manual) > 0 {
+			b.WriteString("\n\nChecks a human runs once the card is merged:")
+
+			for _, m := range manual {
+				b.WriteString("\n- " + m)
+			}
+		}
+
+		entry.Content = b.String()
 	default:
 		return protocol.LogEntry{}, false
 	}

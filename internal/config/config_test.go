@@ -58,7 +58,7 @@ func TestLoad_MissingFileIsDefaultsPlusEnv(t *testing.T) {
 func TestValidate(t *testing.T) {
 	valid := func() *Config {
 		return &Config{
-			ContextMatrixURL: "http://cm:8080", APIKey: strings.Repeat("k", 32), Port: 9095,
+			ContextMatrixURL: "http://cm:8080", APIKey: strings.Repeat("k", 32), CallerIdentity: "human:architect", Port: 9095,
 			LogLevel: "info", StateDir: "/tmp/x", MaxRunCostUSD: 5, MaxTurns: 80, WorkspaceMaxAgeDays: 7,
 		}
 	}
@@ -107,4 +107,23 @@ func TestDefaultsYAMLRoundTrips(t *testing.T) {
 	assert.Equal(t, 9095, cfg.Port)
 	assert.Contains(t, string(out), "contextmatrix_url:")
 	assert.Contains(t, string(out), "max_run_cost_usd:")
+}
+
+func TestCallerIdentity(t *testing.T) {
+	cfg, err := Load("")
+	require.NoError(t, err)
+	assert.Equal(t, "human:architect", cfg.CallerIdentity)
+
+	cfg.ContextMatrixURL = "http://cm"
+	cfg.APIKey = strings.Repeat("k", 32)
+
+	for _, bad := range []string{"", "architect", "human:", "agent:architect"} {
+		cfg.CallerIdentity = bad
+		err := cfg.Validate()
+		require.Error(t, err, bad)
+		assert.Contains(t, err.Error(), "caller_identity")
+	}
+
+	cfg.CallerIdentity = "human:alice"
+	require.NoError(t, cfg.Validate())
 }

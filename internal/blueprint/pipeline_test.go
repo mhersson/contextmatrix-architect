@@ -36,8 +36,9 @@ type fakeWorkspace struct {
 	hold   chan struct{}
 	failOn string
 
-	mu    sync.Mutex
-	calls []checkoutCall
+	mu      sync.Mutex
+	calls   []checkoutCall
+	removed []string
 }
 
 type checkoutCall struct {
@@ -79,6 +80,14 @@ func (w *fakeWorkspace) Checkout(ctx context.Context, blueprintID, name, repoURL
 	}
 
 	return code.Checkout{RepoURL: repoURL, DefaultBranch: "main", SHA: "sha-" + name, Dir: dir}, nil
+}
+
+func (w *fakeWorkspace) Remove(_ context.Context, blueprintID string) error {
+	w.mu.Lock()
+	w.removed = append(w.removed, blueprintID)
+	w.mu.Unlock()
+
+	return os.RemoveAll(w.TreeRoot(blueprintID))
 }
 
 func (w *fakeWorkspace) TreeRoot(blueprintID string) string {
@@ -178,7 +187,10 @@ func newPipelineOn(t *testing.T, st *store.Store, script stageScript, ws *fakeWo
 		Store: st, Pack: pk, Runner: runner, MaxRunCostUSD: 2, MaxTurns: 10,
 		Sink: rec.sink, HarnessLine: rec.line,
 		Workspace: ws, Projects: listAlpha, CMTools: (&fakeCMTools{}).open,
+		ConnectCM: newFakeCM().connect, CallerIdentity: "human:architect",
 	})
+
+	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 
 	return c, st, runner, rec, ws
 }
@@ -188,12 +200,32 @@ func newPipelineOn(t *testing.T, st *store.Store, script stageScript, ws *fakeWo
 func drive(t *testing.T, c *Controller, id string) {
 	t.Helper()
 
+	driveIn(t, c, startInput(id))
+}
+
+// driveIn is drive with a chosen start input, such as another mode.
+func driveIn(t *testing.T, c *Controller, in StartInput) {
+	t.Helper()
+
 	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput(id)))
-	require.NoError(t, c.Message(ctx, id, "the need", "m1"))
-	c.Wait(id)
-	require.NoError(t, c.Message(ctx, id, "the design", "m2"))
-	c.Wait(id)
+	require.NoError(t, c.Start(ctx, in))
+	require.NoError(t, c.Message(ctx, in.ID, "the need", "m1"))
+	c.Wait(in.ID)
+	require.NoError(t, c.Message(ctx, in.ID, "the design", "m2"))
+	c.Wait(in.ID)
+}
+
+// sessionOf returns the attached session of id.
+func sessionOf(t *testing.T, c *Controller, id string) *session {
+	t.Helper()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	s := c.sessions[id]
+	require.NotNil(t, s, "session %s is attached", id)
+
+	return s
 }
 
 func happyScript() stageScript {

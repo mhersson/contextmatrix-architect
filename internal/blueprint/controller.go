@@ -35,6 +35,8 @@ const (
 	StateWaiting State = "waiting"
 	StateIdle    State = "idle"
 	StateFailed  State = "failed"
+	StateEmitted State = "emitted"
+	StateDone    State = "done"
 )
 
 // needStage is the pseudo-stage the user's first message is stored under.
@@ -73,6 +75,22 @@ type Runner interface {
 type Workspace interface {
 	Checkout(ctx context.Context, blueprintID, name, repoURL string, creds code.Credentials) (code.Checkout, error)
 	TreeRoot(blueprintID string) string
+	// Remove deletes a blueprint's trees; emission calls it once the cards exist.
+	Remove(ctx context.Context, blueprintID string) error
+}
+
+// CMClient is the ContextMatrix surface emission, its preflight, the run
+// start and the watch use. internal/cm's Client implements it; tests fake it.
+type CMClient interface {
+	ListProjects(ctx context.Context) ([]cm.Project, error)
+	ListPlaybooks(ctx context.Context) ([]cm.PlaybookSummary, error)
+	GetPlaybook(ctx context.Context, id string) (cm.Playbook, error)
+	GetCard(ctx context.Context, project, id string) (cm.Card, error)
+	CreateCard(ctx context.Context, in cm.CardInput) (cm.CreatedCard, error)
+	CreatePlaybook(ctx context.Context, in cm.PlaybookInput) (string, error)
+	RunCard(ctx context.Context, project, id, agentID string) (cm.Card, error)
+	RunPlaybook(ctx context.Context, id, agentID string) error
+	Close() error
 }
 
 // Options wires a Controller.
@@ -108,6 +126,14 @@ type Options struct {
 	// ExportDir is where export bundles are written, one directory per
 	// blueprint and time; empty refuses export.
 	ExportDir string
+	// ConnectCM opens a ContextMatrix MCP session with the session's key for
+	// emission, its preflight, the run start and the watch. nil refuses
+	// emission with a clear error.
+	ConnectCM func(ctx context.Context, mcpAPIKey string) (CMClient, error)
+	// CallerIdentity is the agent_id every ContextMatrix write passes. It is
+	// a human: id, because run_card and run_playbook are human-gated; stage
+	// tools never get it.
+	CallerIdentity string
 }
 
 // session is an attached CM session: the provisioned endpoint, model and

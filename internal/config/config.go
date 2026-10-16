@@ -25,9 +25,12 @@ const envPrefix = "CONTEXTMATRIX_ARCHITECT_"
 type Config struct {
 	ContextMatrixURL string
 	APIKey           string
-	Port             int
-	LogLevel         string
-	StateDir         string
+	// CallerIdentity is the agent_id every ContextMatrix write passes; a
+	// human: id, because run_card and run_playbook are human-gated.
+	CallerIdentity string
+	Port           int
+	LogLevel       string
+	StateDir       string
 	// Pack is a pipeline pack directory; empty means the embedded default.
 	Pack string
 	// Models overrides the model per persona; the session's model is the
@@ -53,6 +56,7 @@ type Config struct {
 type raw struct {
 	ContextMatrixURL       string            `koanf:"contextmatrix_url"`
 	APIKey                 string            `koanf:"api_key"`
+	CallerIdentity         string            `koanf:"caller_identity"`
 	Port                   int               `koanf:"port"`
 	LogLevel               string            `koanf:"log_level"`
 	StateDir               string            `koanf:"state_dir"`
@@ -69,6 +73,7 @@ type raw struct {
 
 func defaults() raw {
 	return raw{
+		CallerIdentity:         "human:architect",
 		Port:                   9095,
 		LogLevel:               "info",
 		StateDir:               "/var/lib/contextmatrix-architect",
@@ -87,6 +92,7 @@ func (r raw) toConfig() *Config {
 	return &Config{
 		ContextMatrixURL:      r.ContextMatrixURL,
 		APIKey:                r.APIKey,
+		CallerIdentity:        r.CallerIdentity,
 		Port:                  r.Port,
 		LogLevel:              r.LogLevel,
 		StateDir:              r.StateDir,
@@ -212,6 +218,10 @@ func (c *Config) Validate() error {
 
 	if c.WorkspaceMaxAgeDays < 1 {
 		return errors.New("workspace_max_age_days must be at least 1")
+	}
+
+	if suffix, ok := strings.CutPrefix(c.CallerIdentity, "human:"); !ok || strings.TrimSpace(suffix) == "" {
+		return fmt.Errorf("caller_identity must be a human: identity such as human:architect, got %q; ContextMatrix's run_card and run_playbook are human-gated", c.CallerIdentity)
 	}
 
 	switch c.LogLevel {

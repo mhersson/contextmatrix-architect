@@ -435,16 +435,18 @@ At sign-off, in order:
    default branch has moved since grounding (a moved branch needs a re-ground
    or an explicit, logged override); no draft card's title matches a card in
    another runnable playbook.
-2. **Cards**, per project in dependency order so `depends_on` carries real ids.
-   Each created id is stored in `emissions` against its draft, which makes a
-   re-run after a partial failure skip what exists. A warning from
-   `create_card` is a readiness miss: stop and log, never continue blind.
-3. **Playbook**, when there are two or more cards, in blueprint order, with
-   manual entries for human checks, live checks and cross-project gates. Its
-   description carries the blueprint summary and the assumption list. A
-   single card carries the summary and assumptions in its own Context.
-4. Ids stored in `emissions`, state `emitted`. Running is a human action in
-   CM, or `run_card` and `run_playbook` in yolo mode.
+2. **Cards**, in playbook order, which the contract keeps dependency-first,
+   so `depends_on` carries real ids within a project. Each created id is
+   stored in `emissions` at once, so a retry after a failure skips what
+   exists. A `create_card` warning is reported and emission continues: CM
+   creates the card before it lints it, the readiness checks mirror its lint,
+   and the outcomes stage learns from what slips through.
+3. **Playbook**, for two or more cards: card and manual entries in draft
+   order, the draft's title, and a description with intake's problem, value
+   and assumptions. A single card carries the problem and the assumptions in
+   its Context section, and its manual checks are listed in the session.
+4. The blueprint's trees are removed and its state is `emitted`. Running is
+   a human action in CM, or `run_card` and `run_playbook` in yolo mode.
 
 The architect does not use CM's Jira import for cards. Its traps hit exactly
 what the contract tunes: imported titles start with the issue key, no labels
@@ -533,8 +535,10 @@ Replies the server understands, besides answers to questions:
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
-  URL, backend HMAC key, listen address, state directory, pack, per-project
-  export opt-ins, and optional per-persona model overrides (slugs only).
+  URL, backend HMAC key, listen address, state directory, pack, the caller
+  identity for ContextMatrix writes (default human:architect), per-project
+  export opt-ins (slice 4), and optional per-persona model overrides (slugs
+  only).
   Secrets reach only their client and never a log, error, artifact or store
   row.
 - Models: the start payload's model is the default for every persona; config

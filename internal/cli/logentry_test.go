@@ -46,6 +46,9 @@ func TestLogEntryFor(t *testing.T) {
 		{"report not ready", blueprint.Event{Kind: blueprint.EventReport, BlueprintID: "S1", Payload: map[string]any{
 			"body": "# Cards", "ready": false, "rounds": 3, "findings": []string{"D1: two deliverables"},
 		}}, "text", []string{"D1: two deliverables"}, false},
+		{"card created", blueprint.Event{Kind: blueprint.EventCardCreated, BlueprintID: "S1", Payload: map[string]any{"card": "ALPHA-001", "draft": "D1", "project": "alpha", "title": "Add the parser", "warnings": []string{"w1"}}}, "system", []string{"ALPHA-001", "w1"}, false},
+		{"playbook created", blueprint.Event{Kind: blueprint.EventPlaybookCreated, BlueprintID: "S1", Payload: map[string]any{"playbook": "ship-the-parser", "entries": 3}}, "system", []string{"ship-the-parser"}, false},
+		{"emitted", blueprint.Event{Kind: blueprint.EventEmitted, BlueprintID: "S1", Payload: map[string]any{"cards": []any{map[string]any{"card": "ALPHA-001"}}, "playbook": "", "manual": []any{"Check the dashboard"}}}, "text", []string{"ALPHA-001", "Check the dashboard"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

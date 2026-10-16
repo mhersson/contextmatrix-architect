@@ -1,0 +1,445 @@
+package blueprint
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/mhersson/contextmatrix-architect/internal/cm"
+	"github.com/mhersson/contextmatrix-architect/internal/contract"
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
+	"github.com/mhersson/contextmatrix-architect/internal/store"
+)
+
+var errNoCMClient = errors.New("blueprint: emission needs the ContextMatrix client")
+
+// cmWriteTimeout bounds one ContextMatrix write of emission. It covers CM's
+// own bound on run_playbook, three minutes, as Play can wait behind a Stop
+// of the same playbook.
+const cmWriteTimeout = 4 * time.Minute
+
+// writeContext is the context of one ContextMatrix write: the MCP client
+// gives up at once on a cancel while CM may still finish the write, which
+// the record would then miss and the next attempt would make again. So
+// abort, End and Shutdown stop emission between two calls, never inside one.
+func writeContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), cmWriteTimeout)
+}
+
+// connectCM opens a ContextMatrix session with the session's MCP key.
+func (c *Controller) connectCM(ctx context.Context, sess *session) (CMClient, error) {
+	if c.opts.ConnectCM == nil {
+		return nil, errNoCMClient
+	}
+
+	client, err := c.opts.ConnectCM(ctx, sess.mcpKey)
+	if err != nil {
+		return nil, fmt.Errorf("blueprint: connect to ContextMatrix: %w", err)
+	}
+
+	return client, nil
+}
+
+// cardsStage is the stage that checks cards; "" when the pack has none, and
+// then nothing is emitted.
+func (c *Controller) cardsStage() string {
+	for _, st := range c.opts.Pack.Stages {
+		if slices.Contains(st.Checks, pack.CheckCards) {
+			return st.ID
+		}
+	}
+
+	return ""
+}
+
+// draft reads the cards the pipeline ended on: the latest artifact of the
+// stage that checks cards.
+func (c *Controller) draft(ctx context.Context, id string) (contract.Draft, error) {
+	stageID := c.cardsStage()
+	if stageID == "" {
+		return contract.Draft{}, errors.New("blueprint: the pack has no stage that checks cards")
+	}
+
+	art, err := c.opts.Store.LatestArtifact(ctx, id, stageID)
+	if err != nil {
+		return contract.Draft{}, fmt.Errorf("blueprint: load the cards: %w", err)
+	}
+
+	var data map[string]any
+	if err := json.Unmarshal(art.Data, &data); err != nil {
+		return contract.Draft{}, fmt.Errorf("blueprint: decode the cards: %w", err)
+	}
+
+	return contract.ParseDraft(data)
+}
+
+// emitted reports whether everything emission creates is recorded: every
+// draft card and, for two or more cards, the playbook.
+//
+//nolint:unused // the sign-off reads it before it emits
+func (c *Controller) emitted(ctx context.Context, bp store.Blueprint) (bool, error) {
+	draft, err := c.draft(ctx, bp.ID)
+	if err != nil {
+		return false, err
+	}
+
+	recs, err := c.opts.Store.ListEmissions(ctx, bp.ID)
+	if err != nil {
+		return false, fmt.Errorf("blueprint: list emissions: %w", err)
+	}
+
+	cards, playbook := 0, false
+
+	for _, e := range recs {
+		switch e.Kind {
+		case store.EmitCard:
+			cards++
+		case store.EmitPlaybook:
+			playbook = true
+		}
+	}
+
+	return cards == len(draft.Cards) && (len(draft.Cards) < 2 || playbook), nil
+}
+
+// emit creates an approved blueprint's cards and playbook in ContextMatrix.
+// It runs on the blueprint's run slot, so a message meanwhile is a note and
+// abort stops it between two calls. Every created id is recorded at once,
+// and the next approve resumes from what is recorded.
+func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint) {
+	bg := context.WithoutCancel(ctx)
+	au := sess.audit
+
+	draft, err := c.draft(bg, bp.ID)
+	if err != nil {
+		c.emitError(bg, au, bp.ID, err)
+
+		return
+	}
+
+	client, err := c.connectCM(ctx, sess)
+	if err != nil {
+		c.emitError(bg, au, bp.ID, err)
+
+		return
+	}
+
+	defer func() { _ = client.Close() }()
+
+	if err := c.emitCards(ctx, au, bp, client, draft); err != nil {
+		c.emitError(bg, au, bp.ID, err)
+	}
+}
+
+// emitError reports a stopped emission and leaves the blueprint idle.
+func (c *Controller) emitError(ctx context.Context, au audit, id string, err error) {
+	c.opts.Logger.Error("blueprint: emission stopped", "blueprint", id, "error", au.text(err.Error()))
+	c.setState(ctx, id, StateIdle)
+	au.event(ctx, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{
+		"stage":   "emission",
+		"message": "Emission stopped: " + err.Error() + ". Cards already created are kept; reply approve to resume.",
+	}})
+}
+
+// emitCards creates the draft's missing cards in playbook order, which the
+// contract keeps dependency-first, then the playbook for two or more cards,
+// recording each CM id as soon as it exists. A card CM warns about is kept
+// and its warnings reported: readiness mirrors CM's lint, and the outcomes
+// stage learns from what slips through. The trees go once everything exists.
+func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint, client CMClient, draft contract.Draft) error {
+	bg := context.WithoutCancel(ctx)
+
+	recs, err := c.opts.Store.ListEmissions(bg, bp.ID)
+	if err != nil {
+		return fmt.Errorf("list emissions: %w", err)
+	}
+
+	cmIDs := map[string]string{}
+	playbookID := ""
+
+	for _, e := range recs {
+		switch e.Kind {
+		case store.EmitCard:
+			cmIDs[e.DraftID] = e.CMID
+		case store.EmitPlaybook:
+			playbookID = e.CMID
+		}
+	}
+
+	summary, err := c.summary(bg, bp.ID)
+	if err != nil {
+		return err
+	}
+
+	byID := map[string]contract.Card{}
+	for _, card := range draft.Cards {
+		byID[card.ID] = card
+	}
+
+	created := false
+
+	for _, id := range draft.Order {
+		card, isCard := byID[id]
+		if !isCard {
+			continue
+		}
+
+		if _, done := cmIDs[card.ID]; done {
+			continue
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		deps := make([]string, 0, len(card.DependsOn))
+
+		for _, dep := range card.DependsOn {
+			cmID, ok := cmIDs[dep]
+			if !ok {
+				return fmt.Errorf("%s depends on %s, which is not created", card.ID, dep)
+			}
+
+			deps = append(deps, cmID)
+		}
+
+		body := card.Body
+		if len(draft.Cards) == 1 {
+			body = withContext(body, summary.contextText())
+		}
+
+		wctx, cancel := writeContext(ctx)
+		out, err := client.CreateCard(wctx, cm.CardInput{
+			Project: card.Project, Title: card.Title, Type: card.Type, Priority: card.Priority,
+			Labels: card.Labels, Skills: card.Skills, Body: body, DependsOn: deps, AgentID: c.opts.CallerIdentity,
+		})
+
+		cancel()
+
+		if err != nil {
+			return fmt.Errorf("create %s: %w", card.ID, err)
+		}
+
+		if err := c.opts.Store.AddEmission(bg, store.Emission{
+			BlueprintID: bp.ID, Kind: store.EmitCard, DraftID: card.ID, Project: card.Project,
+			CMID: out.ID, CreatedAt: c.opts.Now().UTC(),
+		}); err != nil {
+			return fmt.Errorf("record %s as %s, which exists in ContextMatrix: %w", card.ID, out.ID, err)
+		}
+
+		cmIDs[card.ID] = out.ID
+		created = true
+
+		au.event(bg, Event{Kind: EventCardCreated, BlueprintID: bp.ID, Payload: map[string]any{
+			"draft": card.ID, "project": card.Project, "card": out.ID, "title": card.Title, "warnings": out.Warnings,
+		}})
+	}
+
+	if len(draft.Cards) > 1 && playbookID == "" {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		entries := make([]cm.PlaybookEntryInput, 0, len(draft.Order))
+		manual := map[string]contract.Manual{}
+
+		for _, m := range draft.Manual {
+			manual[m.ID] = m
+		}
+
+		for _, id := range draft.Order {
+			if card, ok := byID[id]; ok {
+				entries = append(entries, cm.PlaybookEntryInput{Type: "card", Project: card.Project, Card: cmIDs[id]})
+
+				continue
+			}
+
+			if m, ok := manual[id]; ok {
+				entries = append(entries, cm.PlaybookEntryInput{Type: "manual", Text: m.Text, Note: m.Note})
+			}
+		}
+
+		wctx, cancel := writeContext(ctx)
+		id, err := client.CreatePlaybook(wctx, cm.PlaybookInput{
+			Title: draft.Title, Description: summary.description(bp.ID), Entries: entries, AgentID: c.opts.CallerIdentity,
+		})
+
+		cancel()
+
+		if err != nil {
+			return fmt.Errorf("create the playbook: %w", err)
+		}
+
+		if err := c.opts.Store.AddEmission(bg, store.Emission{
+			BlueprintID: bp.ID, Kind: store.EmitPlaybook, CMID: id, CreatedAt: c.opts.Now().UTC(),
+		}); err != nil {
+			return fmt.Errorf("record the playbook %s, which exists in ContextMatrix: %w", id, err)
+		}
+
+		playbookID = id
+		created = true
+
+		au.event(bg, Event{Kind: EventPlaybookCreated, BlueprintID: bp.ID, Payload: map[string]any{
+			"playbook": id, "title": draft.Title, "entries": len(entries),
+		}})
+	}
+
+	if c.opts.Workspace != nil {
+		if err := c.opts.Workspace.Remove(bg, bp.ID); err != nil {
+			c.opts.Logger.Warn("blueprint: remove trees after emission", "blueprint", bp.ID, "error", err)
+		}
+	}
+
+	cur, err := c.opts.Store.GetBlueprint(bg, bp.ID)
+	if err != nil {
+		return fmt.Errorf("reload the blueprint: %w", err)
+	}
+
+	// A resumed emission that created nothing (a retried run start) does not
+	// announce the cards again.
+	if !created && cur.State == string(StateEmitted) {
+		return nil
+	}
+
+	c.setState(bg, bp.ID, StateEmitted)
+
+	cards := make([]any, 0, len(draft.Cards))
+
+	for _, id := range draft.Order {
+		if card, ok := byID[id]; ok {
+			cards = append(cards, map[string]any{"draft": id, "project": card.Project, "card": cmIDs[id], "title": card.Title})
+		}
+	}
+
+	var manual []string
+
+	if len(draft.Cards) == 1 {
+		for _, m := range draft.Manual {
+			manual = append(manual, m.Text)
+		}
+	}
+
+	au.event(bg, Event{Kind: EventEmitted, BlueprintID: bp.ID, Payload: map[string]any{
+		"cards": cards, "playbook": playbookID, "manual": manual,
+	}})
+
+	return nil
+}
+
+// blueprintSummary is what the cards and the playbook carry about the
+// blueprint: intake's problem and value, and its assumptions.
+type blueprintSummary struct {
+	problem, value, assumptions string
+}
+
+// summary reads the first stage's latest artifact, the need.
+func (c *Controller) summary(ctx context.Context, id string) (blueprintSummary, error) {
+	art, err := c.opts.Store.LatestArtifact(ctx, id, c.opts.Pack.Stages[0].ID)
+	if err != nil {
+		return blueprintSummary{}, fmt.Errorf("load the need: %w", err)
+	}
+
+	return blueprintSummary{
+		problem:     sectionText(art.Body, "Problem"),
+		value:       sectionText(art.Body, "Value"),
+		assumptions: sectionText(art.Body, "Assumptions"),
+	}, nil
+}
+
+// description is the playbook's description.
+func (s blueprintSummary) description(id string) string {
+	var b strings.Builder
+
+	for _, part := range []struct{ head, text string }{{"Problem", s.problem}, {"Value", s.value}} {
+		if part.text != "" {
+			fmt.Fprintf(&b, "%s:\n%s\n\n", part.head, part.text)
+		}
+	}
+
+	if s.assumptions == "" {
+		b.WriteString("Assumptions: none recorded.\n\n")
+	} else {
+		fmt.Fprintf(&b, "Assumptions:\n%s\n\n", s.assumptions)
+	}
+
+	fmt.Fprintf(&b, "Emitted by contextmatrix-architect from blueprint %s.", id)
+
+	return b.String()
+}
+
+// contextText is what a single card's Context section gains.
+func (s blueprintSummary) contextText() string {
+	var b strings.Builder
+
+	if s.problem != "" {
+		fmt.Fprintf(&b, "Blueprint problem: %s\n\n", s.problem)
+	}
+
+	if s.assumptions == "" {
+		b.WriteString("Blueprint assumptions: none recorded.")
+	} else {
+		fmt.Fprintf(&b, "Blueprint assumptions:\n%s", s.assumptions)
+	}
+
+	return b.String()
+}
+
+// sectionText returns the text under the first "## <name>" heading of body,
+// up to the next "## " heading, trimmed; "" when there is none.
+func sectionText(body, name string) string {
+	var (
+		out []string
+		in  bool
+	)
+
+	for _, line := range strings.Split(body, "\n") {
+		if title, ok := strings.CutPrefix(line, "## "); ok {
+			if in {
+				break
+			}
+
+			in = strings.EqualFold(strings.TrimSpace(title), name)
+
+			continue
+		}
+
+		if in {
+			out = append(out, line)
+		}
+	}
+
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+// withContext appends text to the end of body's Context section, or opens
+// the body with one when it has none.
+func withContext(body, text string) string {
+	lines := strings.Split(body, "\n")
+
+	start := slices.IndexFunc(lines, func(l string) bool {
+		title, ok := strings.CutPrefix(l, "## ")
+
+		return ok && strings.EqualFold(strings.TrimSpace(title), "Context")
+	})
+	if start < 0 {
+		return "## Context\n\n" + text + "\n\n" + body
+	}
+
+	end := len(lines)
+
+	for i := start + 1; i < len(lines); i++ {
+		if strings.HasPrefix(lines[i], "## ") {
+			end = i
+
+			break
+		}
+	}
+
+	out := slices.Concat(lines[:end], []string{"", text, ""}, lines[end:])
+
+	return strings.Join(out, "\n")
+}

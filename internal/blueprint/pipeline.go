@@ -517,6 +517,26 @@ func draftProblems(d contract.Draft) []string {
 		}
 	}
 
+	// The playbook runner walks entries in order and a card waits for its
+	// dependencies, so a dependency later in order would stall the run.
+	at := map[string]int{}
+	for i, id := range d.Order {
+		if _, seen := at[id]; !seen {
+			at[id] = i
+		}
+	}
+
+	for _, card := range d.Cards {
+		for _, dep := range card.DependsOn {
+			cd, cardIn := at[card.ID]
+			pd, depIn := at[dep]
+
+			if cardIn && depIn && pd > cd {
+				problems = append(problems, fmt.Sprintf("%s comes before its dependency %s in order", card.ID, dep))
+			}
+		}
+	}
+
 	return problems
 }
 

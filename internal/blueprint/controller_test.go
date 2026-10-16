@@ -196,6 +196,20 @@ func signal(ch chan struct{}) {
 	}
 }
 
+// closer returns a func that closes ch once, and runs it when the test ends,
+// so a fake that waits on ch never outlives a failing test. Called after the
+// controller is built, it runs before the controller's Shutdown waits.
+func closer(t *testing.T, ch chan struct{}) func() {
+	t.Helper()
+
+	var once sync.Once
+
+	closeCh := func() { once.Do(func() { close(ch) }) }
+	t.Cleanup(closeCh)
+
+	return closeCh
+}
+
 func newController(t *testing.T, fn func(context.Context, stage.Input) (stage.Output, error)) (*Controller, *store.Store, *fakeRunner, *recorder) {
 	t.Helper()
 
