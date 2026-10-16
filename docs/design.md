@@ -505,7 +505,7 @@ Replies the server understands, besides answers to questions:
 | ----------------------------- | ---------------------------------------------------------------------- |
 | `approve`, `reject <feedback>` | Decides the sign-off: approve emits, and resumes an emission that stopped; reject re-runs decomposition with the feedback. Only after the pipeline ends ready; before that the text is an answer, the design or a note. |
 | `gate <stage> human\|auto`    | Changes a gate's policy for this blueprint; offered at the gate plan.   |
-| `export`                      | Writes the markdown bundle (blueprint summary, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with emission. |
+| `export`                      | Writes the markdown bundle (blueprint summary with the sign-off decisions and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
 | `lessons`                     | Lists lessons and their state.                                          |
 | `abort`                       | Ends the open run; the blueprint stays and can be reopened.             |
@@ -526,9 +526,9 @@ Replies the server understands, besides answers to questions:
   message is the need again and intake re-runs on it. A pipeline stopped by the card contract or by
   readiness's rounds is not re-run; the user starts a new blueprint with a
   better design.
-- A project may opt into automatic export in config: a target repo, branch and
-  directory; the bundle is committed there at each gate or at sign-off. Off by
-  default.
+- From slice 4, a project may opt into automatic export in config: a target
+  repo, branch and directory; the bundle is committed there at each gate or at
+  sign-off. Off by default.
 - A message that arrives while no question or gate is open is logged as a
   note; delivering notes to the next stage arrives with the dialog stages.
 
@@ -649,7 +649,9 @@ Ordered so a real card comes out as early as possible.
 3. **Dialog stages.** Intake, slicing, solution design, acceptance; `human`
    and `auto` responders; gates. In CM: typed question and gate entries
    rendered with buttons.
-4. **Outcomes and lessons**, with pack overlays.
+4. **Outcomes and lessons**, with pack overlays, and the per-project export
+   opt-in that commits the bundle to a repository through an allowlist of
+   target repositories.
 5. **Later**: a gate inbox and a blueprint view in CM's web UI;
    seeding a blueprint from an existing CM card, in the same adapter shape as
    the Jira seed; Jira seed and mirror (decide REST against Atlassian MCP then,

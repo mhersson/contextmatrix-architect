@@ -1796,13 +1796,17 @@ func TestStart_ReopenWithoutAPriceKeepsTheCreationPrice(t *testing.T) {
 }
 
 func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
-	c, _, _, rec := newController(t, artifactRun("# Need with "+testKey+" "+testMCPKey+" "+testGitToken))
+	c, st, _, rec := newController(t, artifactRun("# Need with "+testKey+" "+testMCPKey+" "+testGitToken))
 	c.opts.ExportDir = t.TempDir()
 	ctx := context.Background()
 
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
 	c.Wait("BP1")
+
+	_, err := st.AddGate(ctx, store.Gate{BlueprintID: "BP1", Stage: signoffStage, Version: 1, Decision: store.GateReject, Feedback: "split the card", Responder: store.ResponderHuman, DecidedAt: time.Now()})
+	require.NoError(t, err)
+	require.NoError(t, st.AddEmission(ctx, store.Emission{BlueprintID: "BP1", Kind: store.EmitCard, DraftID: "D1", Project: "alpha", CMID: "ALPHA-042", CreatedAt: time.Now()}))
 
 	require.NoError(t, c.Export(ctx, "BP1", "m2"))
 
@@ -1834,6 +1838,11 @@ func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
 	assert.NotContains(t, string(all), testMCPKey)
 	assert.NotContains(t, string(all), testGitToken)
 	assert.Contains(t, string(all), "# Need with")
+
+	summary, err := os.ReadFile(filepath.Join(dir, "blueprint.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(summary), "split the card")
+	assert.Contains(t, string(summary), "ALPHA-042")
 }
 
 func TestExport_UnknownBlueprint(t *testing.T) {

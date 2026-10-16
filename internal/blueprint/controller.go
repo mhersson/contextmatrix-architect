@@ -506,6 +506,14 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 		return fmt.Errorf("blueprint: export: %w", err)
 	}
 
+	if bundle.Gates, err = c.opts.Store.ListGates(ctx, id, signoffStage); err != nil {
+		return fmt.Errorf("blueprint: export: %w", err)
+	}
+
+	if bundle.Emissions, err = c.opts.Store.ListEmissions(ctx, id); err != nil {
+		return fmt.Errorf("blueprint: export: %w", err)
+	}
+
 	for _, r := range bundle.Runs {
 		t, err := c.opts.Store.GetTranscript(ctx, r.ID)
 		if errors.Is(err, store.ErrNotFound) {
