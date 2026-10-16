@@ -117,8 +117,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   (fail-closed, no local fallback), MCP key, model and git-credentials token,
   and ignores `resume` and the worker image. It reopens the blueprint by id and
   runs no container. An end-session call detaches the client; the blueprint
-  persists. A message that arrives while no question is pending is queued as a
-  note for the next stage and logged, never dropped. Entries published before
+  persists. A message that arrives while no question is pending is logged as a
+  note, never dropped; delivering notes to the next stage arrives with the
+  dialog stages. Entries published before
   CM's consumer connects, or while it is reconnecting, are retained on the
   server and replayed to it once, ahead of live entries.
 - **A question blocks the run.** `ask_human` is an ordinary tool: its
@@ -493,15 +494,16 @@ Replies the server understands, besides answers to questions:
   its prompt again. Completed artifacts are never lost. A record the pack
   cannot place, such as a stage the pack no longer has, is reported in the
   session and nothing runs.
-- After a stage fails or is aborted, the next message is logged as a note
-  and re-runs that stage. A pipeline stopped by the card contract or by
+- After a later stage fails or is aborted, the next message is logged as a
+  note and re-runs that stage; after intake fails or is aborted, the next
+  message is the need again and intake re-runs on it. A pipeline stopped by the card contract or by
   readiness's rounds is not re-run; the user starts a new blueprint with a
   better design.
 - A project may opt into automatic export in config: a target repo, branch and
   directory; the bundle is committed there at each gate or at sign-off. Off by
   default.
-- A message that arrives while no question or gate is open is queued as a
-  note for the next stage and logged.
+- A message that arrives while no question or gate is open is logged as a
+  note; delivering notes to the next stage arrives with the dialog stages.
 
 ## Deployment
 
@@ -537,9 +539,9 @@ Replies the server understands, besides answers to questions:
   may override per persona. Priors-based selection through
   `contextmatrix-protocol`'s `selection` package comes later.
 - Cost: every run's token buckets are priced at the model price CM sends in
-  the start payload; the ledger sums runs per blueprint, the per-run cap stops
-  a run within one model call of passing it, or is off at zero, and a capped blueprint whose
-  model has no price does not run. An unpriced model on an uncapped blueprint
+  the start payload; the ledger sums runs per blueprint. The per-run cap
+  (off at zero) stops a run within one model call of passing it, and a
+  capped blueprint whose model has no price does not run. An unpriced model on an uncapped blueprint
   counts only the cost the endpoint reports, and max_turns still bounds every
   run. CM prices only the session model, so a run on a per-persona override
   is unpriced: a capped blueprint refuses it, an uncapped one counts the
@@ -547,13 +549,14 @@ Replies the server understands, besides answers to questions:
   ledger counts it.
 - Long intake dialogs rely on the harness's in-run compaction. Whether that is
   enough is checked in slice 3.
-- State dir: `architect.db`, `workspaces/mirrors/<repo>/` and
+- State dir: `architect.db`, `exports/<blueprint>/<time>/`,
+  `workspaces/mirrors/<repo>/` and
   `workspaces/trees/<blueprint>/<project>/`, with a project's secondary
   repository beside it at `<project>@<repo>/`. A blueprint's trees are
   removed at emission and by a sweep, at startup and hourly, for blueprints
   not written for `workspace_max_age_days`; mirrors stay. Trees are written
-  from the mirror's objects; the server never runs git. All of it is a
-  disposable cache.
+  from the mirror's objects; the server never runs git. `workspaces/` is a
+  disposable cache; `exports/` is the operator's record and is never swept.
 - LLM endpoint: whatever CM provisions, OpenRouter or any OpenAI-compatible
   endpoint. Never name a gateway operator in repo artifacts.
 - Builds on macOS too: no filenames differing only by case.

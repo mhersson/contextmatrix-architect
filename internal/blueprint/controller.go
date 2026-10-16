@@ -499,7 +499,8 @@ func (c *Controller) modelFor(sess *session, persona string) runModel {
 
 // capAllows reports whether a run of stageID on model m may start under the
 // blueprint's cost cap, and the cap the run must stay under: the configured
-// per-run cap, or what is left of the blueprint cap when that is smaller. A
+// per-run cap, or what is left of the blueprint cap when that is smaller; 0
+// means no cap (a run cap of 0 on an uncapped blueprint). A
 // capped blueprint whose run would be unpriced is refused, because the cap
 // could not bind. A refusal is reported to the panel, with refused merged
 // into its event payload, and leaves the blueprint idle.

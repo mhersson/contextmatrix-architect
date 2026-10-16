@@ -838,9 +838,11 @@ func TestRunCapZero_DisablesThePerRunCap(t *testing.T) {
 		capUSD     float64
 		spentUSD   float64
 		wantRunCap float64
+		wantRefuse bool
 	}{
 		{name: "no caps at all runs unbounded", capUSD: 0, wantRunCap: 0},
 		{name: "blueprint cap alone bounds the run by what is left", capUSD: 1.5, spentUSD: 0.5, wantRunCap: 1},
+		{name: "an exhausted blueprint cap is refused, not read as no cap", capUSD: 1, spentUSD: 1, wantRefuse: true},
 	}
 
 	for _, tt := range tests {
@@ -861,6 +863,13 @@ func TestRunCapZero_DisablesThePerRunCap(t *testing.T) {
 
 			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
 			c.Wait("BP1")
+
+			if tt.wantRefuse {
+				assert.Zero(t, runner.calls(), "no run starts")
+				assert.True(t, rec.has(EventError))
+
+				return
+			}
 
 			require.Equal(t, 1, runner.calls(), "the run starts")
 			assert.InDelta(t, tt.wantRunCap, runner.input(0).MaxCostUSD, 1e-9)
