@@ -251,13 +251,43 @@ func TestStart_CreatesOnceThenReopens(t *testing.T) {
 	ctx := context.Background()
 
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.End(ctx, "BP1"))
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 
 	bp, err := st.GetBlueprint(ctx, "BP1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"alpha"}, bp.Projects)
 	assert.Equal(t, string(StateNew), bp.State)
-	assert.Equal(t, []string{EventCreated, EventReopened}, rec.kinds())
+	assert.Equal(t, []string{EventCreated, EventEnded, EventReopened}, rec.kinds())
+}
+
+func TestStart_OnAHeldSessionIsSilent(t *testing.T) {
+	c, st, runner, rec := newController(t, artifactRun("# Need"))
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	before, err := st.ListEvents(ctx, "BP1")
+	require.NoError(t, err)
+
+	runsBefore, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+
+	published := len(rec.kinds())
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	after, err := st.ListEvents(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Len(t, after, len(before), "no event is stored")
+	assert.Len(t, rec.kinds(), published, "nothing reaches the panel")
+
+	runsAfter, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, runsBefore, runsAfter, "no run is started")
+	assert.Zero(t, runner.calls(), "the model is never called")
 }
 
 func TestMessage_FirstMessageIsTheNeedAndRunsIntake(t *testing.T) {
