@@ -100,7 +100,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		case str(p["decision"]) == "reject":
 			entry.Content = "Rejected. Decomposition runs again with your feedback."
 		case str(p["responder"]) == "auto":
-			entry.Content = "Preflight found nothing for a human, so the mode approved the cards. Emission starts."
+			entry.Content = "Preflight found nothing that needs a human first, so the mode approved the cards. Emission starts."
 		default:
 			entry.Content = "Approved. Emission starts."
 		}
@@ -266,6 +266,14 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			}
 		}
 
+		if steps := stringsOf(p["steps"]); len(steps) > 0 {
+			b.WriteString("\n\nManual steps for you before the cards run:")
+
+			for _, s := range steps {
+				b.WriteString("\n- " + s)
+			}
+		}
+
 		entry.Content = b.String()
 	default:
 		return protocol.LogEntry{}, false
@@ -372,6 +380,10 @@ func signoffText(p map[string]any) string {
 				b.WriteString("; depends on " + strings.Join(deps, ", "))
 			}
 
+			if writes := str(card["writes"]); writes != "" {
+				b.WriteString("; also writes " + writes)
+			}
+
 			b.WriteString(")\n")
 
 			continue
@@ -392,7 +404,7 @@ func signoffText(p map[string]any) string {
 		b.WriteString("\nAssumptions: none recorded.\n")
 	}
 
-	blocking, warnings, pfErr := stringsOf(p["blocking"]), stringsOf(p["warnings"]), str(p["preflight_error"])
+	blocking, warnings, steps, pfErr := stringsOf(p["blocking"]), stringsOf(p["warnings"]), stringsOf(p["steps"]), str(p["preflight_error"])
 
 	if len(blocking) > 0 {
 		b.WriteString("\nBlocking (fix these in ContextMatrix first):\n")
@@ -410,11 +422,19 @@ func signoffText(p map[string]any) string {
 		}
 	}
 
+	if len(steps) > 0 {
+		b.WriteString("\nManual steps for you before the cards run (they do not hold up emission):\n")
+
+		for _, s := range steps {
+			b.WriteString("- " + s + "\n")
+		}
+	}
+
 	if pfErr != "" {
 		b.WriteString("\nPreflight could not run: " + pfErr + "\n")
 	}
 
-	if len(blocking) == 0 && len(warnings) == 0 && pfErr == "" {
+	if len(blocking) == 0 && len(warnings) == 0 && len(steps) == 0 && pfErr == "" {
 		b.WriteString("\nPreflight found nothing for a human.\n")
 	}
 

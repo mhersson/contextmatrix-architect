@@ -146,6 +146,8 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 
 	auto := emitsOnItsOwn(bp.Mode)
 
+	// Steps do not stop it: creating the cards does not need them, and they
+	// are shown again with the emitted cards.
 	if auto && ctx.Err() == nil && pfErr == nil && len(pf.Blocking) == 0 && len(pf.Warnings) == 0 {
 		if !c.decide(bg, au, bp.ID, out.art.Version, store.GateApprove, "", store.ResponderAuto, "") {
 			return
@@ -173,10 +175,16 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	cards := make([]any, 0, len(draft.Cards))
 
 	for _, card := range draft.Cards {
-		cards = append(cards, map[string]any{
+		entry := map[string]any{
 			"id": card.ID, "project": card.Project, "title": card.Title, "type": card.Type,
 			"priority": card.Priority, "depends_on": card.DependsOn,
-		})
+		}
+
+		if draft.Setup[card.Project].InstructionCard == card.ID {
+			entry["writes"] = "AGENTS.md"
+		}
+
+		cards = append(cards, entry)
 	}
 
 	manual := make([]any, 0, len(draft.Manual))
@@ -186,7 +194,7 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 
 	payload := map[string]any{
 		"version": out.art.Version, "cards": cards, "order": draft.Order, "manual": manual, "title": draft.Title,
-		"blocking": pf.Blocking, "warnings": pf.Warnings, "auto_stopped": auto, "assumptions": assumptions,
+		"blocking": pf.Blocking, "warnings": pf.Warnings, "steps": pf.Steps, "auto_stopped": auto, "assumptions": assumptions,
 	}
 
 	if pfErr != nil {

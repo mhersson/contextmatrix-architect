@@ -141,7 +141,8 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 
 	// The blocking checks run again: ContextMatrix may have changed since
 	// the sign-off. Warnings were shown at the sign-off, and the approval
-	// overrode them.
+	// overrode them. The re-run also reads the steps announced with the
+	// cards.
 	pf, err := c.preflight(ctx, sess, bp, draft, client)
 	if err != nil {
 		c.emitError(ctx, au, bp.ID, fmt.Errorf("preflight: %w", err))
@@ -163,7 +164,7 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 		return
 	}
 
-	if err := c.emitCards(ctx, au, bp, client, draft); err != nil {
+	if err := c.emitCards(ctx, au, bp, client, draft, pf.Steps); err != nil {
 		c.emitError(ctx, au, bp.ID, err)
 
 		return
@@ -356,8 +357,9 @@ func (c *Controller) emitError(ctx context.Context, au audit, id string, err err
 // contract keeps dependency-first, then the playbook for two or more cards,
 // recording each CM id as soon as it exists. A card CM warns about is kept
 // and its warnings reported: readiness mirrors CM's lint, and the outcomes
-// stage learns from what slips through. The trees go once everything exists.
-func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint, client CMClient, draft contract.Draft) error {
+// stage learns from what slips through. The steps preflight found at this
+// attempt are announced with the cards. The trees go once everything exists.
+func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint, client CMClient, draft contract.Draft, steps []string) error {
 	bg := context.WithoutCancel(ctx)
 
 	recs, err := c.opts.Store.ListEmissions(bg, bp.ID)
@@ -535,7 +537,7 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 
 	// run_follows tells the panel that the run start comes next.
 	au.event(bg, Event{Kind: EventEmitted, BlueprintID: bp.ID, Payload: map[string]any{
-		"cards": cards, "playbook": playbookID, "manual": manual,
+		"cards": cards, "playbook": playbookID, "manual": manual, "steps": steps,
 		"run_follows": bp.Mode == protocol.ArchitectModeYolo && !started,
 	}})
 

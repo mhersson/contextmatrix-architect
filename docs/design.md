@@ -346,7 +346,7 @@ release.
   `setup.<project>.verify_command`, and every card of the project runs it
   in its acceptance criteria, written exactly as proposed. The architect
   cannot set it: `create_card` has no verify field, and `update_project`
-  keeps the operator's.
+  keeps the operator's. The sign-off lists setting it as a manual step.
 - A repository without `AGENTS.md` or `CLAUDE.md` at the root: the
   project's first card also writes `AGENTS.md` (stack, verify command,
   layout, conventions), `setup.<project>.instruction_card` names it, and
@@ -355,10 +355,9 @@ release.
 
 **Target project prerequisites**
 
-- A `verify.command` in the project's `.board.yaml`. The architect refuses to
-  emit into a project without one.
-- A root `AGENTS.md` or `CLAUDE.md`.
-- A repository URL on the project.
+- A repository URL on the project. A missing verify command or instruction
+  file is setup the cards carry (see Setup), never a block: CM runs a card
+  without a verify command, and the agent then detects verification itself.
 
 ### Readiness checks
 
@@ -447,22 +446,32 @@ holds.
 ## Emission
 
 Cards that pass readiness go to sign-off. Default and `auto` modes show the
-sign-off (the entries in playbook order, the playbook title, the assumptions
-and the preflight result) and wait: `approve` emits, and `reject <feedback>`
-stores the feedback and re-runs decomposition and readiness with it, the
-three readiness rounds counted again from the rejection. `auto+emit` and
-`yolo` approve on their own when preflight finds nothing for a human, and
-stop for one otherwise. Every decision is a row in `gates`. Then, in order:
+sign-off (the entries in playbook order with the card that also writes
+`AGENTS.md` marked, the playbook title, the assumptions and the preflight
+result) and wait: `approve` emits, and `reject <feedback>` stores the
+feedback and re-runs decomposition and readiness with it, the three
+readiness rounds counted again from the rejection. `auto+emit` and `yolo`
+approve on their own when preflight runs and finds nothing blocking and no
+warning, and stop for a human otherwise. Every decision is a row in `gates`.
+Then, in order:
 
 1. **Preflight**, at sign-off and again at the start of every emission
-   attempt. Blocking: a card's project is missing in CM or declares no
-   repository or verify command, or its checkout has no `AGENTS.md` or
-   `CLAUDE.md` at the root. A blocked emission waits for the fix in CM and
-   another `approve`. Warnings: a repository whose default branch moved
-   since grounding or could not be read, a checkout swept before its
-   instruction file could be re-checked, or a draft title that is a card in
+   attempt, reading CM each time. Blocking: a card's project is missing in
+   CM or declares no repository. A blocked emission waits for the fix in CM
+   and another `approve`. Warnings: a repository whose default branch moved
+   since grounding or could not be read, a project that declares no verify
+   command while the cards propose none, or a draft title that is a card in
    another runnable playbook. An `approve` after the warnings were shown is
-   the logged override; an emitting mode stops for a human instead.
+   the logged override; an emitting mode stops for a human instead. Steps:
+   "set verify command `<cmd>` on project `<p>` in ContextMatrix" for each
+   project that still declares no verify command, with the command the
+   cards propose, and "push an initial commit to `<repo>`'s default branch
+   before running the cards; the agent needs a base branch" for each
+   repository of a card's project with no commits. Steps are shown at the
+   sign-off and again with the emitted cards; they neither block emission
+   nor stop an emitting mode, and they are not playbook entries, which would
+   hold a run at a check-off. A missing instruction file is never a
+   preflight finding: the contract makes a card write it.
 2. **Cards**, in playbook order, which the contract keeps dependency-first,
    so `depends_on` carries real ids within a project. Each created id is
    stored in `emissions` at once, so a retry after a failure skips what

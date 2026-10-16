@@ -65,8 +65,19 @@ func TestLogEntryFor(t *testing.T) {
 			"order":    []any{"D1"},
 			"manual":   []any{},
 			"title":    "",
-			"blocking": []any{"project alpha declares no verify command"}, "warnings": []any{"moved"}, "auto_stopped": false, "assumptions": "- The parser stays in Go.",
-		}}, "text", []string{"D1", "Add the thing", "declares no verify command", "moved", "approve", "The parser stays in Go."}, false},
+			"blocking": []any{"project alpha declares no repository"}, "warnings": []any{"moved"}, "auto_stopped": false, "assumptions": "- The parser stays in Go.",
+		}}, "text", []string{"D1", "Add the thing", "declares no repository", "moved", "approve", "The parser stays in Go."}, false},
+		{"signoff marks the instruction card", blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
+			"cards":    []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing", "type": "feature", "priority": "medium", "writes": "AGENTS.md"}},
+			"order":    []any{"D1"},
+			"manual":   []any{},
+			"blocking": []any{}, "warnings": []any{},
+		}}, "text", []string{"D1 alpha: Add the thing (feature, medium; also writes AGENTS.md)"}, false},
+		{"emitted with a step", blueprint.Event{Kind: blueprint.EventEmitted, BlueprintID: "S1", Payload: map[string]any{
+			"cards": []any{map[string]any{"card": "ALPHA-001"}}, "playbook": "",
+			"steps": []any{"set verify command `go test ./...` on project alpha in ContextMatrix"},
+		}}, "text", []string{"ALPHA-001", "set verify command `go test ./...` on project alpha in ContextMatrix"}, false},
+		{"decided by the mode", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{"decision": "approve", "responder": "auto"}}, "system", []string{"needs a human first"}, false},
 		{"decided reject", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{"decision": "reject", "responder": "human", "feedback": "split it"}}, "system", []string{"Rejected"}, false},
 		{"note with a hint", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "hm", "hint": "Reply approve or reject."}}, "system", []string{"Reply approve or reject."}, false},
 	}
@@ -160,8 +171,13 @@ func TestLogEntryFor_SignoffSaysWhatPreflightFound(t *testing.T) {
 			carries: []string{"moved", "(this also overrides the warnings)"}, lacks: []string{"found nothing"},
 		},
 		{
-			name: "blocking", preflight: map[string]any{"blocking": []any{"project alpha declares no verify command"}, "warnings": []any{}},
-			carries: []string{"declares no verify command"}, lacks: []string{"found nothing", "overrides the warnings"},
+			name: "blocking", preflight: map[string]any{"blocking": []any{"project alpha declares no repository"}, "warnings": []any{}},
+			carries: []string{"declares no repository"}, lacks: []string{"found nothing", "overrides the warnings"},
+		},
+		{
+			name: "steps", preflight: map[string]any{"blocking": []any{}, "warnings": []any{}, "steps": []any{"set verify command `go test ./...` on project alpha in ContextMatrix"}},
+			carries: []string{"Manual steps for you before the cards run", "set verify command `go test ./...` on project alpha in ContextMatrix"},
+			lacks:   []string{"found nothing", "overrides the warnings"},
 		},
 		{
 			name: "not run", preflight: map[string]any{"blocking": []any{}, "warnings": []any{}, "preflight_error": "connect: refused"},
