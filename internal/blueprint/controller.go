@@ -316,8 +316,10 @@ func (c *Controller) leftRunning(ctx context.Context, id string) (*store.Run, er
 	return nil, nil
 }
 
-// Message handles one user message: the answer to an open question, the need while the first stage has no artifact, the
-// artifact of a human-sourced stage that waits for it, or a note.
+// Message handles one user message: the answer to an open question, the
+// need while the first stage has no artifact, the artifact of a
+// human-sourced stage that waits for it, or a note. The abort and export
+// commands are parsed by the webhook and reach Abort and Export instead.
 func (c *Controller) Message(ctx context.Context, id, text, msgID string) error {
 	trimmed := strings.TrimSpace(text)
 
@@ -456,6 +458,8 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 		return fmt.Errorf("blueprint: export: %w", err)
 	}
 
+	// A blueprint that is not attached has no redactor, which is intended:
+	// the payload carries only the path, the file count and the message id.
 	au := c.newAudit()
 
 	c.mu.Lock()

@@ -27,15 +27,17 @@ import (
 const testKey = "test-secret-key-0123456789abcdef"
 
 type stubController struct {
-	mu       sync.Mutex
-	starts   []blueprint.StartInput
-	messages []string
-	aborts   []string
-	exports  []string
-	ends     []string
-	startErr error
-	msgErr   error
-	endErr   error
+	mu        sync.Mutex
+	starts    []blueprint.StartInput
+	messages  []string
+	aborts    []string
+	exports   []string
+	ends      []string
+	startErr  error
+	msgErr    error
+	endErr    error
+	abortErr  error
+	exportErr error
 	// ctxErrs is the context's error as each call saw it, in call order.
 	ctxErrs []error
 }
@@ -67,7 +69,7 @@ func (s *stubController) Abort(ctx context.Context, id, msgID string) error {
 	s.aborts = append(s.aborts, id+"|"+msgID)
 	s.ctxErrs = append(s.ctxErrs, ctx.Err())
 
-	return nil
+	return s.abortErr
 }
 
 func (s *stubController) Export(ctx context.Context, id, msgID string) error {
@@ -77,7 +79,7 @@ func (s *stubController) Export(ctx context.Context, id, msgID string) error {
 	s.exports = append(s.exports, id+"|"+msgID)
 	s.ctxErrs = append(s.ctxErrs, ctx.Err())
 
-	return nil
+	return s.exportErr
 }
 
 func (s *stubController) End(ctx context.Context, id string) error {
@@ -464,4 +466,39 @@ func TestMessage_FailedDeliveryIsNotDeduplicated(t *testing.T) {
 	srv.Routes().ServeHTTP(rec, signed(t, http.MethodPost, "/message", payload, nextTS()))
 	assert.Equal(t, http.StatusAccepted, rec.Code, "a rolled-back id is delivered on retry")
 	assert.Len(t, ctl.messages, 2)
+}
+
+func TestCommand_FailedDeliveryIsNotDeduplicated(t *testing.T) {
+	tests := []struct {
+		text string
+		fail func(*stubController)
+		heal func(*stubController)
+		got  func(*stubController) int
+	}{
+		{"abort", func(c *stubController) { c.abortErr = errors.New("boom") }, func(c *stubController) { c.abortErr = nil }, func(c *stubController) int { return len(c.aborts) }},
+		{"export", func(c *stubController) { c.exportErr = errors.New("boom") }, func(c *stubController) { c.exportErr = nil }, func(c *stubController) int { return len(c.exports) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.text, func(t *testing.T) {
+			ctl := &stubController{}
+			tt.fail(ctl)
+
+			srv, _ := newTestServer(t, ctl)
+			payload := protocol.MessagePayload{SessionID: "BP1", Content: tt.text, MessageID: "m-same"}
+
+			rec := httptest.NewRecorder()
+			srv.Routes().ServeHTTP(rec, signed(t, http.MethodPost, "/message", payload, nextTS()))
+			require.Equal(t, http.StatusInternalServerError, rec.Code)
+
+			ctl.mu.Lock()
+			tt.heal(ctl)
+			ctl.mu.Unlock()
+
+			rec = httptest.NewRecorder()
+			srv.Routes().ServeHTTP(rec, signed(t, http.MethodPost, "/message", payload, nextTS()))
+			assert.Equal(t, http.StatusAccepted, rec.Code, "a rolled-back id is delivered on retry")
+			assert.Equal(t, 2, tt.got(ctl))
+		})
+	}
 }
