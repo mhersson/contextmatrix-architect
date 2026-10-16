@@ -152,6 +152,56 @@ func TestOpen_MigratesV1(t *testing.T) {
 	var version int
 	require.NoError(t, s.db.QueryRow("PRAGMA user_version").Scan(&version))
 	assert.Equal(t, 2, version)
+
+	// Every ALTER landed: usage written to the migrated table reads back.
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	id, err := s.StartRun(ctx, Run{BlueprintID: "old", Stage: "intake", Attempt: 1, Round: 1, Status: RunRunning, StartedAt: now})
+	require.NoError(t, err)
+
+	usage := RunUsage{PromptTokens: 1, CompletionTokens: 2, CacheReadTokens: 3, CacheWriteTokens: 4, CostUSD: 0.5}
+	require.NoError(t, s.EndRun(ctx, id, RunDone, "done", usage, now))
+
+	runs, err := s.ListRuns(ctx, "old")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, usage, runs[0].Usage)
+}
+
+func TestOpen_FailedMigrationLeavesV1(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "architect.db")
+
+	// stage_runs already has one of the new columns, so a later ALTER fails
+	// after the blueprints ALTER succeeded.
+	db, err := sql.Open("sqlite", "file:"+path)
+	require.NoError(t, err)
+
+	for _, stmt := range []string{
+		`CREATE TABLE blueprints (id TEXT PRIMARY KEY, model TEXT NOT NULL DEFAULT '', state TEXT NOT NULL)`,
+		`CREATE TABLE stage_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, prompt_tokens INTEGER NOT NULL DEFAULT 0)`,
+		`PRAGMA user_version = 1`,
+	} {
+		_, err := db.Exec(stmt)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, db.Close())
+
+	_, err = Open(context.Background(), path)
+	require.Error(t, err)
+
+	db, err = sql.Open("sqlite", "file:"+path)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	var version int
+	require.NoError(t, db.QueryRow("PRAGMA user_version").Scan(&version))
+	assert.Equal(t, 1, version)
+
+	var n int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('blueprints') WHERE name = 'price'`).Scan(&n))
+	assert.Zero(t, n, "the blueprints ALTER was rolled back")
 }
 
 func TestRunsAndCost(t *testing.T) {

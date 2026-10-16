@@ -22,6 +22,8 @@ type Source struct {
 func (s Source) Tag() string { return fmt.Sprintf("S%d", s.Number) }
 
 // AddSource stores src with the next number for its blueprint and returns it.
+// The read-then-insert numbering relies on the store's single connection
+// (SetMaxOpenConns(1)) serializing callers.
 func (s *Store) AddSource(ctx context.Context, src Source) (Source, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

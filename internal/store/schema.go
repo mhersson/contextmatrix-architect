@@ -112,14 +112,27 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 		)
 	}
 
+	// One transaction: a failed or interrupted migration leaves the file
+	// exactly as it was, never half-altered at the old version.
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin schema: %w", err)
+	}
+
+	defer func() { _ = tx.Rollback() }()
+
 	for _, stmt := range stmts {
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("store: ensure schema: %w", err)
 		}
 	}
 
-	if _, err := db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		return fmt.Errorf("store: stamp schema version: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit schema: %w", err)
 	}
 
 	return nil
