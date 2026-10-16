@@ -95,8 +95,8 @@ stage runner (internal/stage)       one harness.Run per round: persona + stage p
      |-- code tools      read-only tree per project from a bare mirror, at a recorded sha;
      |                   harness read/grep/glob jailed to it; repo_info
      |-- research tools  web_fetch
-     |-- cm tools        MCP client: list_projects, create_card, create_playbook,
-     |                   add_playbook_entry, get_playbook, get_card, run_playbook
+     |-- cm tools        read-only MCP reads for grounding and readiness:
+     |                   cm_list_projects, cm_list_cards, cm_get_card, cm_get_playbook
      |-- control tools   ask_human (blocking), submit_artifact (terminal)
      |
 store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions, gates,
@@ -163,7 +163,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | gates         | append-only: blueprint, stage, attempt, decision, feedback, responder, decided at                                             |
 | transcripts   | append-only: run, full message history as JSON, redacted                                                                     |
 | events        | append-only: time, blueprint, run, kind, payload                                                                              |
-| sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`; later `jira`), identity, version (sha, content hash), fetched at, first used by stage |
+| sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm`), fetched at, first used by stage |
 | ledger        | per-run cost rows summed per blueprint                                                                                        |
 | emissions     | draft card id to CM project and card id; playbook id; created at                                                              |
 | outcomes      | per emitted card: final state, review attempts, parked reason, cost, finding text, proposed lesson                            |
@@ -362,6 +362,7 @@ release.
 | One deliverable, no open decisions, no optional scope              | model-judged               |
 | Estimated planner split of two subtasks or fewer                   | model-judged               |
 | "Could an agent with only this repo finish this card?"             | model-judged, adversarial  |
+| No card duplicates an open card of its project                     | model-judged (cm tools)    |
 
 The contract lives here: the default pack's `card.md` and `lists.yaml` plus
 `internal/contract`. The agent is the consumer and its prompts are the ground
@@ -419,7 +420,7 @@ starts are bounded by CM's per-card guardrails, not by the architect.
 | -------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock at the start of grounding, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. `repo_info` returns the sha, instruction file presence, the project's verify command and, to the stage that fetched the tree, the default branch. |
 | research | `web_fetch`                                                                                             | Readable text, recorded as a source. A search provider is deferred.                                                                               |
-| cm       | `list_projects`, `create_card`, `create_playbook`, `add_playbook_entry`, `get_playbook`, `get_card`, `run_card`, `run_playbook` | MCP client over Streamable HTTP with the MCP key from the session's start payload and a configured caller identity (default `human:architect`). The chat backend's bridge, copied and generalised with per-server tool prefixes and an allowlist, so a second MCP server plugs in the same way. |
+| cm       | `list_projects`, `list_cards`, `get_card`, `get_playbook` as `cm_`-prefixed reads | Offered to grounding and readiness over the session's MCP key, one MCP session per run, chat's bridge adapter on the architect's client with a `cm_` prefix and an allowlist that skips tools CM does not serve. No `agent_id` is sent, so CM keeps redacting unvetted imported text; `get_card` never attaches images; a credential embedded in a URL is removed from every result and error before the model or the record sees it, since CM returns project config as stored; every result carries the blueprint's ContextMatrix source tag. Creating cards and playbooks and starting runs are controller calls with the configured caller identity, never model tools. |
 | control  | `ask_human`, `submit_artifact`                                                                          | `ask_human` blocks: question, options and context in; the answer out as the tool result. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
 
 Every tool result passes the harness redactor for every secret the process
@@ -575,7 +576,7 @@ internal/contract    card contract checks, mechanical and model-judged
 internal/store       SQLite: schema, append-only tables, queries
 internal/code        workspace checkout and repo_info
 internal/research    web_fetch
-internal/cm          MCP client (list_projects; emission arrives with the emission slice)
+internal/cm          MCP client: the project list and the stage read tools
 internal/outcomes    outcomes stage and lessons
 internal/export      markdown rendering into the state directory
 internal/config

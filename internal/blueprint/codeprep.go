@@ -19,6 +19,38 @@ import (
 
 var errNoCodeSupport = errors.New("blueprint: code stages need a workspace and the project list")
 
+var errNoCMSupport = errors.New("blueprint: cm stages need the ContextMatrix tool source")
+
+// cmSourceIdentity is the ContextMatrix board as a source: one per
+// blueprint, because CM state carries no version a read could cite.
+const cmSourceIdentity = "contextmatrix"
+
+// cmSource returns the blueprint's ContextMatrix source, recording it the
+// first time a run of a stage with the cm tools prepares them: the tag must
+// exist before the tools open, since every result carries it.
+func (c *Controller) cmSource(ctx context.Context, bp store.Blueprint, stageID string) (store.Source, error) {
+	known, err := c.opts.Store.ListSources(ctx, bp.ID)
+	if err != nil {
+		return store.Source{}, fmt.Errorf("blueprint: list sources: %w", err)
+	}
+
+	for _, s := range known {
+		if s.Kind == "cm" && s.Identity == cmSourceIdentity {
+			return s, nil
+		}
+	}
+
+	src, err := c.opts.Store.AddSource(ctx, store.Source{
+		BlueprintID: bp.ID, Kind: "cm", Identity: cmSourceIdentity,
+		FetchedAt: c.opts.Now().UTC(), FirstUsedBy: stageID,
+	})
+	if err != nil {
+		return store.Source{}, fmt.Errorf("blueprint: record source: %w", err)
+	}
+
+	return src, nil
+}
+
 // codeFacts is what a code stage knows: the jailed tool root, the facts
 // repo_info reports, and the contract view of every target project.
 type codeFacts struct {

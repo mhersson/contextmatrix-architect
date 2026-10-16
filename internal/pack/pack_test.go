@@ -230,3 +230,12 @@ func TestLoad_EmptyListsYAMLIsEmptyLists(t *testing.T) {
 	assert.Empty(t, p.Lists().RequiredSections)
 	assert.NotEmpty(t, p.CardTemplate())
 }
+
+func TestLoad_AcceptsTheCMToolGroup(t *testing.T) {
+	p, err := load(packFS("    tools: [code, cm]\n", nil))
+	require.NoError(t, err)
+
+	s1, ok := p.Stage("s1")
+	require.True(t, ok)
+	assert.Equal(t, []string{ToolCode, ToolCM}, s1.Tools)
+}

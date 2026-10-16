@@ -8,6 +8,10 @@ repository, this card and the verify command finish it on the first attempt?
 Judge one deliverable, no open decision, no optional scope, a planner split
 of two subtasks or fewer, and that every path and symbol under Where exists.
 
+Compare each card with the open cards of its project through the cm_ tools:
+a card that duplicates an open card is not ready, and its finding names that
+card's id.
+
 Produce markdown with one `## <card id>: <title>` section per card holding
 `ready` or the findings that block it. Submit with a data object
 `{"cards": [{"id": "D1", "ready": true, "findings": []}]}`. A card with a

@@ -14,6 +14,10 @@ For every target project, verify in the code what the design assumes:
 Use read, grep and glob on the checkout and repo_info for the project facts.
 Every claim carries the source tag of the tool result it came from.
 
+Use the cm_ tools to find open cards in the target projects that already
+cover part of the need, and list them in each project's section under
+`### Existing cards` with their ids and the ContextMatrix source tag.
+
 Produce markdown with one `## <project>` section per project, each with
 `### Verified`, `### Contradictions` and `### Verify command`. Submit with a
 data object `{"projects": {"<project>": {"sha": "<sha>", "verify_command": "<cmd>", "instruction_file": "<AGENTS.md|CLAUDE.md|none>"}}}`.

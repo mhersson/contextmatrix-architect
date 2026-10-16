@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mhersson/contextmatrix-harness/tools"
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
@@ -98,6 +99,12 @@ type Options struct {
 	// Credentials builds the git credential source for a session's token.
 	// nil means repositories are fetched without auth.
 	Credentials func(gitToken string) code.Credentials
+	// CMTools opens one MCP session with the session's key for a run of a
+	// stage with the cm tools and returns them, each result tagged with tag,
+	// and the closer the run calls when it ends; the closer may be nil. nil
+	// disables cm stages: such a stage then fails with a clear error before
+	// any checkout.
+	CMTools func(ctx context.Context, mcpAPIKey, tag string) ([]tools.Tool, func(), error)
 	// ExportDir is where export bundles are written, one directory per
 	// blueprint and time; empty refuses export.
 	ExportDir string
