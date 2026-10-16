@@ -27,35 +27,25 @@ const (
 // Workspace is the on-disk cache: <root>/mirrors/<repoKey> holds one bare
 // mirror per repository, <root>/trees/<blueprintID>/<name> one plain tree per
 // blueprint and project, so one jail root per blueprint covers every target
-// project. A mirror has at most one fetch in flight; a checkout that arrives
-// meanwhile waits for it and reuses its result instead of fetching again.
-// Trees are written from the mirror's objects without a git binary, so a
-// fetch never touches a tree another blueprint is reading.
+// project. Mirrors are fetched under a per-repository lock so parallel
+// blueprints never fetch the same repository at once; trees are written from
+// the mirror's objects without a git binary, so a fetch never touches a tree
+// another blueprint is reading.
 type Workspace struct {
 	root string
 	now  func() time.Time
 
-	// fetch is the mirror fetch; a field so tests can observe and hold it.
-	fetch func(ctx context.Context, mirror, repoURL string, auth *githttp.BasicAuth) (branch, sha string, err error)
+	// allowLocal admits filesystem repositories; only the package's tests set it.
+	allowLocal bool
 
-	mu      sync.Mutex
-	flights map[string]*flight
-}
-
-// flight is one in-progress mirror fetch and, once done is closed, its result.
-type flight struct {
-	done   chan struct{}
-	branch string
-	sha    string
-	err    error
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
+	busy  map[string]int
 }
 
 // NewWorkspace returns a workspace under root. now is injectable for the sweep.
 func NewWorkspace(root string, now func() time.Time) *Workspace {
-	w := &Workspace{root: root, now: now, flights: map[string]*flight{}}
-	w.fetch = fetchMirror
-
-	return w
+	return &Workspace{root: root, now: now, locks: map[string]*sync.Mutex{}, busy: map[string]int{}}
 }
 
 // Checkout is a blueprint's tree of one repository at the commit it records.
@@ -74,13 +64,15 @@ func (w *Workspace) TreeRoot(blueprintID string) string {
 
 // Checkout fetches the repository's mirror and exports its default branch
 // into <TreeRoot(blueprintID)>/<name>, replacing any earlier tree there.
-// creds may be nil for a repository that needs none.
+// name is "<project>" or "<project>/<repo>". Only https repositories are
+// accepted. creds may be nil for a repository that needs none; otherwise
+// every Checkout mints its own credential.
 func (w *Workspace) Checkout(ctx context.Context, blueprintID, name, repoURL string, creds Credentials) (Checkout, error) {
 	if !validSegment(blueprintID) {
 		return Checkout{}, fmt.Errorf("code: blueprint id %q is not valid", blueprintID)
 	}
 
-	if name == "" || strings.Contains(name, "..") || filepath.IsAbs(name) {
+	if !validTreeName(name) {
 		return Checkout{}, fmt.Errorf("code: tree name %q is not valid", name)
 	}
 
@@ -89,9 +81,27 @@ func (w *Workspace) Checkout(ctx context.Context, blueprintID, name, repoURL str
 		return Checkout{}, err
 	}
 
+	if scheme := repoScheme(repoURL); scheme != "https" && !w.allowLocal {
+		return Checkout{}, fmt.Errorf("code: repository scheme %q is not supported, only https", scheme)
+	}
+
+	w.markBusy(blueprintID, 1)
+	defer w.markBusy(blueprintID, -1)
+
+	var auth *githttp.BasicAuth
+
+	if creds != nil {
+		user, token, err := creds.Fetch(ctx, host, path)
+		if err != nil {
+			return Checkout{}, err
+		}
+
+		auth = &githttp.BasicAuth{Username: user, Password: token}
+	}
+
 	mirror := filepath.Join(w.root, mirrorsDir, key)
 
-	branch, sha, err := w.syncMirror(ctx, mirror, repoURL, host, path, creds)
+	branch, sha, err := w.fetchMirror(ctx, mirror, repoURL, auth)
 	if err != nil {
 		return Checkout{}, err
 	}
@@ -111,70 +121,66 @@ func (w *Workspace) Checkout(ctx context.Context, blueprintID, name, repoURL str
 	return Checkout{RepoURL: repoURL, DefaultBranch: branch, SHA: sha, Dir: dir}, nil
 }
 
+func (w *Workspace) markBusy(blueprintID string, delta int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.busy[blueprintID] += delta
+	if w.busy[blueprintID] <= 0 {
+		delete(w.busy, blueprintID)
+	}
+}
+
+func (w *Workspace) isBusy(blueprintID string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return w.busy[blueprintID] > 0
+}
+
 func validSegment(s string) bool {
 	return s != "" && s != "." && !strings.ContainsAny(s, `/\`) && !strings.Contains(s, "..")
 }
 
-// syncMirror brings the mirror up to date and returns the default branch and
-// its sha. The first caller fetches; callers arriving during that fetch wait
-// and share its result. A waiter whose leader was cancelled retries.
-func (w *Workspace) syncMirror(ctx context.Context, mirror, repoURL, host, path string, creds Credentials) (string, string, error) {
-	for {
-		w.mu.Lock()
-
-		f, inFlight := w.flights[mirror]
-		if !inFlight {
-			f = &flight{done: make(chan struct{})}
-			w.flights[mirror] = f
-		}
-
-		w.mu.Unlock()
-
-		if inFlight {
-			select {
-			case <-f.done:
-			case <-ctx.Done():
-				return "", "", ctx.Err()
-			}
-
-			if f.err != nil && ctx.Err() == nil &&
-				(errors.Is(f.err, context.Canceled) || errors.Is(f.err, context.DeadlineExceeded)) {
-				continue
-			}
-
-			return f.branch, f.sha, f.err
-		}
-
-		f.branch, f.sha, f.err = w.lead(ctx, mirror, repoURL, host, path, creds)
-
-		w.mu.Lock()
-		delete(w.flights, mirror)
-		w.mu.Unlock()
-		close(f.done)
-
-		return f.branch, f.sha, f.err
-	}
-}
-
-// lead mints the credential and runs the fetch.
-func (w *Workspace) lead(ctx context.Context, mirror, repoURL, host, path string, creds Credentials) (string, string, error) {
-	var auth *githttp.BasicAuth
-
-	if creds != nil {
-		user, token, err := creds.Fetch(ctx, host, path)
-		if err != nil {
-			return "", "", err
-		}
-
-		auth = &githttp.BasicAuth{Username: user, Password: token}
+// validTreeName admits "<project>" or "<project>/<repo>", each a safe segment.
+func validTreeName(name string) bool {
+	segments := strings.Split(name, "/")
+	if len(segments) > 2 {
+		return false
 	}
 
-	return w.fetch(ctx, mirror, repoURL, auth)
+	for _, seg := range segments {
+		if !validSegment(seg) {
+			return false
+		}
+	}
+
+	return true
 }
 
-// fetchMirror creates or updates the bare mirror and returns the default
-// branch and its sha. Only heads are fetched, never tags or pull refs.
-func fetchMirror(ctx context.Context, mirror, repoURL string, auth *githttp.BasicAuth) (string, string, error) {
+// repoScheme names how a repository url would be reached.
+func repoScheme(raw string) string {
+	raw = strings.TrimSpace(raw)
+
+	if before, _, ok := strings.Cut(raw, "://"); ok {
+		return strings.ToLower(before)
+	}
+
+	if strings.Contains(raw, "@") && strings.Contains(raw, ":") {
+		return "ssh"
+	}
+
+	return "file"
+}
+
+// fetchMirror creates or updates the bare mirror under its per-repository lock
+// and returns the default branch and its sha. Only heads are fetched, never
+// tags or pull refs.
+func (w *Workspace) fetchMirror(ctx context.Context, mirror, repoURL string, auth *githttp.BasicAuth) (string, string, error) {
+	lock := w.lockFor(mirror)
+	lock.Lock()
+	defer lock.Unlock()
+
 	repo, err := git.PlainOpen(mirror)
 	if errors.Is(err, git.ErrRepositoryNotExists) {
 		if err := os.MkdirAll(mirror, 0o750); err != nil {
@@ -264,6 +270,19 @@ func defaultBranch(refs []*plumbing.Reference) string {
 	return ""
 }
 
+func (w *Workspace) lockFor(mirror string) *sync.Mutex {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	l, ok := w.locks[mirror]
+	if !ok {
+		l = &sync.Mutex{}
+		w.locks[mirror] = l
+	}
+
+	return l
+}
+
 // Remove deletes every tree of blueprintID. Mirrors stay.
 func (w *Workspace) Remove(blueprintID string) error {
 	if !validSegment(blueprintID) {
@@ -297,7 +316,7 @@ func (w *Workspace) Sweep(ctx context.Context, maxAge time.Duration) (int, error
 			return removed, err
 		}
 
-		if !root.IsDir() {
+		if !root.IsDir() || w.isBusy(root.Name()) {
 			continue
 		}
 
@@ -350,6 +369,9 @@ func repoKey(repoURL string) (key, host, path string, err error) {
 	}
 
 	key = strings.ToLower(host + "__" + strings.ReplaceAll(path, "/", "__"))
+	if !validSegment(key) {
+		return "", "", "", errors.New("code: repository url is not valid")
+	}
 
 	return key, host, path, nil
 }

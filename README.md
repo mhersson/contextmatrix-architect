@@ -23,7 +23,7 @@ a directory that user can write.
 Code lives under `<state_dir>/workspaces`: `mirrors/` holds one bare mirror per
 repository, fetched over HTTPS with credentials CM mints per session, and
 `trees/<blueprint>/<project>` holds one plain tree per blueprint and project at
-the default branch's commit, written without a git binary. Trees untouched for
+the default branch's commit, written without a git binary. Trees not written for
 `workspace_max_age_days` are swept at startup and hourly; mirrors stay.
 
 ## Cost caps

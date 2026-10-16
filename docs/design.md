@@ -531,7 +531,7 @@ Replies the server understands, besides answers to questions:
   enough is checked in slice 3.
 - State dir: `architect.db`, `workspaces/mirrors/<repo>/` and
   `workspaces/trees/<blueprint>/<project>/`. A blueprint's trees are removed at
-  emission and by a sweep, at startup and hourly, for blueprints untouched for
+  emission and by a sweep, at startup and hourly, for blueprints not written for
   `workspace_max_age_days`; mirrors stay. Trees are written from the mirror's
   objects; the server never runs git. All of it is a disposable cache.
 - LLM endpoint: whatever CM provisions, OpenRouter or any OpenAI-compatible

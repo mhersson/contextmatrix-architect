@@ -103,7 +103,7 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 		HarnessLine:   harnessForwarder(hub),
 	})
 
-	// The sweep is its only user until grounding checks code out through it.
+	// Removes trees not written for workspace_max_age_days, at startup and hourly.
 	workspace := code.NewWorkspace(filepath.Join(cfg.StateDir, "workspaces"), time.Now)
 
 	sweepCtx, stopSweep := context.WithCancel(context.Background())

@@ -50,7 +50,11 @@ func exportTree(mirror, sha, dir string) error {
 			perm = 0o755
 		}
 
-		target := filepath.Join(tmp, filepath.FromSlash(f.Name))
+		target, err := treeTarget(tmp, f.Name)
+		if err != nil {
+			return err
+		}
+
 		if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 			return err
 		}
@@ -94,4 +98,15 @@ func exportTree(mirror, sha, dir string) error {
 	}
 
 	return nil
+}
+
+// treeTarget places a tree entry under base, refusing any name that would
+// resolve outside it.
+func treeTarget(base, name string) (string, error) {
+	local := filepath.FromSlash(name)
+	if !filepath.IsLocal(local) {
+		return "", fmt.Errorf("tree entry %q escapes the checkout", name)
+	}
+
+	return filepath.Join(base, local), nil
 }
