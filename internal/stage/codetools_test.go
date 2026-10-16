@@ -96,11 +96,26 @@ func TestCodeTools_TagFollowsThePathArgument(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			res, err := toolByName(t, ts, tc.tool).Execute(context.Background(), tc.args)
+			tool, ok := toolByName(t, ts, tc.tool).(tagged)
+			require.True(t, ok)
+
+			// The tag comes from the arguments alone, so the wrapped tool is
+			// stubbed: the harness grep and glob exec ripgrep, which the tests
+			// do not require.
+			tool.Tool = stubbed{tool.Tool}
+
+			res, err := tool.Execute(context.Background(), tc.args)
 			require.NoError(t, err)
-			assert.True(t, strings.HasPrefix(res.Text, tc.want), res.Text)
+			assert.Equal(t, tc.want+"stub", res.Text)
 		})
 	}
+}
+
+// stubbed keeps a tool's name and schema but answers without running it.
+type stubbed struct{ tools.Tool }
+
+func (stubbed) Execute(context.Context, map[string]any) (tools.Result, error) {
+	return tools.Result{Text: "stub"}, nil
 }
 
 func TestCodeTools_RepoInfo(t *testing.T) {
