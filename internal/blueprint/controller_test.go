@@ -3,6 +3,7 @@ package blueprint
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -307,7 +308,33 @@ func TestMessage_OnIdleBlueprintIsANote(t *testing.T) {
 	require.NoError(t, c.Message(ctx, "BP1", "also use helm", "m2"))
 	c.Wait("BP1")
 	assert.Equal(t, 1, runner.calls())
-	assert.True(t, rec.has(EventNote))
+
+	note, ok := rec.first(EventNote)
+	require.True(t, ok)
+	assert.Equal(t, false, note.Payload["during_run"], "no run is in flight")
+}
+
+func TestMessage_NoteWhileAStageRunsSaysSo(t *testing.T) {
+	started := make(chan struct{}, 4)
+	finish := make(chan struct{})
+	c, _, _, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+		signal(started)
+		<-finish
+
+		return artifactOutput("# Need", in), nil
+	})
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	receive(t, started, "the intake run")
+
+	require.NoError(t, c.Message(ctx, "BP1", "also use helm", "m2"))
+	close(finish)
+	c.Wait("BP1")
+
+	note, ok := rec.first(EventNote)
+	require.True(t, ok)
+	assert.Equal(t, true, note.Payload["during_run"], "the run continues after the note")
 }
 
 func TestMessage_AfterAFailedIntakeIsTheNeed(t *testing.T) {
@@ -685,7 +712,7 @@ func TestStart_RerunsAStageInterruptedByACrash(t *testing.T) {
 	assert.Equal(t, 2, runs[1].Attempt)
 }
 
-func TestStart_FailedRecoveryLeavesNoSessionAttached(t *testing.T) {
+func TestStart_RecoveryWithoutANeedClosesTheRun(t *testing.T) {
 	c, st, runner, _ := newController(t, artifactRun("# Need"))
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -700,8 +727,61 @@ func TestStart_FailedRecoveryLeavesNoSessionAttached(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.Error(t, c.Start(ctx, startInput("BP1")), "an interrupted stage without a stored need cannot re-run")
-	require.ErrorIs(t, c.Message(ctx, "BP1", "hello", "m1"), ErrNotFound)
+	require.NoError(t, c.Start(ctx, startInput("BP1")), "a run with nothing to re-run from does not wedge the blueprint")
+	c.Wait("BP1")
+	assert.Equal(t, 0, runner.calls(), "nothing is relaunched")
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, store.RunInterrupted, runs[0].Status)
+
+	// The session is attached and the next message is the need.
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	require.Equal(t, 1, runner.calls())
+	assert.Contains(t, runner.input(0).Task, "the need")
+
+	runs, err = st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 2)
+	assert.Equal(t, store.RunDone, runs[1].Status)
+}
+
+func TestStart_TransientRecoveryErrorLeavesTheRunRecoverable(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "architect.db")
+	st, err := store.Open(ctx, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	c, _, runner, _ := newControllerOn(t, st, artifactRun("# Need"))
+	now := time.Now().UTC()
+
+	require.NoError(t, st.CreateBlueprint(ctx, store.Blueprint{
+		ID: "BP1", Projects: []string{"alpha"},
+		Model: "m", State: string(StateRunning), CreatedAt: now, UpdatedAt: now,
+	}))
+	_, err = st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: "need", Body: "the stored need"})
+	require.NoError(t, err)
+	_, err = st.StartRun(ctx, store.Run{
+		BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1,
+		Status: store.RunRunning, StartedAt: now,
+	})
+	require.NoError(t, err)
+
+	// A second connection hides the artifacts table, so loading the need
+	// fails with an error that is not "not found".
+	raw, err := sql.Open("sqlite", "file:"+path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+
+	_, err = raw.ExecContext(ctx, `ALTER TABLE artifacts RENAME TO artifacts_hidden`)
+	require.NoError(t, err)
+
+	require.Error(t, c.Start(ctx, startInput("BP1")))
+	require.ErrorIs(t, c.Message(ctx, "BP1", "hello", "m1"), ErrNotFound, "a failed recovery attaches no session")
 	assert.Equal(t, 0, runner.calls())
 
 	runs, err := st.ListRuns(ctx, "BP1")
@@ -709,13 +789,14 @@ func TestStart_FailedRecoveryLeavesNoSessionAttached(t *testing.T) {
 	require.Len(t, runs, 1)
 	assert.Equal(t, store.RunRunning, runs[0].Status, "not marked interrupted while nothing can be relaunched")
 
-	// Once the need loads, the next Start recovers the stage.
-	_, err = st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: "need", Body: "the stored need"})
+	_, err = raw.ExecContext(ctx, `ALTER TABLE artifacts_hidden RENAME TO artifacts`)
 	require.NoError(t, err)
+
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	c.Wait("BP1")
 
 	require.Equal(t, 1, runner.calls())
+	assert.Contains(t, runner.input(0).Task, "the stored need")
 
 	runs, err = st.ListRuns(ctx, "BP1")
 	require.NoError(t, err)
@@ -1077,4 +1158,115 @@ func TestEnd_IsAudited(t *testing.T) {
 	}
 
 	assert.Equal(t, []string{EventCreated, EventEnded}, kinds)
+}
+
+// blockingLLM parks every request until its context ends, as a real
+// endpoint does when the run is canceled mid-request.
+type blockingLLM struct{ entered chan struct{} }
+
+func (b *blockingLLM) Send(ctx context.Context, _ llm.Request) (llm.Response, error) {
+	return b.wait(ctx)
+}
+
+func (b *blockingLLM) SendStream(ctx context.Context, _ llm.Request, _ func(llm.Delta)) (llm.Response, error) {
+	return b.wait(ctx)
+}
+
+func (b *blockingLLM) wait(ctx context.Context) (llm.Response, error) {
+	signal(b.entered)
+	<-ctx.Done()
+
+	return llm.Response{}, ctx.Err()
+}
+
+func TestCancel_IsNotShownAsAnError(t *testing.T) {
+	tests := []struct {
+		name   string
+		cancel func(ctx context.Context, c *Controller) error
+	}{
+		{"abort", func(ctx context.Context, c *Controller) error { return c.Message(ctx, "BP1", "abort", "m2") }},
+		{"end", func(ctx context.Context, c *Controller) error { return c.End(ctx, "BP1") }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "architect.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = st.Close() })
+
+			pk, err := pack.LoadEmbedded()
+			require.NoError(t, err)
+
+			model := &blockingLLM{entered: make(chan struct{}, 4)}
+			rec := newRecorder()
+			c := New(Options{
+				Store: st, Pack: pk, MaxRunCostUSD: 2, MaxTurns: 5, Sink: rec.sink, HarnessLine: rec.line,
+				Runner: &stage.Runner{NewLLM: func(protocol.LLMEndpoint) llm.LLM { return model }},
+			})
+
+			ctx := context.Background()
+			require.NoError(t, c.Start(ctx, startInput("BP1")))
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			receive(t, model.entered, "the model request")
+
+			require.NoError(t, tt.cancel(ctx, c))
+			c.Wait("BP1")
+
+			assert.False(t, rec.has(EventError), "a cancel is not an error")
+			assert.True(t, rec.has(EventStageEnded))
+
+			rec.mu.Lock()
+			for _, l := range rec.lines {
+				var line struct{ Kind string }
+				require.NoError(t, json.Unmarshal(l, &line))
+				assert.NotEqual(t, "error", line.Kind, "the harness's cancel error is not forwarded: %s", l)
+			}
+			rec.mu.Unlock()
+
+			stored, err := st.ListEvents(ctx, "BP1")
+			require.NoError(t, err)
+
+			var storedHarnessError bool
+
+			for _, e := range stored {
+				if e.Kind == EventHarness && strings.Contains(string(e.Payload), `"kind":"error"`) {
+					storedHarnessError = true
+				}
+			}
+
+			assert.True(t, storedHarnessError, "the harness's own record of the cancel is still audited")
+		})
+	}
+}
+
+func TestShutdown_StoresTheHarnessLinesOfARunThatCompleted(t *testing.T) {
+	started := make(chan struct{}, 4)
+	c, st, _, _ := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		signal(started)
+		<-ctx.Done()
+
+		// The run finished its last turn as the cancel landed.
+		_, _ = in.Events.Write([]byte(`{"seq":7,"kind":"state_change","data":{"stop":"done","via":"terminating_tool"}}` + "\n"))
+
+		return artifactOutput("# Need", in), nil
+	})
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	receive(t, started, "the intake run")
+
+	require.NoError(t, c.Shutdown(ctx))
+
+	stored, err := st.ListEvents(ctx, "BP1")
+	require.NoError(t, err)
+
+	var trailing bool
+
+	for _, e := range stored {
+		if e.Kind == EventHarness && strings.Contains(string(e.Payload), `"seq":7`) {
+			trailing = true
+		}
+	}
+
+	assert.True(t, trailing, "the completed run's trailing harness line is audited")
 }

@@ -3,6 +3,7 @@ package blueprint
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
@@ -97,13 +98,13 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		MaxCostUSD:   runCap,
 		MaxTurns:     c.opts.MaxTurns,
 		Asker:        &asker{c: c, id: id, runID: runID, run: r, audit: au},
-		Events:       &harnessSink{c: c, run: r, audit: au, id: id, runID: runID},
+		Events:       &harnessSink{audit: au, id: id, runID: runID, canceled: ctx.Done()},
 		Secrets:      []string{sess.endpoint.APIKey},
 	})
 
-	// A run Shutdown cut short is crash-equivalent: no writes, so recovery
-	// re-runs the stage on the next Start. A completed run still writes;
-	// Shutdown waits for it, so the store is open.
+	// A run Shutdown cut short is crash-equivalent: no result writes, so
+	// recovery re-runs the stage on the next Start. A completed run still
+	// writes; Shutdown waits for it, so the store is open.
 	if runErr != nil && c.shuttingDown(r) {
 		return
 	}
@@ -246,12 +247,14 @@ func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
 }
 
 // harnessSink stores each harness JSONL line as an event and forwards it.
+// Lines are stored even during Shutdown, which waits for the run, so the
+// store is open.
 type harnessSink struct {
-	c     *Controller
-	run   *run
 	audit audit
 	id    string
 	runID int64
+	// canceled is closed once abort, End or Shutdown cancels the run.
+	canceled <-chan struct{}
 }
 
 func (s *harnessSink) Write(p []byte) (int, error) {
@@ -260,11 +263,28 @@ func (s *harnessSink) Write(p []byte) (int, error) {
 		return len(p), nil
 	}
 
-	if s.c.shuttingDown(s.run) {
-		return len(p), nil
-	}
+	// A canceled run's harness reports the cancel as an error. It is
+	// audited, but the panel shows the cancel as the stage's end instead.
+	forward := !s.isCanceled() || !isErrorLine(line)
 
-	s.audit.harness(context.Background(), s.id, s.runID, line)
+	s.audit.harness(context.Background(), s.id, s.runID, line, forward)
 
 	return len(p), nil
+}
+
+func (s *harnessSink) isCanceled() bool {
+	select {
+	case <-s.canceled:
+		return true
+	default:
+		return false
+	}
+}
+
+func isErrorLine(line []byte) bool {
+	var ev struct {
+		Kind string `json:"kind"`
+	}
+
+	return json.Unmarshal(line, &ev) == nil && ev.Kind == "error"
 }

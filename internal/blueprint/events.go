@@ -84,8 +84,9 @@ func (a audit) event(ctx context.Context, e Event) {
 	}
 }
 
-// harness stores one raw harness JSONL line as an event, then forwards it.
-func (a audit) harness(ctx context.Context, id string, runID int64, line []byte) {
+// harness stores one raw harness JSONL line as an event, then forwards it
+// unless forward is false.
+func (a audit) harness(ctx context.Context, id string, runID int64, line []byte, forward bool) {
 	masked, err := a.maskJSON(line)
 	if err != nil {
 		a.c.opts.Logger.Warn("blueprint: harness line dropped", "blueprint", id, "error", err)
@@ -100,7 +101,7 @@ func (a audit) harness(ctx context.Context, id string, runID int64, line []byte)
 		a.c.opts.Logger.Error("blueprint: store harness event", "blueprint", id, "error", err)
 	}
 
-	if a.c.opts.HarnessLine != nil {
+	if forward && a.c.opts.HarnessLine != nil {
 		a.c.opts.HarnessLine(id, masked)
 	}
 }

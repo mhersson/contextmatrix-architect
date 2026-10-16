@@ -206,15 +206,23 @@ func (c *Controller) interruptedStage(ctx context.Context, bp store.Blueprint) (
 		return "", "", err
 	}
 
-	// Loaded before the run is marked: a run marked interrupted with nothing
-	// relaunched is never recovered.
+	// Loaded before the run is marked: a run marked interrupted after a
+	// transient error, with nothing relaunched, is never recovered. With no
+	// need stored there is nothing to re-run from; the run is closed and the
+	// next message becomes the need.
 	need, err := c.opts.Store.LatestArtifact(ctx, bp.ID, needStage)
-	if err != nil {
-		return "", "", fmt.Errorf("blueprint: start: interrupted %s without a need: %w", interrupted.Stage, err)
+
+	noNeed := errors.Is(err, store.ErrNotFound)
+	if err != nil && !noNeed {
+		return "", "", fmt.Errorf("blueprint: start: load the need for interrupted %s: %w", interrupted.Stage, err)
 	}
 
 	if err := c.opts.Store.EndRun(ctx, interrupted.ID, store.RunInterrupted, "process restarted", 0, c.opts.Now().UTC()); err != nil {
 		return "", "", fmt.Errorf("blueprint: mark interrupted: %w", err)
+	}
+
+	if noNeed {
+		return "", "", nil
 	}
 
 	return interrupted.Stage, stageTask(bp.Projects, need.Body), nil
@@ -279,7 +287,7 @@ func (c *Controller) Message(ctx context.Context, id, text, msgID string) error 
 		c.mu.Unlock()
 
 		if answer == nil {
-			sess.audit.event(ctx, noteEvent(id, trimmed, msgID))
+			sess.audit.event(ctx, noteEvent(id, trimmed, msgID, true))
 
 			return nil
 		}
@@ -325,7 +333,7 @@ func (c *Controller) needOrNote(ctx, runCtx context.Context, r *run, sess *sessi
 	switch {
 	case err == nil:
 		c.release(id, r)
-		sess.audit.event(ctx, noteEvent(id, text, msgID))
+		sess.audit.event(ctx, noteEvent(id, text, msgID, false))
 
 		return nil
 	case !errors.Is(err, store.ErrNotFound):
@@ -346,8 +354,12 @@ func (c *Controller) needOrNote(ctx, runCtx context.Context, r *run, sess *sessi
 	return nil
 }
 
-func noteEvent(id, text, msgID string) Event {
-	return Event{Kind: EventNote, BlueprintID: id, Payload: map[string]any{"text": text, "message_id": msgID}}
+// noteEvent records a message that is neither the need nor an answer.
+// duringRun tells the panel the run goes on working after it.
+func noteEvent(id, text, msgID string, duringRun bool) Event {
+	return Event{Kind: EventNote, BlueprintID: id, Payload: map[string]any{
+		"text": text, "message_id": msgID, "during_run": duringRun,
+	}}
 }
 
 // End detaches the session, cancelling any run in flight. The blueprint
@@ -383,9 +395,10 @@ func (c *Controller) End(ctx context.Context, id string) error {
 }
 
 // Shutdown stops accepting runs, cancels every run in flight and waits for
-// the run goroutines to exit. A run the cancel cut short writes nothing, so
-// the next Start re-runs its stage; a run that completed anyway writes its
-// results first. The store can be closed afterwards.
+// the run goroutines to exit. A run the cancel cut short writes no results
+// (only its harness lines), so the next Start re-runs its stage; a run that
+// completed anyway writes its results first. The store can be closed
+// afterwards.
 func (c *Controller) Shutdown(ctx context.Context) error {
 	c.mu.Lock()
 	c.closing = true
