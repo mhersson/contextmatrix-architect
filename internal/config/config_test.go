@@ -31,6 +31,7 @@ func TestLoad_DefaultsFileEnvPrecedence(t *testing.T) {
 	assert.Equal(t, 9200, cfg.Port, "env wins over file")
 	assert.Equal(t, "info", cfg.LogLevel, "default survives")
 	assert.Equal(t, 330*time.Second, cfg.ReplaySkew)
+	assert.Equal(t, time.Minute, cfg.WatchInterval)
 	assert.Equal(t, "openai/gpt-5.5", cfg.Models["reviewer"])
 	assert.Equal(t, "anthropic/claude-sonnet-4", cfg.Models["product_owner"])
 }
@@ -58,8 +59,8 @@ func TestLoad_MissingFileIsDefaultsPlusEnv(t *testing.T) {
 func TestValidate(t *testing.T) {
 	valid := func() *Config {
 		return &Config{
-			ContextMatrixURL: "http://cm:8080", APIKey: strings.Repeat("k", 32), Port: 9095,
-			LogLevel: "info", StateDir: "/tmp/x", MaxRunCostUSD: 5, MaxTurns: 80, WorkspaceMaxAgeDays: 7,
+			ContextMatrixURL: "http://cm:8080", APIKey: strings.Repeat("k", 32), CallerIdentity: "human:architect", Port: 9095,
+			LogLevel: "info", StateDir: "/tmp/x", MaxRunCostUSD: 5, MaxTurns: 80, WorkspaceMaxAgeDays: 7, WatchInterval: time.Minute,
 		}
 	}
 
@@ -76,6 +77,7 @@ func TestValidate(t *testing.T) {
 		{"negative cost cap", func(c *Config) { c.MaxRunCostUSD = -1 }, "max_run_cost_usd"},
 		{"zero turns", func(c *Config) { c.MaxTurns = 0 }, "max_turns"},
 		{"zero workspace age", func(c *Config) { c.WorkspaceMaxAgeDays = 0 }, "workspace_max_age_days"},
+		{"zero watch interval", func(c *Config) { c.WatchInterval = 0 }, "watch_interval_seconds"},
 		{"bad level", func(c *Config) { c.LogLevel = "loud" }, "log_level"},
 	}
 	for _, tc := range cases {
@@ -107,4 +109,23 @@ func TestDefaultsYAMLRoundTrips(t *testing.T) {
 	assert.Equal(t, 9095, cfg.Port)
 	assert.Contains(t, string(out), "contextmatrix_url:")
 	assert.Contains(t, string(out), "max_run_cost_usd:")
+}
+
+func TestCallerIdentity(t *testing.T) {
+	cfg, err := Load("")
+	require.NoError(t, err)
+	assert.Equal(t, "human:architect", cfg.CallerIdentity)
+
+	cfg.ContextMatrixURL = "http://cm"
+	cfg.APIKey = strings.Repeat("k", 32)
+
+	for _, bad := range []string{"", "architect", "human:", "agent:architect"} {
+		cfg.CallerIdentity = bad
+		err := cfg.Validate()
+		require.Error(t, err, bad)
+		assert.Contains(t, err.Error(), "caller_identity")
+	}
+
+	cfg.CallerIdentity = "human:alice"
+	require.NoError(t, cfg.Validate())
 }

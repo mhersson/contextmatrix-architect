@@ -132,6 +132,22 @@ func (r *recorder) first(kind string) (Event, bool) {
 	return Event{}, false
 }
 
+// all returns every recorded event of kind, oldest first.
+func (r *recorder) all(kind string) []Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var out []Event
+
+	for _, e := range r.events {
+		if e.Kind == kind {
+			out = append(out, e)
+		}
+	}
+
+	return out
+}
+
 // waitFor blocks until an event of kind has reached the sink.
 func (r *recorder) waitFor(t *testing.T, kind string) {
 	t.Helper()
@@ -194,6 +210,20 @@ func signal(ch chan struct{}) {
 	case ch <- struct{}{}:
 	default:
 	}
+}
+
+// closer returns a func that closes ch once, and runs it when the test ends,
+// so a fake that waits on ch never outlives a failing test. Called after the
+// controller is built, it runs before the controller's Shutdown waits.
+func closer(t *testing.T, ch chan struct{}) func() {
+	t.Helper()
+
+	var once sync.Once
+
+	closeCh := func() { once.Do(func() { close(ch) }) }
+	t.Cleanup(closeCh)
+
+	return closeCh
 }
 
 func newController(t *testing.T, fn func(context.Context, stage.Input) (stage.Output, error)) (*Controller, *store.Store, *fakeRunner, *recorder) {
@@ -1766,13 +1796,17 @@ func TestStart_ReopenWithoutAPriceKeepsTheCreationPrice(t *testing.T) {
 }
 
 func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
-	c, _, _, rec := newController(t, artifactRun("# Need with "+testKey+" "+testMCPKey+" "+testGitToken))
+	c, st, _, rec := newController(t, artifactRun("# Need with "+testKey+" "+testMCPKey+" "+testGitToken))
 	c.opts.ExportDir = t.TempDir()
 	ctx := context.Background()
 
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
 	c.Wait("BP1")
+
+	_, err := st.AddGate(ctx, store.Gate{BlueprintID: "BP1", Stage: signoffStage, Version: 1, Decision: store.GateReject, Feedback: "split the card", Responder: store.ResponderHuman, DecidedAt: time.Now()})
+	require.NoError(t, err)
+	require.NoError(t, st.AddEmission(ctx, store.Emission{BlueprintID: "BP1", Kind: store.EmitCard, DraftID: "D1", Project: "alpha", CMID: "ALPHA-042", CreatedAt: time.Now()}))
 
 	require.NoError(t, c.Export(ctx, "BP1", "m2"))
 
@@ -1804,6 +1838,11 @@ func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
 	assert.NotContains(t, string(all), testMCPKey)
 	assert.NotContains(t, string(all), testGitToken)
 	assert.Contains(t, string(all), "# Need with")
+
+	summary, err := os.ReadFile(filepath.Join(dir, "blueprint.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(summary), "split the card")
+	assert.Contains(t, string(summary), "ALPHA-042")
 }
 
 func TestExport_UnknownBlueprint(t *testing.T) {
@@ -1811,6 +1850,31 @@ func TestExport_UnknownBlueprint(t *testing.T) {
 	c.opts.ExportDir = t.TempDir()
 
 	assert.ErrorIs(t, c.Export(context.Background(), "nope", "m1"), ErrNotFound)
+}
+
+// An export for a session that is not attached is not found, as a message
+// is: ContextMatrix then starts the session again and re-sends it, so the
+// panel hears of the bundle.
+func TestExport_ASessionThatIsNotAttachedIsNotFound(t *testing.T) {
+	c, _, _, rec := newController(t, artifactRun("# Need"))
+	c.opts.ExportDir = t.TempDir()
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+	require.NoError(t, c.End(ctx, "BP1"))
+
+	require.ErrorIs(t, c.Export(ctx, "BP1", "m2"), ErrNotFound)
+	assert.False(t, rec.has(EventExported))
+
+	written, err := os.ReadDir(c.opts.ExportDir)
+	require.NoError(t, err)
+	assert.Empty(t, written, "nothing is written")
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Export(ctx, "BP1", "m2"))
+	assert.True(t, rec.has(EventExported), "the re-sent export is written and announced")
 }
 
 func TestExport_RefusesWithoutADirectoryAndUnsafeIDs(t *testing.T) {

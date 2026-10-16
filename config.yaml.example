@@ -11,6 +11,12 @@
 # Required. Env: CONTEXTMATRIX_ARCHITECT_API_KEY
 api_key: ""
 
+# Caller identity the architect passes to ContextMatrix when it creates cards
+# and playbooks and starts runs. Must be a human: identity: ContextMatrix's
+# run_card and run_playbook are human-gated. Stage runs never get it.
+# Default: human:architect. Env: CONTEXTMATRIX_ARCHITECT_CALLER_IDENTITY
+caller_identity: "human:architect"
+
 # Base URL of the ContextMatrix instance. Required.
 # Env: CONTEXTMATRIX_ARCHITECT_CONTEXTMATRIX_URL
 contextmatrix_url: "http://localhost:8080"
@@ -62,6 +68,11 @@ port: 9095
 # workspaces/. Default as below.
 # Env: CONTEXTMATRIX_ARCHITECT_STATE_DIR
 state_dir: /var/lib/contextmatrix-architect
+
+# Seconds between two polls of an emitted blueprint's cards and playbook run
+# in ContextMatrix while its session is open; each change is posted to the
+# session. Default: 60. Env: CONTEXTMATRIX_ARCHITECT_WATCH_INTERVAL_SECONDS
+watch_interval_seconds: 60
 
 # Size of the webhook replay cache. Default: 10000.
 # Env: CONTEXTMATRIX_ARCHITECT_WEBHOOK_REPLAY_CACHE_SIZE

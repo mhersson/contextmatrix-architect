@@ -25,9 +25,12 @@ const envPrefix = "CONTEXTMATRIX_ARCHITECT_"
 type Config struct {
 	ContextMatrixURL string
 	APIKey           string
-	Port             int
-	LogLevel         string
-	StateDir         string
+	// CallerIdentity is the agent_id every ContextMatrix write passes; a
+	// human: id, because run_card and run_playbook are human-gated.
+	CallerIdentity string
+	Port           int
+	LogLevel       string
+	StateDir       string
 	// Pack is a pipeline pack directory; empty means the embedded default.
 	Pack string
 	// Models overrides the model per persona; the session's model is the
@@ -41,6 +44,8 @@ type Config struct {
 	// WorkspaceMaxAgeDays is how long a blueprint's code trees are kept
 	// after they were last written.
 	WorkspaceMaxAgeDays int
+	// WatchInterval is how often an emitted blueprint's run is polled in ContextMatrix.
+	WatchInterval time.Duration
 
 	ReplaySkew            time.Duration
 	ReplayCacheSize       int
@@ -53,6 +58,7 @@ type Config struct {
 type raw struct {
 	ContextMatrixURL       string            `koanf:"contextmatrix_url"`
 	APIKey                 string            `koanf:"api_key"`
+	CallerIdentity         string            `koanf:"caller_identity"`
 	Port                   int               `koanf:"port"`
 	LogLevel               string            `koanf:"log_level"`
 	StateDir               string            `koanf:"state_dir"`
@@ -65,10 +71,12 @@ type raw struct {
 	MessageDedupTTLSeconds int               `koanf:"message_dedup_ttl_seconds"`
 	MessageDedupCacheSize  int               `koanf:"message_dedup_cache_size"`
 	WorkspaceMaxAgeDays    int               `koanf:"workspace_max_age_days"`
+	WatchIntervalSeconds   int               `koanf:"watch_interval_seconds"`
 }
 
 func defaults() raw {
 	return raw{
+		CallerIdentity:         "human:architect",
 		Port:                   9095,
 		LogLevel:               "info",
 		StateDir:               "/var/lib/contextmatrix-architect",
@@ -80,6 +88,7 @@ func defaults() raw {
 		MessageDedupTTLSeconds: 600,
 		MessageDedupCacheSize:  1000,
 		WorkspaceMaxAgeDays:    7,
+		WatchIntervalSeconds:   60,
 	}
 }
 
@@ -87,6 +96,7 @@ func (r raw) toConfig() *Config {
 	return &Config{
 		ContextMatrixURL:      r.ContextMatrixURL,
 		APIKey:                r.APIKey,
+		CallerIdentity:        r.CallerIdentity,
 		Port:                  r.Port,
 		LogLevel:              r.LogLevel,
 		StateDir:              r.StateDir,
@@ -99,6 +109,7 @@ func (r raw) toConfig() *Config {
 		MessageDedupTTL:       time.Duration(r.MessageDedupTTLSeconds) * time.Second,
 		MessageDedupCacheSize: r.MessageDedupCacheSize,
 		WorkspaceMaxAgeDays:   r.WorkspaceMaxAgeDays,
+		WatchInterval:         time.Duration(r.WatchIntervalSeconds) * time.Second,
 	}
 }
 
@@ -212,6 +223,14 @@ func (c *Config) Validate() error {
 
 	if c.WorkspaceMaxAgeDays < 1 {
 		return errors.New("workspace_max_age_days must be at least 1")
+	}
+
+	if c.WatchInterval < time.Second {
+		return errors.New("watch_interval_seconds must be at least 1")
+	}
+
+	if suffix, ok := strings.CutPrefix(c.CallerIdentity, "human:"); !ok || strings.TrimSpace(suffix) == "" {
+		return fmt.Errorf("caller_identity must be a human: identity such as human:architect, got %q; ContextMatrix's run_card and run_playbook are human-gated", c.CallerIdentity)
 	}
 
 	switch c.LogLevel {

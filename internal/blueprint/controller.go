@@ -35,6 +35,12 @@ const (
 	StateWaiting State = "waiting"
 	StateIdle    State = "idle"
 	StateFailed  State = "failed"
+	// StateEmitting runs from an approve until the cards exist and, in yolo
+	// mode, the run start was attempted. A restart resumes an emission it
+	// finds emitting; one a stop left idle or emitted waits for approve.
+	StateEmitting State = "emitting"
+	StateEmitted  State = "emitted"
+	StateDone     State = "done"
 )
 
 // needStage is the pseudo-stage the user's first message is stored under.
@@ -73,6 +79,25 @@ type Runner interface {
 type Workspace interface {
 	Checkout(ctx context.Context, blueprintID, name, repoURL string, creds code.Credentials) (code.Checkout, error)
 	TreeRoot(blueprintID string) string
+	// RemoteHead reads a repository's default branch and its sha without
+	// fetching; preflight compares it with what grounding recorded.
+	RemoteHead(ctx context.Context, repoURL string, creds code.Credentials) (string, string, error)
+	// Remove deletes a blueprint's trees; emission calls it once the cards exist.
+	Remove(ctx context.Context, blueprintID string) error
+}
+
+// CMClient is the ContextMatrix surface emission, its preflight, the run
+// start and the watch use. internal/cm's Client implements it; tests fake it.
+type CMClient interface {
+	ListProjects(ctx context.Context) ([]cm.Project, error)
+	ListPlaybooks(ctx context.Context) ([]cm.PlaybookSummary, error)
+	GetPlaybook(ctx context.Context, id string) (cm.Playbook, error)
+	GetCard(ctx context.Context, project, id string) (cm.Card, error)
+	CreateCard(ctx context.Context, in cm.CardInput) (cm.CreatedCard, error)
+	CreatePlaybook(ctx context.Context, in cm.PlaybookInput) (string, error)
+	RunCard(ctx context.Context, project, id, agentID string) (cm.Card, error)
+	RunPlaybook(ctx context.Context, id, agentID string) error
+	Close() error
 }
 
 // Options wires a Controller.
@@ -108,6 +133,17 @@ type Options struct {
 	// ExportDir is where export bundles are written, one directory per
 	// blueprint and time; empty refuses export.
 	ExportDir string
+	// ConnectCM opens a ContextMatrix MCP session with the session's key for
+	// emission, its preflight, the run start and the watch. nil refuses
+	// emission with a clear error.
+	ConnectCM func(ctx context.Context, mcpAPIKey string) (CMClient, error)
+	// CallerIdentity is the agent_id every ContextMatrix write passes. It is
+	// a human: id, because run_card and run_playbook are human-gated; stage
+	// tools never get it.
+	CallerIdentity string
+	// WatchInterval is how often an emitted blueprint's watch polls
+	// ContextMatrix; 0 means one minute.
+	WatchInterval time.Duration
 }
 
 // session is an attached CM session: the provisioned endpoint, model and
@@ -147,6 +183,7 @@ type Controller struct {
 	mu       sync.Mutex
 	sessions map[string]*session
 	runs     map[string]*run
+	watches  map[string]*watcher
 	closing  bool
 }
 
@@ -160,7 +197,11 @@ func New(opts Options) *Controller {
 		opts.Now = time.Now
 	}
 
-	return &Controller{opts: opts, sessions: map[string]*session{}, runs: map[string]*run{}}
+	if opts.WatchInterval <= 0 {
+		opts.WatchInterval = time.Minute
+	}
+
+	return &Controller{opts: opts, sessions: map[string]*session{}, runs: map[string]*run{}, watches: map[string]*watcher{}}
 }
 
 // effectivePrice maps an all-zero price to nil. CM sends zero rates for a
@@ -177,8 +218,11 @@ func effectivePrice(p *protocol.ModelPrice) *protocol.ModelPrice {
 // Start attaches a session to the blueprint with in.ID, creating it on first
 // sight. A stage left running by a crash is marked interrupted and re-run, a
 // stage whose inputs were stored but which never started runs, and a
-// human-sourced stage that waits shows its prompt again. Start on a session
-// already attached does nothing.
+// human-sourced stage that waits shows its prompt again. At a ready end an
+// open sign-off is shown again or, never shown, runs; an emission a restart
+// cut short resumes, a stopped one is reminded of approve, and an emitted
+// blueprint's watch restarts. Start on a session already attached does
+// nothing.
 func (c *Controller) Start(ctx context.Context, in StartInput) error {
 	in.Price = effectivePrice(in.Price)
 
@@ -239,6 +283,12 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 		c.detach(in.ID, sess)
 
 		return err
+	}
+
+	if next.end {
+		c.resumeEnd(runCtx, r, sess, bp, next)
+
+		return nil
 	}
 
 	// The prompt is shown again: the panel lost it with the ended session,
@@ -335,7 +385,8 @@ func (c *Controller) leftRunning(ctx context.Context, id string) (*store.Run, er
 
 // Message handles one user message: the answer to an open question, the
 // need while the first stage has no artifact, the artifact of a
-// human-sourced stage that waits for it, or a note. The abort and export
+// human-sourced stage that waits for it, the sign-off decision (approve or
+// reject <feedback>) at a ready end, or a note. The abort and export
 // commands are parsed by the webhook and reach Abort and Export instead.
 func (c *Controller) Message(ctx context.Context, id, text, msgID string) error {
 	trimmed := strings.TrimSpace(text)
@@ -418,9 +469,19 @@ func safeID(id string) bool {
 // Export renders the blueprint's record under ExportDir/<id>/<time> and
 // tells the panel where. It reads the store only, whose records were masked
 // when written, so a running stage is not disturbed and no secret is in the
-// bundle.
+// bundle. A session that is not attached is not found, as for a message, so
+// ContextMatrix starts it again and re-sends the export: only an attached
+// session's panel hears of the bundle.
 func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 	if !safeID(id) {
+		return ErrNotFound
+	}
+
+	c.mu.Lock()
+	sess, ok := c.sessions[id]
+	c.mu.Unlock()
+
+	if !ok {
 		return ErrNotFound
 	}
 
@@ -455,6 +516,14 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 		return fmt.Errorf("blueprint: export: %w", err)
 	}
 
+	if bundle.Gates, err = c.opts.Store.ListGates(ctx, id, signoffStage); err != nil {
+		return fmt.Errorf("blueprint: export: %w", err)
+	}
+
+	if bundle.Emissions, err = c.opts.Store.ListEmissions(ctx, id); err != nil {
+		return fmt.Errorf("blueprint: export: %w", err)
+	}
+
 	for _, r := range bundle.Runs {
 		t, err := c.opts.Store.GetTranscript(ctx, r.ID)
 		if errors.Is(err, store.ErrNotFound) {
@@ -475,21 +544,13 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 		return fmt.Errorf("blueprint: export: %w", err)
 	}
 
-	// A blueprint that is not attached has no redactor, which is intended:
-	// the payload carries only the path, the file count and the message id.
-	au := c.newAudit()
-
 	c.mu.Lock()
-	if sess := c.sessions[id]; sess != nil {
-		au = sess.audit
-	}
-
 	_, running := c.runs[id]
 	c.mu.Unlock()
 
 	// during_run tells the panel whether a stage keeps working after the
 	// export; when none does, the panel must be told it is idle.
-	au.event(ctx, Event{Kind: EventExported, BlueprintID: id, Payload: map[string]any{
+	sess.audit.event(ctx, Event{Kind: EventExported, BlueprintID: id, Payload: map[string]any{
 		"path": dir, "files": len(files), "message_id": msgID, "during_run": running,
 	}})
 
@@ -574,8 +635,8 @@ func noteEvent(id, text, msgID string, duringRun bool) Event {
 	}}
 }
 
-// End detaches the session, cancelling any run in flight. The blueprint
-// persists and a later Start reopens it.
+// End detaches the session, cancelling any run in flight and stopping the
+// watch, which it waits for. The blueprint persists and a later Start reopens it.
 func (c *Controller) End(ctx context.Context, id string) error {
 	if _, err := c.opts.Store.GetBlueprint(ctx, id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -594,7 +655,18 @@ func (c *Controller) End(ctx context.Context, id string) error {
 		r.cancel()
 	}
 
+	// The watcher leaves in the same section as the session, so a Start that
+	// reopens the blueprint right after always sees no watcher and can start
+	// its own.
+	w := c.watches[id]
+	delete(c.watches, id)
+
 	c.mu.Unlock()
+
+	if w != nil {
+		w.cancel()
+		<-w.done
+	}
 
 	au := c.newAudit()
 	if sess != nil {
@@ -606,8 +678,8 @@ func (c *Controller) End(ctx context.Context, id string) error {
 	return nil
 }
 
-// Shutdown stops accepting runs, cancels every run in flight and waits for
-// the run goroutines to exit. A run the cancel cut short writes no results
+// Shutdown stops accepting runs, cancels every run in flight and every watch
+// and waits for those goroutines to exit. A run the cancel cut short writes no results
 // (only its harness lines), so the next Start re-runs its stage; a run that
 // completed anyway writes its results first. The store can be closed
 // afterwards.
@@ -623,6 +695,12 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 		r.cancel()
 
 		dones = append(dones, r.done)
+	}
+
+	for _, w := range c.watches {
+		w.cancel()
+
+		dones = append(dones, w.done)
 	}
 
 	c.mu.Unlock()
@@ -644,6 +722,16 @@ func (c *Controller) shuttingDown(r *run) bool {
 	defer c.mu.Unlock()
 
 	return r.shutdown
+}
+
+// closingDown reports whether Shutdown has begun. A sign-off, emission or
+// run start it cuts short is interrupted, not stopped: it reports nothing
+// and keeps the state, so the restart resumes it.
+func (c *Controller) closingDown() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.closing
 }
 
 // Wait blocks until no run is in flight for id, including a run whose

@@ -11,9 +11,14 @@ the next message as the design. Grounding, decomposition and readiness then
 run in turn over read-only checkouts of the target projects' repositories.
 Every decomposition submit is checked against the card contract inside the
 run, and readiness sends cards that are not ready back to decomposition for up
-to three rounds. The session ends with a report of whether the cards are
-ready, with the findings when they are not; nothing is emitted into
-ContextMatrix yet.
+to three rounds. The session then reports whether the cards are ready. Ready
+cards go to sign-off: reply approve to create them in ContextMatrix, with a
+playbook for two or more, or reject with feedback to re-run decomposition. The
+auto+emit and yolo modes approve on their own when the preflight finds nothing
+for a human. In yolo mode the architect then starts the run: one card with
+run_card, several with run_playbook. While the session is open the architect
+watches the emitted cards and playbook in ContextMatrix and posts each change,
+ending with the pull requests and compare links.
 
 ## Run
 
@@ -43,8 +48,9 @@ mirrors stay.
 
 Reply `export` in the chat panel to write the blueprint's record as markdown
 under `<state_dir>/exports/<blueprint>/<time>`: a summary with the runs and
-their cost, every artifact version, the questions and answers, the sources,
-the event log and the run transcripts. It reads the store, which holds
+their cost, the sign-off decisions and the ids emission created in
+ContextMatrix, every artifact version, the questions and answers, the
+sources, the event log and the run transcripts. It reads the store, which holds
 records with the session's secrets already masked, so a running stage is not
 disturbed. Committing the bundle to a repository is not built yet.
 

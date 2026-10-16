@@ -25,6 +25,15 @@ func TestWrite_RendersEveryPart(t *testing.T) {
 			{Time: now, Kind: "question", Payload: json.RawMessage(`{"text":"Which cluster?","options":["dev","prod"]}`)},
 			{Time: now, Kind: "answer", Payload: json.RawMessage(`{"text":"dev"}`)},
 		},
+		Gates: []store.Gate{
+			{Stage: "signoff", Version: 1, Decision: store.GateReject, Feedback: "split it\nup | now", Responder: store.ResponderHuman, DecidedAt: now},
+			{Stage: "signoff", Version: 2, Decision: store.GateApprove, Responder: store.ResponderHuman, DecidedAt: now},
+			{Stage: "signoff", Version: 3, Decision: store.GateReject, Feedback: `keep a\|b`, Responder: store.ResponderHuman, DecidedAt: now},
+		},
+		Emissions: []store.Emission{
+			{Kind: store.EmitCard, DraftID: "D1", Project: "alpha", CMID: "ALPHA-007", CreatedAt: now},
+			{Kind: store.EmitPlaybook, CMID: "ship-it", CreatedAt: now},
+		},
 		Sources:     []store.Source{{Number: 1, Kind: "repo", Identity: "https://example.com/alpha.git", Version: "abc", FetchedAt: now}},
 		Transcripts: map[int64]json.RawMessage{7: json.RawMessage(`[{"role":"user","content":"x"}]`)},
 	})
@@ -44,6 +53,13 @@ func TestWrite_RendersEveryPart(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(intake), "# Need")
 	assert.Contains(t, string(intake), `"slices"`)
+
+	summary, err := os.ReadFile(filepath.Join(dir, "blueprint.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(summary), `split it up \| now`, "newlines flattened and the pipe escaped")
+	assert.Contains(t, string(summary), `keep a\\\|b`, "a backslash cannot unescape the pipe after it")
+	assert.Contains(t, string(summary), "ALPHA-007")
+	assert.Contains(t, string(summary), "ship-it")
 
 	info, err := os.Stat(filepath.Join(dir, "blueprint.md"))
 	require.NoError(t, err)

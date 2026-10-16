@@ -46,8 +46,21 @@ func eventSink(hub *logbridge.Hub) func(blueprint.Event) {
 func waitsOnUser(e blueprint.Event) bool {
 	switch e.Kind {
 	case blueprint.EventQuestion, blueprint.EventError, blueprint.EventAborted,
-		blueprint.EventAwaitInput, blueprint.EventReport:
+		blueprint.EventAwaitInput, blueprint.EventSignOff, blueprint.EventRunStarted, blueprint.EventWatchEnded:
 		return true
+	case blueprint.EventReport:
+		// At a ready end the sign-off follows on the held run slot; the
+		// sign-off, error or emission that ends it is followed by the idle
+		// frame.
+		signoff, _ := e.Payload["signoff"].(bool)
+
+		return !signoff
+	case blueprint.EventEmitted:
+		// In yolo mode the run start follows; the run start or its error is
+		// followed by the idle frame.
+		runFollows, _ := e.Payload["run_follows"].(bool)
+
+		return !runFollows
 	case blueprint.EventStageEnded:
 		// After a completed stage the next one may start at once; the await,
 		// report or error that ends the chain is followed by the idle frame.

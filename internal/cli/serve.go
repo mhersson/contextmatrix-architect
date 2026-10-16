@@ -98,19 +98,22 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 	workspace := code.NewWorkspace(filepath.Join(cfg.StateDir, "workspaces"), time.Now)
 
 	ctl := blueprint.New(blueprint.Options{
-		Store:         st,
-		Pack:          pk,
-		Runner:        runner,
-		Logger:        logger,
-		MaxRunCostUSD: cfg.MaxRunCostUSD,
-		MaxTurns:      cfg.MaxTurns,
-		Models:        cfg.Models,
-		Sink:          eventSink(hub),
-		HarnessLine:   harnessForwarder(hub),
-		Workspace:     workspace,
-		ExportDir:     filepath.Join(cfg.StateDir, "exports"),
-		Projects:      cmProjects(cfg.ContextMatrixURL),
-		CMTools:       cmReadTools(cfg.ContextMatrixURL),
+		Store:          st,
+		Pack:           pk,
+		Runner:         runner,
+		Logger:         logger,
+		MaxRunCostUSD:  cfg.MaxRunCostUSD,
+		MaxTurns:       cfg.MaxTurns,
+		Models:         cfg.Models,
+		Sink:           eventSink(hub),
+		HarnessLine:    harnessForwarder(hub),
+		Workspace:      workspace,
+		ExportDir:      filepath.Join(cfg.StateDir, "exports"),
+		Projects:       cmProjects(cfg.ContextMatrixURL),
+		CMTools:        cmReadTools(cfg.ContextMatrixURL),
+		ConnectCM:      cmConnect(cfg.ContextMatrixURL),
+		CallerIdentity: cfg.CallerIdentity,
+		WatchInterval:  cfg.WatchInterval,
 		Credentials: func(gitToken string) code.Credentials {
 			return code.NewCMCredentials(cfg.ContextMatrixURL, gitToken)
 		},
@@ -173,6 +176,19 @@ func cmProjects(baseURL string) func(ctx context.Context, mcpAPIKey string) ([]c
 		defer func() { _ = client.Close() }()
 
 		return client.ListProjects(ctx)
+	}
+}
+
+// cmConnect opens one MCP session to ContextMatrix with the session's key.
+func cmConnect(baseURL string) func(ctx context.Context, mcpAPIKey string) (blueprint.CMClient, error) {
+	return func(ctx context.Context, mcpAPIKey string) (blueprint.CMClient, error) {
+		client, err := cm.Connect(ctx, baseURL, mcpAPIKey)
+		if err != nil {
+			// A nil *cm.Client in the interface would not compare equal to nil.
+			return nil, err
+		}
+
+		return client, nil
 	}
 }
 

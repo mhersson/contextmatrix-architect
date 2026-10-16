@@ -33,6 +33,7 @@ func TestLogEntryFor(t *testing.T) {
 		{"answer is echoed by CM", blueprint.Event{Kind: blueprint.EventAnswer, BlueprintID: "S1"}, "", nil, true},
 		{"harness lines go through the bridge", blueprint.Event{Kind: blueprint.EventHarness, BlueprintID: "S1"}, "", nil, true},
 		{"CM ended the session itself", blueprint.Event{Kind: blueprint.EventEnded, BlueprintID: "S1"}, "", nil, true},
+		{"the watch's state is internal", blueprint.Event{Kind: blueprint.EventWatchState, BlueprintID: "S1", Payload: map[string]any{"cards": []any{}}}, "", nil, true},
 		{"reopened", blueprint.Event{Kind: blueprint.EventReopened, BlueprintID: "S1", Payload: map[string]any{"state": "idle"}}, "system", []string{"idle"}, false},
 		{"design awaited", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "design", "prompt": "Paste the design."}}, "text", []string{"Paste the design."}, false},
 		{"awaited without a prompt", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "design", "prompt": ""}}, "text", []string{"design"}, false},
@@ -46,6 +47,25 @@ func TestLogEntryFor(t *testing.T) {
 		{"report not ready", blueprint.Event{Kind: blueprint.EventReport, BlueprintID: "S1", Payload: map[string]any{
 			"body": "# Cards", "ready": false, "rounds": 3, "findings": []string{"D1: two deliverables"},
 		}}, "text", []string{"D1: two deliverables"}, false},
+		{"card created", blueprint.Event{Kind: blueprint.EventCardCreated, BlueprintID: "S1", Payload: map[string]any{"card": "ALPHA-001", "draft": "D1", "project": "alpha", "title": "Add the parser", "warnings": []string{"w1"}}}, "system", []string{"ALPHA-001", "w1"}, false},
+		{"playbook created", blueprint.Event{Kind: blueprint.EventPlaybookCreated, BlueprintID: "S1", Payload: map[string]any{"playbook": "ship-the-parser", "entries": 3}}, "system", []string{"ship-the-parser"}, false},
+		{"emitted", blueprint.Event{Kind: blueprint.EventEmitted, BlueprintID: "S1", Payload: map[string]any{"cards": []any{map[string]any{"card": "ALPHA-001"}}, "playbook": "", "manual": []any{"Check the dashboard"}}}, "text", []string{"ALPHA-001", "Check the dashboard"}, false},
+		{"run started", blueprint.Event{Kind: blueprint.EventRunStarted, BlueprintID: "S1", Payload: map[string]any{"kind": "playbook", "target": "ship-the-parser"}}, "system", []string{"ship-the-parser"}, false},
+		{"watch", blueprint.Event{Kind: blueprint.EventWatch, BlueprintID: "S1", Payload: map[string]any{"line": "ALPHA-001 (D1) Add: todo"}}, "system", []string{"ALPHA-001 (D1) Add: todo"}, false},
+		{"watch ended", blueprint.Event{Kind: blueprint.EventWatchEnded, BlueprintID: "S1", Payload: map[string]any{
+			"playbook": "p",
+			"repos":    []any{map[string]any{"project": "alpha", "compare_url": "https://x/compare"}},
+			"cards":    []any{map[string]any{"card": "ALPHA-001", "state": "done", "pr": "https://x/pr/1"}},
+		}}, "text", []string{"https://x/compare", "\n\nCards:\n- ALPHA-001 is done: https://x/pr/1"}, false},
+		{"signoff", blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
+			"cards":    []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing", "type": "feature", "priority": "medium"}},
+			"order":    []any{"D1"},
+			"manual":   []any{},
+			"title":    "",
+			"blocking": []any{"project alpha declares no verify command"}, "warnings": []any{"moved"}, "auto_stopped": false, "assumptions": "- The parser stays in Go.",
+		}}, "text", []string{"D1", "Add the thing", "declares no verify command", "moved", "approve", "The parser stays in Go."}, false},
+		{"decided reject", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{"decision": "reject", "responder": "human", "feedback": "split it"}}, "system", []string{"Rejected"}, false},
+		{"note with a hint", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "hm", "hint": "Reply approve or reject."}}, "system", []string{"Reply approve or reject."}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -119,4 +139,101 @@ func TestLogEntryFor_ReportIsTheVerdictNotTheBody(t *testing.T) {
 	assert.Contains(t, notReady.Content, "D1: two deliverables")
 	assert.Contains(t, notReady.Content, "D2: not judged")
 	assert.NotEqual(t, ready.Content, report(false).Content, "ready and not ready read differently")
+}
+
+func TestLogEntryFor_SignoffSaysWhatPreflightFound(t *testing.T) {
+	cases := []struct {
+		name      string
+		preflight map[string]any
+		carries   []string
+		lacks     []string
+	}{
+		{
+			name: "clean", preflight: map[string]any{"blocking": []any{}, "warnings": []any{}},
+			carries: []string{"Preflight found nothing for a human."}, lacks: []string{"overrides the warnings"},
+		},
+		{
+			name: "warnings", preflight: map[string]any{"blocking": []any{}, "warnings": []any{"moved"}},
+			carries: []string{"moved", "(this also overrides the warnings)"}, lacks: []string{"found nothing"},
+		},
+		{
+			name: "blocking", preflight: map[string]any{"blocking": []any{"project alpha declares no verify command"}, "warnings": []any{}},
+			carries: []string{"declares no verify command"}, lacks: []string{"found nothing", "overrides the warnings"},
+		},
+		{
+			name: "not run", preflight: map[string]any{"blocking": []any{}, "warnings": []any{}, "preflight_error": "connect: refused"},
+			carries: []string{"connect: refused"}, lacks: []string{"found nothing", "overrides the warnings"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := map[string]any{
+				"cards": []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing", "type": "feature", "priority": "medium"}},
+				"order": []any{"D1"}, "manual": []any{}, "title": "", "auto_stopped": false, "assumptions": "",
+			}
+			for k, v := range tc.preflight {
+				payload[k] = v
+			}
+
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: payload})
+			require.True(t, ok)
+
+			for _, s := range tc.carries {
+				assert.Contains(t, entry.Content, s)
+			}
+
+			for _, s := range tc.lacks {
+				assert.NotContains(t, entry.Content, s)
+			}
+
+			assert.Contains(t, entry.Content, "`reject <feedback>`")
+		})
+	}
+}
+
+func TestLogEntryFor_ARunAlreadyThereIsRecordedNotStarted(t *testing.T) {
+	cases := []struct {
+		name     string
+		payload  map[string]any
+		want     string
+		wantSays string
+	}{
+		{
+			name:    "a card",
+			payload: map[string]any{"kind": "card", "target": "ALPHA-001", "existing": true},
+			want:    "ALPHA-001 is already running in ContextMatrix; the architect recorded it.",
+		},
+		{
+			name:    "a playbook",
+			payload: map[string]any{"kind": "playbook", "target": "ship-the-parser", "existing": true},
+			want:    "Playbook ship-the-parser already runs in ContextMatrix; the architect recorded it.",
+		},
+		{
+			name:     "a card the architect started",
+			payload:  map[string]any{"kind": "card", "target": "ALPHA-001", "existing": false},
+			wantSays: "Started ALPHA-001",
+		},
+		{
+			name:     "a playbook the architect started",
+			payload:  map[string]any{"kind": "playbook", "target": "ship-the-parser", "existing": false},
+			wantSays: "Started playbook ship-the-parser",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRunStarted, BlueprintID: "S1", Payload: tc.payload})
+			require.True(t, ok)
+			assert.Equal(t, "system", entry.Type)
+
+			if tc.want != "" {
+				assert.Equal(t, tc.want, entry.Content)
+
+				return
+			}
+
+			assert.Contains(t, entry.Content, tc.wantSays)
+		})
+	}
 }

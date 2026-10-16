@@ -21,6 +21,8 @@ type Bundle struct {
 	Artifacts   []store.Artifact
 	Events      []store.Event
 	Sources     []store.Source
+	Gates       []store.Gate
+	Emissions   []store.Emission
 	Transcripts map[int64]json.RawMessage
 }
 
@@ -79,7 +81,31 @@ func blueprintMD(b Bundle) string {
 
 	fmt.Fprintf(&sb, "\nTotal recorded cost: %.4f USD\n", total)
 
+	if len(b.Gates) > 0 {
+		sb.WriteString("\n## Sign-off\n\n| Decided | Stage | Version | Decision | Responder | Feedback |\n|---|---|---|---|---|---|\n")
+
+		for _, g := range b.Gates {
+			fmt.Fprintf(&sb, "| %s | %s | %d | %s | %s | %s |\n",
+				g.DecidedAt.Format("2006-01-02 15:04 UTC"), g.Stage, g.Version, g.Decision, g.Responder, cell(g.Feedback))
+		}
+	}
+
+	if len(b.Emissions) > 0 {
+		sb.WriteString("\n## Emitted\n\n| Created | Kind | Draft | Project | ContextMatrix id |\n|---|---|---|---|---|\n")
+
+		for _, e := range b.Emissions {
+			fmt.Fprintf(&sb, "| %s | %s | %s | %s | %s |\n",
+				e.CreatedAt.Format("2006-01-02 15:04 UTC"), e.Kind, cell(e.DraftID), cell(e.Project), cell(e.CMID))
+		}
+	}
+
 	return sb.String()
+}
+
+// cell makes free text safe inside a markdown table cell. A backslash is
+// escaped too, so text ending in one cannot unescape the pipe after it.
+func cell(s string) string {
+	return strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", `\`, `\\`, "|", `\|`).Replace(s)
 }
 
 func artifactMD(a store.Artifact) string {

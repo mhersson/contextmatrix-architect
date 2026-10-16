@@ -83,11 +83,27 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 
 		if stage := str(p["retries"]); stage != "" {
 			entry.Content = fmt.Sprintf("Message recorded in the audit log. It is not delivered to a stage; stage %s runs again.", stage)
-
-			break
+		} else {
+			entry.Content = "Message recorded in the audit log. It is not delivered to a stage and starts none."
 		}
 
-		entry.Content = "Message recorded in the audit log. It is not delivered to a stage and starts none."
+		if hint := str(p["hint"]); hint != "" {
+			entry.Content += " " + hint
+		}
+	case blueprint.EventSignOff:
+		entry.Type = "text"
+		entry.Content = signoffText(p)
+	case blueprint.EventDecided:
+		entry.Type = "system"
+
+		switch {
+		case str(p["decision"]) == "reject":
+			entry.Content = "Rejected. Decomposition runs again with your feedback."
+		case str(p["responder"]) == "auto":
+			entry.Content = "Preflight found nothing for a human, so the mode approved the cards. Emission starts."
+		default:
+			entry.Content = "Approved. Emission starts."
+		}
 	case blueprint.EventAborted:
 		entry.Type = "system"
 		entry.Content = "Abort requested. Any running stage is canceled; the blueprint is kept and can be reopened."
@@ -137,6 +153,111 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 
 		for _, f := range stringsOf(p["findings"]) {
 			b.WriteString("\n- " + f)
+		}
+
+		entry.Content = b.String()
+	case blueprint.EventCardCreated:
+		entry.Type = "system"
+
+		var b strings.Builder
+
+		fmt.Fprintf(&b, "Created %s (%s) in %s: %s.", str(p["card"]), str(p["draft"]), str(p["project"]), str(p["title"]))
+
+		for _, w := range stringsOf(p["warnings"]) {
+			b.WriteString("\nContextMatrix warned: " + w)
+		}
+
+		entry.Content = b.String()
+	case blueprint.EventPlaybookCreated:
+		entry.Type = "system"
+		entry.Content = fmt.Sprintf("Created playbook %s with %.0f entries.", str(p["playbook"]), num(p["entries"]))
+	case blueprint.EventRunStarted:
+		entry.Type = "system"
+
+		// A run ContextMatrix already had was recorded, not started.
+		if existing, _ := p["existing"].(bool); existing {
+			if str(p["kind"]) == "card" {
+				entry.Content = fmt.Sprintf("%s is already running in ContextMatrix; the architect recorded it.", str(p["target"]))
+			} else {
+				entry.Content = fmt.Sprintf("Playbook %s already runs in ContextMatrix; the architect recorded it.", str(p["target"]))
+			}
+
+			break
+		}
+
+		if str(p["kind"]) == "card" {
+			entry.Content = fmt.Sprintf("Started %s in ContextMatrix; it opens one pull request to the default branch.", str(p["target"]))
+
+			break
+		}
+
+		entry.Content = fmt.Sprintf("Started playbook %s in ContextMatrix. Each card's pull request merges into the playbook branch once CI passes.", str(p["target"]))
+	case blueprint.EventWatch:
+		entry.Type = "system"
+		entry.Content = str(p["line"])
+	case blueprint.EventWatchEnded:
+		entry.Type = "text"
+
+		var b strings.Builder
+
+		if pb := str(p["playbook"]); pb != "" {
+			fmt.Fprintf(&b, "**Done.** Playbook %s completed.", pb)
+
+			if repos := anyMaps(p["repos"]); len(repos) > 0 {
+				b.WriteString("\n\nOpen the final pull request for each repository:")
+
+				for _, r := range repos {
+					fmt.Fprintf(&b, "\n- %s: %s", str(r["project"]), str(r["compare_url"]))
+				}
+			}
+		} else {
+			b.WriteString("**Done.**")
+		}
+
+		cards := anyMaps(p["cards"])
+		if len(cards) > 0 {
+			b.WriteString("\n\nCards:")
+		}
+
+		for _, card := range cards {
+			fmt.Fprintf(&b, "\n- %s is %s", str(card["card"]), str(card["state"]))
+
+			if pr := str(card["pr"]); pr != "" {
+				b.WriteString(": " + pr)
+			}
+		}
+
+		if manual := stringsOf(p["manual"]); len(manual) > 0 {
+			b.WriteString("\n\nChecks a human runs now:")
+
+			for _, m := range manual {
+				b.WriteString("\n- " + m)
+			}
+		}
+
+		entry.Content = b.String()
+	case blueprint.EventEmitted:
+		entry.Type = "text"
+
+		var ids []string
+		for _, card := range anyMaps(p["cards"]) {
+			ids = append(ids, str(card["card"]))
+		}
+
+		var b strings.Builder
+
+		fmt.Fprintf(&b, "**Emitted** %d card(s) into ContextMatrix: %s.", len(ids), strings.Join(ids, ", "))
+
+		if pb := str(p["playbook"]); pb != "" {
+			fmt.Fprintf(&b, " Playbook: %s.", pb)
+		}
+
+		if manual := stringsOf(p["manual"]); len(manual) > 0 {
+			b.WriteString("\n\nChecks a human runs once the card is merged:")
+
+			for _, m := range manual {
+				b.WriteString("\n- " + m)
+			}
 		}
 
 		entry.Content = b.String()
@@ -212,4 +333,92 @@ func stringsOf(v any) []string {
 	default:
 		return nil
 	}
+}
+
+// signoffText renders the sign-off: the entries in playbook order, the
+// playbook, the preflight result and how to decide.
+func signoffText(p map[string]any) string {
+	var b strings.Builder
+
+	if auto, _ := p["auto_stopped"].(bool); auto {
+		b.WriteString("**Sign-off needed.** This mode emits on its own, but preflight found something for a human.\n\n")
+	} else {
+		b.WriteString("**Sign-off.** Readiness passed the cards.\n\n")
+	}
+
+	cards := map[string]map[string]any{}
+	for _, card := range anyMaps(p["cards"]) {
+		cards[str(card["id"])] = card
+	}
+
+	manual := map[string]string{}
+	for _, m := range anyMaps(p["manual"]) {
+		manual[str(m["id"])] = str(m["text"])
+	}
+
+	b.WriteString("In playbook order:\n")
+
+	for i, id := range stringsOf(p["order"]) {
+		if card, ok := cards[id]; ok {
+			fmt.Fprintf(&b, "%d. %s %s: %s (%s, %s", i+1, id, str(card["project"]), str(card["title"]), str(card["type"]), str(card["priority"]))
+
+			if deps := stringsOf(card["depends_on"]); len(deps) > 0 {
+				b.WriteString("; depends on " + strings.Join(deps, ", "))
+			}
+
+			b.WriteString(")\n")
+
+			continue
+		}
+
+		fmt.Fprintf(&b, "%d. %s manual: %s\n", i+1, id, manual[id])
+	}
+
+	if title := str(p["title"]); title != "" && len(cards) > 1 {
+		fmt.Fprintf(&b, "\nPlaybook: %q.\n", title)
+	} else {
+		b.WriteString("\nOne card, so no playbook.\n")
+	}
+
+	if a := str(p["assumptions"]); a != "" {
+		b.WriteString("\nAssumptions:\n" + a + "\n")
+	} else {
+		b.WriteString("\nAssumptions: none recorded.\n")
+	}
+
+	blocking, warnings, pfErr := stringsOf(p["blocking"]), stringsOf(p["warnings"]), str(p["preflight_error"])
+
+	if len(blocking) > 0 {
+		b.WriteString("\nBlocking (fix these in ContextMatrix first):\n")
+
+		for _, s := range blocking {
+			b.WriteString("- " + s + "\n")
+		}
+	}
+
+	if len(warnings) > 0 {
+		b.WriteString("\nWarnings:\n")
+
+		for _, s := range warnings {
+			b.WriteString("- " + s + "\n")
+		}
+	}
+
+	if pfErr != "" {
+		b.WriteString("\nPreflight could not run: " + pfErr + "\n")
+	}
+
+	if len(blocking) == 0 && len(warnings) == 0 && pfErr == "" {
+		b.WriteString("\nPreflight found nothing for a human.\n")
+	}
+
+	b.WriteString("\nReply `approve` to emit the cards")
+
+	if len(warnings) > 0 {
+		b.WriteString(" (this also overrides the warnings)")
+	}
+
+	b.WriteString(", or `reject <feedback>` to re-run decomposition with your feedback.")
+
+	return b.String()
 }

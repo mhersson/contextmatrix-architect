@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slice 0 is implemented, and slice 1 runs intake, a pasted design, grounding, decomposition and readiness and reports in the session; emission and the dialog stages are design, and so is the export's commit to a repository; the export writes the bundle under the state directory.
+Status: agreed design, 2026-10-15. Slices 0 and 1 are implemented, and slice 2 signs off ready cards, emits them and a playbook into CM and starts them in yolo mode, then reports their run; the dialog stages are design, and so is the export's commit to a repository (slice 4); the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -203,7 +203,7 @@ developer (DEV), reviewer (REV).
 | 8  | Sign-off        | human   | everything        | approval; then emission                                                                               | yes       |
 | -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   |
 
-The embedded pack holds intake, a human-sourced design stage, grounding, decomposition and readiness; slicing, acceptance and sign-off arrive with the dialog stages.
+The embedded pack holds intake, a human-sourced design stage, grounding, decomposition and readiness; slicing and acceptance arrive with the dialog stages. Sign-off is the controller's step after readiness (see Emission).
 The design stage is human-sourced until the dialog stages arrive: the message after intake's artifact is stored as the design. The loader refuses a human-sourced first stage, a human-sourced stage with tools, checks or loops_to, and a loops_to naming a human-sourced stage.
 
 - Intake ends by stating the shape it expects (slices, projects involved) and
@@ -407,9 +407,9 @@ blueprint.
   branch under the card's own settings. Several cards are started with
   `run_playbook`, which makes the playbook runnable and plays it; every card
   then runs with `autonomous`, `create_pr`, `await_ci` and `merge_pr` on, each
-  pull request merges into `playbook/<id>` on CI pass, and a compare link
-  offers one final pull request to the default branch. That final merge stays
-  human. The session reports the run's progress and end.
+  pull request merges into `playbook/<id>` on CI pass, and one compare link
+  per repository offers the final pull request to its default branch. Those
+  final merges stay human. The session reports the run's progress and end.
 
 The architect's cost cap bounds the architect. The CM runs a yolo blueprint
 starts are bounded by CM's per-card guardrails, not by the architect.
@@ -428,23 +428,44 @@ holds.
 
 ## Emission
 
-At sign-off, in order:
+Cards that pass readiness go to sign-off. Default and `auto` modes show the
+sign-off (the entries in playbook order, the playbook title, the assumptions
+and the preflight result) and wait: `approve` emits, and `reject <feedback>`
+stores the feedback and re-runs decomposition and readiness with it, the
+three readiness rounds counted again from the rejection. `auto+emit` and
+`yolo` approve on their own when preflight finds nothing for a human, and
+stop for one otherwise. Every decision is a row in `gates`. Then, in order:
 
-1. **Preflight.** Every target project exists in CM, declares a verify command
-   and a repo URL; grounding found an instruction file; no source repo's
-   default branch has moved since grounding (a moved branch needs a re-ground
-   or an explicit, logged override); no draft card's title matches a card in
-   another runnable playbook.
-2. **Cards**, per project in dependency order so `depends_on` carries real ids.
-   Each created id is stored in `emissions` against its draft, which makes a
-   re-run after a partial failure skip what exists. A warning from
-   `create_card` is a readiness miss: stop and log, never continue blind.
-3. **Playbook**, when there are two or more cards, in blueprint order, with
-   manual entries for human checks, live checks and cross-project gates. Its
-   description carries the blueprint summary and the assumption list. A
-   single card carries the summary and assumptions in its own Context.
-4. Ids stored in `emissions`, state `emitted`. Running is a human action in
-   CM, or `run_card` and `run_playbook` in yolo mode.
+1. **Preflight**, at sign-off and again at the start of every emission
+   attempt. Blocking: a card's project is missing in CM or declares no
+   repository or verify command, or its checkout has no `AGENTS.md` or
+   `CLAUDE.md` at the root. A blocked emission waits for the fix in CM and
+   another `approve`. Warnings: a repository whose default branch moved
+   since grounding or could not be read, a checkout swept before its
+   instruction file could be re-checked, or a draft title that is a card in
+   another runnable playbook. An `approve` after the warnings were shown is
+   the logged override; an emitting mode stops for a human instead.
+2. **Cards**, in playbook order, which the contract keeps dependency-first,
+   so `depends_on` carries real ids within a project. Each created id is
+   stored in `emissions` at once, so a retry after a failure skips what
+   exists. A `create_card` warning is reported and emission continues: CM
+   creates the card before it lints it, the readiness checks mirror its lint,
+   and the outcomes stage learns from what slips through.
+3. **Playbook**, for two or more cards: card and manual entries in draft
+   order, the draft's title, and a description with intake's problem, value
+   and assumptions. A single card carries the problem and the assumptions in
+   its Context section, and its manual checks are listed in the session.
+4. The blueprint's trees are removed and its state is `emitted`. Running is
+   a human action in CM, or in yolo mode `run_card` for one card and
+   `run_playbook` for several, started once and recorded in `emissions`.
+5. **Watch.** While the session is attached the architect polls CM every
+   `watch_interval_seconds` (default 60) and posts a line when a card's
+   state, worker, phase or pull request changes, or the playbook run's
+   status does. A run waiting on a check-off or on a failed card is reported
+   once as waiting for a human. The watch ends when the single card is done
+   or not planned, or the playbook run completes or every entry is complete,
+   with the pull requests and one compare link per repository, and the
+   blueprint's state is `done`.
 
 The architect does not use CM's Jira import for cards. Its traps hit exactly
 what the contract tunes: imported titles start with the issue key, no labels
@@ -482,9 +503,9 @@ Replies the server understands, besides answers to questions:
 
 | Reply                         | Effect                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
-| `approve`, `reject <feedback>` | Decides the open gate, or the proposed lesson the reply answers.        |
+| `approve`, `reject <feedback>` | Decides the sign-off: approve emits, and resumes an emission that stopped; reject re-runs decomposition with the feedback. Only after the pipeline ends ready; before that the text is an answer, the design or a note. |
 | `gate <stage> human\|auto`    | Changes a gate's policy for this blueprint; offered at the gate plan.   |
-| `export`                      | Writes the markdown bundle (blueprint summary, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with emission. |
+| `export`                      | Writes the markdown bundle (blueprint summary with the sign-off decisions and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
 | `lessons`                     | Lists lessons and their state.                                          |
 | `abort`                       | Ends the open run; the blueprint stays and can be reopened.             |
@@ -495,15 +516,19 @@ Replies the server understands, besides answers to questions:
   but which never started runs, and a human-sourced stage that waits shows
   its prompt again. Completed artifacts are never lost. A record the pack
   cannot place, such as a stage the pack no longer has, is reported in the
-  session and nothing runs.
+  session and nothing runs. An open sign-off is shown again as it was, an
+  emission a restart cut short resumes, a stopped one waits for approve, an
+  emitted blueprint's watch restarts, and nothing is created or started
+  twice. CM sends the start again after the architect restarts, when a
+  message finds the session unknown or the log stream ends.
 - After a later stage fails or is aborted, the next message is logged as a
   note and re-runs that stage; after intake fails or is aborted, the next
   message is the need again and intake re-runs on it. A pipeline stopped by the card contract or by
   readiness's rounds is not re-run; the user starts a new blueprint with a
   better design.
-- A project may opt into automatic export in config: a target repo, branch and
-  directory; the bundle is committed there at each gate or at sign-off. Off by
-  default.
+- From slice 4, a project may opt into automatic export in config: a target
+  repo, branch and directory; the bundle is committed there at each gate or at
+  sign-off. Off by default.
 - A message that arrives while no question or gate is open is logged as a
   note; delivering notes to the next stage arrives with the dialog stages.
 
@@ -533,8 +558,10 @@ Replies the server understands, besides answers to questions:
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
-  URL, backend HMAC key, listen address, state directory, pack, per-project
-  export opt-ins, and optional per-persona model overrides (slugs only).
+  URL, backend HMAC key, listen address, state directory, pack, the caller
+  identity for ContextMatrix writes (default human:architect), the watch
+  interval, per-project export opt-ins (slice 4), and optional per-persona
+  model overrides (slugs only).
   Secrets reach only their client and never a log, error, artifact or store
   row.
 - Models: the start payload's model is the default for every persona; config
@@ -592,6 +619,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Chat sessions carry a kind and a blueprint binding instead of only a project; a one-way ops.db schema bump | slice 0 |
 | Panel: a new-session dialog for blueprints with a multi-project picker, mode and cost cap | slice 0 |
 | The git-credentials endpoint treats an attached architect session as live | slice 1 |
+| CM re-sends the start to an architect session after the architect restarts: on a 404 `not_found` for a message (then re-sends the message once), and when the log stream ends | slice 2 |
 | Panel: typed question, gate, gate-plan and lesson entries rendered with buttons instead of as plain messages | slice 3 |
 | Panel: a gate inbox and a blueprint view (stages, assumptions, cards with readiness, cost), read from the architect through a signed endpoint | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
@@ -621,7 +649,9 @@ Ordered so a real card comes out as early as possible.
 3. **Dialog stages.** Intake, slicing, solution design, acceptance; `human`
    and `auto` responders; gates. In CM: typed question and gate entries
    rendered with buttons.
-4. **Outcomes and lessons**, with pack overlays.
+4. **Outcomes and lessons**, with pack overlays, and the per-project export
+   opt-in that commits the bundle to a repository through an allowlist of
+   target repositories.
 5. **Later**: a gate inbox and a blueprint view in CM's web UI;
    seeding a blueprint from an existing CM card, in the same adapter shape as
    the Jira seed; Jira seed and mirror (decide REST against Atlassian MCP then,
