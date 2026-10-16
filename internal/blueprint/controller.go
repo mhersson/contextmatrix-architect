@@ -469,9 +469,19 @@ func safeID(id string) bool {
 // Export renders the blueprint's record under ExportDir/<id>/<time> and
 // tells the panel where. It reads the store only, whose records were masked
 // when written, so a running stage is not disturbed and no secret is in the
-// bundle.
+// bundle. A session that is not attached is not found, as for a message, so
+// ContextMatrix starts it again and re-sends the export: only an attached
+// session's panel hears of the bundle.
 func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 	if !safeID(id) {
+		return ErrNotFound
+	}
+
+	c.mu.Lock()
+	sess, ok := c.sessions[id]
+	c.mu.Unlock()
+
+	if !ok {
 		return ErrNotFound
 	}
 
@@ -534,21 +544,13 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 		return fmt.Errorf("blueprint: export: %w", err)
 	}
 
-	// A blueprint that is not attached has no redactor, which is intended:
-	// the payload carries only the path, the file count and the message id.
-	au := c.newAudit()
-
 	c.mu.Lock()
-	if sess := c.sessions[id]; sess != nil {
-		au = sess.audit
-	}
-
 	_, running := c.runs[id]
 	c.mu.Unlock()
 
 	// during_run tells the panel whether a stage keeps working after the
 	// export; when none does, the panel must be told it is idle.
-	au.event(ctx, Event{Kind: EventExported, BlueprintID: id, Payload: map[string]any{
+	sess.audit.event(ctx, Event{Kind: EventExported, BlueprintID: id, Payload: map[string]any{
 		"path": dir, "files": len(files), "message_id": msgID, "during_run": running,
 	}})
 

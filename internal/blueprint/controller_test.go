@@ -1852,6 +1852,31 @@ func TestExport_UnknownBlueprint(t *testing.T) {
 	assert.ErrorIs(t, c.Export(context.Background(), "nope", "m1"), ErrNotFound)
 }
 
+// An export for a session that is not attached is not found, as a message
+// is: ContextMatrix then starts the session again and re-sends it, so the
+// panel hears of the bundle.
+func TestExport_ASessionThatIsNotAttachedIsNotFound(t *testing.T) {
+	c, _, _, rec := newController(t, artifactRun("# Need"))
+	c.opts.ExportDir = t.TempDir()
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+	require.NoError(t, c.End(ctx, "BP1"))
+
+	require.ErrorIs(t, c.Export(ctx, "BP1", "m2"), ErrNotFound)
+	assert.False(t, rec.has(EventExported))
+
+	written, err := os.ReadDir(c.opts.ExportDir)
+	require.NoError(t, err)
+	assert.Empty(t, written, "nothing is written")
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Export(ctx, "BP1", "m2"))
+	assert.True(t, rec.has(EventExported), "the re-sent export is written and announced")
+}
+
 func TestExport_RefusesWithoutADirectoryAndUnsafeIDs(t *testing.T) {
 	c, st, _, _ := newController(t, artifactRun("# Need"))
 	ctx := context.Background()

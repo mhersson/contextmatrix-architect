@@ -333,6 +333,31 @@ func TestMessage_UnknownBlueprintIs404AndNotRecorded(t *testing.T) {
 	assert.Equal(t, http.StatusAccepted, w.Code, "the failed delivery was rolled back from the dedup cache")
 }
 
+// The controller answers not found for an export to a session it does not
+// hold, as for a message, so ContextMatrix starts the session and re-sends.
+func TestExport_UnattachedBlueprintIs404AndNotRecorded(t *testing.T) {
+	ctl := &stubController{exportErr: blueprint.ErrNotFound}
+	srv, _ := newTestServer(t, ctl)
+
+	msg := protocol.MessagePayload{SessionID: "S1", Content: "export", MessageID: "m1"}
+
+	w := do(srv, signed(t, http.MethodPost, "/message", msg, nextTS()))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	var body protocol.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, protocol.CodeNotFound, body.Code, "ContextMatrix restarts the session only on not_found")
+
+	ctl.mu.Lock()
+	ctl.exportErr = nil
+	ctl.mu.Unlock()
+
+	w = do(srv, signed(t, http.MethodPost, "/message", msg, nextTS()))
+	assert.Equal(t, http.StatusAccepted, w.Code, "the re-sent export is delivered, not taken for a duplicate")
+	assert.Equal(t, []string{"S1|m1", "S1|m1"}, ctl.exports)
+	assert.Empty(t, ctl.messages)
+}
+
 func TestEnd_UnknownIs200KnownIs202(t *testing.T) {
 	ctl := &stubController{endErr: blueprint.ErrNotFound}
 	srv, _ := newTestServer(t, ctl)
