@@ -47,6 +47,9 @@ type StartInput struct {
 	CostCapUSD float64
 	Model      string
 	Endpoint   protocol.LLMEndpoint
+	// Price is the session model's resolved price from CM; nil when CM has
+	// none, and then a capped blueprint cannot run.
+	Price *protocol.ModelPrice
 }
 
 // Runner runs one stage. internal/stage implements it; tests fake it.
@@ -76,6 +79,7 @@ type Options struct {
 type session struct {
 	endpoint protocol.LLMEndpoint
 	model    string
+	price    *protocol.ModelPrice
 	audit    audit
 }
 
@@ -120,7 +124,7 @@ func New(opts Options) *Controller {
 // sight. A stage left running by a crash is marked interrupted and re-run.
 // Start on an attached session only logs the reopen.
 func (c *Controller) Start(ctx context.Context, in StartInput) error {
-	sess := &session{endpoint: in.Endpoint, model: in.Model, audit: c.newAudit(in.Endpoint.APIKey)}
+	sess := &session{endpoint: in.Endpoint, model: in.Model, price: in.Price, audit: c.newAudit(in.Endpoint.APIKey)}
 
 	bp, err := c.openBlueprint(ctx, in, sess.audit)
 	if err != nil {
@@ -178,7 +182,7 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 		now := c.opts.Now().UTC()
 		bp = store.Blueprint{
 			ID: in.ID, Projects: in.Projects, Mode: in.Mode, CostCapUSD: in.CostCapUSD,
-			Model: in.Model, State: string(StateNew), CreatedAt: now, UpdatedAt: now,
+			Model: in.Model, Price: in.Price, State: string(StateNew), CreatedAt: now, UpdatedAt: now,
 		}
 
 		if err := c.opts.Store.CreateBlueprint(ctx, bp); err != nil {
@@ -186,7 +190,7 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 		}
 
 		au.event(ctx, Event{Kind: EventCreated, BlueprintID: in.ID, Payload: map[string]any{
-			"projects": in.Projects, "mode": in.Mode, "cost_cap_usd": in.CostCapUSD, "model": in.Model,
+			"projects": in.Projects, "mode": in.Mode, "cost_cap_usd": in.CostCapUSD, "model": in.Model, "priced": in.Price != nil,
 		}})
 	case err != nil:
 		return store.Blueprint{}, fmt.Errorf("blueprint: start: %w", err)
@@ -342,6 +346,14 @@ func (c *Controller) needOrNote(ctx, runCtx context.Context, r *run, sess *sessi
 		return fmt.Errorf("blueprint: message: %w", err)
 	}
 
+	// The cap is checked before the need is stored, so a spent blueprint
+	// does not pile up refused need versions.
+	if _, ok := c.capAllows(ctx, sess.audit, sess, bp, first); !ok {
+		c.release(id, r)
+
+		return nil
+	}
+
 	need := sess.audit.text(text)
 	if _, err := sess.audit.artifact(ctx, id, needStage, need, nil); err != nil {
 		c.release(id, r)
@@ -352,6 +364,52 @@ func (c *Controller) needOrNote(ctx, runCtx context.Context, r *run, sess *sessi
 	c.launch(runCtx, r, sess, bp, first, stageTask(bp.Projects, need))
 
 	return nil
+}
+
+// capAllows reports whether a run of stageID may start under the blueprint's
+// cost cap, and the cap the run must stay under: the configured per-run cap,
+// or what is left of the blueprint cap when that is smaller. A capped
+// blueprint whose model has no price is refused, because the cap could not
+// bind. A refusal is reported to the panel and leaves the blueprint idle.
+func (c *Controller) capAllows(ctx context.Context, au audit, sess *session, bp store.Blueprint, stageID string) (float64, bool) {
+	runCap := c.opts.MaxRunCostUSD
+
+	if bp.CostCapUSD <= 0 {
+		return runCap, true
+	}
+
+	if sess.price == nil {
+		au.event(ctx, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
+			"stage":   stageID,
+			"message": fmt.Sprintf("cost cap %.2f USD is set but the model has no price, so the cap cannot bind; remove the cap or pick a priced model", bp.CostCapUSD),
+		}})
+		c.setState(ctx, bp.ID, StateIdle)
+
+		return 0, false
+	}
+
+	spent, err := c.opts.Store.BlueprintCost(ctx, bp.ID)
+	if err != nil {
+		c.fail(ctx, au, bp.ID, 0, "cost lookup failed: "+err.Error())
+
+		return 0, false
+	}
+
+	if remaining := bp.CostCapUSD - spent; remaining < runCap {
+		runCap = remaining
+	}
+
+	if runCap <= 0 {
+		au.event(ctx, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
+			"stage":   stageID,
+			"message": fmt.Sprintf("cost cap %.2f USD would be breached (spent %.2f)", bp.CostCapUSD, spent),
+		}})
+		c.setState(ctx, bp.ID, StateIdle)
+
+		return 0, false
+	}
+
+	return runCap, true
 }
 
 // noteEvent records a message that is neither the need nor an answer.

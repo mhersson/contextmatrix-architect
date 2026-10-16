@@ -128,7 +128,10 @@ func TestStart_HappyPath(t *testing.T) {
 	ctl := &stubController{}
 	srv, _ := newTestServer(t, ctl)
 
-	w := do(srv, signed(t, http.MethodPost, "/chat/start", validStart(), nextTS()))
+	payload := validStart()
+	payload.Architect.Price = &protocol.ModelPrice{PromptUSDPerMTok: 3}
+
+	w := do(srv, signed(t, http.MethodPost, "/chat/start", payload, nextTS()))
 	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
 
 	var resp protocol.ChatStartResponse
@@ -144,6 +147,8 @@ func TestStart_HappyPath(t *testing.T) {
 	assert.InDelta(t, 2.0, in.CostCapUSD, 1e-9)
 	assert.Equal(t, "anthropic/claude-sonnet-4", in.Model)
 	assert.Equal(t, "sk-or-key", in.Endpoint.APIKey)
+	require.NotNil(t, in.Price)
+	assert.InDelta(t, 3.0, in.Price.PromptUSDPerMTok, 1e-9)
 }
 
 func TestStart_Refusals(t *testing.T) {

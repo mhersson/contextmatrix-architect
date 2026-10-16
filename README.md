@@ -20,9 +20,13 @@ a directory that user can write.
 
 ## Cost caps
 
-Cost is what the LLM endpoint reports per call. An endpoint that reports no
-cost shows 0 USD on every stage, and neither `max_run_cost_usd` nor a
-blueprint's cost cap binds; `max_turns` still bounds every run.
+CM sends the session model's price with every blueprint start, resolved from
+its `token_costs` and model catalog. The architect prices every run's tokens
+with it, so `max_run_cost_usd` and a blueprint's cost cap bind on any
+endpoint, and a run is stopped within one model call of passing its cap. A
+model CM cannot price arrives without a price: an uncapped blueprint still
+runs and shows the endpoint's reported cost, a capped one refuses to run until
+the cap is removed or a priced model chosen.
 
 ## Docker
 

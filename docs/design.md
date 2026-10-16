@@ -520,8 +520,11 @@ Replies the server understands, besides answers to questions:
 - Models: the start payload's model is the default for every persona; config
   may override per persona. Priors-based selection through
   `contextmatrix-protocol`'s `selection` package comes later.
-- Cost: the harness per-run cap plus the blueprint ledger across runs. A
-  critique round re-bills the conversation so far; the ledger counts it.
+- Cost: every run's token buckets are priced at the model price CM sends in
+  the start payload; the ledger sums runs per blueprint, the per-run cap stops
+  a run within one model call of passing it, and a capped blueprint whose
+  model has no price does not run. A critique round re-bills the conversation
+  so far; the ledger counts it.
 - Long intake dialogs rely on the harness's in-run compaction. Whether that is
   enough is checked in slice 3.
 - State dir: `architect.db` and `workspaces/<repo>/mirror/` plus

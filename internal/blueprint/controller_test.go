@@ -214,6 +214,21 @@ func newControllerOn(t *testing.T, st *store.Store, fn func(context.Context, sta
 	return c, st, runner, rec
 }
 
+func testPrice() *protocol.ModelPrice {
+	// 1 USD per million prompt tokens and 10 per million completion tokens:
+	// 100k prompt + 10k completion tokens cost exactly 0.20 USD.
+	return &protocol.ModelPrice{PromptUSDPerMTok: 1, CompletionUSDPerMTok: 10, CacheReadUSDPerMTok: 0.1, CacheWriteUSDPerMTok: 1.25}
+}
+
+func newControllerWithRunCap(t *testing.T, runCap float64, fn func(context.Context, stage.Input) (stage.Output, error)) (*Controller, *store.Store, *fakeRunner, *recorder) {
+	t.Helper()
+
+	c, st, runner, rec := newController(t, fn)
+	c.opts.MaxRunCostUSD = runCap
+
+	return c, st, runner, rec
+}
+
 func startInput(id string) StartInput {
 	return StartInput{
 		ID: id, Projects: []string{"alpha"}, Mode: "default", CostCapUSD: 0, Model: "session/model",
@@ -810,11 +825,13 @@ func TestMessage_CostCap(t *testing.T) {
 		name       string
 		capUSD     float64
 		spentUSD   float64
+		noPrice    bool
 		wantRun    bool
 		wantRunCap float64
 	}{
 		{name: "nothing left is refused", capUSD: 1, spentUSD: 1},
 		{name: "less left than the run cap runs clamped", capUSD: 1.5, spentUSD: 0.5, wantRun: true, wantRunCap: 1},
+		{name: "capped without a price is refused", capUSD: 1, spentUSD: 0, noPrice: true},
 	}
 
 	for _, tt := range tests {
@@ -823,6 +840,11 @@ func TestMessage_CostCap(t *testing.T) {
 			ctx := context.Background()
 			in := startInput("BP1")
 			in.CostCapUSD = tt.capUSD
+
+			if !tt.noPrice {
+				in.Price = testPrice()
+			}
+
 			require.NoError(t, c.Start(ctx, in))
 
 			now := time.Now().UTC()
@@ -852,6 +874,130 @@ func TestMessage_CostCap(t *testing.T) {
 			assert.False(t, rec.has(EventError))
 		})
 	}
+}
+
+func TestRun_CostIsPricedFromTokensWhenTheEndpointReportsNone(t *testing.T) {
+	c, st, _, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+		out := artifactOutput("# Need", in)
+		out.Result.TotalCostUSD = 0
+		out.Result.PromptTokens = 100_000
+		out.Result.CompletionTokens = 10_000
+
+		return out, nil
+	})
+	ctx := context.Background()
+	in := startInput("BP1")
+	in.Price = testPrice()
+	require.NoError(t, c.Start(ctx, in))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.InDelta(t, 0.20, runs[0].Usage.CostUSD, 1e-9)
+	assert.Equal(t, int64(100_000), runs[0].Usage.PromptTokens)
+
+	ended, ok := rec.first(EventStageEnded)
+	require.True(t, ok)
+	assert.Equal(t, true, ended.Payload["priced"])
+	assert.InDelta(t, 0.20, ended.Payload["cost_usd"], 1e-9)
+}
+
+func TestRun_ReportedCostWinsWhenHigher(t *testing.T) {
+	c, st, _, _ := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+		out := artifactOutput("# Need", in)
+		out.Result.TotalCostUSD = 0.5
+		out.Result.PromptTokens = 1000
+
+		return out, nil
+	})
+	ctx := context.Background()
+	in := startInput("BP1")
+	in.Price = testPrice()
+	require.NoError(t, c.Start(ctx, in))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.InDelta(t, 0.5, runs[0].Usage.CostUSD, 1e-9)
+}
+
+func TestRun_StopsWhenPricedUsagePassesTheRunCap(t *testing.T) {
+	// The fake model "spends" through usage lines and then blocks until the
+	// run is stopped, as a real model call would be cut off by the context.
+	c, st, _, rec := newControllerWithRunCap(t, 0.5, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		for range 3 {
+			_, _ = in.Events.Write([]byte(`{"seq":1,"kind":"usage","data":{"prompt_tokens":100000,"completion_tokens":10000,"cost_usd":0}}` + "\n"))
+		}
+
+		<-ctx.Done()
+
+		return stage.Output{Result: harness.Result{Reason: "error", PromptTokens: 300_000, CompletionTokens: 30_000}}, ctx.Err()
+	})
+	ctx := context.Background()
+	in := startInput("BP1")
+	in.Price = testPrice()
+	in.CostCapUSD = 10
+	require.NoError(t, c.Start(ctx, in))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, store.RunFailed, runs[0].Status)
+	assert.Equal(t, "max_cost", runs[0].Reason)
+	assert.InDelta(t, 0.60, runs[0].Usage.CostUSD, 1e-9)
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, string(StateIdle), bp.State)
+
+	ev, ok := rec.first(EventError)
+	require.True(t, ok)
+	assert.Contains(t, ev.Payload["message"], "run cost cap")
+}
+
+func TestMessage_NeedRefusedWhenTheCapIsSpent(t *testing.T) {
+	c, st, runner, rec := newController(t, artifactRun("# Need"))
+	ctx := context.Background()
+	in := startInput("BP1")
+	in.CostCapUSD = 1
+	in.Price = testPrice()
+	require.NoError(t, c.Start(ctx, in))
+
+	now := time.Now().UTC()
+	prior, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+	require.NoError(t, st.EndRun(ctx, prior, store.RunDone, "done", store.RunUsage{CostUSD: 1}, now))
+
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	assert.Equal(t, 0, runner.calls())
+	assert.True(t, rec.has(EventError))
+
+	_, err = st.LatestArtifact(ctx, "BP1", needStage)
+	assert.ErrorIs(t, err, store.ErrNotFound, "a refused need is not stored as a version")
+}
+
+func TestMessage_CappedWithoutPriceStoresNoNeed(t *testing.T) {
+	c, st, runner, rec := newController(t, artifactRun("# Need"))
+	ctx := context.Background()
+	in := startInput("BP1")
+	in.CostCapUSD = 1
+	require.NoError(t, c.Start(ctx, in))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	assert.Equal(t, 0, runner.calls())
+	assert.True(t, rec.has(EventError))
+
+	_, err := st.LatestArtifact(ctx, "BP1", needStage)
+	assert.ErrorIs(t, err, store.ErrNotFound)
 }
 
 func TestRunError_IsRecorded(t *testing.T) {

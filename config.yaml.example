@@ -20,9 +20,8 @@ contextmatrix_url: "http://localhost:8080"
 log_level: info
 
 # Harness cost cap per stage run, in USD. Default: 2.
-# Cost is what the LLM endpoint reports per call. An endpoint that reports no
-# cost shows 0 USD, and neither this cap nor a blueprint's cost cap binds;
-# max_turns still bounds every run.
+# Runs are priced from their tokens at the price CM sends per session, so this
+# binds on every endpoint. A run is stopped within one model call of passing it.
 # Env: CONTEXTMATRIX_ARCHITECT_MAX_RUN_COST_USD
 max_run_cost_usd: 2
 
