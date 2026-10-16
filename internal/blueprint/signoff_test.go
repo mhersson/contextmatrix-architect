@@ -167,6 +167,21 @@ func TestSignoff_AutoEmitApprovesWhenPreflightIsClean(t *testing.T) {
 	assert.Equal(t, store.ResponderAuto, gates[0].Responder)
 }
 
+func TestSignoff_AutoEmitEmitsAfterAFirstCommitToAnEmptyRepository(t *testing.T) {
+	c, _, _, rec, ws := newPipeline(t, happyScript())
+	ws.empty = map[string]bool{"alpha": true}
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	ws.heads = map[string]string{"https://example.com/alpha.git": "sha-first"}
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeAutoEmit
+	driveIn(t, c, in)
+
+	assert.Equal(t, []string{"Add the thing"}, fake.titles())
+	assert.False(t, rec.has(EventSignOff))
+}
+
 func TestSignoff_AutoEmitStopsForAHumanOnAWarning(t *testing.T) {
 	c, _, _, rec, ws := newPipeline(t, happyScript())
 	fake := newFakeCM()
@@ -993,7 +1008,7 @@ func TestReopen_ARefusedYoloStartWaitsForApprove(t *testing.T) {
 	reminder, ok := rec2.first(EventAwaitInput)
 	require.True(t, ok, "the reminder is posted")
 	assert.Equal(t, signoffStage, reminder.Payload["stage"])
-	assert.Contains(t, reminder.Payload["prompt"], "retry the run start")
+	assert.Contains(t, reminder.Payload["prompt"], "start it")
 
 	require.NoError(t, c2.Message(ctx, "BP1", "approve", "m3"))
 	c2.Wait("BP1")
@@ -1074,7 +1089,7 @@ func TestSignoff_TextWhileEmissionIsUnfinishedHintsAtApprove(t *testing.T) {
 		{
 			name: "a refused run start", script: happyScript(), in: yoloInput("BP1"),
 			inCM: func(f *fakeCM) { f.runErr = errors.New("cm: run_card: no execution backend is configured") },
-			hint: "reply approve to retry the run start",
+			hint: "reply approve to start the run",
 		},
 		{name: "a finished emission", script: happyScript(), in: startInput("BP1"), inCM: func(*fakeCM) {}},
 	}

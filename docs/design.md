@@ -17,7 +17,8 @@ reviewer), asks what it cannot decide, records every decision and assumption,
 drafts the cards, checks them against the card contract, and emits the
 playbook. CM does what CM does from there. In yolo mode the whole path from
 need to merged pull requests on a playbook branch runs without a human touching
-it.
+it, unless a card's repository has no commits: the run then waits for a first
+commit and an `approve`.
 
 ## Vocabulary
 
@@ -424,7 +425,9 @@ blueprint.
 - **`auto`**: every policy `auto`. Stops before emission. Cards auto-vet in
   CM on the non-Jira path, so this stop is the only human backstop.
 - **`auto+emit`**: as above, then emits the playbook and stops.
-- **`yolo`**: as `auto+emit`, then starts the run. A single card is
+- **`yolo`**: as `auto+emit`, then starts the run, unless a card's repository
+  has no commits: the cards are emitted, the session is told to push a first
+  commit and reply `approve`, and no run starts until then. A single card is
   started with `run_card` and ends as one pull request to the project's default
   branch under the card's own settings. Several cards are started with
   `run_playbook`, which makes the playbook runnable and plays it; every card
@@ -464,9 +467,11 @@ Then, in order:
    attempt, reading CM each time. Blocking: a card's project is missing in
    CM or declares no repository. A blocked emission waits for the fix in CM
    and another `approve`. Warnings: a repository whose default branch moved
-   since grounding or could not be read, a project that declares no verify
-   command while the cards propose none, or a draft title that is a card in
-   another runnable playbook. An `approve` after the warnings were shown is
+   since grounding or could not be read (a move is a changed grounded commit:
+   a repository empty at grounding that has commits now is not a move, the
+   push step is done), a project that declares no verify command while the
+   cards propose none, or a draft title that is a card in another runnable
+   playbook. An `approve` after the warnings were shown is
    the logged override; an emitting mode stops for a human instead. Steps:
    "set verify command `<cmd>` on project `<p>` in ContextMatrix" for each
    project that still declares no verify command, with the command the
@@ -494,6 +499,12 @@ Then, in order:
 4. The blueprint's trees are removed and its state is `emitted`. Running is
    a human action in CM, or in yolo mode `run_card` for one card and
    `run_playbook` for several, started once and recorded in `emissions`.
+   While a card's repository has no commits yolo starts nothing and records
+   nothing: the session gets a line naming the repositories, saying to push
+   an initial commit and reply `approve`, or to start the run in CM and
+   reply `approve`. A later `approve` resumes the emission and starts the run
+   once every repository has a commit; if one is still empty the line is
+   posted again. The watch starts once the run start is recorded.
 5. **Watch.** While the session is attached the architect polls CM every
    `watch_interval_seconds` (default 60) and posts a line when a card's
    state, worker, phase or pull request changes, or the playbook run's

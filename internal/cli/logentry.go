@@ -481,7 +481,7 @@ func setupGapsText(p map[string]any) string {
 		}
 
 		if empty, _ := g["empty"].(bool); empty {
-			fmt.Fprintf(&b, "\n- %s is an empty repository. Its default branch needs an initial commit before the cards run, because the agent needs a base branch; the manual steps shown before the cards run include it. A commit pushed before emission is shown at the sign-off as a moved branch to review, because the cards were planned on an empty repository.", name)
+			fmt.Fprintf(&b, "\n- %s is an empty repository. Its default branch needs an initial commit before the cards run, because the agent needs a base branch; the manual steps shown before the cards run include it.", name)
 		}
 	}
 

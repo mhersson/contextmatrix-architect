@@ -120,7 +120,7 @@ func (c *Controller) emitted(ctx context.Context, bp store.Blueprint) (cards, co
 // abort stops it between two calls. Every created id is recorded at once,
 // and the next approve resumes from what is recorded. The state is emitting
 // until the cards exist and are announced and, in yolo mode, the run start
-// was attempted.
+// was attempted or held for a repository with no commits.
 func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint) {
 	bg := context.WithoutCancel(ctx)
 	au := sess.audit
@@ -168,13 +168,20 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 		return
 	}
 
-	if err := c.emitCards(ctx, au, bp, client, draft, pf.Steps); err != nil {
+	if err := c.emitCards(ctx, au, bp, client, draft, pf); err != nil {
 		c.emitError(ctx, au, bp.ID, err)
 
 		return
 	}
 
-	if bp.Mode == protocol.ArchitectModeYolo {
+	if bp.Mode == protocol.ArchitectModeYolo && len(pf.EmptyRepos) > 0 {
+		// Nothing is recorded, so the blueprint stays incomplete: the watch
+		// starts once an approve records the run start.
+		au.event(bg, Event{Kind: EventAwaitInput, BlueprintID: bp.ID, Payload: map[string]any{
+			"stage":  signoffStage,
+			"prompt": emptyReposPrompt(pf.EmptyRepos),
+		}})
+	} else if bp.Mode == protocol.ArchitectModeYolo {
 		err := c.startRun(ctx, au, bp, client, draft)
 		if err != nil && c.closingDown() {
 			c.opts.Logger.Info("blueprint: run start interrupted by shutdown", "blueprint", bp.ID, "error", au.text(err.Error()))
@@ -362,9 +369,10 @@ func (c *Controller) emitError(ctx context.Context, au audit, id string, err err
 // recording each CM id as soon as it exists. A card CM warns about is kept
 // and its warnings reported: readiness mirrors CM's lint, and the outcomes
 // stage learns from what slips through. The steps preflight found at this
-// attempt are announced with the cards. The trees go once everything exists.
+// attempt are announced with the cards, and the run start is said to follow
+// unless a repository has no commits. The trees go once everything exists.
 // Each body says what the source tags it cites stand for.
-func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint, client CMClient, draft contract.Draft, steps []string) error {
+func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint, client CMClient, draft contract.Draft, pf preflightResult) error {
 	bg := context.WithoutCancel(ctx)
 
 	recs, err := c.opts.Store.ListEmissions(bg, bp.ID)
@@ -554,8 +562,8 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 
 	// run_follows tells the panel that the run start comes next.
 	au.event(bg, Event{Kind: EventEmitted, BlueprintID: bp.ID, Payload: map[string]any{
-		"cards": cards, "playbook": playbookID, "manual": manual, "steps": steps,
-		"run_follows": bp.Mode == protocol.ArchitectModeYolo && !started,
+		"cards": cards, "playbook": playbookID, "manual": manual, "steps": pf.Steps,
+		"run_follows": bp.Mode == protocol.ArchitectModeYolo && !started && len(pf.EmptyRepos) == 0,
 	}})
 
 	return nil
@@ -783,4 +791,15 @@ func ownRepos(projects []cm.Project, name string) []string {
 	}
 
 	return out
+}
+
+// emptyReposPrompt tells the session why yolo did not start the run and how
+// to go on. The approve is what records the run start, which starts the
+// watch.
+func emptyReposPrompt(repos []string) string {
+	if len(repos) == 1 {
+		return repos[0] + " has no commits, so the run was not started; push an initial commit, then reply approve to start it, or start it in ContextMatrix and reply approve."
+	}
+
+	return strings.Join(repos, ", ") + " have no commits, so the run was not started; push an initial commit to each, then reply approve to start it, or start it in ContextMatrix and reply approve."
 }

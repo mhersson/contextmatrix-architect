@@ -18,11 +18,14 @@ import (
 // mode stops for a human instead of approving. Steps are setup only a human
 // can do before the cards run, in ContextMatrix or in a repository; they
 // are shown but neither block emission nor stop an emitting mode, because
-// creating the cards does not need them.
+// creating the cards does not need them. EmptyRepos are the identities
+// (clean urls) of the repositories of card projects with no commits, in
+// source order; a yolo run waits for them.
 type preflightResult struct {
-	Blocking []string
-	Warnings []string
-	Steps    []string
+	Blocking   []string
+	Warnings   []string
+	Steps      []string
+	EmptyRepos []string
 }
 
 // preflight checks what emission needs: every card's project in
@@ -95,15 +98,21 @@ func (c *Controller) preflight(ctx context.Context, sess *session, bp store.Blue
 	}
 
 	res.Warnings = append(append(res.Warnings, moved...), taken...)
-	res.Steps = append(res.Steps, empty...)
+	for _, identity := range empty {
+		res.Steps = append(res.Steps, fmt.Sprintf("push an initial commit to %s's default branch before running the cards; the agent needs a base branch", identity))
+	}
+
+	res.EmptyRepos = empty
 
 	return res, nil
 }
 
 // movedRepos warns about every repository whose default branch moved since
-// grounding recorded it or could not be read, and lists a step for every
-// repository with no commits that a card runs in (targets, by clean url):
-// the agent needs a base branch to work from.
+// grounding recorded it or could not be read, and returns the identity of
+// every repository with no commits that a card runs in (targets, by clean
+// url): the agent needs a base branch to work from. A first commit to a
+// repository that was empty at grounding is no move: it is the push step
+// done.
 func (c *Controller) movedRepos(ctx context.Context, sess *session, bp store.Blueprint, targets map[string]bool) ([]string, []string, error) {
 	if c.opts.Workspace == nil {
 		return nil, nil, nil
@@ -135,7 +144,7 @@ func (c *Controller) movedRepos(ctx context.Context, sess *session, bp store.Blu
 		creds = c.opts.Credentials(sess.gitToken)
 	}
 
-	var warnings, steps []string
+	var warnings, empty []string
 
 	for _, identity := range order {
 		src := latest[identity]
@@ -147,16 +156,16 @@ func (c *Controller) movedRepos(ctx context.Context, sess *session, bp store.Blu
 			continue
 		}
 
-		if sha != src.Version {
+		if sha != src.Version && src.Version != "" {
 			warnings = append(warnings, fmt.Sprintf("the default branch of %s [%s] moved since grounding, from %s to %s", identity, src.Tag(), commitOf(src.Version), commitOf(sha)))
 		}
 
 		if sha == "" && targets[identity] {
-			steps = append(steps, fmt.Sprintf("push an initial commit to %s's default branch before running the cards; the agent needs a base branch", identity))
+			empty = append(empty, identity)
 		}
 	}
 
-	return warnings, steps, nil
+	return warnings, empty, nil
 }
 
 // takenTitles warns about every draft card whose title is already a card in

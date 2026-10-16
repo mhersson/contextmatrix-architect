@@ -17,9 +17,10 @@ playbook for two or more, or reject with feedback to re-run decomposition. The
 auto+emit and yolo modes approve on their own when the preflight finds nothing
 that needs a human first; manual steps it lists are shown with the emitted
 cards. In yolo mode the architect then starts the run: one card with
-run_card, several with run_playbook. While the session is open the architect
-watches the emitted cards and playbook in ContextMatrix and posts each change,
-ending with the pull requests and compare links.
+run_card, several with run_playbook. If a card's repository has no commits it
+waits for a first commit and a reply of approve. While the session is open the
+architect watches the emitted cards and playbook in ContextMatrix and posts
+each change, ending with the pull requests and compare links.
 
 ## Run
 

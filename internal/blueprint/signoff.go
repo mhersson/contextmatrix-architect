@@ -296,7 +296,7 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 			// A plain note: without the record, a hint could point the wrong way.
 			c.opts.Logger.Warn("blueprint: read the emission for a note", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
 		case cards:
-			note.Payload["hint"] = "The cards are approved; reply approve to retry the run start."
+			note.Payload["hint"] = "The cards are approved; reply approve to start the run."
 		default:
 			note.Payload["hint"] = "The cards are approved; reply approve to resume emission."
 		}
@@ -395,7 +395,7 @@ func (c *Controller) resumeEnd(ctx context.Context, r *run, sess *session, bp st
 		case cur.State != string(StateEmitting):
 			prompt := "Emission is stopped; reply approve to resume it."
 			if cards {
-				prompt = "The run did not start; reply approve to retry the run start."
+				prompt = "The run has not started; reply approve to start it."
 			}
 
 			au.event(bg, Event{Kind: EventAwaitInput, BlueprintID: bp.ID, Payload: map[string]any{"stage": signoffStage, "prompt": prompt}})

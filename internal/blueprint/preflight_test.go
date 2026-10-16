@@ -43,6 +43,7 @@ func TestPreflight(t *testing.T) {
 		blocking string // substring expected among the blocking problems
 		warning  string // substring expected among the warnings
 		step     string // substring expected among the steps
+		empty    []string
 	}{
 		{name: "clean", arrange: noop},
 		{
@@ -101,6 +102,7 @@ func TestPreflight(t *testing.T) {
 			},
 			warning: "to an empty repository",
 			step:    "push an initial commit to https://example.com/alpha.git's default branch before running the cards; the agent needs a base branch",
+			empty:   []string{"https://example.com/alpha.git"},
 		},
 		{
 			name: "title in another runnable playbook",
@@ -129,6 +131,8 @@ func TestPreflight(t *testing.T) {
 
 			res := preflightOf(t, c, st, fake)
 
+			assert.Equal(t, tt.empty, res.EmptyRepos)
+
 			for _, check := range []struct {
 				got  []string
 				want string
@@ -144,6 +148,29 @@ func TestPreflight(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A first commit to a repository that was empty at grounding is the push
+// step done: no warning, no step.
+func TestPreflight_AFirstCommitIsNotAMove(t *testing.T) {
+	c, st, _, _, ws := newPipeline(t, happyScript())
+	ws.empty = map[string]bool{"alpha": true}
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+
+	drive(t, c, "BP1")
+
+	before := preflightOf(t, c, st, fake)
+	assert.Equal(t, []string{"https://example.com/alpha.git"}, before.EmptyRepos)
+
+	ws.mu.Lock()
+	ws.heads = map[string]string{"https://example.com/alpha.git": "sha-first"}
+	ws.mu.Unlock()
+
+	res := preflightOf(t, c, st, fake)
+	assert.Empty(t, res.Warnings)
+	assert.Empty(t, res.Steps)
+	assert.Empty(t, res.EmptyRepos)
 }
 
 func TestEmit_RefusesWhilePreflightBlocks(t *testing.T) {
@@ -165,20 +192,18 @@ func TestEmit_RefusesWhilePreflightBlocks(t *testing.T) {
 func TestMovedRepos_EmptyRepositories(t *testing.T) {
 	const url = "https://example.com/alpha.git"
 
-	const push = "push an initial commit to https://example.com/alpha.git's default branch before running the cards; the agent needs a base branch"
-
 	tests := []struct {
 		name     string
 		recorded string // the sha grounding recorded; "" for no commits
 		head     string // the sha the default branch has now; "" for no commits
 		targets  map[string]bool
 		warnings []string
-		steps    []string
+		empty    []string
 	}{
-		{name: "still empty", targets: map[string]bool{url: true}, steps: []string{push}},
+		{name: "still empty", targets: map[string]bool{url: true}, empty: []string{url}},
 		{name: "a repository no card runs in", targets: map[string]bool{}},
-		{name: "a first commit since grounding", head: "0123456789abcdef", targets: map[string]bool{url: true}, warnings: []string{"from an empty repository to 0123456789ab"}},
-		{name: "emptied since grounding", recorded: "0123456789abcdef", targets: map[string]bool{url: true}, warnings: []string{"from 0123456789ab to an empty repository"}, steps: []string{push}},
+		{name: "a first commit since grounding", head: "0123456789abcdef", targets: map[string]bool{url: true}},
+		{name: "emptied since grounding", recorded: "0123456789abcdef", targets: map[string]bool{url: true}, warnings: []string{"from 0123456789ab to an empty repository"}, empty: []string{url}},
 	}
 
 	for _, tt := range tests {
@@ -198,9 +223,9 @@ func TestMovedRepos_EmptyRepositories(t *testing.T) {
 			bp, err := st.GetBlueprint(ctx, "BP1")
 			require.NoError(t, err)
 
-			warnings, steps, err := c.movedRepos(ctx, sessionOf(t, c, "BP1"), bp, tt.targets)
+			warnings, empty, err := c.movedRepos(ctx, sessionOf(t, c, "BP1"), bp, tt.targets)
 			require.NoError(t, err)
-			assert.Equal(t, tt.steps, steps)
+			assert.Equal(t, tt.empty, empty)
 			require.Len(t, warnings, len(tt.warnings))
 
 			for i, want := range tt.warnings {

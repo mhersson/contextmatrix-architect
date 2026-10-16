@@ -297,6 +297,99 @@ func TestYolo_StartsOneCardWithRunCard(t *testing.T) {
 	assert.Equal(t, true, ev.Payload["run_follows"], "the run start follows the announcement")
 }
 
+func TestYolo_AnEmptyRepositoryEmitsTheCardsAndStartsNoRun(t *testing.T) {
+	c, st, _, rec, ws := newPipeline(t, happyScript())
+	ws.empty = map[string]bool{"alpha": true}
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+
+	driveIn(t, c, yoloInput("BP1"))
+	assert.Nil(t, watcherOf(c, "BP1"), "no watch while the run is held")
+
+	assert.Len(t, fake.titles(), 1, "the card is created")
+	assert.Empty(t, fake.cardRuns())
+	assert.Empty(t, fake.runBooks)
+	assert.False(t, rec.has(EventRunStarted))
+
+	recs, err := st.ListEmissions(context.Background(), "BP1")
+	require.NoError(t, err)
+
+	for _, e := range recs {
+		assert.NotEqual(t, store.EmitRun, e.Kind, "no run start is recorded")
+	}
+
+	ev, ok := rec.first(EventEmitted)
+	require.True(t, ok)
+	assert.Equal(t, false, ev.Payload["run_follows"])
+
+	var prompt string
+
+	for _, a := range rec.all(EventAwaitInput) {
+		if p, _ := a.Payload["prompt"].(string); strings.Contains(p, "has no commits") {
+			prompt = p
+		}
+	}
+
+	assert.Contains(t, prompt, "https://example.com/alpha.git has no commits")
+
+	bp, err := st.GetBlueprint(context.Background(), "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, string(StateEmitted), bp.State)
+}
+
+func TestYolo_AFirstCommitThenApproveStartsTheRun(t *testing.T) {
+	c, _, _, rec, ws := newPipeline(t, happyScript())
+	ws.empty = map[string]bool{"alpha": true}
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	c.opts.WatchInterval = 5 * time.Millisecond
+	ctx := context.Background()
+
+	driveIn(t, c, yoloInput("BP1"))
+	require.Empty(t, fake.cardRuns())
+	assert.Nil(t, watcherOf(c, "BP1"), "no watch while the run is held")
+
+	ws.mu.Lock()
+	ws.heads = map[string]string{"https://example.com/alpha.git": "sha-first"}
+	ws.mu.Unlock()
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	assert.Len(t, fake.cardRuns(), 1)
+	assert.True(t, rec.has(EventRunStarted))
+	assert.Len(t, fake.titles(), 1, "no card is created twice")
+	assert.NotNil(t, watcherOf(c, "BP1"), "the recorded run start starts the watch")
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m4"))
+	c.Wait("BP1")
+
+	assert.Len(t, fake.cardRuns(), 1, "a started run is never started again")
+}
+
+func TestEmptyReposPrompt(t *testing.T) {
+	tests := []struct {
+		name  string
+		repos []string
+		want  string
+	}{
+		{
+			name: "one repository", repos: []string{"a"},
+			want: "a has no commits, so the run was not started; push an initial commit, then reply approve to start it, or start it in ContextMatrix and reply approve.",
+		},
+		{
+			name: "several repositories", repos: []string{"a", "b"},
+			want: "a, b have no commits, so the run was not started; push an initial commit to each, then reply approve to start it, or start it in ContextMatrix and reply approve.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, emptyReposPrompt(tt.repos))
+		})
+	}
+}
+
 func TestYolo_StartsSeveralCardsWithRunPlaybook(t *testing.T) {
 	c, _, _, _, _ := newPipeline(t, twoCardScript())
 	fake := newFakeCM()
