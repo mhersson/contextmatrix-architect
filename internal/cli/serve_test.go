@@ -93,8 +93,16 @@ func TestServe_EndToEnd(t *testing.T) {
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
 
-	// Subscribe to the session's log stream before anything happens. The
-	// deadline ends a read that would otherwise block forever.
+	// Start the blueprint session the way CM does.
+	resp := post(t, ts.Client(), ts.URL+"/chat/start", protocol.ChatStartPayload{
+		SessionID: "S1", Model: "test/model", MCPAPIKey: "mcp", GitCredentialsToken: "S1.mac",
+		LLMEndpoint: &protocol.LLMEndpoint{Type: "openrouter", APIKey: e2eLLMKey},
+		Architect:   &protocol.ArchitectStart{Projects: []string{"alpha"}, Mode: "default"},
+	})
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+
+	// Connect to the session's log stream after the start, the way CM does.
+	// The deadline ends a read that would otherwise block forever.
 	logsCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
 
@@ -112,13 +120,21 @@ func TestServe_EndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ": connected\n", first)
 
-	// Start the blueprint session the way CM does.
-	resp := post(t, ts.Client(), ts.URL+"/chat/start", protocol.ChatStartPayload{
-		SessionID: "S1", Model: "test/model", MCPAPIKey: "mcp", GitCredentialsToken: "S1.mac",
-		LLMEndpoint: &protocol.LLMEndpoint{Type: "openrouter", APIKey: e2eLLMKey},
-		Architect:   &protocol.ArchitectStart{Projects: []string{"alpha"}, Mode: "default"},
-	})
-	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	// The entry published during the start was retained for this consumer.
+	var created protocol.LogEntry
+
+	for {
+		line, err := reader.ReadString('\n')
+		require.NoError(t, err)
+
+		if strings.HasPrefix(line, "data: ") {
+			require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &created))
+
+			break
+		}
+	}
+
+	assert.Equal(t, "system", created.Type, "the created entry is replayed first")
 
 	// The user states the need.
 	resp = post(t, ts.Client(), ts.URL+"/message", protocol.MessagePayload{SessionID: "S1", Content: "run alpha on kubernetes", MessageID: "m1"})

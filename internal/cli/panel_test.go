@@ -2,6 +2,7 @@ package cli
 
 import (
 	"testing"
+	"time"
 
 	"github.com/mhersson/contextmatrix-backendkit/logbridge"
 	protocol "github.com/mhersson/contextmatrix-protocol"
@@ -117,5 +118,35 @@ func TestHarnessForwarder_DropsStopLines(t *testing.T) {
 			require.Len(t, entries, 1)
 			assert.Equal(t, tc.wantType, entries[0].Type)
 		})
+	}
+}
+
+func TestEventSink_RetainsUntilTheConsumerConnects(t *testing.T) {
+	hub := logbridge.NewHub(func(e protocol.LogEntry) string { return e.SessionID }, nil)
+	sink := eventSink(hub)
+
+	sink(blueprint.Event{Kind: blueprint.EventCreated, BlueprintID: "BP1", Payload: map[string]any{"projects": []string{"alpha"}, "mode": "default"}})
+
+	id, ch := hub.Subscribe("BP1")
+
+	select {
+	case e := <-ch:
+		assert.Equal(t, "system", e.Type)
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("the created entry published before the subscriber connected was not replayed")
+	}
+
+	// The consumer leaves, so only a retained key could hold what follows.
+	hub.Unsubscribe(id)
+
+	sink(blueprint.Event{Kind: blueprint.EventEnded, BlueprintID: "BP1"})
+	hub.Publish(protocol.LogEntry{SessionID: "BP1", Type: "system", Content: "after end"})
+
+	_, again := hub.Subscribe("BP1")
+
+	select {
+	case e := <-again:
+		t.Fatalf("nothing is retained after the session ended, got %q", e.Content)
+	case <-time.After(30 * time.Millisecond):
 	}
 }

@@ -118,7 +118,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   and ignores `resume` and the worker image. It reopens the blueprint by id and
   runs no container. An end-session call detaches the client; the blueprint
   persists. A message that arrives while no question is pending is queued as a
-  note for the next stage and logged, never dropped.
+  note for the next stage and logged, never dropped. Entries published before
+  CM's consumer connects, or while it is reconnecting, are retained on the
+  server and replayed to it once, ahead of live entries.
 - **A question blocks the run.** `ask_human` is an ordinary tool: its
   execution waits until the attached client answers or, under `auto`, until a
   responder run returns. The model's run continues with the answer as the tool
