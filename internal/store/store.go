@@ -22,8 +22,10 @@ type Store struct {
 
 // Open opens or creates the database at path and applies the schema.
 func Open(ctx context.Context, path string) (*Store, error) {
+	// recursive_triggers makes the implicit delete of INSERT OR REPLACE fire
+	// the append-only delete triggers; SQLite skips them otherwise.
 	dsn := "file:" + path + "?" + url.Values{
-		"_pragma": {"journal_mode(WAL)", "foreign_keys(1)", "busy_timeout(5000)"},
+		"_pragma": {"journal_mode(WAL)", "foreign_keys(1)", "busy_timeout(5000)", "recursive_triggers(1)"},
 	}.Encode()
 
 	db, err := sql.Open("sqlite", dsn)

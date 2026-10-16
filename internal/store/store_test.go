@@ -77,7 +77,7 @@ func TestRunsAndCost(t *testing.T) {
 	assert.InDelta(t, 1.75, cost, 1e-9)
 }
 
-func TestEventsAppendOnly(t *testing.T) {
+func TestEventsRoundTrip(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -94,7 +94,7 @@ func TestEventsAppendOnly(t *testing.T) {
 	assert.Equal(t, int64(7), got[1].RunID)
 }
 
-func TestTranscriptsAppendOnly(t *testing.T) {
+func TestTranscriptsRoundTrip(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 
@@ -154,6 +154,13 @@ func TestAppendOnlyTablesRefuseRawWrites(t *testing.T) {
 	_, err := s.PutArtifact(ctx, Artifact{BlueprintID: "BP1", Stage: "intake", Body: "b"})
 	require.NoError(t, err)
 
+	// Each table's one row, read back to prove a refused write changed nothing.
+	rows := map[string]struct{ query, want string }{
+		"events":      {`SELECT kind FROM events`, "a"},
+		"transcripts": {`SELECT messages FROM transcripts`, "[]"},
+		"artifacts":   {`SELECT body FROM artifacts`, "b"},
+	}
+
 	tests := []struct {
 		name  string
 		table string
@@ -161,10 +168,15 @@ func TestAppendOnlyTablesRefuseRawWrites(t *testing.T) {
 	}{
 		{"events update", "events", `UPDATE events SET kind = 'z'`},
 		{"events delete", "events", `DELETE FROM events`},
+		{"events replace", "events", `INSERT OR REPLACE INTO events (id, ts, blueprint_id, run_id, kind, payload)
+			SELECT id, ts, blueprint_id, run_id, 'z', payload FROM events`},
 		{"transcripts update", "transcripts", `UPDATE transcripts SET messages = '[]'`},
 		{"transcripts delete", "transcripts", `DELETE FROM transcripts`},
+		{"transcripts replace", "transcripts", `INSERT OR REPLACE INTO transcripts (run_id, messages, created_at) VALUES (1, '[{}]', 0)`},
 		{"artifacts update", "artifacts", `UPDATE artifacts SET body = 'x'`},
 		{"artifacts delete", "artifacts", `DELETE FROM artifacts`},
+		{"artifacts replace", "artifacts", `INSERT OR REPLACE INTO artifacts (blueprint_id, stage, version, body, created_at)
+			VALUES ('BP1', 'intake', 1, 'x', 0)`},
 	}
 
 	for _, tt := range tests {
@@ -176,6 +188,10 @@ func TestAppendOnlyTablesRefuseRawWrites(t *testing.T) {
 			var n int
 			require.NoError(t, s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+tt.table).Scan(&n))
 			assert.Equal(t, 1, n)
+
+			var got string
+			require.NoError(t, s.db.QueryRowContext(ctx, rows[tt.table].query).Scan(&got))
+			assert.Equal(t, rows[tt.table].want, got)
 		})
 	}
 }
