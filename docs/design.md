@@ -198,7 +198,7 @@ developer (DEV), reviewer (REV).
 | 3  | Solution design | SD      | need, slices      | per slice: projects involved, decisions with rejected options, cross-project contracts               | yes       |
 | 4  | Grounding       | DEV     | design            | per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        |
 | 5  | Acceptance      | DEV     | design, grounding | per slice: criteria checkable inside one repo; human and live checks split into manual steps         | `auto` by default |
-| 6  | Decomposition   | DEV     | all above         | draft cards, `depends_on` per project, playbook order                                                 | no        |
+| 6  | Decomposition   | DEV     | all above         | draft cards with type and priority, `depends_on` per project, manual entries for human and live checks, a playbook title and order | no        |
 | 7  | Readiness       | REV     | cards             | contract check per card; failures loop back to 6, three rounds max                                    | no        |
 | 8  | Sign-off        | human   | everything        | approval; then emission                                                                               | yes       |
 | -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   |

@@ -21,6 +21,7 @@ import (
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/code"
+	"github.com/mhersson/contextmatrix-architect/internal/contract"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
@@ -1343,6 +1344,42 @@ func TestPrepareCode_RefusesUnsafeOrCollidingProjects(t *testing.T) {
 			}
 
 			assert.Equal(t, 0, ws.checkouts(), "nothing is fetched")
+		})
+	}
+}
+
+func TestDraftProblems_ManualEntriesAndTitle(t *testing.T) {
+	card := func(id string) contract.Card { return contract.Card{ID: id, Project: "alpha", Title: "Add " + id} }
+
+	tests := []struct {
+		name  string
+		draft contract.Draft
+		want  []string
+	}{
+		{
+			name:  "one card with a manual entry needs no title",
+			draft: contract.Draft{Cards: []contract.Card{card("D1")}, Manual: []contract.Manual{{ID: "M1", Text: "check"}}, Order: []string{"D1", "M1"}},
+		},
+		{
+			name:  "two cards need a playbook title",
+			draft: contract.Draft{Cards: []contract.Card{card("D1"), card("D2")}, Order: []string{"D1", "D2"}},
+			want:  []string{"the draft has several cards, so it needs a playbook title"},
+		},
+		{
+			name:  "a manual entry missing from order",
+			draft: contract.Draft{Title: "T", Cards: []contract.Card{card("D1"), card("D2")}, Manual: []contract.Manual{{ID: "M1", Text: "check"}}, Order: []string{"D1", "D2"}},
+			want:  []string{"M1 is missing from order"},
+		},
+		{
+			name:  "a manual entry twice in order",
+			draft: contract.Draft{Cards: []contract.Card{card("D1")}, Manual: []contract.Manual{{ID: "M1", Text: "check"}}, Order: []string{"D1", "M1", "M1"}},
+			want:  []string{"M1 appears more than once in order"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, draftProblems(tt.draft))
 		})
 	}
 }

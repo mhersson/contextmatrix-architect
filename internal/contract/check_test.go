@@ -288,3 +288,64 @@ func TestParseDraft(t *testing.T) {
 	_, err = ParseDraft(map[string]any{"cards": []any{map[string]any{"id": "D1", "project": "alpha", "title": "t"}, map[string]any{"id": "D1", "project": "alpha", "title": "u"}}})
 	require.Error(t, err, "duplicate ids are rejected")
 }
+
+func TestParseDraft_ManualEntries(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    map[string]any
+		wantErr string
+	}{
+		{
+			name: "card and manual entry",
+			data: map[string]any{
+				"title":  "Ship the thing",
+				"cards":  []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing", "priority": "medium"}},
+				"manual": []any{map[string]any{"id": "M1", "text": "Check the dashboard on staging"}},
+				"order":  []any{"D1", "M1"},
+			},
+		},
+		{
+			name: "manual entry without text",
+			data: map[string]any{
+				"cards":  []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing"}},
+				"manual": []any{map[string]any{"id": "M1", "text": "  "}},
+			},
+			wantErr: `manual entry "M1" needs an id and text`,
+		},
+		{
+			name: "manual entry without an id",
+			data: map[string]any{
+				"cards":  []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing"}},
+				"manual": []any{map[string]any{"id": "", "text": "Check the dashboard on staging"}},
+			},
+			wantErr: `manual entry "" needs an id and text`,
+		},
+		{
+			name: "manual id reuses a card id",
+			data: map[string]any{
+				"cards":  []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing"}},
+				"manual": []any{map[string]any{"id": "D1", "text": "Check it"}},
+			},
+			wantErr: `duplicate id "D1"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d, err := ParseDraft(tt.data)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, "Ship the thing", d.Title)
+			assert.Equal(t, "medium", d.Cards[0].Priority)
+			require.Len(t, d.Manual, 1)
+			assert.Equal(t, "Check the dashboard on staging", d.Manual[0].Text)
+			assert.Equal(t, []string{"D1", "M1"}, d.Order)
+		})
+	}
+}
