@@ -113,6 +113,7 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 		CMTools:        cmReadTools(cfg.ContextMatrixURL),
 		ConnectCM:      cmConnect(cfg.ContextMatrixURL),
 		CallerIdentity: cfg.CallerIdentity,
+		WatchInterval:  cfg.WatchInterval,
 		Credentials: func(gitToken string) code.Credentials {
 			return code.NewCMCredentials(cfg.ContextMatrixURL, gitToken)
 		},

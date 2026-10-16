@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slices 0 and 1 are implemented, and slice 2 signs off ready cards, emits them and a playbook into CM and starts them in yolo mode; the dialog stages are design, and so is the export's commit to a repository (slice 4); the export writes the bundle under the state directory.
+Status: agreed design, 2026-10-15. Slices 0 and 1 are implemented, and slice 2 signs off ready cards, emits them and a playbook into CM and starts them in yolo mode, then reports their run; the dialog stages are design, and so is the export's commit to a repository (slice 4); the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -458,6 +458,14 @@ stop for one otherwise. Every decision is a row in `gates`. Then, in order:
 4. The blueprint's trees are removed and its state is `emitted`. Running is
    a human action in CM, or in yolo mode `run_card` for one card and
    `run_playbook` for several, started once and recorded in `emissions`.
+5. **Watch.** While the session is attached the architect polls CM every
+   `watch_interval_seconds` (default 60) and posts a line when a card's
+   state, worker, phase or pull request changes, or the playbook run's
+   status does. A run waiting on a check-off or on a failed card is reported
+   once as waiting for a human. The watch ends when the single card is done
+   or not planned, or the playbook run completes or every entry is complete,
+   with the pull requests and one compare link per repository, and the
+   blueprint's state is `done`.
 
 The architect does not use CM's Jira import for cards. Its traps hit exactly
 what the contract tunes: imported titles start with the issue key, no labels
@@ -547,9 +555,9 @@ Replies the server understands, besides answers to questions:
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
   URL, backend HMAC key, listen address, state directory, pack, the caller
-  identity for ContextMatrix writes (default human:architect), per-project
-  export opt-ins (slice 4), and optional per-persona model overrides (slugs
-  only).
+  identity for ContextMatrix writes (default human:architect), the watch
+  interval, per-project export opt-ins (slice 4), and optional per-persona
+  model overrides (slugs only).
   Secrets reach only their client and never a log, error, artifact or store
   row.
 - Models: the start payload's model is the default for every persona; config

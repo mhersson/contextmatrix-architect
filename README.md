@@ -11,12 +11,14 @@ the next message as the design. Grounding, decomposition and readiness then
 run in turn over read-only checkouts of the target projects' repositories.
 Every decomposition submit is checked against the card contract inside the
 run, and readiness sends cards that are not ready back to decomposition for up
-to three rounds. The session then reports whether the cards are ready. Ready cards go to
-sign-off: reply approve to create them in ContextMatrix, with a playbook for
-two or more, or reject with feedback to re-run decomposition. The auto+emit
-and yolo modes approve on their own when the preflight finds nothing for a
-human. In yolo mode the architect then starts the run: one card with run_card,
-several with run_playbook.
+to three rounds. The session then reports whether the cards are ready. Ready
+cards go to sign-off: reply approve to create them in ContextMatrix, with a
+playbook for two or more, or reject with feedback to re-run decomposition. The
+auto+emit and yolo modes approve on their own when the preflight finds nothing
+for a human. In yolo mode the architect then starts the run: one card with
+run_card, several with run_playbook. While the session is open the architect
+watches the emitted cards and playbook in ContextMatrix and posts each change,
+ending with the pull requests and compare links.
 
 ## Run
 

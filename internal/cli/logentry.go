@@ -192,6 +192,50 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		}
 
 		entry.Content = fmt.Sprintf("Started playbook %s in ContextMatrix. Each card's pull request merges into the playbook branch once CI passes.", str(p["target"]))
+	case blueprint.EventWatch:
+		entry.Type = "system"
+		entry.Content = str(p["line"])
+	case blueprint.EventWatchEnded:
+		entry.Type = "text"
+
+		var b strings.Builder
+
+		if pb := str(p["playbook"]); pb != "" {
+			fmt.Fprintf(&b, "**Done.** Playbook %s completed.", pb)
+
+			if repos := anyMaps(p["repos"]); len(repos) > 0 {
+				b.WriteString("\n\nOpen the final pull request for each repository:")
+
+				for _, r := range repos {
+					fmt.Fprintf(&b, "\n- %s: %s", str(r["project"]), str(r["compare_url"]))
+				}
+			}
+		} else {
+			b.WriteString("**Done.**")
+		}
+
+		cards := anyMaps(p["cards"])
+		if len(cards) > 0 {
+			b.WriteString("\n\nCards:")
+		}
+
+		for _, card := range cards {
+			fmt.Fprintf(&b, "\n- %s is %s", str(card["card"]), str(card["state"]))
+
+			if pr := str(card["pr"]); pr != "" {
+				b.WriteString(": " + pr)
+			}
+		}
+
+		if manual := stringsOf(p["manual"]); len(manual) > 0 {
+			b.WriteString("\n\nChecks a human runs now:")
+
+			for _, m := range manual {
+				b.WriteString("\n- " + m)
+			}
+		}
+
+		entry.Content = b.String()
 	case blueprint.EventEmitted:
 		entry.Type = "text"
 

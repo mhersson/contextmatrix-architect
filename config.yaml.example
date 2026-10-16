@@ -69,6 +69,11 @@ port: 9095
 # Env: CONTEXTMATRIX_ARCHITECT_STATE_DIR
 state_dir: /var/lib/contextmatrix-architect
 
+# Seconds between two polls of an emitted blueprint's cards and playbook run
+# in ContextMatrix while its session is open; each change is posted to the
+# session. Default: 60. Env: CONTEXTMATRIX_ARCHITECT_WATCH_INTERVAL_SECONDS
+watch_interval_seconds: 60
+
 # Size of the webhook replay cache. Default: 10000.
 # Env: CONTEXTMATRIX_ARCHITECT_WEBHOOK_REPLAY_CACHE_SIZE
 webhook_replay_cache_size: 10000

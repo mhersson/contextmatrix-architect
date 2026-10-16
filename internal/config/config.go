@@ -44,6 +44,8 @@ type Config struct {
 	// WorkspaceMaxAgeDays is how long a blueprint's code trees are kept
 	// after they were last written.
 	WorkspaceMaxAgeDays int
+	// WatchInterval is how often an emitted blueprint's run is polled in ContextMatrix.
+	WatchInterval time.Duration
 
 	ReplaySkew            time.Duration
 	ReplayCacheSize       int
@@ -69,6 +71,7 @@ type raw struct {
 	MessageDedupTTLSeconds int               `koanf:"message_dedup_ttl_seconds"`
 	MessageDedupCacheSize  int               `koanf:"message_dedup_cache_size"`
 	WorkspaceMaxAgeDays    int               `koanf:"workspace_max_age_days"`
+	WatchIntervalSeconds   int               `koanf:"watch_interval_seconds"`
 }
 
 func defaults() raw {
@@ -85,6 +88,7 @@ func defaults() raw {
 		MessageDedupTTLSeconds: 600,
 		MessageDedupCacheSize:  1000,
 		WorkspaceMaxAgeDays:    7,
+		WatchIntervalSeconds:   60,
 	}
 }
 
@@ -105,6 +109,7 @@ func (r raw) toConfig() *Config {
 		MessageDedupTTL:       time.Duration(r.MessageDedupTTLSeconds) * time.Second,
 		MessageDedupCacheSize: r.MessageDedupCacheSize,
 		WorkspaceMaxAgeDays:   r.WorkspaceMaxAgeDays,
+		WatchInterval:         time.Duration(r.WatchIntervalSeconds) * time.Second,
 	}
 }
 
@@ -218,6 +223,10 @@ func (c *Config) Validate() error {
 
 	if c.WorkspaceMaxAgeDays < 1 {
 		return errors.New("workspace_max_age_days must be at least 1")
+	}
+
+	if c.WatchInterval < time.Second {
+		return errors.New("watch_interval_seconds must be at least 1")
 	}
 
 	if suffix, ok := strings.CutPrefix(c.CallerIdentity, "human:"); !ok || strings.TrimSpace(suffix) == "" {

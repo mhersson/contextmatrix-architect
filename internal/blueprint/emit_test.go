@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
 	"github.com/stretchr/testify/assert"
@@ -312,9 +313,11 @@ func TestYolo_ARefusedStartIsReportedAndApproveRetriesItOnce(t *testing.T) {
 	fake := newFakeCM()
 	fake.runErr = errors.New("cm: run_card: no execution backend is configured")
 	c.opts.ConnectCM = fake.connect
+	c.opts.WatchInterval = 5 * time.Millisecond
 	ctx := context.Background()
 
 	driveIn(t, c, yoloInput("BP1"))
+	assert.Nil(t, watcherOf(c, "BP1"), "a refused start starts no watch")
 
 	ev, ok := rec.first(EventError)
 	require.True(t, ok)
@@ -331,6 +334,7 @@ func TestYolo_ARefusedStartIsReportedAndApproveRetriesItOnce(t *testing.T) {
 	require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
 	c.Wait("BP1")
 
+	assert.NotNil(t, watcherOf(c, "BP1"), "the retry starts the watch")
 	assert.Len(t, fake.runCards, 2, "the refused start, then the retry")
 	assert.Len(t, fake.titles(), 1, "no card is created twice")
 
@@ -456,6 +460,7 @@ func TestYolo_ApproveRecordsARunAlreadyInContextMatrix(t *testing.T) {
 			ev, ok := rec.first(EventRunStarted)
 			require.True(t, ok)
 			assert.Equal(t, tc.existing, ev.Payload["existing"])
+			assert.NotNil(t, watcherOf(c, "BP1"), "the run is watched")
 		})
 	}
 }
@@ -526,6 +531,7 @@ func TestYolo_AStartThatFailsAfterTheRunStartedIsRecorded(t *testing.T) {
 			runs := slices.DeleteFunc(recs, func(e store.Emission) bool { return e.Kind != store.EmitRun })
 			require.Len(t, runs, 1)
 			assert.Equal(t, tc.target, runs[0].CMID)
+			assert.NotNil(t, watcherOf(c, "BP1"), "the run is watched")
 
 			require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
 			c.Wait("BP1")

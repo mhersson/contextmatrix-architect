@@ -52,6 +52,10 @@ const (
 	// EventRunStarted records the yolo run start: run_card for one card,
 	// run_playbook for several.
 	EventRunStarted = "run_started"
+	// EventWatch is one change the watch saw in ContextMatrix; EventWatchEnded
+	// the end of the run with its pull requests and compare links.
+	EventWatch      = "watch"
+	EventWatchEnded = "watch_ended"
 	// EventSignOff shows the ready cards, the preflight result and how to
 	// decide; the blueprint waits for approve or reject.
 	EventSignOff = "signoff"

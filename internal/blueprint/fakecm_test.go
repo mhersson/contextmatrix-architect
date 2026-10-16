@@ -32,6 +32,7 @@ type fakeCM struct {
 	bookSeq    map[string][]cm.Playbook
 	seq        map[string]int
 	gets       int
+	failGets   int // fail this many GetCard calls
 	connects   int
 	closes     int
 }
@@ -97,6 +98,12 @@ func (f *fakeCM) GetCard(_ context.Context, _, id string) (cm.Card, error) {
 	defer f.mu.Unlock()
 
 	f.gets++
+
+	if f.failGets > 0 {
+		f.failGets--
+
+		return cm.Card{}, errors.New("cm: get_card: remote unreachable")
+	}
 
 	seq := f.cardSeq[id]
 	if len(seq) == 0 {
@@ -271,8 +278,6 @@ func (f *fakeCM) inputs() ([]cm.CardInput, []cm.PlaybookInput) {
 }
 
 // set replaces what the fake serves for a card or a playbook.
-//
-//nolint:unused // helper for tests of the sign-off and the watch
 func (f *fakeCM) setCards(id string, seq ...cm.Card) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -280,7 +285,6 @@ func (f *fakeCM) setCards(id string, seq ...cm.Card) {
 	f.cardSeq[id] = seq
 }
 
-//nolint:unused // helper for tests of the sign-off and the watch
 func (f *fakeCM) setBooks(id string, seq ...cm.Playbook) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -288,7 +292,6 @@ func (f *fakeCM) setBooks(id string, seq ...cm.Playbook) {
 	f.bookSeq[id] = seq
 }
 
-//nolint:unused // helper for tests of the sign-off and the watch
 func (f *fakeCM) getCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

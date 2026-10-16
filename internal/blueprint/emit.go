@@ -168,6 +168,17 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 			}})
 		}
 	}
+
+	complete, err := c.emitted(bg, bp)
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: watch not started", "blueprint", bp.ID, "error", au.text(err.Error()))
+
+		return
+	}
+
+	if complete {
+		c.startWatch(sess, bp.ID)
+	}
 }
 
 // startRun starts the emitted cards once: run_card for one card, which

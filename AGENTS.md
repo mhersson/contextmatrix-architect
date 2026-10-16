@@ -27,7 +27,7 @@ specification and must stay true at HEAD.
 - `internal/config` - koanf config: file, then `CONTEXTMATRIX_ARCHITECT_*` env.
 - `internal/webhook` - CM-facing chat-backend protocol on backendkit webhookcore and logbridge; parses the abort and export commands.
 - `internal/export` - renders a blueprint's stored record as a markdown bundle in the state directory.
-- `internal/blueprint` - controller: blueprint state machine, stage chaining, human-sourced stages, code stage preparation, the readiness loop, reply handling (answers, the need, notes), abort and export, questions, events, sign-off and emission.
+- `internal/blueprint` - controller: blueprint state machine, stage chaining, human-sourced stages, code stage preparation, the readiness loop, reply handling (answers, the need, notes), abort and export, questions, events, sign-off, emission and the run watch.
 - `internal/stage` - one harness run: persona + instructions + the ask_human and submit_artifact tools, plus per-run tool sets (the code tools and `repo_info`) and submit validation.
 - `internal/pack` - pipeline packs: stages, personas, instructions, lists.yaml and card.md; the default pack is embedded.
 - `internal/code` - read-only mirrors and per-blueprint trees for grounding; repo facts.

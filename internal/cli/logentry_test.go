@@ -50,6 +50,12 @@ func TestLogEntryFor(t *testing.T) {
 		{"playbook created", blueprint.Event{Kind: blueprint.EventPlaybookCreated, BlueprintID: "S1", Payload: map[string]any{"playbook": "ship-the-parser", "entries": 3}}, "system", []string{"ship-the-parser"}, false},
 		{"emitted", blueprint.Event{Kind: blueprint.EventEmitted, BlueprintID: "S1", Payload: map[string]any{"cards": []any{map[string]any{"card": "ALPHA-001"}}, "playbook": "", "manual": []any{"Check the dashboard"}}}, "text", []string{"ALPHA-001", "Check the dashboard"}, false},
 		{"run started", blueprint.Event{Kind: blueprint.EventRunStarted, BlueprintID: "S1", Payload: map[string]any{"kind": "playbook", "target": "ship-the-parser"}}, "system", []string{"ship-the-parser"}, false},
+		{"watch", blueprint.Event{Kind: blueprint.EventWatch, BlueprintID: "S1", Payload: map[string]any{"line": "ALPHA-001 (D1) Add: todo"}}, "system", []string{"ALPHA-001 (D1) Add: todo"}, false},
+		{"watch ended", blueprint.Event{Kind: blueprint.EventWatchEnded, BlueprintID: "S1", Payload: map[string]any{
+			"playbook": "p",
+			"repos":    []any{map[string]any{"project": "alpha", "compare_url": "https://x/compare"}},
+			"cards":    []any{map[string]any{"card": "ALPHA-001", "state": "done", "pr": "https://x/pr/1"}},
+		}}, "text", []string{"https://x/compare", "\n\nCards:\n- ALPHA-001 is done: https://x/pr/1"}, false},
 		{"signoff", blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
 			"cards":    []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing", "type": "feature", "priority": "medium"}},
 			"order":    []any{"D1"},

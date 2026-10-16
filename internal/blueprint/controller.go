@@ -137,6 +137,9 @@ type Options struct {
 	// a human: id, because run_card and run_playbook are human-gated; stage
 	// tools never get it.
 	CallerIdentity string
+	// WatchInterval is how often an emitted blueprint's watch polls
+	// ContextMatrix; 0 means one minute.
+	WatchInterval time.Duration
 }
 
 // session is an attached CM session: the provisioned endpoint, model and
@@ -176,6 +179,7 @@ type Controller struct {
 	mu       sync.Mutex
 	sessions map[string]*session
 	runs     map[string]*run
+	watches  map[string]*watcher
 	closing  bool
 }
 
@@ -189,7 +193,11 @@ func New(opts Options) *Controller {
 		opts.Now = time.Now
 	}
 
-	return &Controller{opts: opts, sessions: map[string]*session{}, runs: map[string]*run{}}
+	if opts.WatchInterval <= 0 {
+		opts.WatchInterval = time.Minute
+	}
+
+	return &Controller{opts: opts, sessions: map[string]*session{}, runs: map[string]*run{}, watches: map[string]*watcher{}}
 }
 
 // effectivePrice maps an all-zero price to nil. CM sends zero rates for a
@@ -604,8 +612,8 @@ func noteEvent(id, text, msgID string, duringRun bool) Event {
 	}}
 }
 
-// End detaches the session, cancelling any run in flight. The blueprint
-// persists and a later Start reopens it.
+// End detaches the session, cancelling any run in flight and stopping the
+// watch, which it waits for. The blueprint persists and a later Start reopens it.
 func (c *Controller) End(ctx context.Context, id string) error {
 	if _, err := c.opts.Store.GetBlueprint(ctx, id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -624,7 +632,18 @@ func (c *Controller) End(ctx context.Context, id string) error {
 		r.cancel()
 	}
 
+	// The watcher leaves in the same section as the session, so a Start that
+	// reopens the blueprint right after always sees no watcher and can start
+	// its own.
+	w := c.watches[id]
+	delete(c.watches, id)
+
 	c.mu.Unlock()
+
+	if w != nil {
+		w.cancel()
+		<-w.done
+	}
 
 	au := c.newAudit()
 	if sess != nil {
@@ -636,8 +655,8 @@ func (c *Controller) End(ctx context.Context, id string) error {
 	return nil
 }
 
-// Shutdown stops accepting runs, cancels every run in flight and waits for
-// the run goroutines to exit. A run the cancel cut short writes no results
+// Shutdown stops accepting runs, cancels every run in flight and every watch
+// and waits for those goroutines to exit. A run the cancel cut short writes no results
 // (only its harness lines), so the next Start re-runs its stage; a run that
 // completed anyway writes its results first. The store can be closed
 // afterwards.
@@ -653,6 +672,12 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 		r.cancel()
 
 		dones = append(dones, r.done)
+	}
+
+	for _, w := range c.watches {
+		w.cancel()
+
+		dones = append(dones, w.done)
 	}
 
 	c.mu.Unlock()
