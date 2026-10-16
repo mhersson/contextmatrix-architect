@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sync"
@@ -226,6 +227,7 @@ func cmReadTools(baseURL string) func(ctx context.Context, mcpAPIKey, tag string
 func runServe(ctx context.Context, cfg *config.Config) error {
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
+	warnMissingSearchTools(logger, exec.LookPath)
 
 	srv, cleanup, err := buildServer(ctx, cfg, logger, stage.NewRunner())
 	if err != nil {
