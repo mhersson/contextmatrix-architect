@@ -35,6 +35,6 @@ maintenance_labels: [simple, chore, dependencies, infra]
 maintenance_verbs: [bump, update, rename, move, pin, upgrade, downgrade]
 forbidden_references:
   - name: local path
-    pattern: '(^|[\s"`(])/(home|Users|tmp|var|etc|opt)/'
+    pattern: '(^|[\s"`(])(/(home|Users)/|C:\\Users\\)'
   - name: parent directory
-    pattern: '(^|[\s"`(])\.\./'
+    pattern: '(^|\s)\.\./'

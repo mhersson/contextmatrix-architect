@@ -301,7 +301,8 @@ release.
 
 - Title starts with an imperative verb. Not a maintenance verb unless the card
   is mechanical work with a maintenance label.
-- Type `bug` only for a real defect.
+- Type `bug` only for a real defect. Only a bug's title opens with a bug verb:
+  the agent routes on the title's first word, whatever the type.
 - `skills` names the task skills the work needs.
 - `depends_on` within the project only.
 
@@ -343,7 +344,7 @@ release.
 | ------------------------------------------------------------------ | -------------------------- |
 | Required sections present, criteria numbered                       | mechanical                 |
 | No local paths, other repos, cluster or deploy references          | mechanical                 |
-| No defect phrase in a feature card; no criteria under a stripped heading | mechanical (lists.yaml) |
+| No defect phrase or bug title verb in a card that is not a bug; no criteria under a stripped heading | mechanical (lists.yaml) |
 | Every path and symbol in Where exists at the recorded sha          | mechanical (code tool)     |
 | `depends_on` graph acyclic within each project                     | mechanical                 |
 | Every acceptance criterion of the slice maps to exactly one card   | mechanical                 |

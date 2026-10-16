@@ -68,13 +68,30 @@ func Check(d Draft, lists Lists, projects map[string]Project) []Finding {
 	return out
 }
 
-// headings returns the "## " headings of a body, trimmed.
-func headings(body string) []string {
+// heading returns the title of a "## " heading line. A column-0 heading
+// always counts; an indented one counts only when the agent strips it, since
+// the agent starts a stripped section at an indented heading too.
+func heading(line string, lists Lists) (string, bool) {
+	if title, ok := strings.CutPrefix(line, "## "); ok {
+		return strings.TrimSpace(title), true
+	}
+
+	if title, ok := strings.CutPrefix(strings.TrimSpace(line), "## "); ok {
+		title = strings.TrimSpace(title)
+
+		return title, isStripped(title, lists)
+	}
+
+	return "", false
+}
+
+// headings returns the headings of a body, trimmed.
+func headings(body string, lists Lists) []string {
 	var out []string
 
 	for _, line := range strings.Split(body, "\n") {
-		if strings.HasPrefix(line, "## ") {
-			out = append(out, strings.TrimSpace(strings.TrimPrefix(line, "## ")))
+		if h, ok := heading(line, lists); ok {
+			out = append(out, h)
 		}
 	}
 
@@ -82,16 +99,16 @@ func headings(body string) []string {
 }
 
 // section returns the non-blank lines under the first "## <name>" heading,
-// up to the next "## " heading.
-func section(body, name string) []string {
+// up to the next heading, an indented stripped one included.
+func section(body, name string, lists Lists) []string {
 	var (
 		out []string
 		in  bool
 	)
 
 	for _, line := range strings.Split(body, "\n") {
-		if strings.HasPrefix(line, "## ") {
-			in = strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(line, "## ")), name)
+		if h, ok := heading(line, lists); ok {
+			in = strings.EqualFold(h, name)
 
 			continue
 		}
@@ -109,7 +126,7 @@ var numbered = regexp.MustCompile(`^\s*\d+[.)]\s+\S`)
 func checkBody(c Card, lists Lists) []Finding {
 	var out []Finding
 
-	hs := headings(c.Body)
+	hs := headings(c.Body, lists)
 
 	for _, want := range lists.RequiredSections {
 		found := false
@@ -133,15 +150,7 @@ func checkBody(c Card, lists Lists) []Finding {
 		}
 	}
 
-	// A continuation line of a numbered criterion is indented; anything else
-	// under the heading must open with a number.
-	for i, line := range section(c.Body, "Acceptance criteria") {
-		if !numbered.MatchString(line) && !strings.HasPrefix(line, "   ") {
-			out = append(out, Finding{c.ID, "criteria_numbered", fmt.Sprintf("criterion line %d is not numbered: %q", i+1, strings.TrimSpace(line))})
-
-			break
-		}
-	}
+	out = append(out, checkCriteria(c, hs, lists)...)
 
 	if !isBug(c) {
 		lower := strings.ToLower(c.Title + "\n" + c.Body)
@@ -165,6 +174,34 @@ func checkBody(c Card, lists Lists) []Finding {
 	}
 
 	return out
+}
+
+// checkCriteria requires the acceptance criteria to be numbered: at least
+// one numbered line, and every line either numbered or an indented
+// continuation of one.
+func checkCriteria(c Card, hs []string, lists Lists) []Finding {
+	const name = "Acceptance criteria"
+
+	if !slices.ContainsFunc(hs, func(h string) bool { return strings.EqualFold(h, name) }) {
+		return nil // required_section reports the missing section
+	}
+
+	count := 0
+
+	for i, line := range section(c.Body, name, lists) {
+		switch {
+		case numbered.MatchString(line):
+			count++
+		case !strings.HasPrefix(line, "   "):
+			return []Finding{{c.ID, "criteria_numbered", fmt.Sprintf("criterion line %d is not numbered: %q", i+1, strings.TrimSpace(line))}}
+		}
+	}
+
+	if count == 0 {
+		return []Finding{{c.ID, "criteria_numbered", "no numbered criterion"}}
+	}
+
+	return nil
 }
 
 // isStripped reports whether the agent removes a heading before prompting:
@@ -191,14 +228,33 @@ func isBug(c Card) bool {
 	return strings.EqualFold(c.Type, "bug")
 }
 
-func checkTitle(c Card, lists Lists) []Finding {
-	words := strings.Fields(c.Title)
+// firstWord is the agent's routing word: the title's first word without
+// trailing punctuation.
+func firstWord(title string) string {
+	words := strings.Fields(title)
 	if len(words) == 0 {
+		return ""
+	}
+
+	return strings.TrimRight(words[0], ".:,!?")
+}
+
+func checkTitle(c Card, lists Lists) []Finding {
+	first := firstWord(c.Title)
+	if first == "" {
 		return []Finding{{c.ID, "title", "title is empty"}}
 	}
 
+	if !isBug(c) {
+		for _, verb := range lists.BugTitleVerbs {
+			if strings.EqualFold(first, verb) {
+				return []Finding{{c.ID, "bug_title_verb", fmt.Sprintf("title verb %q routes a %s card to the bug path", first, c.Type)}}
+			}
+		}
+	}
+
 	for _, verb := range lists.MaintenanceVerbs {
-		if !strings.EqualFold(words[0], verb) {
+		if !strings.EqualFold(first, verb) {
 			continue
 		}
 
@@ -210,7 +266,7 @@ func checkTitle(c Card, lists Lists) []Finding {
 			}
 		}
 
-		return []Finding{{c.ID, "maintenance_label", fmt.Sprintf("title verb %q needs one of the labels %v", words[0], lists.MaintenanceLabels)}}
+		return []Finding{{c.ID, "maintenance_label", fmt.Sprintf("title verb %q needs one of the labels %v", first, lists.MaintenanceLabels)}}
 	}
 
 	return nil

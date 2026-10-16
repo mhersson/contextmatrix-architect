@@ -20,8 +20,8 @@ func testLists() Lists {
 		MaintenanceLabels:       []string{"chore", "dependencies"},
 		MaintenanceVerbs:        []string{"bump", "update"},
 		ForbiddenReferences: []Pattern{
-			{Name: "local path", Pattern: `(^|[\s"` + "`" + `(])/(home|Users|tmp)/`},
-			{Name: "parent directory", Pattern: `(^|[\s"` + "`" + `(])\.\./`},
+			{Name: "local path", Pattern: `(^|[\s"` + "`" + `(])(/(home|Users)/|C:\\Users\\)`},
+			{Name: "parent directory", Pattern: `(^|\s)\.\./`},
 		},
 	}
 }
@@ -85,8 +85,18 @@ func TestCheck_Findings(t *testing.T) {
 		{name: "stripped heading", mutate: func(c *Card) { c.Body += "## Verify Command\nmake test\n" }, want: "stripped_heading"},
 		{name: "stripped heading by prefix", mutate: func(c *Card) { c.Body += "## Review Findings round 2\nx\n" }, want: "stripped_heading"},
 		{name: "defect phrase in a feature", mutate: func(c *Card) { c.Body += "\nIt must not panic.\n" }, want: "defect_phrase"},
+		{name: "no numbered criterion", mutate: func(c *Card) {
+			c.Body = strings.Replace(goodBody, "1. go test ./internal/api/ passes.\n2. The route answers 200.\n", "", 1)
+		}, want: "criteria_numbered"},
+		{name: "indented stripped heading inside the criteria", mutate: func(c *Card) {
+			c.Body = strings.Replace(goodBody, "2. The route answers 200.\n", "2. The route answers 200.\n   ## Verify Command\n3. The agent never sees this.\n", 1)
+		}, want: "stripped_heading"},
+		{name: "feature titled with a bug verb", mutate: func(c *Card) { c.Title = "Fix the missing health route" }, want: "bug_title_verb"},
+		{name: "bug verb with trailing punctuation", mutate: func(c *Card) { c.Title = "Fix: the health route" }, want: "bug_title_verb"},
 		{name: "local path", mutate: func(c *Card) { c.Body += "\nSee /home/dev/notes.md\n" }, want: "forbidden_reference"},
+		{name: "windows local path", mutate: func(c *Card) { c.Body += "\nSee C:\\Users\\dev\\notes.md\n" }, want: "forbidden_reference"},
 		{name: "parent directory", mutate: func(c *Card) { c.Body += "\nCopy from ../other-repo/x.go\n" }, want: "forbidden_reference"},
+		{name: "parent directory at line start", mutate: func(c *Card) { c.Body += "\n../other-repo/x.go\n" }, want: "forbidden_reference"},
 		{name: "maintenance verb without label", mutate: func(c *Card) { c.Title = "Bump the router dependency" }, want: "maintenance_label"},
 		{name: "unknown where path", mutate: func(c *Card) { c.Where = []Where{{Path: "internal/api/missing.go"}} }, want: "where_exists"},
 		{name: "unknown where symbol", mutate: func(c *Card) { c.Where = []Where{{Path: "internal/api/router.go", Symbol: "OldRouter"}} }, want: "where_exists"},
@@ -103,6 +113,15 @@ func TestCheck_Findings(t *testing.T) {
 			assert.Contains(t, checkNames(findings), "D1:"+tt.want)
 		})
 	}
+}
+
+func TestCheck_InRepoPathsAreNotForbidden(t *testing.T) {
+	c := goodCard("D1")
+	c.Body += "\nMount the config at /etc/app/config.yaml, data under /var/lib/app, scratch in /tmp/x.\n" +
+		"Keep `import { x } from \"../lib/x\"` as it is.\n"
+
+	findings := Check(Draft{Cards: []Card{c}, Order: []string{"D1"}}, testLists(), withRoot(t))
+	assert.Empty(t, findings)
 }
 
 func TestCheck_BugCardMayNameTheDefect(t *testing.T) {

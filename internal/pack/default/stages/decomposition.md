@@ -7,7 +7,8 @@ Write the cards an autonomous agent will complete, one deliverable each,
 sized for one pull request and at most two planner subtasks. Follow the card
 template exactly; it is appended to these instructions. Rules:
 
-- Title starts with an imperative verb. Type `bug` only for a real defect.
+- Title starts with an imperative verb. Type `bug` only for a real defect;
+  only a `bug` card's title opens with a bug verb such as fix or repair.
 - Every path and symbol under Where exists in the checkout; cite its source tag.
 - Criteria are numbered and each is checkable inside this repository.
 - No decision is left open; no optional or later scope.

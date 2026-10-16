@@ -17,8 +17,9 @@ type Lists struct {
 	// DefectPhrases route a card to the bug path; a feature card must not
 	// contain one, negated or not.
 	DefectPhrases []string `yaml:"defect_phrases"`
-	// BugTitleVerbs open the titles of bug work. The checks route a card by
-	// its type alone; this list is data for the pack, not a check input.
+	// BugTitleVerbs route a card to the bug path when they are its title's
+	// first word, whatever its type: the agent routes on that word. The
+	// checks flag a card that is not bug-typed and would be misrouted.
 	BugTitleVerbs []string `yaml:"bug_title_verbs"`
 	// MaintenanceLabels and MaintenanceVerbs together route a card to the
 	// maintenance path; a maintenance verb needs a maintenance label.

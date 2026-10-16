@@ -1,10 +1,13 @@
 package pack
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mhersson/contextmatrix-architect/internal/contract"
 )
 
 func TestLoadEmbedded_ReferencesResolve(t *testing.T) {
@@ -88,4 +91,52 @@ func TestLoadDir_Invalid(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.want)
 		})
 	}
+}
+
+// forbiddenRefs runs the embedded pack's card checks over one card with body
+// appended to a good body and returns the forbidden_reference findings.
+func forbiddenRefs(t *testing.T, extra string) []string {
+	t.Helper()
+
+	p, err := LoadEmbedded()
+	require.NoError(t, err)
+
+	lists := p.Lists()
+
+	var body strings.Builder
+
+	for _, section := range lists.RequiredSections {
+		body.WriteString("## " + section + "\n")
+
+		if strings.EqualFold(section, "Acceptance criteria") {
+			body.WriteString("1. The image builds.\n")
+		} else {
+			body.WriteString("Text.\n")
+		}
+	}
+
+	body.WriteString(extra)
+
+	card := contract.Card{ID: "D1", Project: "alpha", Title: "Add a container image", Type: "feature", Body: body.String()}
+	projects := map[string]contract.Project{"alpha": {HasRepo: true, HasVerify: true}}
+
+	var out []string
+
+	for _, f := range contract.Check(contract.Draft{Cards: []contract.Card{card}}, lists, projects) {
+		if f.Check == "forbidden_reference" {
+			out = append(out, f.Message)
+		}
+	}
+
+	return out
+}
+
+func TestEmbeddedLists_ForbiddenReferences(t *testing.T) {
+	inRepo := "Mount the config at /etc/app/config.yaml and keep data in /var/lib/app.\n" +
+		"Scratch files go to /tmp/x.\n" +
+		"The web card keeps `import { x } from \"../lib/x\"` unchanged.\n"
+	assert.Empty(t, forbiddenRefs(t, inRepo), "paths inside an image and quoted relative imports are in-repo content")
+
+	assert.NotEmpty(t, forbiddenRefs(t, "See /home/dev/notes.md for the plan.\n"), "a developer's home directory")
+	assert.NotEmpty(t, forbiddenRefs(t, "Copy it from ../other-repo/x.go first.\n"), "a sibling checkout")
 }
