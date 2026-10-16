@@ -182,6 +182,12 @@ func newController(t *testing.T, fn func(context.Context, stage.Input) (stage.Ou
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 
+	return newControllerOn(t, st, fn)
+}
+
+func newControllerOn(t *testing.T, st *store.Store, fn func(context.Context, stage.Input) (stage.Output, error)) (*Controller, *store.Store, *fakeRunner, *recorder) {
+	t.Helper()
+
 	pk, err := pack.LoadEmbedded()
 	require.NoError(t, err)
 
@@ -817,4 +823,74 @@ func TestSecrets_AreMaskedInTheRecordAndTheSink(t *testing.T) {
 func TestMessage_UnknownBlueprint(t *testing.T) {
 	c, _, _, _ := newController(t, artifactRun("# Need"))
 	require.ErrorIs(t, c.Message(context.Background(), "nope", "hi", "m1"), ErrNotFound)
+}
+
+func TestShutdown_StopsRunsAndLeavesThemRecoverable(t *testing.T) {
+	started := make(chan struct{}, 4)
+	c, st, _, rec := newController(t, func(ctx context.Context, _ stage.Input) (stage.Output, error) {
+		signal(started)
+		<-ctx.Done()
+
+		return stage.Output{}, ctx.Err()
+	})
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	<-started
+
+	require.NoError(t, c.Shutdown(ctx))
+
+	c.mu.Lock()
+	assert.Empty(t, c.runs, "every run goroutine has exited")
+	c.mu.Unlock()
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, store.RunRunning, runs[0].Status, "left as after a crash")
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, string(StateRunning), bp.State)
+	assert.False(t, rec.has(EventStageEnded))
+	assert.False(t, rec.has(EventError))
+
+	require.ErrorIs(t, c.Message(ctx, "BP1", "more", "m2"), ErrShuttingDown)
+	require.ErrorIs(t, c.Start(ctx, startInput("BP2")), ErrShuttingDown)
+
+	// A second controller on the same store recovers the stage.
+	c2, _, runner2, _ := newControllerOn(t, st, artifactRun("# Need"))
+	require.NoError(t, c2.Start(ctx, startInput("BP1")))
+	c2.Wait("BP1")
+	require.Equal(t, 1, runner2.calls())
+
+	runs, err = st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 2)
+	assert.Equal(t, store.RunInterrupted, runs[0].Status)
+	assert.Equal(t, 2, runs[1].Attempt)
+}
+
+func TestShutdown_ExpiredContextDoesNotHang(t *testing.T) {
+	started := make(chan struct{}, 4)
+	release := make(chan struct{})
+	c, _, _, _ := newController(t, func(_ context.Context, _ stage.Input) (stage.Output, error) {
+		signal(started)
+		<-release
+
+		return stage.Output{}, errors.New("ignored cancellation")
+	})
+	t.Cleanup(func() {
+		close(release)
+		c.Wait("BP1")
+	})
+
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	<-started
+
+	expired, cancel := context.WithCancel(ctx)
+	cancel()
+	require.ErrorIs(t, c.Shutdown(expired), context.Canceled)
 }

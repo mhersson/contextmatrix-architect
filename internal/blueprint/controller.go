@@ -36,6 +36,9 @@ const needStage = "need"
 // ErrNotFound is returned for an unknown blueprint or a detached session.
 var ErrNotFound = errors.New("blueprint: not found")
 
+// ErrShuttingDown is returned when a call would launch a run after Shutdown.
+var ErrShuttingDown = errors.New("blueprint: shutting down")
+
 // StartInput is what a CM session start carries.
 type StartInput struct {
 	ID         string
@@ -83,6 +86,9 @@ type session struct {
 type run struct {
 	cancel context.CancelFunc
 	done   chan struct{}
+	// shutdown is set under Controller.mu by Shutdown: the run ends without
+	// touching the store.
+	shutdown bool
 	// answer is the open question's reply channel; nil when none is open.
 	answer chan string
 }
@@ -94,6 +100,7 @@ type Controller struct {
 	mu       sync.Mutex
 	sessions map[string]*session
 	runs     map[string]*run
+	closing  bool
 }
 
 // New builds a Controller.
@@ -121,6 +128,12 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 	}
 
 	c.mu.Lock()
+
+	if c.closing {
+		c.mu.Unlock()
+
+		return ErrShuttingDown
+	}
 
 	if _, attached := c.sessions[in.ID]; attached {
 		c.mu.Unlock()
@@ -275,6 +288,12 @@ func (c *Controller) Message(ctx context.Context, id, text, msgID string) error 
 		return nil
 	}
 
+	if c.closing {
+		c.mu.Unlock()
+
+		return ErrShuttingDown
+	}
+
 	r, runCtx, _ := c.claimLocked(id)
 	c.mu.Unlock()
 
@@ -337,6 +356,44 @@ func (c *Controller) End(ctx context.Context, id string) error {
 	c.mu.Unlock()
 
 	return nil
+}
+
+// Shutdown stops accepting runs, cancels every run in flight and waits for
+// the run goroutines to exit. Cancelled runs write nothing, so the store can
+// be closed afterwards and the next Start re-runs their stages.
+func (c *Controller) Shutdown(ctx context.Context) error {
+	c.mu.Lock()
+	c.closing = true
+
+	dones := make([]chan struct{}, 0, len(c.runs))
+
+	for _, r := range c.runs {
+		r.shutdown = true
+		r.answer = nil
+		r.cancel()
+
+		dones = append(dones, r.done)
+	}
+
+	c.mu.Unlock()
+
+	for _, d := range dones {
+		select {
+		case <-d:
+		case <-ctx.Done():
+			return fmt.Errorf("blueprint: shutdown: %w", ctx.Err())
+		}
+	}
+
+	return nil
+}
+
+// shuttingDown reports whether r was cancelled by Shutdown.
+func (c *Controller) shuttingDown(r *run) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return r.shutdown
 }
 
 // Wait blocks until no run is in flight for id, including a run whose

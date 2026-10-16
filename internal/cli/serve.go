@@ -62,8 +62,8 @@ func newLogger(level string) *slog.Logger {
 
 // buildServer wires store, pack, controller and the webhook server. The
 // runner is injected so tests can replace the model. The returned cleanup
-// closes the store and stops the replay janitor.
-func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, runner blueprint.Runner) (*webhook.Server, func(), error) {
+// stops the replay janitor and the controller's runs, then closes the store.
+func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, runner blueprint.Runner) (*webhook.Server, func(context.Context) error, error) {
 	if err := os.MkdirAll(cfg.StateDir, 0o750); err != nil {
 		return nil, nil, fmt.Errorf("state dir: %w", err)
 	}
@@ -126,10 +126,16 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 		Controller: ctl,
 	})
 
-	cleanup := func() {
+	// Stops the runs before closing the store, so no run writes to a closed DB.
+	cleanup := func(ctx context.Context) error {
 		stopJanitor()
 
-		_ = st.Close()
+		err := ctl.Shutdown(ctx)
+		if closeErr := st.Close(); err == nil {
+			err = closeErr
+		}
+
+		return err
 	}
 
 	return srv, cleanup, nil
@@ -144,7 +150,13 @@ func runServe(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
-	defer cleanup()
+	stopped := false
+
+	defer func() {
+		if !stopped {
+			_ = stopRuns(cleanup)
+		}
+	}()
 
 	httpServer := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
@@ -178,6 +190,20 @@ func runServe(ctx context.Context, cfg *config.Config) error {
 	defer cancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shutdown: %w", err)
+	}
+
+	stopped = true
+
+	return stopRuns(cleanup)
+}
+
+// stopRuns runs cleanup bounded by shutdownTimeout.
+func stopRuns(cleanup func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	if err := cleanup(ctx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
 	}
 

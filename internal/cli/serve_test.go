@@ -83,7 +83,7 @@ func TestServe_EndToEnd(t *testing.T) {
 
 	srv, cleanup, err := buildServer(context.Background(), cfg, testLogger(t), runner)
 	require.NoError(t, err)
-	t.Cleanup(cleanup)
+	t.Cleanup(func() { _ = cleanup(context.Background()) })
 
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)

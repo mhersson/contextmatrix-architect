@@ -97,9 +97,14 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		MaxCostUSD:   runCap,
 		MaxTurns:     c.opts.MaxTurns,
 		Asker:        &asker{c: c, id: id, runID: runID, run: r, audit: au},
-		Events:       &harnessSink{audit: au, id: id, runID: runID},
+		Events:       &harnessSink{c: c, run: r, audit: au, id: id, runID: runID},
 		Secrets:      []string{sess.endpoint.APIKey},
 	})
+
+	// Crash-equivalent: no writes, so recovery re-runs the stage on the next Start.
+	if c.shuttingDown(r) {
+		return
+	}
 
 	if len(out.Result.Messages) > 0 {
 		if err := au.transcript(bg, runID, out.Result.Messages); err != nil {
@@ -238,6 +243,8 @@ func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
 
 // harnessSink stores each harness JSONL line as an event and forwards it.
 type harnessSink struct {
+	c     *Controller
+	run   *run
 	audit audit
 	id    string
 	runID int64
@@ -246,6 +253,10 @@ type harnessSink struct {
 func (s *harnessSink) Write(p []byte) (int, error) {
 	line := bytes.TrimRight(bytes.Clone(p), "\n")
 	if len(line) == 0 {
+		return len(p), nil
+	}
+
+	if s.c.shuttingDown(s.run) {
 		return len(p), nil
 	}
 
