@@ -1,5 +1,8 @@
 .PHONY: build install test test-race fmt lint docker
 
+# Kept in sync with contextmatrix-agent so CI installs the same linter release.
+GOLANGCI_LINT_VERSION ?= v2.14.0
+
 build:
 	go build ./...
 	go build -trimpath -o architect ./cmd/architect

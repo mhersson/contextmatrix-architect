@@ -1,12 +1,13 @@
 FROM golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e AS build
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 WORKDIR /src
+# An empty state dir owned by the nonroot user, so a fresh volume mounted over
+# it inherits that ownership.
+RUN mkdir -p /state
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -o /architect ./cmd/architect
-# An empty state dir owned by the nonroot user, so a fresh volume mounted over
-# it inherits that ownership.
-RUN mkdir -p /state
 # The harness grep and glob tools exec ripgrep; the static musl build runs on
 # distroless. Pinned by version and digest per architecture (14.1.1 ships no
 # aarch64 musl build, so the pin is 15.x).
