@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -31,13 +32,16 @@ type stubController struct {
 	startErr error
 	msgErr   error
 	endErr   error
+	// startCtxErr is the context's error as Start saw it.
+	startCtxErr error
 }
 
-func (s *stubController) Start(_ context.Context, in blueprint.StartInput) error {
+func (s *stubController) Start(ctx context.Context, in blueprint.StartInput) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.starts = append(s.starts, in)
+	s.startCtxErr = ctx.Err()
 
 	return s.startErr
 }
@@ -64,7 +68,7 @@ func newTestServer(t *testing.T, ctl *stubController) (*Server, *logbridge.Hub) 
 	t.Helper()
 
 	hub := logbridge.NewHub(func(e protocol.LogEntry) string { return e.SessionID }, nil)
-	srv := NewServer(Config{APIKey: testKey, Hub: hub, Controller: ctl})
+	srv := NewServer(Config{APIKey: testKey, Hub: hub, Controller: ctl, Logger: slog.New(slog.DiscardHandler)})
 
 	return srv, hub
 }
@@ -179,12 +183,52 @@ func TestStart_ControllerErrorIs500(t *testing.T) {
 	assert.Contains(t, w.Body.String(), protocol.CodeInternal)
 }
 
-func TestUnsignedIsRefused(t *testing.T) {
-	srv, _ := newTestServer(t, &stubController{})
+func TestStart_ARequestCancelDoesNotReachTheController(t *testing.T) {
+	ctl := &stubController{}
+	srv, _ := newTestServer(t, ctl)
 
-	raw, _ := json.Marshal(validStart())
-	w := do(srv, httptest.NewRequest(http.MethodPost, "/chat/start", bytes.NewReader(raw)))
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	w := do(srv, signed(t, http.MethodPost, "/chat/start", validStart(), nextTS()).WithContext(ctx))
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	require.Len(t, ctl.starts, 1)
+	assert.NoError(t, ctl.startCtxErr, "a start runs to completion once the request is in")
+}
+
+func TestUnsignedIsRefused(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+		body   any
+	}{
+		{http.MethodPost, "/chat/start", validStart()},
+		{http.MethodPost, "/message", protocol.MessagePayload{SessionID: "S1", Content: "hi", MessageID: "m1"}},
+		{http.MethodPost, "/chat/end", protocol.ChatEndPayload{SessionID: "S1"}},
+		{http.MethodGet, "/logs?session_id=S1", nil},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			ctl := &stubController{}
+			srv, _ := newTestServer(t, ctl)
+
+			var raw []byte
+
+			if tc.body != nil {
+				var err error
+
+				raw, err = json.Marshal(tc.body)
+				require.NoError(t, err)
+			}
+
+			w := do(srv, httptest.NewRequest(tc.method, tc.path, bytes.NewReader(raw)))
+			assert.Equal(t, http.StatusUnauthorized, w.Code)
+			assert.Empty(t, ctl.starts)
+			assert.Empty(t, ctl.messages)
+			assert.Empty(t, ctl.ends)
+		})
+	}
 }
 
 func TestMessage_DeliversAndDedups(t *testing.T) {
@@ -235,7 +279,11 @@ func TestLogs_StreamsEntriesForTheSession(t *testing.T) {
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/logs?session_id=S1", nil)
+	// The deadline ends a read that would otherwise block forever.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/logs?session_id=S1", nil)
 	require.NoError(t, err)
 
 	tsUsed := nextTS()

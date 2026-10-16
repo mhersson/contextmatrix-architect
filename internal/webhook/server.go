@@ -74,8 +74,8 @@ func NewServer(cfg Config) *Server {
 	return &Server{Core: core, ctl: cfg.Controller, dedup: dedup, logger: logger}
 }
 
-// Routes mounts every route. Lifecycle routes sit behind the drain gate;
-// /logs, /health and /readyz stay reachable while draining.
+// Routes mounts every route. /chat/start and /message sit behind the drain
+// gate; /chat/end, /logs, /health and /readyz stay reachable while draining.
 func (s *Server) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
 

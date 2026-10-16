@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"regexp"
@@ -53,7 +54,9 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.ctl.Start(r.Context(), blueprint.StartInput{
+	// Start is several store steps plus crash recovery; a client that hangs
+	// up must not cut it off midway.
+	if err := s.ctl.Start(context.WithoutCancel(r.Context()), blueprint.StartInput{
 		ID:         p.SessionID,
 		Projects:   p.Architect.Projects,
 		Mode:       p.Architect.Mode,
