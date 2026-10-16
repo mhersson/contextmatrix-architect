@@ -107,6 +107,40 @@ func TestConfigValidate_TakesExactlyOneFile(t *testing.T) {
 	}
 }
 
+// An unknown key fails the load before anything listens, and the error names
+// it, so the error proves which file serve read.
+const unloadable = validConfig + "prot: 1\n"
+
+func TestServe_ReadsTheUserConfigFileByDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	dir, err := os.UserConfigDir()
+	require.NoError(t, err)
+
+	p := filepath.Join(dir, "contextmatrix-architect", "config.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o700))
+	require.NoError(t, os.WriteFile(p, []byte(unloadable), 0o600))
+
+	_, err = runCLI(t, "serve")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "prot")
+}
+
+func TestServe_FallsBackToConfigYAMLWithoutAUserConfigDir(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	cwd := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(cwd, "config.yaml"), []byte(unloadable), 0o600))
+	t.Chdir(cwd)
+
+	_, err := runCLI(t, "serve")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "prot")
+}
+
 func TestConfigDefaults_TakesNoArgs(t *testing.T) {
 	_, err := runCLI(t, "config", "defaults", "extra")
 	require.Error(t, err)
