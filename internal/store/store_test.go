@@ -151,7 +151,7 @@ func TestOpen_MigratesV1(t *testing.T) {
 
 	var version int
 	require.NoError(t, s.db.QueryRow("PRAGMA user_version").Scan(&version))
-	assert.Equal(t, 2, version)
+	assert.Equal(t, 3, version)
 
 	// Every ALTER landed: usage written to the migrated table reads back.
 	ctx := context.Background()
@@ -314,12 +314,17 @@ func TestAppendOnlyTablesRefuseRawWrites(t *testing.T) {
 	require.NoError(t, s.PutTranscript(ctx, 1, json.RawMessage(`[]`)))
 	_, err := s.PutArtifact(ctx, Artifact{BlueprintID: "BP1", Stage: "intake", Body: "b"})
 	require.NoError(t, err)
+	_, err = s.AddGate(ctx, Gate{BlueprintID: "BP1", Stage: "signoff", Version: 1, Decision: GateApprove, Responder: ResponderHuman, DecidedAt: now})
+	require.NoError(t, err)
+	require.NoError(t, s.AddEmission(ctx, Emission{BlueprintID: "BP1", Kind: EmitCard, DraftID: "D1", Project: "alpha", CMID: "ALPHA-1", CreatedAt: now}))
 
 	// Each table's one row, read back to prove a refused write changed nothing.
 	rows := map[string]struct{ query, want string }{
 		"events":      {`SELECT kind FROM events`, "a"},
 		"transcripts": {`SELECT messages FROM transcripts`, "[]"},
 		"artifacts":   {`SELECT body FROM artifacts`, "b"},
+		"gates":       {`SELECT decision FROM gates`, "approve"},
+		"emissions":   {`SELECT cm_id FROM emissions`, "ALPHA-1"},
 	}
 
 	tests := []struct {
@@ -338,6 +343,12 @@ func TestAppendOnlyTablesRefuseRawWrites(t *testing.T) {
 		{"artifacts delete", "artifacts", `DELETE FROM artifacts`},
 		{"artifacts replace", "artifacts", `INSERT OR REPLACE INTO artifacts (blueprint_id, stage, version, body, created_at)
 			VALUES ('BP1', 'intake', 1, 'x', 0)`},
+		{"gates update", "gates", `UPDATE gates SET decision = 'reject'`},
+		{"gates delete", "gates", `DELETE FROM gates`},
+		{"emissions update", "emissions", `UPDATE emissions SET cm_id = 'X'`},
+		{"emissions delete", "emissions", `DELETE FROM emissions`},
+		{"emissions replace", "emissions", `INSERT OR REPLACE INTO emissions (blueprint_id, kind, draft_id, project, cm_id, created_at)
+			VALUES ('BP1', 'card', 'D1', 'alpha', 'X', 0)`},
 	}
 
 	for _, tt := range tests {
@@ -377,4 +388,75 @@ func TestListArtifacts_AllStagesAllVersions(t *testing.T) {
 	require.Len(t, got, 3)
 	assert.Equal(t, "need", got[0].Stage)
 	assert.Equal(t, 2, got[2].Version)
+}
+
+func TestGatesRoundTrip(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	_, err := s.AddGate(ctx, Gate{BlueprintID: "BP1", Stage: "signoff", Version: 2, Decision: GateReject, Feedback: "split D2", Responder: ResponderHuman, DecidedAt: now})
+	require.NoError(t, err)
+	_, err = s.AddGate(ctx, Gate{BlueprintID: "BP1", Stage: "signoff", Version: 3, Decision: GateApprove, Responder: ResponderAuto, DecidedAt: now})
+	require.NoError(t, err)
+	_, err = s.AddGate(ctx, Gate{BlueprintID: "BP2", Stage: "signoff", Version: 1, Decision: GateApprove, Responder: ResponderHuman, DecidedAt: now})
+	require.NoError(t, err)
+
+	got, err := s.ListGates(ctx, "BP1", "signoff")
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, GateReject, got[0].Decision)
+	assert.Equal(t, "split D2", got[0].Feedback)
+	assert.Equal(t, 2, got[0].Version)
+	assert.Equal(t, now, got[0].DecidedAt)
+	assert.Equal(t, ResponderAuto, got[1].Responder)
+}
+
+func TestEmissionsRoundTripAndRefuseDuplicates(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.AddEmission(ctx, Emission{BlueprintID: "BP1", Kind: EmitCard, DraftID: "D1", Project: "alpha", CMID: "ALPHA-007", CreatedAt: now}))
+	require.NoError(t, s.AddEmission(ctx, Emission{BlueprintID: "BP1", Kind: EmitPlaybook, CMID: "ship-the-thing", CreatedAt: now}))
+
+	err := s.AddEmission(ctx, Emission{BlueprintID: "BP1", Kind: EmitCard, DraftID: "D1", Project: "alpha", CMID: "ALPHA-008", CreatedAt: now})
+	require.ErrorIs(t, err, ErrDuplicate)
+
+	got, err := s.ListEmissions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, []Emission{
+		{BlueprintID: "BP1", Kind: EmitCard, DraftID: "D1", Project: "alpha", CMID: "ALPHA-007", CreatedAt: now},
+		{BlueprintID: "BP1", Kind: EmitPlaybook, CMID: "ship-the-thing", CreatedAt: now},
+	}, got)
+}
+
+func TestOpen_MigratesV2(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "architect.db")
+
+	s, err := Open(context.Background(), path)
+	require.NoError(t, err)
+
+	// A v2 file: the v3 tables and their triggers do not exist yet.
+	for _, stmt := range []string{
+		`DROP TRIGGER gates_no_update`, `DROP TRIGGER gates_no_delete`, `DROP TABLE gates`,
+		`DROP TRIGGER emissions_no_update`, `DROP TRIGGER emissions_no_delete`, `DROP TABLE emissions`,
+		`PRAGMA user_version = 2`,
+	} {
+		_, err := s.db.Exec(stmt)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, s.Close())
+
+	s, err = Open(context.Background(), path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	var version int
+	require.NoError(t, s.db.QueryRow("PRAGMA user_version").Scan(&version))
+	assert.Equal(t, 3, version)
+
+	_, err = s.AddGate(context.Background(), Gate{BlueprintID: "BP1", Stage: "signoff", Version: 1, Decision: GateApprove, Responder: ResponderHuman, DecidedAt: time.Now()})
+	require.NoError(t, err)
 }

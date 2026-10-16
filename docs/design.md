@@ -156,16 +156,16 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 
 | Table         | Holds                                                                                                                        |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| blueprints    | id, title, target CM projects, pack name and version, policy overrides, state, cost cap, model price as CM sent it, CM playbook id after emission         |
+| blueprints    | id, title, target CM projects, pack name and version, policy overrides, state, cost cap, model price as CM sent it                                        |
 | stage_runs    | blueprint, stage, attempt, round, status, model, started, ended, cost, token buckets                                                          |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results, reviewer score                   |
 | questions     | append-only: run, number, text, options, answer, responder (`human`, `auto`), assumption flag, verified flag                   |
-| gates         | append-only: blueprint, stage, attempt, decision, feedback, responder, decided at                                             |
+| gates         | append-only: blueprint, stage, the judged artifact's version, decision (approve, reject), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted                                                                     |
 | events        | append-only: time, blueprint, run, kind, payload                                                                              |
 | sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm`), fetched at, first used by stage |
 | ledger        | per-run cost rows summed per blueprint                                                                                        |
-| emissions     | draft card id to CM project and card id; playbook id; created at                                                              |
+| emissions     | append-only: blueprint, kind (card, playbook, run), the draft card id, project, CM id, created at; one row per blueprint, kind and draft id |
 | outcomes      | per emitted card: final state, review attempts, parked reason, cost, finding text, proposed lesson                            |
 | lessons       | text, rationale, evidence card ids, scope (pack or project), state (`proposed`, `active`, `rejected`), decided by             |
 

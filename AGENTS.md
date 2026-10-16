@@ -17,7 +17,7 @@ specification and must stay true at HEAD.
   git-credentials token arrive in every session start from CM and live in
   memory only. There is no CM-less mode.
 - Every action is logged: full transcripts and an append-only event log.
-  The append-only tables (events, transcripts, artifacts) are never updated
+  The append-only tables (events, transcripts, artifacts, gates, emissions) are never updated
   or deleted.
 
 ## Package map
@@ -33,7 +33,7 @@ specification and must stay true at HEAD.
 - `internal/code` - read-only mirrors and per-blueprint trees for grounding; repo facts.
 - `internal/cm` - MCP client to ContextMatrix: list_projects, the read-only `cm_` tools stage runs get, and typed card, playbook and run calls.
 - `internal/contract` - the card contract: lists data and the mechanical checks.
-- `internal/store` - SQLite: blueprints, stage runs, artifacts, transcripts, events, sources.
+- `internal/store` - SQLite: blueprints, stage runs, artifacts, transcripts, events, sources, gates, emissions.
 
 ## Coding conventions
 
