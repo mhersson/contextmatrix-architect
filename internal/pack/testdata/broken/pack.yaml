@@ -1,0 +1,7 @@
+name: broken
+version: "1"
+stages:
+  - id: intake
+    persona: ghost
+    produces: need
+    gate: questions

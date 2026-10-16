@@ -1,0 +1,7 @@
+name: default
+version: "0.1"
+stages:
+  - id: intake
+    persona: product_owner
+    produces: need
+    gate: questions
