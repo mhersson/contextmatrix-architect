@@ -549,7 +549,7 @@ internal/contract    card contract checks, mechanical and model-judged
 internal/store       SQLite: schema, append-only tables, queries
 internal/code        workspace checkout and repo_info
 internal/research    web_fetch
-internal/cm          MCP client and emission
+internal/cm          MCP client (list_projects; emission arrives with the emission slice)
 internal/outcomes    outcomes stage and lessons
 internal/export      markdown rendering into the state directory and the opted-in repo
 internal/config

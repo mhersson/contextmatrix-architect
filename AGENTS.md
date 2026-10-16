@@ -30,6 +30,7 @@ specification and must stay true at HEAD.
 - `internal/stage` - one harness run: persona + instructions + the ask_human and submit_artifact tools.
 - `internal/pack` - pipeline packs: stages, personas, instructions, lists.yaml and card.md; the default pack is embedded.
 - `internal/code` - read-only mirrors and per-blueprint trees for grounding; repo facts.
+- `internal/cm` - MCP client to ContextMatrix: list_projects now, cards and playbooks with emission.
 - `internal/contract` - the card contract: lists data and the mechanical checks.
 - `internal/store` - SQLite: blueprints, stage runs, artifacts, transcripts, events.
 
