@@ -43,6 +43,9 @@ func TestLogEntryFor(t *testing.T) {
 			map[string]any{"tag": "S1", "project": "alpha", "identity": "https://example.com/alpha.git", "sha": "0123456789abcdef0123"},
 			map[string]any{"tag": "S2", "project": "alpha", "identity": "https://example.com/docs.git", "sha": "fedcba9876543210fedc"},
 		}}}, "system", []string{"alpha at 0123456789ab [S1]", "fedcba987654 [S2]"}, false},
+		{"grounded empty repository", blueprint.Event{Kind: blueprint.EventGrounded, BlueprintID: "S1", Payload: map[string]any{"stage": "grounding", "sources": []any{
+			map[string]any{"tag": "S1", "project": "alpha", "sha": ""},
+		}}}, "system", []string{"alpha, an empty repository [S1]"}, false},
 		{"report ready", blueprint.Event{Kind: blueprint.EventReport, BlueprintID: "S1", Payload: map[string]any{"body": "# Ready", "ready": true, "rounds": 1}}, "text", nil, false},
 		{"report not ready", blueprint.Event{Kind: blueprint.EventReport, BlueprintID: "S1", Payload: map[string]any{
 			"body": "# Cards", "ready": false, "rounds": 3, "findings": []string{"D1: two deliverables"},

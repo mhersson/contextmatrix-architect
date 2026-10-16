@@ -145,7 +145,7 @@ func (c *Controller) movedRepos(ctx context.Context, sess *session, bp store.Blu
 		case err != nil:
 			out = append(out, fmt.Sprintf("could not read the default branch of %s [%s]: %v", identity, src.Tag(), err))
 		case sha != src.Version:
-			out = append(out, fmt.Sprintf("the default branch of %s [%s] moved since grounding, from %s to %s", identity, src.Tag(), short(src.Version), short(sha)))
+			out = append(out, fmt.Sprintf("the default branch of %s [%s] moved since grounding, from %s to %s", identity, src.Tag(), commitOf(src.Version), commitOf(sha)))
 		}
 	}
 
@@ -199,6 +199,16 @@ func (c *Controller) takenTitles(ctx context.Context, bp store.Blueprint, draft 
 	}
 
 	return out, nil
+}
+
+// commitOf names a commit in a message: its short sha, or an empty
+// repository for no commit.
+func commitOf(sha string) string {
+	if sha == "" {
+		return "an empty repository"
+	}
+
+	return short(sha)
 }
 
 // short is a commit's first 12 characters.

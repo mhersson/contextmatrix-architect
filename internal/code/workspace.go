@@ -81,6 +81,8 @@ func NewWorkspace(root string, now func() time.Time) *Workspace {
 }
 
 // Checkout is a blueprint's tree of one repository at the commit it records.
+// A repository with no commits has an empty DefaultBranch and SHA, and its
+// tree is an empty directory.
 type Checkout struct {
 	// RepoURL is the repository url without any userinfo.
 	RepoURL       string
@@ -165,7 +167,8 @@ func (w *Workspace) Checkout(ctx context.Context, blueprintID, name, repoURL str
 
 // RemoteHead lists the repository's refs without fetching and returns its
 // default branch and that branch's sha: what a checkout now would record.
-// It writes nothing to disk, so it needs no lock.
+// A repository with no commits returns both empty. It writes nothing to
+// disk, so it needs no lock.
 func (w *Workspace) RemoteHead(ctx context.Context, repoURL string, creds Credentials) (string, string, error) {
 	repoURL = CleanURL(repoURL)
 
@@ -195,7 +198,11 @@ func (w *Workspace) RemoteHead(ctx context.Context, repoURL string, creds Creden
 	remote := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{Name: "origin", URLs: []string{repoURL}})
 
 	refs, err := remote.ListContext(listCtx, &git.ListOptions{Auth: auth})
-	if err != nil {
+
+	switch {
+	case errors.Is(err, transport.ErrEmptyRemoteRepository):
+		return "", "", nil
+	case err != nil:
 		return "", "", fmt.Errorf("code: list %s: %w", repoURL, err)
 	}
 
@@ -298,7 +305,12 @@ func (w *Workspace) fetchMirror(ctx context.Context, mirror, repoURL string, aut
 		Force:      true,
 		Prune:      true,
 	})
-	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+	switch {
+	case errors.Is(err, transport.ErrEmptyRemoteRepository):
+		// No commits, so no default branch: the tree is empty, and the
+		// mirror kept here takes the first commit on a later fetch.
+		return "", "", nil
+	case err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate):
 		return "", "", fmt.Errorf("code: fetch %s: %w", repoURL, err)
 	}
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -132,4 +133,46 @@ func TestEmit_RefusesWhilePreflightBlocks(t *testing.T) {
 	ev, ok := rec.first(EventError)
 	require.True(t, ok)
 	assert.Contains(t, ev.Payload["message"], "declares no verify command")
+}
+
+func TestMovedRepos_EmptyRepositories(t *testing.T) {
+	const url = "https://example.com/alpha.git"
+
+	tests := []struct {
+		name     string
+		recorded string // the sha grounding recorded; "" for no commits
+		head     string // the sha the default branch has now; "" for no commits
+		want     []string
+	}{
+		{name: "still empty"},
+		{name: "a first commit since grounding", head: "0123456789abcdef", want: []string{"from an empty repository to 0123456789ab"}},
+		{name: "emptied since grounding", recorded: "0123456789abcdef", want: []string{"from 0123456789ab to an empty repository"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, _, _, ws := newPipeline(t, happyScript())
+			ctx := context.Background()
+			require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+			_, err := st.AddSource(ctx, store.Source{
+				BlueprintID: "BP1", Kind: "repo", Identity: url, Version: tt.recorded,
+				FetchedAt: time.Now().UTC(), FirstUsedBy: "grounding",
+			})
+			require.NoError(t, err)
+
+			ws.heads = map[string]string{url: tt.head}
+
+			bp, err := st.GetBlueprint(ctx, "BP1")
+			require.NoError(t, err)
+
+			got, err := c.movedRepos(ctx, sessionOf(t, c, "BP1"), bp)
+			require.NoError(t, err)
+			require.Len(t, got, len(tt.want))
+
+			for i, want := range tt.want {
+				assert.Contains(t, got[i], want)
+			}
+		})
+	}
 }

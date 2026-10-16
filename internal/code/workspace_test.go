@@ -54,6 +54,22 @@ func fixtureRepo(t *testing.T, files map[string]string) (string, string) {
 	return dir, hash.String()
 }
 
+// emptyRepo builds a repository with no commits whose default branch would
+// be main, and returns its path.
+func emptyRepo(t *testing.T) string {
+	t.Helper()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary required for the file transport in tests")
+	}
+
+	dir := t.TempDir()
+	_, err := git.PlainInitWithOptions(dir, &git.PlainInitOptions{InitOptions: git.InitOptions{DefaultBranch: plumbing.Main}})
+	require.NoError(t, err)
+
+	return dir
+}
+
 // gitServer serves the repositories under root over smart HTTP through git
 // http-backend. A path under /broken/ answers 500. With held set, every
 // request signals entered and waits until release is called; release is also
@@ -571,4 +587,77 @@ func TestWorkspace_RemoteHeadStopsWhenCredentialsFail(t *testing.T) {
 
 	assert.Zero(t, requests.Load(), "nothing is listed without a credential")
 	assert.Equal(t, [][2]string{{"127.0.0.1", "acme/alpha"}}, creds.asked, "the credential is asked for the repository's host and path")
+}
+
+func TestWorkspace_AnEmptyRepositoryChecksOutAsAnEmptyTree(t *testing.T) {
+	src := emptyRepo(t)
+	ws := newTestWorkspace(t.TempDir(), time.Now)
+	ctx := context.Background()
+
+	co, err := ws.Checkout(ctx, "BP1", "alpha", src, nil)
+	require.NoError(t, err)
+	assert.Empty(t, co.SHA)
+	assert.Empty(t, co.DefaultBranch)
+
+	entries, err := os.ReadDir(co.Dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+
+	info, err := Inspect(ctx, co.Dir)
+	require.NoError(t, err)
+	assert.Empty(t, info.InstructionFile)
+
+	// The mirror made while the repository was empty takes its first commit.
+	repo, err := git.PlainOpen(src)
+	require.NoError(t, err)
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(src, "AGENTS.md"), []byte("# agents\n"), 0o600))
+
+	_, err = wt.Add("AGENTS.md")
+	require.NoError(t, err)
+	first, err := wt.Commit("first", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.com", When: time.Now()}})
+	require.NoError(t, err)
+
+	co, err = ws.Checkout(ctx, "BP1", "alpha", src, nil)
+	require.NoError(t, err)
+	assert.Equal(t, first.String(), co.SHA)
+	assert.Equal(t, "main", co.DefaultBranch)
+
+	info, err = Inspect(ctx, co.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, "AGENTS.md", info.InstructionFile)
+}
+
+func TestWorkspace_AnEmptyRepositoryHasNoHead(t *testing.T) {
+	tests := []struct {
+		name string
+		url  func(t *testing.T, src string) string
+	}{
+		{name: "file", url: func(_ *testing.T, src string) string { return src }},
+		{name: "smart http", url: func(t *testing.T, src string) string {
+			t.Helper()
+
+			base, _, _ := gitServer(t, filepath.Dir(src), false)
+
+			return base + "/" + filepath.Base(src)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := tt.url(t, emptyRepo(t))
+			ws := newTestWorkspace(t.TempDir(), time.Now)
+			ctx := context.Background()
+
+			branch, sha, err := ws.RemoteHead(ctx, url, nil)
+			require.NoError(t, err)
+			assert.Empty(t, branch)
+			assert.Empty(t, sha)
+
+			co, err := ws.Checkout(ctx, "BP1", "alpha", url, nil)
+			require.NoError(t, err)
+			assert.Empty(t, co.SHA)
+		})
+	}
 }

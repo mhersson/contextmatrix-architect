@@ -268,6 +268,7 @@ func (c *Controller) prepareCode(ctx context.Context, sess *session, bp store.Bl
 		facts.repos = append(facts.repos, stage.RepoFacts{
 			Project: t.project, Dir: t.name, DefaultBranch: branch, SHA: src.Version,
 			InstructionFile: info.InstructionFile, VerifyCommand: verifies[t.project], SourceTag: src.Tag(),
+			Empty: src.Version == "",
 		})
 	}
 
@@ -311,6 +312,12 @@ func checkoutLines(facts *codeFacts) string {
 	b.WriteString("Checkouts under the tool root (cite the tag for anything read there):\n")
 
 	for _, r := range facts.repos {
+		if r.Empty {
+			fmt.Fprintf(&b, "- %s/ is project %s, an empty repository with no commits [%s]\n", r.Dir, r.Project, r.SourceTag)
+
+			continue
+		}
+
 		fmt.Fprintf(&b, "- %s/ is project %s at %s [%s]\n", r.Dir, r.Project, r.SHA, r.SourceTag)
 	}
 

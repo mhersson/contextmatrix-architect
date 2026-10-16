@@ -133,6 +133,12 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 				b.WriteString(", ")
 			}
 
+			if str(src["sha"]) == "" {
+				fmt.Fprintf(&b, "%s, an empty repository [%s]", str(src["project"]), str(src["tag"]))
+
+				continue
+			}
+
 			fmt.Fprintf(&b, "%s at %s [%s]", str(src["project"]), shortSHA(str(src["sha"])), str(src["tag"]))
 		}
 

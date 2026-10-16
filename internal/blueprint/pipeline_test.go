@@ -35,6 +35,9 @@ type fakeWorkspace struct {
 	root   string
 	hold   chan struct{}
 	failOn string
+	// empty names the trees that check out as a repository with no
+	// commits: no files, no sha.
+	empty map[string]bool
 
 	mu      sync.Mutex
 	calls   []checkoutCall
@@ -66,6 +69,15 @@ func (w *fakeWorkspace) Checkout(ctx context.Context, blueprintID, name, repoURL
 	}
 
 	dir := filepath.Join(w.TreeRoot(blueprintID), name)
+
+	if w.empty[name] {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return code.Checkout{}, err
+		}
+
+		return code.Checkout{RepoURL: repoURL, Dir: dir}, nil
+	}
+
 	if err := os.MkdirAll(filepath.Join(dir, "internal"), 0o750); err != nil {
 		return code.Checkout{}, err
 	}
@@ -1524,6 +1536,33 @@ func TestPrepareCode_FillsProjectTypesPrioritiesAndForeignRepos(t *testing.T) {
 		"https://example.com/gamma.git",
 		"https://example.com/beta.git", "https://example.com/beta-api.git", "https://example.com/beta-web.git",
 	}, alpha.ForeignRepos, "CM's project order; the legacy repo and every repos url, as CM's lint collects them")
+}
+
+func TestPrepareCode_AnEmptyRepositoryGrounds(t *testing.T) {
+	c, st, _, _, ws := newPipeline(t, happyScript())
+	ws.empty = map[string]bool{"alpha": true}
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	facts, err := c.prepareCode(ctx, sessionOf(t, c, "BP1"), bp, "grounding")
+	require.NoError(t, err)
+	require.Len(t, facts.repos, 1)
+	assert.True(t, facts.repos[0].Empty)
+	assert.Empty(t, facts.repos[0].SHA)
+	assert.Empty(t, facts.repos[0].InstructionFile)
+	assert.Contains(t, checkoutLines(facts), "- alpha/ is project alpha, an empty repository with no commits [S1]\n")
+
+	sources, err := st.ListSources(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, sources, 1)
+	assert.Empty(t, sources[0].Version, "a repository with no commits is recorded with no sha")
+
+	_, err = c.prepareCode(ctx, sessionOf(t, c, "BP1"), bp, "decomposition")
+	require.NoError(t, err)
+	assert.Equal(t, 1, ws.checkouts(), "a later stage reuses the empty tree")
 }
 
 // fakeCMTools hands a cm stage one read tool and counts the sessions it
