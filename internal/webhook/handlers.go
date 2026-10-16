@@ -54,16 +54,23 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Start is several store steps plus crash recovery; a client that hangs
-	// up must not cut it off midway.
-	if err := s.ctl.Start(context.WithoutCancel(r.Context()), blueprint.StartInput{
+	// Controller calls are several store steps (Start adds crash recovery);
+	// a client that hangs up must not cut one off midway.
+	err := s.ctl.Start(context.WithoutCancel(r.Context()), blueprint.StartInput{
 		ID:         p.SessionID,
 		Projects:   p.Architect.Projects,
 		Mode:       p.Architect.Mode,
 		CostCapUSD: p.Architect.CostCapUSD,
 		Model:      p.Model,
 		Endpoint:   *p.LLMEndpoint,
-	}); err != nil {
+	})
+
+	switch {
+	case errors.Is(err, blueprint.ErrShuttingDown):
+		writeDraining(w)
+
+		return
+	case err != nil:
 		s.logger.Error("chat/start: controller start failed", "session_id", p.SessionID, "error", err)
 		webhookcore.WriteError(w, http.StatusInternalServerError, protocol.CodeInternal, "start failed")
 
@@ -84,7 +91,7 @@ func (s *Server) handleEnd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := s.ctl.End(r.Context(), p.SessionID)
+	err := s.ctl.End(context.WithoutCancel(r.Context()), p.SessionID)
 
 	switch {
 	case errors.Is(err, blueprint.ErrNotFound):
@@ -119,12 +126,15 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := s.ctl.Message(r.Context(), p.SessionID, p.Content, p.MessageID)
+	err := s.ctl.Message(context.WithoutCancel(r.Context()), p.SessionID, p.Content, p.MessageID)
 
 	switch {
 	case errors.Is(err, blueprint.ErrNotFound):
 		s.dedup.Rollback(p.SessionID, p.MessageID)
 		webhookcore.WriteError(w, http.StatusNotFound, protocol.CodeNotFound, "no such blueprint session")
+	case errors.Is(err, blueprint.ErrShuttingDown):
+		s.dedup.Rollback(p.SessionID, p.MessageID)
+		writeDraining(w)
 	case err != nil:
 		s.dedup.Rollback(p.SessionID, p.MessageID)
 		s.logger.Error("message: failed", "session_id", p.SessionID, "error", err)
@@ -132,4 +142,10 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	default:
 		webhookcore.WriteJSON(w, http.StatusAccepted, protocol.SuccessResponse{OK: true, MessageID: p.MessageID})
 	}
+}
+
+// writeDraining answers as backendkit's drain gate does, so CM treats a
+// controller that is shutting down like a draining backend.
+func writeDraining(w http.ResponseWriter) {
+	webhookcore.WriteError(w, http.StatusServiceUnavailable, protocol.CodeDraining, "backend is draining")
 }

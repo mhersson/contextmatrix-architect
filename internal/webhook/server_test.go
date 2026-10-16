@@ -32,8 +32,8 @@ type stubController struct {
 	startErr error
 	msgErr   error
 	endErr   error
-	// startCtxErr is the context's error as Start saw it.
-	startCtxErr error
+	// ctxErrs is the context's error as each call saw it, in call order.
+	ctxErrs []error
 }
 
 func (s *stubController) Start(ctx context.Context, in blueprint.StartInput) error {
@@ -41,25 +41,27 @@ func (s *stubController) Start(ctx context.Context, in blueprint.StartInput) err
 	defer s.mu.Unlock()
 
 	s.starts = append(s.starts, in)
-	s.startCtxErr = ctx.Err()
+	s.ctxErrs = append(s.ctxErrs, ctx.Err())
 
 	return s.startErr
 }
 
-func (s *stubController) Message(_ context.Context, id, text, msgID string) error {
+func (s *stubController) Message(ctx context.Context, id, text, msgID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.messages = append(s.messages, id+"|"+text+"|"+msgID)
+	s.ctxErrs = append(s.ctxErrs, ctx.Err())
 
 	return s.msgErr
 }
 
-func (s *stubController) End(_ context.Context, id string) error {
+func (s *stubController) End(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.ends = append(s.ends, id)
+	s.ctxErrs = append(s.ctxErrs, ctx.Err())
 
 	return s.endErr
 }
@@ -183,17 +185,54 @@ func TestStart_ControllerErrorIs500(t *testing.T) {
 	assert.Contains(t, w.Body.String(), protocol.CodeInternal)
 }
 
-func TestStart_ARequestCancelDoesNotReachTheController(t *testing.T) {
-	ctl := &stubController{}
-	srv, _ := newTestServer(t, ctl)
+func TestARequestCancelDoesNotReachTheController(t *testing.T) {
+	cases := []struct {
+		path string
+		body any
+	}{
+		{"/chat/start", validStart()},
+		{"/message", protocol.MessagePayload{SessionID: "S1", Content: "hi", MessageID: "m1"}},
+		{"/chat/end", protocol.ChatEndPayload{SessionID: "S1"}},
+	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			ctl := &stubController{}
+			srv, _ := newTestServer(t, ctl)
 
-	w := do(srv, signed(t, http.MethodPost, "/chat/start", validStart(), nextTS()).WithContext(ctx))
-	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
-	require.Len(t, ctl.starts, 1)
-	assert.NoError(t, ctl.startCtxErr, "a start runs to completion once the request is in")
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			w := do(srv, signed(t, http.MethodPost, tc.path, tc.body, nextTS()).WithContext(ctx))
+			require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+			require.Len(t, ctl.ctxErrs, 1)
+			assert.NoError(t, ctl.ctxErrs[0], "the call runs to completion once the request is in")
+		})
+	}
+}
+
+func TestShuttingDownIs503Draining(t *testing.T) {
+	cases := []struct {
+		path string
+		body any
+	}{
+		{"/chat/start", validStart()},
+		{"/message", protocol.MessagePayload{SessionID: "S1", Content: "hi", MessageID: "m1"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			ctl := &stubController{startErr: blueprint.ErrShuttingDown, msgErr: blueprint.ErrShuttingDown}
+			srv, _ := newTestServer(t, ctl)
+
+			w := do(srv, signed(t, http.MethodPost, tc.path, tc.body, nextTS()))
+			assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+
+			var resp protocol.ErrorResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, protocol.CodeDraining, resp.Code)
+		})
+	}
 }
 
 func TestUnsignedIsRefused(t *testing.T) {
