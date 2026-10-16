@@ -10,7 +10,7 @@ require (
 	github.com/knadh/koanf/v2 v2.3.8
 	github.com/mhersson/contextmatrix-backendkit v0.7.0
 	github.com/mhersson/contextmatrix-harness v0.25.0
-	github.com/mhersson/contextmatrix-protocol v0.22.0
+	github.com/mhersson/contextmatrix-protocol v0.23.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
 	gopkg.in/yaml.v3 v3.0.1
