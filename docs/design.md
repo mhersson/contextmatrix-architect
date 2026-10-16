@@ -576,7 +576,7 @@ internal/contract    card contract checks, mechanical and model-judged
 internal/store       SQLite: schema, append-only tables, queries
 internal/code        workspace checkout and repo_info
 internal/research    web_fetch
-internal/cm          MCP client: the project list and the stage read tools
+internal/cm          MCP client: the project list, the stage read tools, and the card, playbook and run calls emission makes
 internal/outcomes    outcomes stage and lessons
 internal/export      markdown rendering into the state directory
 internal/config
