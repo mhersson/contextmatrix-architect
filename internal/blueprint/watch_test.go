@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
+	"github.com/mhersson/contextmatrix-architect/internal/stage"
+	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
 func watcherOf(c *Controller, id string) *watcher {
@@ -323,4 +325,75 @@ func anyList(v any) []any {
 	default:
 		return nil
 	}
+}
+
+func TestWatch_TheEndIsPostedOnceWithTheArchitectCost(t *testing.T) {
+	script := happyScript()
+	script["intake"] = func(context.Context, stage.Input) (stage.Output, error) {
+		out := done("# Need", map[string]any{"slices": 1})
+		out.Result.TotalCostUSD = 0.25
+
+		return out, nil
+	}
+
+	c, st, _, rec, ws := newPipeline(t, script)
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	c.opts.WatchInterval = 5 * time.Millisecond
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	fake.setCards("ALPHA-001", cm.Card{ID: "ALPHA-001", State: "done", PRURL: "https://example.com/pr/1"})
+	rec.waitFor(t, EventWatchEnded)
+
+	end, ok := rec.first(EventWatchEnded)
+	require.True(t, ok)
+	assert.InDelta(t, 0.25, end.Payload["cost_usd"], 1e-9, "the ledger's sum over the architect's runs")
+	assert.Equal(t, false, end.Payload["priced"], "the session model has no price")
+
+	_, rec2 := reopen(t, c, st, ws, script, newFakeCM(), startInput("BP1"))
+	assert.False(t, rec2.has(EventWatchEnded), "a reopen of a done blueprint posts nothing")
+
+	stored, err := st.ListEvents(ctx, "BP1")
+	require.NoError(t, err)
+
+	n := 0
+
+	for _, e := range stored {
+		if e.Kind == EventWatchEnded {
+			n++
+		}
+	}
+
+	assert.Equal(t, 1, n)
+}
+
+func TestWatch_AnEndAlreadyPostedIsNotPostedAgain(t *testing.T) {
+	c, st, _, _, ws := newPipeline(t, happyScript())
+	c.opts.ConnectCM = newFakeCM().connect
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	// A crash fell between posting the summary and marking the blueprint done.
+	require.NoError(t, st.AppendEvent(ctx, store.Event{
+		Time: time.Now().UTC(), BlueprintID: "BP1", Kind: EventWatchEnded, Payload: []byte(`{"cards":[]}`),
+	}))
+
+	second := newFakeCM()
+	second.setCards("ALPHA-001", cm.Card{ID: "ALPHA-001", State: "done"})
+
+	_, rec2 := reopen(t, c, st, ws, happyScript(), second, startInput("BP1"))
+
+	require.Eventually(t, func() bool {
+		bp, err := st.GetBlueprint(ctx, "BP1")
+
+		return err == nil && bp.State == string(StateDone)
+	}, 2*time.Second, 5*time.Millisecond, "the reopened watch sets the state")
+	assert.False(t, rec2.has(EventWatchEnded), "the stored summary is not posted again")
 }

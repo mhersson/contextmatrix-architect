@@ -19,6 +19,15 @@ func TestLogEntryFor(t *testing.T) {
 		carries  []string
 		skipped  bool
 	}{
+		{"setup gaps", blueprint.Event{Kind: blueprint.EventSetupGaps, BlueprintID: "S1", Payload: map[string]any{"projects": []any{
+			map[string]any{"project": "alpha", "has_verify": false, "has_instruction_file": false, "empty": true},
+			map[string]any{"project": "beta", "has_verify": true, "has_instruction_file": false, "empty": false},
+		}}}, "text", []string{
+			"alpha declares no verify command in ContextMatrix",
+			"alpha has no AGENTS.md or CLAUDE.md",
+			"alpha is an empty repository",
+			"beta has no AGENTS.md or CLAUDE.md",
+		}, false},
 		{"created", blueprint.Event{Kind: blueprint.EventCreated, BlueprintID: "S1", Payload: map[string]any{"projects": []string{"alpha", "beta"}, "mode": "yolo"}}, "system", []string{"alpha", "beta", "yolo"}, false},
 		{"stage started", blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "persona": "product_owner", "pack": "default", "pack_version": "1"}}, "system", []string{"intake"}, false},
 		{"question", blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: map[string]any{"text": "Helm or kustomize?", "options": []string{"helm", "kustomize"}}}, "text", []string{"Helm or kustomize?", "helm", "kustomize"}, false},
@@ -43,6 +52,9 @@ func TestLogEntryFor(t *testing.T) {
 			map[string]any{"tag": "S1", "project": "alpha", "identity": "https://example.com/alpha.git", "sha": "0123456789abcdef0123"},
 			map[string]any{"tag": "S2", "project": "alpha", "identity": "https://example.com/docs.git", "sha": "fedcba9876543210fedc"},
 		}}}, "system", []string{"alpha at 0123456789ab [S1]", "fedcba987654 [S2]"}, false},
+		{"grounded empty repository", blueprint.Event{Kind: blueprint.EventGrounded, BlueprintID: "S1", Payload: map[string]any{"stage": "grounding", "sources": []any{
+			map[string]any{"tag": "S1", "project": "alpha", "sha": ""},
+		}}}, "system", []string{"alpha, an empty repository [S1]"}, false},
 		{"report ready", blueprint.Event{Kind: blueprint.EventReport, BlueprintID: "S1", Payload: map[string]any{"body": "# Ready", "ready": true, "rounds": 1}}, "text", nil, false},
 		{"report not ready", blueprint.Event{Kind: blueprint.EventReport, BlueprintID: "S1", Payload: map[string]any{
 			"body": "# Cards", "ready": false, "rounds": 3, "findings": []string{"D1: two deliverables"},
@@ -57,13 +69,31 @@ func TestLogEntryFor(t *testing.T) {
 			"repos":    []any{map[string]any{"project": "alpha", "compare_url": "https://x/compare"}},
 			"cards":    []any{map[string]any{"card": "ALPHA-001", "state": "done", "pr": "https://x/pr/1"}},
 		}}, "text", []string{"https://x/compare", "\n\nCards:\n- ALPHA-001 is done: https://x/pr/1"}, false},
+		{"watch ended with the cost", blueprint.Event{Kind: blueprint.EventWatchEnded, BlueprintID: "S1", Payload: map[string]any{
+			"playbook": "", "cards": []any{map[string]any{"card": "ALPHA-001", "state": "done", "pr": "https://x/pr/1"}},
+			"cost_usd": 0.42, "priced": true,
+		}}, "text", []string{"- ALPHA-001 is done: https://x/pr/1", "The architect's runs cost 0.42 USD.", "Reply export for the bundle, or end the session."}, false},
+		{"watch ended with a reported cost", blueprint.Event{Kind: blueprint.EventWatchEnded, BlueprintID: "S1", Payload: map[string]any{
+			"playbook": "", "cards": []any{}, "cost_usd": 0.42, "priced": false,
+		}}, "text", []string{"0.42 USD, as the endpoint reported it", "Reply export for the bundle, or end the session."}, false},
 		{"signoff", blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
 			"cards":    []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing", "type": "feature", "priority": "medium"}},
 			"order":    []any{"D1"},
 			"manual":   []any{},
 			"title":    "",
-			"blocking": []any{"project alpha declares no verify command"}, "warnings": []any{"moved"}, "auto_stopped": false, "assumptions": "- The parser stays in Go.",
-		}}, "text", []string{"D1", "Add the thing", "declares no verify command", "moved", "approve", "The parser stays in Go."}, false},
+			"blocking": []any{"project alpha declares no repository"}, "warnings": []any{"moved"}, "auto_stopped": false, "assumptions": "- The parser stays in Go.",
+		}}, "text", []string{"D1", "Add the thing", "declares no repository", "moved", "approve", "The parser stays in Go."}, false},
+		{"signoff marks the instruction card", blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
+			"cards":    []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing", "type": "feature", "priority": "medium", "writes": "AGENTS.md"}},
+			"order":    []any{"D1"},
+			"manual":   []any{},
+			"blocking": []any{}, "warnings": []any{},
+		}}, "text", []string{"D1 alpha: Add the thing (feature, medium; also writes AGENTS.md)"}, false},
+		{"emitted with a step", blueprint.Event{Kind: blueprint.EventEmitted, BlueprintID: "S1", Payload: map[string]any{
+			"cards": []any{map[string]any{"card": "ALPHA-001"}}, "playbook": "",
+			"steps": []any{"set verify command `go test ./...` on project alpha in ContextMatrix"},
+		}}, "text", []string{"ALPHA-001", "set verify command `go test ./...` on project alpha in ContextMatrix"}, false},
+		{"decided by the mode", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{"decision": "approve", "responder": "auto"}}, "system", []string{"needs a human first"}, false},
 		{"decided reject", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{"decision": "reject", "responder": "human", "feedback": "split it"}}, "system", []string{"Rejected"}, false},
 		{"note with a hint", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "hm", "hint": "Reply approve or reject."}}, "system", []string{"Reply approve or reject."}, false},
 	}
@@ -157,8 +187,13 @@ func TestLogEntryFor_SignoffSaysWhatPreflightFound(t *testing.T) {
 			carries: []string{"moved", "(this also overrides the warnings)"}, lacks: []string{"found nothing"},
 		},
 		{
-			name: "blocking", preflight: map[string]any{"blocking": []any{"project alpha declares no verify command"}, "warnings": []any{}},
-			carries: []string{"declares no verify command"}, lacks: []string{"found nothing", "overrides the warnings"},
+			name: "blocking", preflight: map[string]any{"blocking": []any{"project alpha declares no repository"}, "warnings": []any{}},
+			carries: []string{"declares no repository"}, lacks: []string{"found nothing", "overrides the warnings"},
+		},
+		{
+			name: "steps", preflight: map[string]any{"blocking": []any{}, "warnings": []any{}, "steps": []any{"set verify command `go test ./...` on project alpha in ContextMatrix"}},
+			carries: []string{"Manual steps for you before the cards run", "set verify command `go test ./...` on project alpha in ContextMatrix"},
+			lacks:   []string{"found nothing", "overrides the warnings"},
 		},
 		{
 			name: "not run", preflight: map[string]any{"blocking": []any{}, "warnings": []any{}, "preflight_error": "connect: refused"},

@@ -167,6 +167,21 @@ func TestSignoff_AutoEmitApprovesWhenPreflightIsClean(t *testing.T) {
 	assert.Equal(t, store.ResponderAuto, gates[0].Responder)
 }
 
+func TestSignoff_AutoEmitEmitsAfterAFirstCommitToAnEmptyRepository(t *testing.T) {
+	c, _, _, rec, ws := newPipeline(t, happyScript())
+	ws.empty = map[string]bool{"alpha": true}
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	ws.heads = map[string]string{"https://example.com/alpha.git": "sha-first"}
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeAutoEmit
+	driveIn(t, c, in)
+
+	assert.Equal(t, []string{"Add the thing"}, fake.titles())
+	assert.False(t, rec.has(EventSignOff))
+}
+
 func TestSignoff_AutoEmitStopsForAHumanOnAWarning(t *testing.T) {
 	c, _, _, rec, ws := newPipeline(t, happyScript())
 	fake := newFakeCM()
@@ -201,7 +216,7 @@ func TestSignoff_TheAutoModeStillWaitsForAHuman(t *testing.T) {
 func TestSignoff_ShowsBlockingProblemsAndApproveIsRefused(t *testing.T) {
 	c, _, _, rec, _ := newPipeline(t, happyScript())
 	fake := newFakeCM()
-	fake.projects = []cm.Project{{Name: "alpha", Repo: "https://example.com/alpha.git"}}
+	fake.projects = []cm.Project{{Name: "alpha", Verify: &cm.Verify{Command: "make test"}}}
 	c.opts.ConnectCM = fake.connect
 
 	drive(t, c, "BP1")
@@ -661,7 +676,7 @@ func TestReopen_AStoppedEmissionWaitsForApprove(t *testing.T) {
 				t.Helper()
 
 				fake := newFakeCM()
-				fake.projects = []cm.Project{{Name: "alpha", Repo: "https://example.com/alpha.git"}}
+				fake.projects = []cm.Project{{Name: "alpha", Verify: &cm.Verify{Command: "make test"}}}
 				c.opts.ConnectCM = fake.connect
 
 				require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
@@ -993,7 +1008,7 @@ func TestReopen_ARefusedYoloStartWaitsForApprove(t *testing.T) {
 	reminder, ok := rec2.first(EventAwaitInput)
 	require.True(t, ok, "the reminder is posted")
 	assert.Equal(t, signoffStage, reminder.Payload["stage"])
-	assert.Contains(t, reminder.Payload["prompt"], "retry the run start")
+	assert.Contains(t, reminder.Payload["prompt"], "start it")
 
 	require.NoError(t, c2.Message(ctx, "BP1", "approve", "m3"))
 	c2.Wait("BP1")
@@ -1074,7 +1089,7 @@ func TestSignoff_TextWhileEmissionIsUnfinishedHintsAtApprove(t *testing.T) {
 		{
 			name: "a refused run start", script: happyScript(), in: yoloInput("BP1"),
 			inCM: func(f *fakeCM) { f.runErr = errors.New("cm: run_card: no execution backend is configured") },
-			hint: "reply approve to retry the run start",
+			hint: "reply approve to start the run",
 		},
 		{name: "a finished emission", script: happyScript(), in: startInput("BP1"), inCM: func(*fakeCM) {}},
 	}
@@ -1151,4 +1166,80 @@ func TestSignoff_TextWhileTheEmissionCannotBeReadIsAPlainNote(t *testing.T) {
 	require.True(t, ok)
 	assert.NotContains(t, note.Payload, "hint")
 	assert.Equal(t, []string{"Add the parser"}, fake.titles(), "a note resumes nothing")
+}
+
+// newSetupPipeline is a pipeline whose project has no verify command in
+// ContextMatrix and whose tree has no AGENTS.md, with cards that carry the
+// setup.
+func newSetupPipeline(t *testing.T) (*Controller, *store.Store, *recorder, *fakeCM) {
+	t.Helper()
+
+	script := happyScript()
+	script["decomposition"] = returns("# Cards", setupCards())
+
+	c, st, _, rec, ws := newPipeline(t, script)
+	c.opts.Projects = listAlphaUnset
+	ws.noAgents = true
+
+	fake := newFakeCM()
+	fake.projects = []cm.Project{{Name: "alpha", Repo: "https://example.com/alpha.git"}}
+	c.opts.ConnectCM = fake.connect
+
+	return c, st, rec, fake
+}
+
+const verifyStep = "set verify command `go test ./...` on project alpha in ContextMatrix"
+
+func TestSignoff_ListsTheVerifyStepAndMarksTheInstructionCard(t *testing.T) {
+	c, _, rec, _ := newSetupPipeline(t)
+
+	drive(t, c, "BP1")
+
+	so, ok := rec.first(EventSignOff)
+	require.True(t, ok)
+	assert.Empty(t, so.Payload["blocking"], "neither gap blocks")
+	assert.Empty(t, so.Payload["warnings"])
+	assert.Equal(t, []string{verifyStep}, so.Payload["steps"])
+
+	cards, _ := so.Payload["cards"].([]any)
+	require.Len(t, cards, 1)
+	assert.Equal(t, "AGENTS.md", cards[0].(map[string]any)["writes"])
+}
+
+func TestSignoff_AutoEmitEmitsDespiteASetupStep(t *testing.T) {
+	c, _, rec, fake := newSetupPipeline(t)
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeAutoEmit
+	driveIn(t, c, in)
+
+	assert.Equal(t, []string{"Add the thing"}, fake.titles(), "a step does not stop an emitting mode")
+	assert.False(t, rec.has(EventSignOff))
+
+	em, ok := rec.first(EventEmitted)
+	require.True(t, ok)
+	assert.Equal(t, []string{verifyStep}, em.Payload["steps"])
+}
+
+func TestSignoff_AVerifyCommandSetBeforeApproveDropsTheStep(t *testing.T) {
+	c, _, rec, fake := newSetupPipeline(t)
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+
+	so, ok := rec.first(EventSignOff)
+	require.True(t, ok)
+	assert.Equal(t, []string{verifyStep}, so.Payload["steps"])
+
+	// The user sets the verify command in ContextMatrix, then approves.
+	fake.mu.Lock()
+	fake.projects = []cm.Project{alphaProject()}
+	fake.mu.Unlock()
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	em, ok := rec.first(EventEmitted)
+	require.True(t, ok)
+	assert.Empty(t, em.Payload["steps"], "emission reads ContextMatrix again")
 }

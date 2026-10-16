@@ -11,16 +11,18 @@ import (
 
 // Project is what the checks know about a target project: whether CM
 // declares a repository and a verify command for it, the checkout root the
-// where check reads (empty skips it), the card types and priorities it
+// where check reads (empty skips it and the instruction check), whether that
+// checkout has an instruction file, the card types and priorities it
 // declares (empty skips that check), and the repository urls of every other
 // CM project, which no card may name.
 type Project struct {
-	HasRepo      bool
-	HasVerify    bool
-	Root         string
-	Types        []string
-	Priorities   []string
-	ForeignRepos []string
+	HasRepo            bool
+	HasVerify          bool
+	HasInstructionFile bool
+	Root               string
+	Types              []string
+	Priorities         []string
+	ForeignRepos       []string
 }
 
 // Finding is one failed check on one card.
@@ -33,8 +35,9 @@ type Finding struct {
 func (f Finding) String() string { return f.CardID + ": " + f.Check + ": " + f.Message }
 
 // Check runs every mechanical check over a draft and returns the findings,
-// in card order. It is pure: the only I/O is reading the checkout under a
-// project's Root for the where check.
+// in card order, then the instruction setup and cycle findings. It is pure:
+// the only I/O is reading the checkout under a project's Root for the where
+// check.
 func Check(d Draft, lists Lists, projects map[string]Project) []Finding {
 	var out []Finding
 
@@ -59,19 +62,98 @@ func Check(d Draft, lists Lists, projects map[string]Project) []Finding {
 			out = append(out, Finding{c.ID, "project_repo", fmt.Sprintf("project %q declares no repository", c.Project)})
 		}
 
-		if !p.HasVerify {
-			out = append(out, Finding{c.ID, "project_verify", fmt.Sprintf("project %q declares no verify command", c.Project)})
-		}
-
 		out = append(out, checkFields(c, p)...)
 		out = append(out, checkForeignRepos(c, p.ForeignRepos)...)
+		out = append(out, checkVerifySetup(c, p, d.Setup[c.Project], lists)...)
 
 		if p.Root != "" {
 			out = append(out, checkWhere(c, p.Root)...)
 		}
 	}
 
+	out = append(out, checkInstructionSetup(d, projects)...)
 	out = append(out, checkAcyclic(d.Cards)...)
+
+	return out
+}
+
+// checkVerifySetup applies to a card whose project declares no verify
+// command: the draft proposes one in the project's setup, and the card's
+// acceptance criteria run it, written exactly as proposed. A proposal for a
+// project that declares one is ignored; the sign-off reads CM itself.
+func checkVerifySetup(c Card, p Project, s Setup, lists Lists) []Finding {
+	if p.HasVerify {
+		return nil
+	}
+
+	if s.VerifyCommand == "" {
+		return []Finding{{c.ID, "setup_verify", fmt.Sprintf(
+			"project %q declares no verify command; propose one in setup.%s.verify_command and run it in this card's acceptance criteria", c.Project, c.Project)}}
+	}
+
+	if !strings.Contains(strings.Join(section(c.Body, "Acceptance criteria", lists), "\n"), s.VerifyCommand) {
+		return []Finding{{c.ID, "setup_verify", fmt.Sprintf("acceptance criteria do not run the proposed verify command %q", s.VerifyCommand)}}
+	}
+
+	return nil
+}
+
+// checkInstructionSetup applies to every target project with a checkout. One
+// without an instruction file names one of its cards in its setup as the
+// card that also writes AGENTS.md, and every other card of the project
+// depends on that card, directly or through others, so the agent reads
+// AGENTS.md in all of them; the order and cycle checks then make it the
+// project's first card. One with an instruction file names no such card,
+// which would overwrite it.
+func checkInstructionSetup(d Draft, projects map[string]Project) []Finding {
+	deps := map[string][]string{}
+	byProject := map[string][]Card{}
+
+	var names []string
+
+	for _, c := range d.Cards {
+		deps[c.ID] = c.DependsOn
+
+		if _, seen := byProject[c.Project]; !seen {
+			names = append(names, c.Project)
+		}
+
+		byProject[c.Project] = append(byProject[c.Project], c)
+	}
+
+	var out []Finding
+
+	for _, name := range names {
+		p, known := projects[name]
+		if !known || p.Root == "" {
+			continue
+		}
+
+		cards := byProject[name]
+		named := d.Setup[name].InstructionCard
+
+		if p.HasInstructionFile {
+			if named != "" {
+				out = append(out, Finding{named, "setup_instruction", fmt.Sprintf(
+					"project %q already has an instruction file, which this card would overwrite; drop setup.%s.instruction_card", name, name)})
+			}
+
+			continue
+		}
+
+		if !slices.ContainsFunc(cards, func(c Card) bool { return c.ID == named }) {
+			out = append(out, Finding{cards[0].ID, "setup_instruction", fmt.Sprintf(
+				"project %q has no AGENTS.md or CLAUDE.md; its first card also writes AGENTS.md (stack, verify command, layout, conventions), and setup.%s.instruction_card names that card", name, name)})
+
+			continue
+		}
+
+		for _, c := range cards {
+			if c.ID != named && !reaches(deps, c.DependsOn, named) {
+				out = append(out, Finding{c.ID, "setup_instruction", fmt.Sprintf("does not depend on %s, which writes AGENTS.md for project %q", named, name)})
+			}
+		}
+	}
 
 	return out
 }

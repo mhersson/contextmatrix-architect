@@ -14,7 +14,6 @@ import (
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
-	"github.com/mhersson/contextmatrix-architect/internal/contract"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
@@ -64,6 +63,10 @@ func (c *Controller) launch(ctx context.Context, r *run, sess *session, bp store
 		for stageID != "" && ctx.Err() == nil {
 			if !c.runStage(ctx, r, sess, bp, stageID) {
 				return
+			}
+
+			if stageID == c.groundingStage() {
+				c.reportSetup(ctx, sess, bp)
 			}
 
 			// What follows is decided and recorded even when a cancel
@@ -284,8 +287,6 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		return stage.Input{}, nil, nil, errNoCMSupport
 	}
 
-	var projects map[string]contract.Project
-
 	if slices.Contains(st.Tools, pack.ToolCode) {
 		facts, err := c.prepareCode(ctx, sess, bp, st.ID)
 		if err != nil {
@@ -294,7 +295,6 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 
 		in.Tools = stage.CodeTools(facts.root, facts.repos)
 		in.Task = checkoutLines(facts) + in.Task
-		projects = facts.projects
 	}
 
 	closeCM := noop
@@ -321,7 +321,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	var checked *validatorState
 
 	if slices.Contains(st.Checks, pack.CheckCards) {
-		in.Validate, checked = c.cardsValidator(projects)
+		in.Validate, checked = c.cardsValidator(sess, bp)
 		in.Instructions += "\n\n# Card template\n\n" + c.opts.Pack.CardTemplate()
 	}
 

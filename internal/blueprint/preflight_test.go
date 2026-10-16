@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,32 +33,48 @@ func preflightOf(t *testing.T, c *Controller, st *store.Store, fake *fakeCM) pre
 }
 
 func TestPreflight(t *testing.T) {
+	unset := []cm.Project{{Name: "alpha", Repo: "https://example.com/alpha.git"}}
+	noop := func(*testing.T, *fakeCM, *fakeWorkspace, string) {}
+
 	tests := []struct {
 		name     string
+		cards    map[string]any // the draft; nil is goodCards
 		arrange  func(t *testing.T, fake *fakeCM, ws *fakeWorkspace, root string)
 		blocking string // substring expected among the blocking problems
 		warning  string // substring expected among the warnings
+		step     string // substring expected among the steps
+		empty    []string
 	}{
-		{name: "clean", arrange: func(*testing.T, *fakeCM, *fakeWorkspace, string) {}},
+		{name: "clean", arrange: noop},
 		{
 			name:     "project missing in ContextMatrix",
 			arrange:  func(_ *testing.T, f *fakeCM, _ *fakeWorkspace, _ string) { f.projects = nil },
 			blocking: "project alpha is not in ContextMatrix",
 		},
 		{
-			name: "no verify command",
+			name: "no repository",
 			arrange: func(_ *testing.T, f *fakeCM, _ *fakeWorkspace, _ string) {
-				f.projects = []cm.Project{{Name: "alpha", Repo: "https://example.com/alpha.git"}}
+				f.projects = []cm.Project{{Name: "alpha", Verify: &cm.Verify{Command: "make test"}}}
 			},
-			blocking: "declares no verify command",
+			blocking: "project alpha declares no repository",
 		},
+		{
+			name: "no verify command, and the cards propose one", cards: setupCards(),
+			arrange: func(_ *testing.T, f *fakeCM, _ *fakeWorkspace, _ string) { f.projects = unset },
+			step:    "set verify command `go test ./...` on project alpha in ContextMatrix",
+		},
+		{
+			name:    "no verify command, and the cards propose none",
+			arrange: func(_ *testing.T, f *fakeCM, _ *fakeWorkspace, _ string) { f.projects = unset },
+			warning: "project alpha declares no verify command and the cards propose none",
+		},
+		{name: "a proposal for a project that has a verify command", cards: setupCards(), arrange: noop},
 		{
 			name: "no instruction file",
 			arrange: func(t *testing.T, _ *fakeCM, _ *fakeWorkspace, root string) {
 				t.Helper()
 				require.NoError(t, os.Remove(filepath.Join(root, "alpha", "AGENTS.md")))
 			},
-			blocking: "no AGENTS.md or CLAUDE.md",
 		},
 		{
 			name: "checkout swept",
@@ -65,7 +82,6 @@ func TestPreflight(t *testing.T) {
 				t.Helper()
 				require.NoError(t, os.RemoveAll(filepath.Join(root, "alpha")))
 			},
-			warning: "instruction file was not re-checked",
 		},
 		{
 			name: "default branch moved",
@@ -80,6 +96,15 @@ func TestPreflight(t *testing.T) {
 			warning: "could not read the default branch",
 		},
 		{
+			name: "the repository lost every commit since grounding",
+			arrange: func(_ *testing.T, _ *fakeCM, ws *fakeWorkspace, _ string) {
+				ws.heads = map[string]string{"https://example.com/alpha.git": ""}
+			},
+			warning: "to an empty repository",
+			step:    "push an initial commit to https://example.com/alpha.git's default branch before running the cards; the agent needs a base branch",
+			empty:   []string{"https://example.com/alpha.git"},
+		},
+		{
 			name: "title in another runnable playbook",
 			arrange: func(_ *testing.T, f *fakeCM, _ *fakeWorkspace, _ string) {
 				f.list = []cm.PlaybookSummary{{ID: "other", Runnable: true}, {ID: "draft-only", Runnable: false}}
@@ -92,7 +117,12 @@ func TestPreflight(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c, st, _, _, ws := newPipeline(t, happyScript())
+			script := happyScript()
+			if tt.cards != nil {
+				script["decomposition"] = returns("# Cards", tt.cards)
+			}
+
+			c, st, _, _, ws := newPipeline(t, script)
 			fake := newFakeCM()
 			c.opts.ConnectCM = fake.connect
 
@@ -101,27 +131,52 @@ func TestPreflight(t *testing.T) {
 
 			res := preflightOf(t, c, st, fake)
 
-			if tt.blocking == "" {
-				assert.Empty(t, res.Blocking)
-			} else {
-				require.Len(t, res.Blocking, 1)
-				assert.Contains(t, res.Blocking[0], tt.blocking)
-			}
+			assert.Equal(t, tt.empty, res.EmptyRepos)
 
-			if tt.warning == "" {
-				assert.Empty(t, res.Warnings)
-			} else {
-				require.Len(t, res.Warnings, 1)
-				assert.Contains(t, res.Warnings[0], tt.warning)
+			for _, check := range []struct {
+				got  []string
+				want string
+			}{{res.Blocking, tt.blocking}, {res.Warnings, tt.warning}, {res.Steps, tt.step}} {
+				if check.want == "" {
+					assert.Empty(t, check.got)
+
+					continue
+				}
+
+				require.Len(t, check.got, 1)
+				assert.Contains(t, check.got[0], check.want)
 			}
 		})
 	}
 }
 
+// A first commit to a repository that was empty at grounding is the push
+// step done: no warning, no step.
+func TestPreflight_AFirstCommitIsNotAMove(t *testing.T) {
+	c, st, _, _, ws := newPipeline(t, happyScript())
+	ws.empty = map[string]bool{"alpha": true}
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+
+	drive(t, c, "BP1")
+
+	before := preflightOf(t, c, st, fake)
+	assert.Equal(t, []string{"https://example.com/alpha.git"}, before.EmptyRepos)
+
+	ws.mu.Lock()
+	ws.heads = map[string]string{"https://example.com/alpha.git": "sha-first"}
+	ws.mu.Unlock()
+
+	res := preflightOf(t, c, st, fake)
+	assert.Empty(t, res.Warnings)
+	assert.Empty(t, res.Steps)
+	assert.Empty(t, res.EmptyRepos)
+}
+
 func TestEmit_RefusesWhilePreflightBlocks(t *testing.T) {
 	c, st, _, rec, _ := newPipeline(t, happyScript())
 	fake := newFakeCM()
-	fake.projects = []cm.Project{{Name: "alpha", Repo: "https://example.com/alpha.git"}}
+	fake.projects = []cm.Project{{Name: "alpha", Verify: &cm.Verify{Command: "make test"}}}
 	c.opts.ConnectCM = fake.connect
 
 	drive(t, c, "BP1")
@@ -131,5 +186,51 @@ func TestEmit_RefusesWhilePreflightBlocks(t *testing.T) {
 
 	ev, ok := rec.first(EventError)
 	require.True(t, ok)
-	assert.Contains(t, ev.Payload["message"], "declares no verify command")
+	assert.Contains(t, ev.Payload["message"], "declares no repository")
+}
+
+func TestMovedRepos_EmptyRepositories(t *testing.T) {
+	const url = "https://example.com/alpha.git"
+
+	tests := []struct {
+		name     string
+		recorded string // the sha grounding recorded; "" for no commits
+		head     string // the sha the default branch has now; "" for no commits
+		targets  map[string]bool
+		warnings []string
+		empty    []string
+	}{
+		{name: "still empty", targets: map[string]bool{url: true}, empty: []string{url}},
+		{name: "a repository no card runs in", targets: map[string]bool{}},
+		{name: "a first commit since grounding", head: "0123456789abcdef", targets: map[string]bool{url: true}},
+		{name: "emptied since grounding", recorded: "0123456789abcdef", targets: map[string]bool{url: true}, warnings: []string{"from 0123456789ab to an empty repository"}, empty: []string{url}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, _, _, ws := newPipeline(t, happyScript())
+			ctx := context.Background()
+			require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+			_, err := st.AddSource(ctx, store.Source{
+				BlueprintID: "BP1", Kind: "repo", Identity: url, Version: tt.recorded,
+				FetchedAt: time.Now().UTC(), FirstUsedBy: "grounding",
+			})
+			require.NoError(t, err)
+
+			ws.heads = map[string]string{url: tt.head}
+
+			bp, err := st.GetBlueprint(ctx, "BP1")
+			require.NoError(t, err)
+
+			warnings, empty, err := c.movedRepos(ctx, sessionOf(t, c, "BP1"), bp, tt.targets)
+			require.NoError(t, err)
+			assert.Equal(t, tt.empty, empty)
+			require.Len(t, warnings, len(tt.warnings))
+
+			for i, want := range tt.warnings {
+				assert.Contains(t, warnings[i], want)
+			}
+		})
+	}
 }

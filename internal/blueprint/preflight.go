@@ -3,8 +3,6 @@ package blueprint
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -17,16 +15,26 @@ import (
 // preflightResult is what preflight found. Blocking problems refuse
 // emission until they are fixed and the human approves again. Warnings need
 // a human: an approve after they were shown overrides them, and an emitting
-// mode stops for a human instead of approving.
+// mode stops for a human instead of approving. Steps are setup only a human
+// can do before the cards run, in ContextMatrix or in a repository; they
+// are shown but neither block emission nor stop an emitting mode, because
+// creating the cards does not need them. EmptyRepos are the identities
+// (clean urls) of the repositories of card projects with no commits, in
+// source order; a yolo run waits for them.
 type preflightResult struct {
-	Blocking []string
-	Warnings []string
+	Blocking   []string
+	Warnings   []string
+	Steps      []string
+	EmptyRepos []string
 }
 
 // preflight checks what emission needs: every card's project in
-// ContextMatrix with a repository, a verify command and an instruction
-// file; every repository's default branch where grounding read it; and no
-// draft title already a card in another runnable playbook.
+// ContextMatrix with a repository; every repository's default branch where
+// grounding read it; and no draft title already a card in another runnable
+// playbook. A project ContextMatrix declares no verify command for is a
+// step when the draft proposes one and a warning when it proposes none. A
+// missing instruction file is no finding: the contract makes a card write
+// it.
 func (c *Controller) preflight(ctx context.Context, sess *session, bp store.Blueprint, draft contract.Draft, client CMClient) (preflightResult, error) {
 	var res preflightResult
 
@@ -48,6 +56,14 @@ func (c *Controller) preflight(ctx context.Context, sess *session, bp store.Blue
 		}
 	}
 
+	targets := map[string]bool{}
+
+	for _, name := range names {
+		for _, u := range byName[name].RepoURLs() {
+			targets[code.CleanURL(u)] = true
+		}
+	}
+
 	for _, name := range names {
 		p, ok := byName[name]
 		if !ok {
@@ -60,33 +76,18 @@ func (c *Controller) preflight(ctx context.Context, sess *session, bp store.Blue
 			res.Blocking = append(res.Blocking, fmt.Sprintf("project %s declares no repository", name))
 		}
 
-		if p.Verify == nil || strings.TrimSpace(p.Verify.Command) == "" {
-			res.Blocking = append(res.Blocking, fmt.Sprintf("project %s declares no verify command; the architect emits only into projects with one", name))
-		}
-
-		if c.opts.Workspace == nil {
+		if p.Verify != nil && strings.TrimSpace(p.Verify.Command) != "" {
 			continue
 		}
 
-		dir := filepath.Join(c.opts.Workspace.TreeRoot(bp.ID), name)
-
-		if _, err := os.Stat(dir); err != nil {
-			res.Warnings = append(res.Warnings, fmt.Sprintf("the checkout of %s is gone, so its instruction file was not re-checked", name))
-
-			continue
-		}
-
-		info, err := code.Inspect(ctx, dir)
-		if err != nil {
-			return res, fmt.Errorf("inspect %s: %w", name, err)
-		}
-
-		if info.InstructionFile == "" {
-			res.Blocking = append(res.Blocking, fmt.Sprintf("project %s has no AGENTS.md or CLAUDE.md at the root of its repository", name))
+		if command := draft.Setup[name].VerifyCommand; command != "" {
+			res.Steps = append(res.Steps, fmt.Sprintf("set verify command `%s` on project %s in ContextMatrix", command, name))
+		} else {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("project %s declares no verify command and the cards propose none", name))
 		}
 	}
 
-	moved, err := c.movedRepos(ctx, sess, bp)
+	moved, empty, err := c.movedRepos(ctx, sess, bp, targets)
 	if err != nil {
 		return res, err
 	}
@@ -97,20 +98,29 @@ func (c *Controller) preflight(ctx context.Context, sess *session, bp store.Blue
 	}
 
 	res.Warnings = append(append(res.Warnings, moved...), taken...)
+	for _, identity := range empty {
+		res.Steps = append(res.Steps, fmt.Sprintf("push an initial commit to %s's default branch before running the cards; the agent needs a base branch", identity))
+	}
+
+	res.EmptyRepos = empty
 
 	return res, nil
 }
 
 // movedRepos warns about every repository whose default branch moved since
-// grounding recorded it, or could not be read.
-func (c *Controller) movedRepos(ctx context.Context, sess *session, bp store.Blueprint) ([]string, error) {
+// grounding recorded it or could not be read, and returns the identity of
+// every repository with no commits that a card runs in (targets, by clean
+// url): the agent needs a base branch to work from. A first commit to a
+// repository that was empty at grounding is no move: it is the push step
+// done.
+func (c *Controller) movedRepos(ctx context.Context, sess *session, bp store.Blueprint, targets map[string]bool) ([]string, []string, error) {
 	if c.opts.Workspace == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	sources, err := c.opts.Store.ListSources(ctx, bp.ID)
 	if err != nil {
-		return nil, fmt.Errorf("list sources: %w", err)
+		return nil, nil, fmt.Errorf("list sources: %w", err)
 	}
 
 	latest := map[string]store.Source{}
@@ -134,22 +144,28 @@ func (c *Controller) movedRepos(ctx context.Context, sess *session, bp store.Blu
 		creds = c.opts.Credentials(sess.gitToken)
 	}
 
-	var out []string
+	var warnings, empty []string
 
 	for _, identity := range order {
 		src := latest[identity]
 
 		_, sha, err := c.opts.Workspace.RemoteHead(ctx, identity, creds)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("could not read the default branch of %s [%s]: %v", identity, src.Tag(), err))
 
-		switch {
-		case err != nil:
-			out = append(out, fmt.Sprintf("could not read the default branch of %s [%s]: %v", identity, src.Tag(), err))
-		case sha != src.Version:
-			out = append(out, fmt.Sprintf("the default branch of %s [%s] moved since grounding, from %s to %s", identity, src.Tag(), short(src.Version), short(sha)))
+			continue
+		}
+
+		if sha != src.Version && src.Version != "" {
+			warnings = append(warnings, fmt.Sprintf("the default branch of %s [%s] moved since grounding, from %s to %s", identity, src.Tag(), commitOf(src.Version), commitOf(sha)))
+		}
+
+		if sha == "" && targets[identity] {
+			empty = append(empty, identity)
 		}
 	}
 
-	return out, nil
+	return warnings, empty, nil
 }
 
 // takenTitles warns about every draft card whose title is already a card in
@@ -199,6 +215,16 @@ func (c *Controller) takenTitles(ctx context.Context, bp store.Blueprint, draft 
 	}
 
 	return out, nil
+}
+
+// commitOf names a commit in a message: its short sha, or an empty
+// repository for no commit.
+func commitOf(sha string) string {
+	if sha == "" {
+		return "an empty repository"
+	}
+
+	return short(sha)
 }
 
 // short is a commit's first 12 characters.

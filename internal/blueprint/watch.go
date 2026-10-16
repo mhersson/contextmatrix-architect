@@ -98,8 +98,7 @@ func (c *Controller) watchLoop(ctx context.Context, sess *session, id string) {
 				prev = &snap
 
 				if snap.done {
-					c.setState(bg, id, StateDone)
-					sess.audit.event(bg, Event{Kind: EventWatchEnded, BlueprintID: id, Payload: snap.endPayload()})
+					c.finish(bg, sess, id, snap)
 
 					return
 				}
@@ -112,6 +111,37 @@ func (c *Controller) watchLoop(ctx context.Context, sess *session, id string) {
 		case <-tick.C:
 		}
 	}
+}
+
+// finish closes an ended run: the closing summary, posted once, then the
+// done state. The summary goes first, so a crash between the two restarts
+// the watch on the next reopen, which finds the summary stored and only
+// sets the state; a reopen of a done blueprint starts no watch at all.
+// Ending the session stays with the user.
+func (c *Controller) finish(ctx context.Context, sess *session, id string, snap snapshot) {
+	_, err := c.opts.Store.LatestEvent(ctx, id, EventWatchEnded)
+
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		payload := snap.endPayload()
+		payload["priced"] = sess.price != nil
+
+		if cost, err := c.opts.Store.BlueprintCost(ctx, id); err != nil {
+			c.opts.Logger.Warn("blueprint: the closing summary goes without the cost", "blueprint", id, "error", err)
+		} else {
+			payload["cost_usd"] = cost
+		}
+
+		sess.audit.event(ctx, Event{Kind: EventWatchEnded, BlueprintID: id, Payload: payload})
+	case err != nil:
+		// Without the record a second summary could follow; the blueprint
+		// stays emitted, and the next reopen's watch tries again.
+		c.opts.Logger.Error("blueprint: read the closing summary", "blueprint", id, "error", err)
+
+		return
+	}
+
+	c.setState(ctx, id, StateDone)
 }
 
 // cardView is what the watch tracks of one emitted card.

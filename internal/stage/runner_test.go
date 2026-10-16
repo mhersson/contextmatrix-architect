@@ -263,7 +263,7 @@ func TestRun_ValidateRejectsASubmitUntilItPasses(t *testing.T) {
 	var events bytes.Buffer
 
 	in := baseInput(&events)
-	in.Validate = func(a Artifact) error {
+	in.Validate = func(_ context.Context, a Artifact) error {
 		if a.Body == "draft one" {
 			return errors.New("the body must say two")
 		}

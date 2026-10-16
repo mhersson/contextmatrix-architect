@@ -17,7 +17,8 @@ reviewer), asks what it cannot decide, records every decision and assumption,
 drafts the cards, checks them against the card contract, and emits the
 playbook. CM does what CM does from there. In yolo mode the whole path from
 need to merged pull requests on a playbook branch runs without a human touching
-it.
+it, unless a card's repository has no commits: the run then waits for a first
+commit and an `approve`.
 
 ## Vocabulary
 
@@ -163,7 +164,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | gates         | append-only: blueprint, stage, the judged artifact's version, decision (approve, reject), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted                                                                     |
 | events        | append-only: time, blueprint, run, kind, payload                                                                              |
-| sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm`), fetched at, first used by stage |
+| sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage |
 | ledger        | per-run cost rows summed per blueprint                                                                                        |
 | emissions     | append-only: blueprint, kind (card, playbook, run), the draft card id, project, CM id, created at; one row per blueprint, kind and draft id |
 | outcomes      | per emitted card: final state, review attempts, parked reason, cost, finding text, proposed lesson                            |
@@ -196,9 +197,9 @@ developer (DEV), reviewer (REV).
 | 1  | Intake          | PO      | the need          | need: problem, value, scope in and out, measurable outcomes; the expected shape and the gate plan     | questions |
 | 2  | Slicing         | PO      | need              | slices, each delivering standalone value; one slice is fine                                           | yes; folds into 3 when there is one slice |
 | 3  | Solution design | SD      | need, slices      | per slice: projects involved, decisions with rejected options, cross-project contracts               | yes       |
-| 4  | Grounding       | DEV     | design            | per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        |
+| 4  | Grounding       | DEV     | design            | per project: files, symbols and patterns verified at a sha, verify command, instruction file presence; when it ends, the session is told what each project lacks for an agent run | no        |
 | 5  | Acceptance      | DEV     | design, grounding | per slice: criteria checkable inside one repo; human and live checks split into manual steps         | `auto` by default |
-| 6  | Decomposition   | DEV     | all above         | draft cards with type and priority, `depends_on` per project, manual entries for human and live checks, a playbook title and order | no        |
+| 6  | Decomposition   | DEV     | all above         | draft cards with type and priority, `depends_on` per project, manual entries for human and live checks, a playbook title and order, and the setup for a project without a verify command or instruction file | no        |
 | 7  | Readiness       | REV     | cards             | contract check per card; failures loop back to 6, three rounds max                                    | no        |
 | 8  | Sign-off        | human   | everything        | approval; then emission                                                                               | yes       |
 | -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   |
@@ -209,6 +210,11 @@ The design stage is human-sourced until the dialog stages arrive: the message af
 - Intake ends by stating the shape it expects (slices, projects involved) and
   the gate plan in effect, so the operator can change the overrides before
   grounding spends anything.
+- Grounding ends by telling the session what each target project lacks for
+  an agent run: a verify command in CM (read again then), an instruction
+  file at the root, or any commit. None of it blocks. Decomposition plans
+  it as setup, and the user may set the verify command in CM meanwhile; the
+  next decomposition submit reads it.
 - A gate folds when the pack's condition on its artifact holds: the slicing
   gate folds into the solution design gate when there is exactly one slice.
   Folding is decided by the artifact, never by an estimate of size.
@@ -340,12 +346,24 @@ release.
   fail".
 - Polish or hardening requests as criteria: review does not block on them.
 
+**Setup**
+
+- A project without a verify command in CM: the draft proposes one in
+  `setup.<project>.verify_command`, and every card of the project runs it
+  in its acceptance criteria, written exactly as proposed. The architect
+  cannot set it: `create_card` has no verify field, and `update_project`
+  keeps the operator's. The sign-off lists setting it as a manual step.
+- A repository without `AGENTS.md` or `CLAUDE.md` at the root: the
+  project's first card also writes `AGENTS.md` (stack, verify command,
+  layout, conventions), `setup.<project>.instruction_card` names it, and
+  every other card of the project depends on it. A repository that has an
+  instruction file names no such card.
+
 **Target project prerequisites**
 
-- A `verify.command` in the project's `.board.yaml`. The architect refuses to
-  emit into a project without one.
-- A root `AGENTS.md` or `CLAUDE.md`.
-- A repository URL on the project.
+- A repository URL on the project. A missing verify command or instruction
+  file is setup the cards carry (see Setup), never a block: CM runs a card
+  without a verify command, and the agent then detects verification itself.
 
 ### Readiness checks
 
@@ -357,7 +375,9 @@ release.
 | Every path and symbol in Where exists at the recorded sha          | mechanical (code tool)     |
 | `depends_on` graph acyclic within each project                     | mechanical                 |
 | Every acceptance criterion of the slice maps to exactly one card   | mechanical                 |
-| Target project declares a verify command and a repo                | mechanical (`list_projects`) |
+| Target project declares a repo                                     | mechanical (`list_projects`) |
+| A project without a verify command: the proposed command in every card's criteria | mechanical (`list_projects`) |
+| A repository without an instruction file: one card writes `AGENTS.md`, every other card of the project depends on it | mechanical (code tool) |
 | Type and priority are ones the project declares                    | mechanical (`list_projects`) |
 | One deliverable, no open decisions, no optional scope              | model-judged               |
 | Estimated planner split of two subtasks or fewer                   | model-judged               |
@@ -367,7 +387,10 @@ release.
 The contract lives here: the default pack's `card.md` and `lists.yaml` plus
 `internal/contract`. The agent is the consumer and its prompts are the ground
 truth the lists are copied from. The mechanical rows run on every decomposition
-submit as the critique loop; the model-judged rows are the readiness stage.
+submit as the critique loop, against the project config read from CM again
+for that submit, so a fix made in CM during the run counts at the next
+submit; a submit made while CM cannot be read is refused without spending a
+round. The model-judged rows are the readiness stage.
 
 ## Interaction
 
@@ -402,7 +425,9 @@ blueprint.
 - **`auto`**: every policy `auto`. Stops before emission. Cards auto-vet in
   CM on the non-Jira path, so this stop is the only human backstop.
 - **`auto+emit`**: as above, then emits the playbook and stops.
-- **`yolo`**: as `auto+emit`, then starts the run. A single card is
+- **`yolo`**: as `auto+emit`, then starts the run, unless a card's repository
+  has no commits: the cards are emitted, the session is told to push a first
+  commit and reply `approve`, and no run starts until then. A single card is
   started with `run_card` and ends as one pull request to the project's default
   branch under the card's own settings. Several cards are started with
   `run_playbook`, which makes the playbook runnable and plays it; every card
@@ -418,7 +443,7 @@ starts are bounded by CM's per-card guardrails, not by the architect.
 
 | Group    | Tools                                                                                                   | Notes                                                                                                                                             |
 | -------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock at the start of grounding, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. `repo_info` returns the sha, instruction file presence, the project's verify command and, to the stage that fetched the tree, the default branch. |
+| code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock at the start of grounding, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. A repository with no commits checks out as an empty tree with no sha. `repo_info` returns the sha, instruction file presence, the project's verify command, whether the repository is empty and, to the stage that fetched the tree, the default branch. |
 | research | `web_fetch`                                                                                             | Readable text, recorded as a source. A search provider is deferred.                                                                               |
 | cm       | `list_projects`, `list_cards`, `get_card`, `get_playbook` as `cm_`-prefixed reads | Offered to grounding and readiness over the session's MCP key, one MCP session per run, chat's bridge adapter on the architect's client with a `cm_` prefix and an allowlist that skips tools CM does not serve. No `agent_id` is sent, so CM keeps redacting unvetted imported text; `get_card` never attaches images; a credential embedded in a URL is removed from every result and error before the model or the record sees it, since CM returns project config as stored; every result carries the blueprint's ContextMatrix source tag. Creating cards and playbooks and starting runs are controller calls with the configured caller identity, never model tools. |
 | control  | `ask_human`, `submit_artifact`                                                                          | `ask_human` blocks: question, options and context in; the answer out as the tool result. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
@@ -429,28 +454,44 @@ holds.
 ## Emission
 
 Cards that pass readiness go to sign-off. Default and `auto` modes show the
-sign-off (the entries in playbook order, the playbook title, the assumptions
-and the preflight result) and wait: `approve` emits, and `reject <feedback>`
-stores the feedback and re-runs decomposition and readiness with it, the
-three readiness rounds counted again from the rejection. `auto+emit` and
-`yolo` approve on their own when preflight finds nothing for a human, and
-stop for one otherwise. Every decision is a row in `gates`. Then, in order:
+sign-off (the entries in playbook order with the card that also writes
+`AGENTS.md` marked, the playbook title, the assumptions and the preflight
+result) and wait: `approve` emits, and `reject <feedback>` stores the
+feedback and re-runs decomposition and readiness with it, the three
+readiness rounds counted again from the rejection. `auto+emit` and `yolo`
+approve on their own when preflight runs and finds nothing blocking and no
+warning, and stop for a human otherwise. Every decision is a row in `gates`.
+Then, in order:
 
 1. **Preflight**, at sign-off and again at the start of every emission
-   attempt. Blocking: a card's project is missing in CM or declares no
-   repository or verify command, or its checkout has no `AGENTS.md` or
-   `CLAUDE.md` at the root. A blocked emission waits for the fix in CM and
-   another `approve`. Warnings: a repository whose default branch moved
-   since grounding or could not be read, a checkout swept before its
-   instruction file could be re-checked, or a draft title that is a card in
-   another runnable playbook. An `approve` after the warnings were shown is
-   the logged override; an emitting mode stops for a human instead.
+   attempt, reading CM each time. Blocking: a card's project is missing in
+   CM or declares no repository. A blocked emission waits for the fix in CM
+   and another `approve`. Warnings: a repository whose default branch moved
+   since grounding or could not be read (a move is a changed grounded commit:
+   a repository empty at grounding that has commits now is not a move, the
+   push step is done), a project that declares no verify command while the
+   cards propose none, or a draft title that is a card in another runnable
+   playbook. An `approve` after the warnings were shown is
+   the logged override; an emitting mode stops for a human instead. Steps:
+   "set verify command `<cmd>` on project `<p>` in ContextMatrix" for each
+   project that still declares no verify command, with the command the
+   cards propose, and "push an initial commit to `<repo>`'s default branch
+   before running the cards; the agent needs a base branch" for each
+   repository of a card's project with no commits. Steps are shown at the
+   sign-off and again with the emitted cards; they neither block emission
+   nor stop an emitting mode, and they are not playbook entries, which would
+   hold a run at a check-off. A missing instruction file is never a
+   preflight finding: the contract makes a card write it.
 2. **Cards**, in playbook order, which the contract keeps dependency-first,
    so `depends_on` carries real ids within a project. Each created id is
    stored in `emissions` at once, so a retry after a failure skips what
-   exists. A `create_card` warning is reported and emission continues: CM
-   creates the card before it lints it, the readiness checks mirror its lint,
-   and the outcomes stage learns from what slips through.
+   exists. Each body ends with a `## Sources` section saying what every
+   source tag it cites stands for: its project's repository at the commit
+   grounding read, or the ContextMatrix board. Another project's repository
+   is not named, and a body citing no tag gets no section. A `create_card`
+   warning is reported and emission continues: CM creates the card before
+   it lints it, the readiness checks mirror its lint, and the outcomes stage
+   learns from what slips through.
 3. **Playbook**, for two or more cards: card and manual entries in draft
    order, the draft's title, and a description with intake's problem, value
    and assumptions. A single card carries the problem and the assumptions in
@@ -458,14 +499,24 @@ stop for one otherwise. Every decision is a row in `gates`. Then, in order:
 4. The blueprint's trees are removed and its state is `emitted`. Running is
    a human action in CM, or in yolo mode `run_card` for one card and
    `run_playbook` for several, started once and recorded in `emissions`.
+   While a card's repository has no commits yolo starts nothing and records
+   nothing: the session gets a line naming the repositories, saying to push
+   an initial commit and reply `approve`, or to start the run in CM and
+   reply `approve`. A later `approve` resumes the emission and starts the run
+   once every repository has a commit; if one is still empty the line is
+   posted again. The watch starts once the run start is recorded.
 5. **Watch.** While the session is attached the architect polls CM every
    `watch_interval_seconds` (default 60) and posts a line when a card's
    state, worker, phase or pull request changes, or the playbook run's
    status does. A run waiting on a check-off or on a failed card is reported
    once as waiting for a human. The watch ends when the single card is done
    or not planned, or the playbook run completes or every entry is complete,
-   with the pull requests and one compare link per repository, and the
-   blueprint's state is `done`.
+   with a closing summary: each card's state and pull request, the playbook
+   and one compare link per repository, the architect's total cost, and
+   "Reply export for the bundle, or end the session." Then the blueprint's
+   state is `done`. The summary is posted once: a restart between the two
+   finds it stored and only sets the state, and a reopen of a `done`
+   blueprint posts nothing. Ending the session stays with the user.
 
 The architect does not use CM's Jira import for cards. Its traps hit exactly
 what the contract tunes: imported titles start with the issue key, no labels

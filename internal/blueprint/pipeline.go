@@ -477,18 +477,26 @@ func (s *validatorState) last() []string {
 
 // cardsValidator returns decomposition's submit validator: the draft's own
 // problems and the contract run on every submit, and a failing submit goes
-// back to the model. The third failing submit is accepted with its findings
-// recorded, so the pipeline stops and reports instead of looping until the
-// run's turns are spent. A draft that does not decode is refused without
-// spending a round.
-func (c *Controller) cardsValidator(projects map[string]contract.Project) (func(stage.Artifact) error, *validatorState) {
+// back to the model. Every submit reads the project list from ContextMatrix
+// again, so a fix made there during the run counts at the next submit; a
+// read of ContextMatrix or the checkout that fails refuses the submit
+// without spending a round. The third failing submit is accepted with its
+// findings recorded, so the pipeline stops and reports instead of looping
+// until the run's turns are spent. A draft that does not decode is refused
+// without spending a round.
+func (c *Controller) cardsValidator(sess *session, bp store.Blueprint) (func(context.Context, stage.Artifact) error, *validatorState) {
 	state := &validatorState{}
 	lists := c.opts.Pack.Lists()
 
-	return func(a stage.Artifact) error {
+	return func(ctx context.Context, a stage.Artifact) error {
 		draft, err := contract.ParseDraft(a.Data)
 		if err != nil {
 			return err
+		}
+
+		projects, err := c.freshView(ctx, sess, bp)
+		if err != nil {
+			return fmt.Errorf("the cards were not judged (%w); submit the same draft again", err)
 		}
 
 		problems := draftProblems(draft)
@@ -509,6 +517,17 @@ func (c *Controller) cardsValidator(projects map[string]contract.Project) (func(
 		return fmt.Errorf("%d problem(s) with the cards; fix them and submit again (submit %d of %d):\n%s",
 			len(problems), state.rounds, maxContractRounds, strings.Join(problems, "\n"))
 	}, state
+}
+
+// freshView reads the project list from ContextMatrix and builds the
+// contract's view of the blueprint's target projects from it.
+func (c *Controller) freshView(ctx context.Context, sess *session, bp store.Blueprint) (map[string]contract.Project, error) {
+	projects, err := c.opts.Projects(ctx, sess.mcpKey)
+	if err != nil {
+		return nil, fmt.Errorf("list projects: %w", err)
+	}
+
+	return contractView(ctx, projects, bp.Projects, c.opts.Workspace.TreeRoot(bp.ID))
 }
 
 // draftProblems are the faults of the draft as a whole: it holds no cards,

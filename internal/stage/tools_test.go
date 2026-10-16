@@ -83,3 +83,13 @@ func TestSubmitArtifactTool_IsTerminalAndValidatesArgs(t *testing.T) {
 		})
 	}
 }
+
+func TestSubmitArtifactTool_ValidatesWithTheCallsContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	tool := submitArtifactTool{validate: func(ctx context.Context, _ Artifact) error { return ctx.Err() }}
+
+	_, err := tool.Execute(ctx, map[string]any{"body": "# Cards"})
+	require.ErrorIs(t, err, context.Canceled)
+}

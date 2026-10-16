@@ -14,23 +14,28 @@ import (
 )
 
 // exportTree writes the tree of commit sha from the bare mirror into dir as
-// plain files, replacing dir. Pure Go: no index, no .git, no git binary.
-// Symlinks are skipped; submodules are not in the file iterator. A cancelled
-// ctx stops it between files and leaves dir as it was.
+// plain files, replacing dir. An empty sha, a repository with no commits,
+// writes an empty dir. Pure Go: no index, no .git, no git binary. Symlinks
+// are skipped; submodules are not in the file iterator. A cancelled ctx
+// stops it between files and leaves dir as it was.
 func exportTree(ctx context.Context, mirror, sha, dir string) error {
-	repo, err := git.PlainOpen(mirror)
-	if err != nil {
-		return fmt.Errorf("code: open mirror: %w", err)
-	}
+	var tree *object.Tree
 
-	commit, err := repo.CommitObject(plumbing.NewHash(sha))
-	if err != nil {
-		return fmt.Errorf("code: commit %s: %w", sha, err)
-	}
+	if sha != "" {
+		repo, err := git.PlainOpen(mirror)
+		if err != nil {
+			return fmt.Errorf("code: open mirror: %w", err)
+		}
 
-	tree, err := commit.Tree()
-	if err != nil {
-		return fmt.Errorf("code: tree of %s: %w", sha, err)
+		commit, err := repo.CommitObject(plumbing.NewHash(sha))
+		if err != nil {
+			return fmt.Errorf("code: commit %s: %w", sha, err)
+		}
+
+		tree, err = commit.Tree()
+		if err != nil {
+			return fmt.Errorf("code: tree of %s: %w", sha, err)
+		}
 	}
 
 	tmp := dir + ".partial"
@@ -42,7 +47,33 @@ func exportTree(ctx context.Context, mirror, sha, dir string) error {
 		return fmt.Errorf("code: partial tree: %w", err)
 	}
 
-	err = tree.Files().ForEach(func(f *object.File) error {
+	if tree != nil {
+		if err := writeFiles(ctx, tree, tmp); err != nil {
+			_ = os.RemoveAll(tmp)
+
+			return fmt.Errorf("code: export tree: %w", err)
+		}
+	}
+
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("code: replace tree: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dir), 0o750); err != nil {
+		return fmt.Errorf("code: tree parent: %w", err)
+	}
+
+	if err := os.Rename(tmp, dir); err != nil {
+		return fmt.Errorf("code: place tree: %w", err)
+	}
+
+	return nil
+}
+
+// writeFiles writes every file of tree under base, stopping between files
+// once ctx ends. Symlinks are skipped.
+func writeFiles(ctx context.Context, tree *object.Tree, base string) error {
+	return tree.Files().ForEach(func(f *object.File) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -56,7 +87,7 @@ func exportTree(ctx context.Context, mirror, sha, dir string) error {
 			perm = 0o755
 		}
 
-		target, err := treeTarget(tmp, f.Name)
+		target, err := treeTarget(base, f.Name)
 		if err != nil {
 			return err
 		}
@@ -85,25 +116,6 @@ func exportTree(ctx context.Context, mirror, sha, dir string) error {
 
 		return out.Close()
 	})
-	if err != nil {
-		_ = os.RemoveAll(tmp)
-
-		return fmt.Errorf("code: export tree: %w", err)
-	}
-
-	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("code: replace tree: %w", err)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(dir), 0o750); err != nil {
-		return fmt.Errorf("code: tree parent: %w", err)
-	}
-
-	if err := os.Rename(tmp, dir); err != nil {
-		return fmt.Errorf("code: place tree: %w", err)
-	}
-
-	return nil
 }
 
 // treeTarget places a tree entry under base, refusing any name that would

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,6 +36,12 @@ type fakeWorkspace struct {
 	root   string
 	hold   chan struct{}
 	failOn string
+	// empty names the trees that check out as a repository with no
+	// commits: no files, no sha.
+	empty map[string]bool
+
+	// noAgents leaves AGENTS.md out of every tree.
+	noAgents bool
 
 	mu      sync.Mutex
 	calls   []checkoutCall
@@ -66,6 +73,15 @@ func (w *fakeWorkspace) Checkout(ctx context.Context, blueprintID, name, repoURL
 	}
 
 	dir := filepath.Join(w.TreeRoot(blueprintID), name)
+
+	if w.empty[name] {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return code.Checkout{}, err
+		}
+
+		return code.Checkout{RepoURL: repoURL, Dir: dir}, nil
+	}
+
 	if err := os.MkdirAll(filepath.Join(dir, "internal"), 0o750); err != nil {
 		return code.Checkout{}, err
 	}
@@ -74,6 +90,10 @@ func (w *fakeWorkspace) Checkout(ctx context.Context, blueprintID, name, repoURL
 		"AGENTS.md":     "# agents\n",
 		"internal/x.go": "package internal\n\nfunc Thing() {}\n",
 		"repo.txt":      repoURL,
+	}
+
+	if w.noAgents {
+		delete(files, "AGENTS.md")
 	}
 
 	for name, body := range files {
@@ -140,6 +160,11 @@ func listAlpha(context.Context, string) ([]cm.Project, error) {
 	return []cm.Project{{Name: "alpha", Repo: "https://example.com/alpha.git", Verify: &cm.Verify{Command: "make test"}}}, nil
 }
 
+// listAlphaUnset is alpha with a repository but no verify command.
+func listAlphaUnset(context.Context, string) ([]cm.Project, error) {
+	return []cm.Project{{Name: "alpha", Repo: "https://example.com/alpha.git"}}, nil
+}
+
 // stageScript answers each stage by id; the fake runner looks up the stage
 // of every run it is asked for.
 type stageScript map[string]func(ctx context.Context, in stage.Input) (stage.Output, error)
@@ -175,6 +200,16 @@ func goodCards() map[string]any {
 		}},
 		"order": []any{"D1"},
 	}
+}
+
+// setupCards is goodCards with the setup for a project with no verify
+// command and no instruction file: goodCards' criteria already run
+// "go test ./...".
+func setupCards() map[string]any {
+	cards := goodCards()
+	cards["setup"] = map[string]any{"alpha": map[string]any{"verify_command": "go test ./...", "instruction_card": "D1"}}
+
+	return cards
 }
 
 func readiness(ready bool) map[string]any {
@@ -555,7 +590,7 @@ func TestPipeline_ReadinessPassesOnTheSecondRound(t *testing.T) {
 // validator accepts it, counting its submits; it gives up after a few, as
 // the run's turn cap would.
 func keepSubmitting(draft map[string]any, wantRejection string, submits *int) func(context.Context, stage.Input) (stage.Output, error) {
-	return func(_ context.Context, in stage.Input) (stage.Output, error) {
+	return func(ctx context.Context, in stage.Input) (stage.Output, error) {
 		for {
 			*submits++
 
@@ -563,7 +598,7 @@ func keepSubmitting(draft map[string]any, wantRejection string, submits *int) fu
 				return stage.Output{}, errors.New("the validator never accepted the draft")
 			}
 
-			if err := in.Validate(stage.Artifact{Body: "# Cards", Data: draft}); err != nil {
+			if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: draft}); err != nil {
 				if !strings.Contains(err.Error(), wantRejection) {
 					return stage.Output{}, fmt.Errorf("unexpected rejection: %w", err)
 				}
@@ -657,14 +692,14 @@ func TestPipeline_ContractPassingOnTheSecondSubmitIsNotStopped(t *testing.T) {
 	var submits int
 
 	script := happyScript()
-	script["decomposition"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+	script["decomposition"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
 		bad := goodCards()
 		bad["order"] = []any{}
 
 		for _, draft := range []map[string]any{bad, goodCards()} {
 			submits++
 
-			if err := in.Validate(stage.Artifact{Body: "# Cards", Data: draft}); err == nil {
+			if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: draft}); err == nil {
 				return done("# Cards", draft), nil
 			}
 		}
@@ -685,6 +720,155 @@ func TestPipeline_ContractPassingOnTheSecondSubmitIsNotStopped(t *testing.T) {
 	report, ok := rec.first(EventReport)
 	require.True(t, ok)
 	assert.Equal(t, true, report.Payload["ready"])
+}
+
+func TestPipeline_EverySubmitReadsTheProjectsAgain(t *testing.T) {
+	var fixed atomic.Bool
+
+	script := happyScript()
+	script["decomposition"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		draft := goodCards()
+
+		if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: draft}); err == nil || !strings.Contains(err.Error(), "type") {
+			return stage.Output{}, fmt.Errorf("the first submit fails on the card type: %v", err)
+		}
+
+		// The user adds the card type in ContextMatrix during the run.
+		fixed.Store(true)
+
+		if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: draft}); err != nil {
+			return stage.Output{}, fmt.Errorf("the same draft passes once ContextMatrix has the type: %w", err)
+		}
+
+		return done("# Cards", draft), nil
+	}
+
+	c, st, _, rec, _ := newPipeline(t, script)
+	c.opts.Projects = func(context.Context, string) ([]cm.Project, error) {
+		types := []string{"task"}
+		if fixed.Load() {
+			types = []string{"task", "feature"}
+		}
+
+		return []cm.Project{{Name: "alpha", Repo: "https://example.com/alpha.git", Verify: &cm.Verify{Command: "make test"}, Types: types}}, nil
+	}
+
+	drive(t, c, "BP1")
+
+	art, err := st.LatestArtifact(context.Background(), "BP1", "decomposition")
+	require.NoError(t, err)
+	assert.False(t, artifactStopped(art), "a fix made in ContextMatrix counts at the next submit")
+
+	report, ok := rec.first(EventReport)
+	require.True(t, ok)
+	assert.Equal(t, true, report.Payload["ready"])
+}
+
+func TestPipeline_ASubmitWhileContextMatrixCannotBeReadSpendsNoRound(t *testing.T) {
+	var down atomic.Bool
+
+	script := happyScript()
+	script["decomposition"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		bad := goodCards()
+		bad["order"] = []any{}
+
+		down.Store(true)
+
+		for range maxContractRounds {
+			if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: bad}); err == nil || !strings.Contains(err.Error(), "not judged") {
+				return stage.Output{}, fmt.Errorf("a submit while ContextMatrix is down is not judged: %v", err)
+			}
+		}
+
+		down.Store(false)
+
+		// Had the refusals spent rounds, this bad draft would be accepted.
+		if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: bad}); err == nil {
+			return stage.Output{}, errors.New("the first judged submit of a bad draft was accepted")
+		}
+
+		if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: goodCards()}); err != nil {
+			return stage.Output{}, fmt.Errorf("the good draft: %w", err)
+		}
+
+		return done("# Cards", goodCards()), nil
+	}
+
+	c, st, _, _, _ := newPipeline(t, script)
+	c.opts.Projects = func(ctx context.Context, key string) ([]cm.Project, error) {
+		if down.Load() {
+			return nil, errors.New("cm: list_projects: remote unreachable")
+		}
+
+		return listAlpha(ctx, key)
+	}
+
+	drive(t, c, "BP1")
+
+	art, err := st.LatestArtifact(context.Background(), "BP1", "decomposition")
+	require.NoError(t, err)
+	assert.False(t, artifactStopped(art))
+}
+
+func TestPipeline_SetupIsWorkTheCardsCarry(t *testing.T) {
+	script := happyScript()
+	script["decomposition"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: goodCards()})
+		if err == nil || !strings.Contains(err.Error(), "setup_verify") || !strings.Contains(err.Error(), "setup_instruction") {
+			return stage.Output{}, fmt.Errorf("cards without the setup are refused: %v", err)
+		}
+
+		if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: setupCards()}); err != nil {
+			return stage.Output{}, fmt.Errorf("cards with the setup pass: %w", err)
+		}
+
+		return done("# Cards", setupCards()), nil
+	}
+
+	c, _, _, rec, ws := newPipeline(t, script)
+	c.opts.Projects = listAlphaUnset
+	ws.noAgents = true
+
+	drive(t, c, "BP1")
+
+	report, ok := rec.first(EventReport)
+	require.True(t, ok)
+	assert.Equal(t, true, report.Payload["ready"], "neither gap stops the pipeline")
+}
+
+func TestPipeline_AVerifyCommandSetDuringDecompositionCounts(t *testing.T) {
+	var set atomic.Bool
+
+	script := happyScript()
+	script["decomposition"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: goodCards()}); err == nil || !strings.Contains(err.Error(), "setup_verify") {
+			return stage.Output{}, fmt.Errorf("the first submit proposes no verify command: %v", err)
+		}
+
+		// The user sets the verify command in ContextMatrix meanwhile.
+		set.Store(true)
+
+		if err := in.Validate(ctx, stage.Artifact{Body: "# Cards", Data: goodCards()}); err != nil {
+			return stage.Output{}, fmt.Errorf("the same cards pass once the project has one: %w", err)
+		}
+
+		return done("# Cards", goodCards()), nil
+	}
+
+	c, st, _, _, _ := newPipeline(t, script)
+	c.opts.Projects = func(ctx context.Context, key string) ([]cm.Project, error) {
+		if set.Load() {
+			return listAlpha(ctx, key)
+		}
+
+		return listAlphaUnset(ctx, key)
+	}
+
+	drive(t, c, "BP1")
+
+	art, err := st.LatestArtifact(context.Background(), "BP1", "decomposition")
+	require.NoError(t, err)
+	assert.False(t, artifactStopped(art))
 }
 
 func TestPipeline_RestartResumesAtTheNextStage(t *testing.T) {
@@ -1317,6 +1501,7 @@ func TestPrepareCode_TreeNames(t *testing.T) {
 			p := facts.projects["alpha"]
 			assert.Equal(t, tt.wantRepo, p.HasRepo)
 			assert.True(t, p.HasVerify)
+			assert.Equal(t, tt.wantRepo, p.HasInstructionFile, "the primary tree's AGENTS.md")
 
 			if tt.wantRepo {
 				assert.Equal(t, filepath.Join(ws.TreeRoot("BP1"), "alpha"), p.Root, "the primary tree is the contract root")
@@ -1526,6 +1711,38 @@ func TestPrepareCode_FillsProjectTypesPrioritiesAndForeignRepos(t *testing.T) {
 	}, alpha.ForeignRepos, "CM's project order; the legacy repo and every repos url, as CM's lint collects them")
 }
 
+func TestPrepareCode_AnEmptyRepositoryGrounds(t *testing.T) {
+	c, st, _, _, ws := newPipeline(t, happyScript())
+	ws.empty = map[string]bool{"alpha": true}
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	facts, err := c.prepareCode(ctx, sessionOf(t, c, "BP1"), bp, "grounding")
+	require.NoError(t, err)
+	require.Len(t, facts.repos, 1)
+	assert.True(t, facts.repos[0].Empty)
+	assert.Empty(t, facts.repos[0].SHA)
+	assert.Empty(t, facts.repos[0].InstructionFile)
+	assert.Contains(t, checkoutLines(facts), "- alpha/ is project alpha, an empty repository with no commits [S1]\n")
+
+	p := facts.projects["alpha"]
+	assert.True(t, p.HasRepo)
+	assert.NotEmpty(t, p.Root)
+	assert.False(t, p.HasInstructionFile, "an empty tree has no instruction file, so a card must write AGENTS.md")
+
+	sources, err := st.ListSources(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, sources, 1)
+	assert.Empty(t, sources[0].Version, "a repository with no commits is recorded with no sha")
+
+	_, err = c.prepareCode(ctx, sessionOf(t, c, "BP1"), bp, "decomposition")
+	require.NoError(t, err)
+	assert.Equal(t, 1, ws.checkouts(), "a later stage reuses the empty tree")
+}
+
 // fakeCMTools hands a cm stage one read tool and counts the sessions it
 // opened and closed.
 type fakeCMTools struct {
@@ -1669,4 +1886,145 @@ func TestPipeline_CMToolsWithoutACloserRun(t *testing.T) {
 
 	assert.Equal(t, 4, runner.calls())
 	assert.True(t, rec.has(EventReport), "a nil closer is not called when the run ends")
+}
+
+func TestPipeline_GroundingReportsTheSetupGaps(t *testing.T) {
+	const (
+		core = "https://example.com/core.git"
+		docs = "https://example.com/docs.git"
+	)
+
+	twoRepos := func(context.Context, string) ([]cm.Project, error) {
+		return []cm.Project{{
+			Name: "alpha", Verify: &cm.Verify{Command: "make test"},
+			Repos: []cm.Repo{{Name: "core", URL: core, Primary: true}, {Name: "docs", URL: docs}},
+		}}, nil
+	}
+
+	gap := func(verify, file, empty bool) []any {
+		return []any{map[string]any{"project": "alpha", "has_verify": verify, "has_instruction_file": file, "empty": empty}}
+	}
+
+	tests := []struct {
+		name     string
+		projects func(context.Context, string) ([]cm.Project, error)
+		noAgents bool
+		empty    map[string]bool
+		want     []any // nil: no report
+	}{
+		{name: "set up", projects: listAlpha},
+		{name: "no verify command", projects: listAlphaUnset, want: gap(false, true, false)},
+		{name: "no instruction file", projects: listAlpha, noAgents: true, want: gap(true, false, false)},
+		{name: "both", projects: listAlphaUnset, noAgents: true, want: gap(false, false, false)},
+		{name: "an empty repository", projects: listAlpha, empty: map[string]bool{"alpha": true}, want: gap(true, false, true)},
+		{name: "an empty secondary repository", projects: twoRepos, empty: map[string]bool{"alpha@docs": true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _, _, rec, ws := newPipeline(t, happyScript())
+			c.opts.Projects = tt.projects
+			ws.noAgents = tt.noAgents
+			ws.empty = tt.empty
+
+			drive(t, c, "BP1")
+
+			ev, ok := rec.first(EventSetupGaps)
+			if tt.want == nil {
+				assert.False(t, ok, "nothing to report")
+
+				return
+			}
+
+			require.True(t, ok)
+			assert.Equal(t, tt.want, ev.Payload["projects"])
+
+			rec.mu.Lock()
+			events := slices.Clone(rec.events)
+			rec.mu.Unlock()
+
+			at := func(kind, stage string) int {
+				return slices.IndexFunc(events, func(e Event) bool {
+					return e.Kind == kind && (stage == "" || e.Payload["stage"] == stage)
+				})
+			}
+
+			assert.Less(t, at(EventStageEnded, "grounding"), at(EventSetupGaps, ""), "reported when grounding ends")
+			assert.Less(t, at(EventSetupGaps, ""), at(EventStageStarted, "decomposition"), "before the paid stages")
+		})
+	}
+}
+
+func TestPipeline_AVerifyCommandSetDuringGroundingIsNotReported(t *testing.T) {
+	var set atomic.Bool
+
+	script := happyScript()
+	script["grounding"] = func(context.Context, stage.Input) (stage.Output, error) {
+		set.Store(true) // the user sets it in ContextMatrix while grounding runs
+
+		return done("# Grounding", nil), nil
+	}
+
+	c, _, _, rec, _ := newPipeline(t, script)
+	c.opts.Projects = func(ctx context.Context, key string) ([]cm.Project, error) {
+		if set.Load() {
+			return listAlpha(ctx, key)
+		}
+
+		return listAlphaUnset(ctx, key)
+	}
+
+	drive(t, c, "BP1")
+
+	assert.False(t, rec.has(EventSetupGaps), "the report reads ContextMatrix when grounding ends")
+}
+
+func TestPipeline_AnUnreadableSetupIsNotReportedAndThePipelineGoesOn(t *testing.T) {
+	var calls atomic.Int32
+
+	c, _, runner, rec, _ := newPipeline(t, happyScript())
+	c.opts.Projects = func(ctx context.Context, key string) ([]cm.Project, error) {
+		// The second read is the report's: after grounding's checkout,
+		// before decomposition's.
+		if calls.Add(1) == 2 {
+			return nil, errors.New("cm: list_projects: remote unreachable")
+		}
+
+		return listAlphaUnset(ctx, key)
+	}
+
+	drive(t, c, "BP1")
+
+	assert.False(t, rec.has(EventSetupGaps))
+	assert.GreaterOrEqual(t, runner.calls(), 3, "decomposition still runs")
+}
+
+// abortedCtx reports a cancel without cutting the I/O under it short, so a
+// report that ignores the abort would still read and publish.
+type abortedCtx struct{ context.Context } //nolint:containedctx // a test double that wraps a context
+
+func (abortedCtx) Err() error { return context.Canceled }
+
+func TestReportSetup_AnAbortedRunReportsNothing(t *testing.T) {
+	var reads atomic.Int32
+
+	c, st, _, rec, _ := newPipeline(t, happyScript())
+	c.opts.Projects = func(ctx context.Context, key string) ([]cm.Project, error) {
+		reads.Add(1)
+
+		return listAlphaUnset(ctx, key)
+	}
+
+	drive(t, c, "BP1")
+	require.Equal(t, 1, rec.count(EventSetupGaps), "the drive reported the gap")
+
+	before := reads.Load()
+
+	bp, err := st.GetBlueprint(context.Background(), "BP1")
+	require.NoError(t, err)
+
+	c.reportSetup(abortedCtx{context.Background()}, sessionOf(t, c, "BP1"), bp)
+
+	assert.Equal(t, before, reads.Load(), "an aborted run reads nothing")
+	assert.Equal(t, 1, rec.count(EventSetupGaps), "an aborted run tells the session nothing more")
 }

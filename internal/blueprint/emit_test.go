@@ -297,6 +297,99 @@ func TestYolo_StartsOneCardWithRunCard(t *testing.T) {
 	assert.Equal(t, true, ev.Payload["run_follows"], "the run start follows the announcement")
 }
 
+func TestYolo_AnEmptyRepositoryEmitsTheCardsAndStartsNoRun(t *testing.T) {
+	c, st, _, rec, ws := newPipeline(t, happyScript())
+	ws.empty = map[string]bool{"alpha": true}
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+
+	driveIn(t, c, yoloInput("BP1"))
+	assert.Nil(t, watcherOf(c, "BP1"), "no watch while the run is held")
+
+	assert.Len(t, fake.titles(), 1, "the card is created")
+	assert.Empty(t, fake.cardRuns())
+	assert.Empty(t, fake.runBooks)
+	assert.False(t, rec.has(EventRunStarted))
+
+	recs, err := st.ListEmissions(context.Background(), "BP1")
+	require.NoError(t, err)
+
+	for _, e := range recs {
+		assert.NotEqual(t, store.EmitRun, e.Kind, "no run start is recorded")
+	}
+
+	ev, ok := rec.first(EventEmitted)
+	require.True(t, ok)
+	assert.Equal(t, false, ev.Payload["run_follows"])
+
+	var prompt string
+
+	for _, a := range rec.all(EventAwaitInput) {
+		if p, _ := a.Payload["prompt"].(string); strings.Contains(p, "has no commits") {
+			prompt = p
+		}
+	}
+
+	assert.Contains(t, prompt, "https://example.com/alpha.git has no commits")
+
+	bp, err := st.GetBlueprint(context.Background(), "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, string(StateEmitted), bp.State)
+}
+
+func TestYolo_AFirstCommitThenApproveStartsTheRun(t *testing.T) {
+	c, _, _, rec, ws := newPipeline(t, happyScript())
+	ws.empty = map[string]bool{"alpha": true}
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	c.opts.WatchInterval = 5 * time.Millisecond
+	ctx := context.Background()
+
+	driveIn(t, c, yoloInput("BP1"))
+	require.Empty(t, fake.cardRuns())
+	assert.Nil(t, watcherOf(c, "BP1"), "no watch while the run is held")
+
+	ws.mu.Lock()
+	ws.heads = map[string]string{"https://example.com/alpha.git": "sha-first"}
+	ws.mu.Unlock()
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	assert.Len(t, fake.cardRuns(), 1)
+	assert.True(t, rec.has(EventRunStarted))
+	assert.Len(t, fake.titles(), 1, "no card is created twice")
+	assert.NotNil(t, watcherOf(c, "BP1"), "the recorded run start starts the watch")
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m4"))
+	c.Wait("BP1")
+
+	assert.Len(t, fake.cardRuns(), 1, "a started run is never started again")
+}
+
+func TestEmptyReposPrompt(t *testing.T) {
+	tests := []struct {
+		name  string
+		repos []string
+		want  string
+	}{
+		{
+			name: "one repository", repos: []string{"a"},
+			want: "a has no commits, so the run was not started; push an initial commit, then reply approve to start it, or start it in ContextMatrix and reply approve.",
+		},
+		{
+			name: "several repositories", repos: []string{"a", "b"},
+			want: "a, b have no commits, so the run was not started; push an initial commit to each, then reply approve to start it, or start it in ContextMatrix and reply approve.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, emptyReposPrompt(tt.repos))
+		})
+	}
+}
+
 func TestYolo_StartsSeveralCardsWithRunPlaybook(t *testing.T) {
 	c, _, _, _, _ := newPipeline(t, twoCardScript())
 	fake := newFakeCM()
@@ -648,4 +741,143 @@ func TestYolo_AnAbortBeforeTheRunStartSaysSo(t *testing.T) {
 	assert.Empty(t, fake.cardRuns(), "no run is started")
 	assert.Equal(t, []string{"Add the thing"}, fake.titles())
 	assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
+}
+
+// The fake checkout records "sha-<tree>", so a repository line carries its
+// first seven characters.
+const (
+	alphaSourceLine = "- S1: https://example.com/alpha.git at sha-alp"
+	boardSourceLine = "- S2: the ContextMatrix board"
+)
+
+func TestEmit_CardBodiesSayWhatTheirSourceTagsMean(t *testing.T) {
+	tests := []struct {
+		name  string
+		why   string // replaces "why" in the card's Context section
+		has   []string
+		lacks []string
+	}{
+		{name: "a repository tag", why: "why [S1 internal/x.go]", has: []string{"## Sources", alphaSourceLine}, lacks: []string{boardSourceLine}},
+		{name: "two tags in one citation", why: "why [S1, S2]", has: []string{alphaSourceLine, boardSourceLine}},
+		{name: "a tag that names no source", why: "why [S9]", lacks: []string{"## Sources"}},
+		{name: "no tags", why: "why", lacks: []string{"## Sources"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			draft := goodCards()
+			card := draft["cards"].([]any)[0].(map[string]any)
+			card["body"] = strings.Replace(card["body"].(string), "why", tt.why, 1)
+
+			script := happyScript()
+			script["decomposition"] = returns("# Cards", draft)
+
+			c, st, _, _, _ := newPipeline(t, script)
+			fake := newFakeCM()
+			c.opts.ConnectCM = fake.connect
+
+			drive(t, c, "BP1")
+			emitNow(t, c, st, "BP1")
+
+			cards, _ := fake.inputs()
+			require.Len(t, cards, 1)
+
+			for _, s := range tt.has {
+				assert.Contains(t, cards[0].Body, s)
+			}
+
+			for _, s := range tt.lacks {
+				assert.NotContains(t, cards[0].Body, s)
+			}
+		})
+	}
+}
+
+func TestEmit_OnlyACardThatCitesGetsASourcesSection(t *testing.T) {
+	draft := twoCards()
+	first := draft["cards"].([]any)[0].(map[string]any)
+	first["body"] = strings.Replace(first["body"].(string), "why", "why [S1]", 1)
+
+	script := twoCardScript()
+	script["decomposition"] = returns("# Cards", draft)
+
+	c, st, _, _, _ := newPipeline(t, script)
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+
+	drive(t, c, "BP1")
+	emitNow(t, c, st, "BP1")
+
+	cards, _ := fake.inputs()
+	require.Len(t, cards, 2)
+	assert.Contains(t, cards[0].Body, alphaSourceLine)
+	assert.NotContains(t, cards[1].Body, "## Sources")
+}
+
+func TestEmit_AnotherProjectsRepositoryIsNotNamed(t *testing.T) {
+	beta := cm.Project{Name: "beta", Repo: "https://example.com/beta.git", Verify: &cm.Verify{Command: "make test"}}
+
+	draft := goodCards()
+	card := draft["cards"].([]any)[0].(map[string]any)
+	card["body"] = strings.Replace(card["body"].(string), "why", "why [S1], matching the client [S2]", 1)
+
+	script := happyScript()
+	script["decomposition"] = returns("# Cards", draft)
+
+	c, st, _, _, _ := newPipeline(t, script)
+	c.opts.Projects = func(context.Context, string) ([]cm.Project, error) {
+		return []cm.Project{alphaProject(), beta}, nil
+	}
+
+	fake := newFakeCM()
+	fake.projects = []cm.Project{alphaProject(), beta}
+	c.opts.ConnectCM = fake.connect
+
+	in := startInput("BP1")
+	in.Projects = []string{"alpha", "beta"}
+	driveIn(t, c, in)
+	emitNow(t, c, st, "BP1")
+
+	cards, _ := fake.inputs()
+	require.Len(t, cards, 1)
+	assert.Contains(t, cards[0].Body, alphaSourceLine)
+	assert.Contains(t, cards[0].Body, "- S2: another project's repository at sha-bet")
+	assert.NotContains(t, cards[0].Body, "https://example.com/beta.git", "the contract keeps other projects' repositories out of a card")
+}
+
+func TestSourceLine(t *testing.T) {
+	own := []string{"https://example.com/alpha.git"}
+
+	tests := []struct {
+		name string
+		src  store.Source
+		want string
+	}{
+		{
+			name: "own repository cut to seven characters",
+			src:  store.Source{Number: 1, Kind: "repo", Identity: "https://example.com/alpha.git", Version: "0123456789abcdef0123456789abcdef01234567"},
+			want: "S1: https://example.com/alpha.git at 0123456",
+		},
+		{
+			name: "own repository with no commits",
+			src:  store.Source{Number: 1, Kind: "repo", Identity: "https://example.com/alpha.git"},
+			want: "S1: https://example.com/alpha.git with no commits",
+		},
+		{
+			name: "another project's repository",
+			src:  store.Source{Number: 2, Kind: "repo", Identity: "https://example.com/beta.git", Version: "0123456789abcdef"},
+			want: "S2: another project's repository at 0123456",
+		},
+		{
+			name: "the board",
+			src:  store.Source{Number: 3, Kind: "cm"},
+			want: "S3: the ContextMatrix board, as read while the cards were written",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, sourceLine(tt.src, own))
+		})
+	}
 }

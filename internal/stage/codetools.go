@@ -12,7 +12,8 @@ import (
 
 // RepoFacts is what repo_info reports about one checked-out repository: the
 // directory under the tool root, the commit, the instruction file the agent
-// injects, the project's verify command and the source tag to cite.
+// injects, the project's verify command, the source tag to cite, and
+// whether the repository has no commits yet.
 type RepoFacts struct {
 	Project         string `json:"project"`
 	Dir             string `json:"dir"`
@@ -21,6 +22,7 @@ type RepoFacts struct {
 	InstructionFile string `json:"instruction_file"`
 	VerifyCommand   string `json:"verify_command"`
 	SourceTag       string `json:"source_tag"`
+	Empty           bool   `json:"empty,omitempty"`
 }
 
 // CodeTools is the read-only tool set of a code stage: the harness read, grep

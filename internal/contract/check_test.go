@@ -55,7 +55,7 @@ func withRoot(t *testing.T) map[string]Project {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "internal", "api"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "internal", "api", "router.go"), []byte("package api\n\nfunc NewRouter() {}\n"), 0o600))
 
-	return map[string]Project{"alpha": {HasRepo: true, HasVerify: true, Root: root}}
+	return map[string]Project{"alpha": {HasRepo: true, HasVerify: true, HasInstructionFile: true, Root: root}}
 }
 
 func checkNames(fs []Finding) []string {
@@ -235,21 +235,18 @@ func TestCheck_CycleReportsOnlyCardsOnIt(t *testing.T) {
 	assert.NotContains(t, names, "D3:depends_on_acyclic", "D3 depends on a cycle but is not on one")
 }
 
-func TestCheck_ProjectPrerequisites(t *testing.T) {
-	projects := withRoot(t)
-	projects["alpha"] = Project{HasRepo: false, HasVerify: false, Root: projects["alpha"].Root}
+func TestCheck_ProjectWithoutARepository(t *testing.T) {
+	projects := map[string]Project{"alpha": {HasVerify: true}}
 
-	findings := Check(Draft{Cards: []Card{goodCard("D1")}}, testLists(), projects)
-	names := checkNames(findings)
-	assert.Contains(t, names, "D1:project_repo")
-	assert.Contains(t, names, "D1:project_verify")
+	names := checkNames(Check(Draft{Cards: []Card{goodCard("D1")}}, testLists(), projects))
+	assert.Equal(t, []string{"D1:project_repo"}, names)
 }
 
 func TestCheck_NoRootSkipsWhere(t *testing.T) {
 	projects := map[string]Project{"alpha": {HasRepo: true, HasVerify: true}}
 
 	findings := Check(Draft{Cards: []Card{goodCard("D1")}}, testLists(), projects)
-	assert.Empty(t, findings, "without a checkout the where check is not run")
+	assert.Empty(t, findings, "without a checkout neither the where check nor the instruction check runs")
 }
 
 func TestCheck_WhereRejectsPathsOutsideRoot(t *testing.T) {
@@ -414,4 +411,169 @@ func TestCheck_ProjectWithoutTypesOrPrioritiesSkipsThoseChecks(t *testing.T) {
 	d := Draft{Cards: []Card{{ID: "D1", Project: "alpha", Title: "Add the thing", Type: "anything", Priority: "whatever", Body: validBody()}}}
 
 	assert.Empty(t, Check(d, Lists{}, projects))
+}
+
+// changeOnlyBody names "make check" in its Change section but not in its
+// criteria.
+const changeOnlyBody = `## Context
+Why.
+## Where
+internal/api/router.go
+## Change
+Run make check before pushing.
+## Acceptance criteria
+1. The route answers 200.
+## Tests expected
+TestRoute_Answers200.
+## Out of scope
+Auth.
+`
+
+func TestCheck_VerifySetup(t *testing.T) {
+	tests := []struct {
+		name    string
+		project Project
+		setup   map[string]Setup
+		body    string // the cards' body; "" is goodBody
+		want    []string
+		message string // substring of the first finding
+	}{
+		{name: "the project declares one", project: Project{HasRepo: true, HasVerify: true}},
+		{
+			name: "no command and no proposal", project: Project{HasRepo: true},
+			want: []string{"D1:setup_verify", "D2:setup_verify"}, message: "setup.alpha.verify_command",
+		},
+		{
+			name: "proposed and run by every card", project: Project{HasRepo: true},
+			setup: map[string]Setup{"alpha": {VerifyCommand: "go test ./internal/api/"}},
+		},
+		{
+			name: "proposed but run by no card", project: Project{HasRepo: true},
+			setup: map[string]Setup{"alpha": {VerifyCommand: "make check"}},
+			want:  []string{"D1:setup_verify", "D2:setup_verify"}, message: `"make check"`,
+		},
+		{
+			name: "named outside the criteria", project: Project{HasRepo: true},
+			setup: map[string]Setup{"alpha": {VerifyCommand: "make check"}}, body: changeOnlyBody,
+			want: []string{"D1:setup_verify", "D2:setup_verify"}, message: `"make check"`,
+		},
+		{
+			name: "a proposal the project does not need is ignored", project: Project{HasRepo: true, HasVerify: true},
+			setup: map[string]Setup{"alpha": {VerifyCommand: "make check"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a, b := goodCard("D1"), goodCard("D2")
+			b.DependsOn = []string{"D1"}
+
+			if tt.body != "" {
+				a.Body, b.Body = tt.body, tt.body
+			}
+
+			findings := Check(Draft{Cards: []Card{a, b}, Setup: tt.setup}, testLists(), map[string]Project{"alpha": tt.project})
+			assert.Equal(t, tt.want, nilIfEmpty(checkNames(findings)))
+
+			if tt.message != "" {
+				require.NotEmpty(t, findings)
+				assert.Contains(t, findings[0].Message, tt.message)
+			}
+		})
+	}
+}
+
+func TestCheck_InstructionSetup(t *testing.T) {
+	three := func(depsOfD2, depsOfD3 []string) []Card {
+		a, b, c := goodCard("D1"), goodCard("D2"), goodCard("D3")
+		b.DependsOn, c.DependsOn = depsOfD2, depsOfD3
+
+		return []Card{a, b, c}
+	}
+
+	chain := three([]string{"D1"}, []string{"D2"})
+
+	tests := []struct {
+		name  string
+		has   bool // the checkout has an instruction file
+		cards []Card
+		setup map[string]Setup
+		want  []string
+	}{
+		{name: "the checkout has one", has: true, cards: three(nil, nil)},
+		{
+			name: "the checkout has one and a card would overwrite it", has: true, cards: three(nil, nil),
+			setup: map[string]Setup{"alpha": {InstructionCard: "D1"}}, want: []string{"D1:setup_instruction"},
+		},
+		{name: "none and no card named", cards: chain, want: []string{"D1:setup_instruction"}},
+		{name: "every other card depends on it", cards: chain, setup: map[string]Setup{"alpha": {InstructionCard: "D1"}}},
+		{
+			name: "a card that does not depend on it", cards: three([]string{"D1"}, nil),
+			setup: map[string]Setup{"alpha": {InstructionCard: "D1"}}, want: []string{"D3:setup_instruction"},
+		},
+		{
+			name: "a later card named", cards: chain,
+			setup: map[string]Setup{"alpha": {InstructionCard: "D3"}}, want: []string{"D1:setup_instruction", "D2:setup_instruction"},
+		},
+		{
+			name: "an unknown card named", cards: chain,
+			setup: map[string]Setup{"alpha": {InstructionCard: "D9"}}, want: []string{"D1:setup_instruction"},
+		},
+		{
+			name: "a single card writes it", cards: []Card{goodCard("D1")},
+			setup: map[string]Setup{"alpha": {InstructionCard: "D1"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			projects := withRoot(t)
+			p := projects["alpha"]
+			p.HasInstructionFile = tt.has
+			projects["alpha"] = p
+
+			var got []string
+
+			for _, name := range checkNames(Check(Draft{Cards: tt.cards, Setup: tt.setup}, testLists(), projects)) {
+				if strings.HasSuffix(name, ":setup_instruction") {
+					got = append(got, name)
+				}
+			}
+
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestCheck_InstructionSetupIsPerProject(t *testing.T) {
+	projects := withRoot(t)
+	alpha := projects["alpha"]
+	alpha.HasInstructionFile = false
+	beta := projects["alpha"]
+	projects["alpha"], projects["beta"] = alpha, beta
+
+	a1, a2, b1 := goodCard("D1"), goodCard("D2"), goodCard("D3")
+	a2.DependsOn = []string{"D1"}
+	b1.Project = "beta"
+
+	findings := Check(Draft{Cards: []Card{a1, a2, b1}, Setup: map[string]Setup{"alpha": {InstructionCard: "D1"}}}, testLists(), projects)
+	assert.Empty(t, findings, "beta has its instruction file, and its card depends on nothing in alpha")
+}
+
+func TestParseDraft_ReadsTheSetupTrimmed(t *testing.T) {
+	d, err := ParseDraft(map[string]any{
+		"cards": []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add x"}},
+		"setup": map[string]any{"alpha": map[string]any{"verify_command": "  go test ./...\n", "instruction_card": " D1 "}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]Setup{"alpha": {VerifyCommand: "go test ./...", InstructionCard: "D1"}}, d.Setup)
+}
+
+// nilIfEmpty lets a table expect nil for no findings.
+func nilIfEmpty(s []string) []string {
+	if len(s) == 0 {
+		return nil
+	}
+
+	return s
 }
