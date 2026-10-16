@@ -553,7 +553,7 @@ func cardIDs(a store.Artifact) []string {
 
 // verdictOf reads a loop stage's per-card verdicts against the draft it
 // judged: ready only when it judged at least one card, every draft card is
-// among them, and every card it judged is ready.
+// among them, and every card it judged is ready and carries no finding.
 func verdictOf(a store.Artifact, draft []string) (bool, []string) {
 	var data struct {
 		Cards []struct {
@@ -574,7 +574,7 @@ func verdictOf(a store.Artifact, draft []string) (bool, []string) {
 	for _, card := range data.Cards {
 		judged[card.ID] = true
 
-		if card.Ready {
+		if card.Ready && len(card.Findings) == 0 {
 			continue
 		}
 

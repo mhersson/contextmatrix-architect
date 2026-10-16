@@ -54,6 +54,12 @@ func waitsOnUser(e blueprint.Event) bool {
 		status, _ := e.Payload["status"].(string)
 
 		return status != store.RunDone
+	case blueprint.EventExported:
+		// CM arms its working indicator on every message, so an export that
+		// leaves nothing running must clear it.
+		duringRun, _ := e.Payload["during_run"].(bool)
+
+		return !duringRun
 	case blueprint.EventNote:
 		// A note taken while a stage runs leaves the run working, and a note
 		// that re-runs a stage starts one.

@@ -1746,6 +1746,7 @@ func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	assert.NotEmpty(t, entries)
+	assert.Equal(t, false, ev.Payload["during_run"], "an idle blueprint leaves nothing working")
 
 	var all []byte
 
@@ -1790,7 +1791,7 @@ func TestExport_RefusesWithoutADirectoryAndUnsafeIDs(t *testing.T) {
 func TestExport_DoesNotDisturbARunningStage(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	c, st, _, _ := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+	c, st, _, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
 		close(started)
 		<-release
 
@@ -1805,6 +1806,10 @@ func TestExport_DoesNotDisturbARunningStage(t *testing.T) {
 	require.NoError(t, c.Export(ctx, "BP1", "m2"))
 	close(release)
 	c.Wait("BP1")
+
+	ev, ok := rec.first(EventExported)
+	require.True(t, ok)
+	assert.Equal(t, true, ev.Payload["during_run"], "the run goes on working after the export")
 
 	runs, err := st.ListRuns(ctx, "BP1")
 	require.NoError(t, err)

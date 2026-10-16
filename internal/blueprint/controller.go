@@ -466,9 +466,15 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 	if sess := c.sessions[id]; sess != nil {
 		au = sess.audit
 	}
+
+	_, running := c.runs[id]
 	c.mu.Unlock()
 
-	au.event(ctx, Event{Kind: EventExported, BlueprintID: id, Payload: map[string]any{"path": dir, "files": len(files), "message_id": msgID}})
+	// during_run tells the panel whether a stage keeps working after the
+	// export; when none does, the panel must be told it is idle.
+	au.event(ctx, Event{Kind: EventExported, BlueprintID: id, Payload: map[string]any{
+		"path": dir, "files": len(files), "message_id": msgID, "during_run": running,
+	}})
 
 	return nil
 }

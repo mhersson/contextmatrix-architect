@@ -56,6 +56,8 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		{"note on an idle blueprint", blueprint.EventNote, map[string]any{"during_run": false}, true},
 		{"note while a stage runs", blueprint.EventNote, map[string]any{"during_run": true}, false},
 		{"aborted", blueprint.EventAborted, nil, true},
+		{"export on an idle blueprint", blueprint.EventExported, map[string]any{"during_run": false}, true},
+		{"export while a stage runs", blueprint.EventExported, map[string]any{"during_run": true}, false},
 		{"created", blueprint.EventCreated, nil, false},
 		{"stage started", blueprint.EventStageStarted, nil, false},
 		{"artifact", blueprint.EventArtifact, nil, false},

@@ -453,6 +453,7 @@ func TestVerdictOf(t *testing.T) {
 		{name: "a card left out", art: verdict(ready("D1")), draft: []string{"D1", "D2"}, want: []string{"D2: not judged"}},
 		{name: "a card not ready", art: verdict(ready("D1"), map[string]any{"id": "D2", "ready": false, "findings": []any{"vague"}}), draft: []string{"D1", "D2"}, want: []string{"D2: vague"}},
 		{name: "not ready without findings", art: verdict(map[string]any{"id": "D1", "ready": false}), draft: []string{"D1"}, want: []string{"D1: not ready"}},
+		{name: "ready with findings is not ready", art: verdict(map[string]any{"id": "D1", "ready": true, "findings": []any{"path does not exist"}}), draft: []string{"D1"}, want: []string{"D1: path does not exist"}},
 		{name: "no cards judged", art: verdict(), draft: []string{"D1"}, want: []string{"the stage reported no cards"}},
 		{name: "no data", art: store.Artifact{}, draft: []string{"D1"}, want: []string{"the stage reported no cards"}},
 	}
