@@ -532,10 +532,12 @@ Replies the server understands, besides answers to questions:
 - Long intake dialogs rely on the harness's in-run compaction. Whether that is
   enough is checked in slice 3.
 - State dir: `architect.db`, `workspaces/mirrors/<repo>/` and
-  `workspaces/trees/<blueprint>/<project>/`. A blueprint's trees are removed at
-  emission and by a sweep, at startup and hourly, for blueprints not written for
-  `workspace_max_age_days`; mirrors stay. Trees are written from the mirror's
-  objects; the server never runs git. All of it is a disposable cache.
+  `workspaces/trees/<blueprint>/<project>/`, with a project's secondary
+  repository beside it at `<project>@<repo>/`. A blueprint's trees are
+  removed at emission and by a sweep, at startup and hourly, for blueprints
+  not written for `workspace_max_age_days`; mirrors stay. Trees are written
+  from the mirror's objects; the server never runs git. All of it is a
+  disposable cache.
 - LLM endpoint: whatever CM provisions, OpenRouter or any OpenAI-compatible
   endpoint. Never name a gateway operator in repo artifacts.
 - Builds on macOS too: no filenames differing only by case.

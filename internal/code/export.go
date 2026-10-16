@@ -1,6 +1,7 @@
 package code
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -14,8 +15,9 @@ import (
 
 // exportTree writes the tree of commit sha from the bare mirror into dir as
 // plain files, replacing dir. Pure Go: no index, no .git, no git binary.
-// Symlinks are skipped; submodules are not in the file iterator.
-func exportTree(mirror, sha, dir string) error {
+// Symlinks are skipped; submodules are not in the file iterator. A cancelled
+// ctx stops it between files and leaves dir as it was.
+func exportTree(ctx context.Context, mirror, sha, dir string) error {
 	repo, err := git.PlainOpen(mirror)
 	if err != nil {
 		return fmt.Errorf("code: open mirror: %w", err)
@@ -41,6 +43,10 @@ func exportTree(mirror, sha, dir string) error {
 	}
 
 	err = tree.Files().ForEach(func(f *object.File) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		if f.Mode == filemode.Symlink {
 			return nil
 		}

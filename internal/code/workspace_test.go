@@ -2,9 +2,14 @@ package code
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/http/cgi" //nolint:gosec // test-only git http-backend fixture; httpoxy affects Go before 1.6.3 only
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -48,6 +53,89 @@ func fixtureRepo(t *testing.T, files map[string]string) (string, string) {
 	return dir, hash.String()
 }
 
+// gitServer serves the repositories under root over smart HTTP through git
+// http-backend. A path under /broken/ answers 500. With held set, every
+// request signals entered and waits until release is called; release is also
+// called at cleanup, so a held server never blocks the test's end.
+func gitServer(t *testing.T, root string, held bool) (base string, entered <-chan struct{}, release func()) {
+	t.Helper()
+
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git binary required for git http-backend in tests")
+	}
+
+	backend := &cgi.Handler{
+		Path: gitBin, Args: []string{"http-backend"},
+		Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1", "HOME=" + t.TempDir()},
+	}
+
+	in := make(chan struct{}, 16)
+	gate := make(chan struct{})
+
+	var once sync.Once
+
+	release = func() { once.Do(func() { close(gate) }) }
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/broken/") {
+			w.WriteHeader(http.StatusInternalServerError)
+
+			return
+		}
+
+		if held {
+			select {
+			case in <- struct{}{}:
+			default:
+			}
+
+			<-gate
+		}
+
+		backend.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(release)
+
+	return srv.URL, in, release
+}
+
+// gateCreds parks every Fetch until the test lets it go, then refuses.
+type gateCreds struct {
+	entered chan struct{}
+	release chan struct{}
+
+	mu             sync.Mutex
+	inflight, peak int
+}
+
+func newGateCreds() *gateCreds {
+	return &gateCreds{entered: make(chan struct{}, 4), release: make(chan struct{}, 4)}
+}
+
+func (g *gateCreds) Fetch(ctx context.Context, _, _ string) (string, string, error) {
+	g.mu.Lock()
+	g.inflight++
+	g.peak = max(g.peak, g.inflight)
+	g.mu.Unlock()
+
+	defer func() {
+		g.mu.Lock()
+		g.inflight--
+		g.mu.Unlock()
+	}()
+
+	g.entered <- struct{}{}
+
+	select {
+	case <-g.release:
+	case <-ctx.Done():
+	}
+
+	return "", "", errors.New("no credential")
+}
+
 func newTestWorkspace(root string, now func() time.Time) *Workspace {
 	ws := NewWorkspace(root, now)
 	ws.allowLocal = true
@@ -72,7 +160,9 @@ func TestWorkspace_CheckoutExportsTheTreeAtTheDefaultBranch(t *testing.T) {
 	_, err = os.Stat(filepath.Join(co.Dir, ".git"))
 	assert.True(t, os.IsNotExist(err), "a plain tree, no .git")
 
-	assert.Equal(t, "AGENTS.md", Inspect(co.Dir).InstructionFile)
+	info, err := Inspect(context.Background(), co.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, "AGENTS.md", info.InstructionFile)
 }
 
 func TestWorkspace_ParallelCheckoutsShareOneMirror(t *testing.T) {
@@ -132,9 +222,9 @@ func TestWorkspace_RemoveAndSweep(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, mirrors, 1, "mirrors are never swept")
 
-	require.NoError(t, ws.Remove("FRESH"))
+	require.NoError(t, ws.Remove(context.Background(), "FRESH"))
 	assert.NoDirExists(t, ws.TreeRoot("FRESH"))
-	require.NoError(t, ws.Remove("FRESH"), "idempotent")
+	require.NoError(t, ws.Remove(context.Background(), "FRESH"), "idempotent")
 }
 
 func TestRepoKey(t *testing.T) {
@@ -159,32 +249,6 @@ func TestRepoKey(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestWorkspace_SweepSkipsBusyBlueprints(t *testing.T) {
-	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
-	ws := NewWorkspace(t.TempDir(), func() time.Time { return now })
-	stale := now.Add(-10 * 24 * time.Hour)
-
-	for _, id := range []string{"BUSY", "IDLE"} {
-		require.NoError(t, os.MkdirAll(filepath.Join(ws.TreeRoot(id), "alpha"), 0o750))
-		require.NoError(t, os.Chtimes(ws.TreeRoot(id), stale, stale))
-	}
-
-	ws.markBusy("BUSY", 1)
-
-	removed, err := ws.Sweep(context.Background(), 7*24*time.Hour)
-	require.NoError(t, err)
-	assert.Equal(t, 1, removed)
-	assert.DirExists(t, ws.TreeRoot("BUSY"))
-	assert.NoDirExists(t, ws.TreeRoot("IDLE"))
-
-	ws.markBusy("BUSY", -1)
-
-	removed, err = ws.Sweep(context.Background(), 7*24*time.Hour)
-	require.NoError(t, err)
-	assert.Equal(t, 1, removed)
-	assert.NoDirExists(t, ws.TreeRoot("BUSY"))
-}
-
 func TestWorkspace_CheckoutRefusesUnsafeInput(t *testing.T) {
 	src, _ := fixtureRepo(t, map[string]string{"a.txt": "a\n"})
 	root := t.TempDir()
@@ -199,7 +263,165 @@ func TestWorkspace_CheckoutRefusesUnsafeInput(t *testing.T) {
 	require.Error(t, err)
 
 	_, err = ws.Checkout(context.Background(), "BP", "alpha/beta", src, nil)
-	require.NoError(t, err, "a secondary repository nests under its project")
+	require.Error(t, err, "a tree name is one path segment")
+
+	_, err = ws.Checkout(context.Background(), "BP", "alpha@beta", src, nil)
+	require.NoError(t, err, "a secondary repository is <project>@<repo>")
+}
+
+func TestWorkspace_SecondaryRepositoryIsASiblingTree(t *testing.T) {
+	primary, _ := fixtureRepo(t, map[string]string{"beta/own.txt": "primary\n"})
+	secondary, _ := fixtureRepo(t, map[string]string{"web.txt": "secondary\n"})
+	ws := newTestWorkspace(t.TempDir(), time.Now)
+	ctx := context.Background()
+
+	sec, err := ws.Checkout(ctx, "BP", "alpha@beta", secondary, nil)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(ws.TreeRoot("BP"), "alpha@beta"), sec.Dir)
+
+	pri, err := ws.Checkout(ctx, "BP", "alpha", primary, nil)
+	require.NoError(t, err)
+
+	assert.FileExists(t, filepath.Join(sec.Dir, "web.txt"), "re-exporting the primary keeps the secondary")
+	assert.FileExists(t, filepath.Join(pri.Dir, "beta", "own.txt"), "a primary directory named like the secondary is its own")
+	assert.NoFileExists(t, filepath.Join(pri.Dir, "beta", "web.txt"))
+}
+
+func TestWorkspace_UserinfoNeverReachesDiskErrorsOrTheResult(t *testing.T) {
+	const secret = "s3cr3t-token-0123456789"
+
+	src, sha := fixtureRepo(t, map[string]string{"a.txt": "a\n"})
+	base, _, _ := gitServer(t, filepath.Dir(src), false)
+	root := t.TempDir()
+	ws := newTestWorkspace(root, time.Now)
+	withUser := strings.Replace(base, "http://", "http://user:"+secret+"@", 1)
+
+	co, err := ws.Checkout(context.Background(), "BP", "alpha", withUser+"/"+filepath.Base(src), nil)
+	require.NoError(t, err)
+	assert.Equal(t, sha, co.SHA)
+	assert.NotContains(t, co.RepoURL, secret)
+	assert.Equal(t, base+"/"+filepath.Base(src), co.RepoURL)
+
+	_, err = ws.Checkout(context.Background(), "BP", "beta", withUser+"/broken/"+filepath.Base(src), nil)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), secret, "a failing fetch's error carries no userinfo")
+
+	configs, err := filepath.Glob(filepath.Join(root, "mirrors", "*", "config"))
+	require.NoError(t, err)
+	require.Len(t, configs, 2)
+
+	for _, cfg := range configs {
+		data, err := os.ReadFile(cfg)
+		require.NoError(t, err)
+		assert.NotContains(t, string(data), secret, "the mirror's config carries no userinfo")
+	}
+}
+
+func TestWorkspace_SweepAndRemoveWaitForACheckout(t *testing.T) {
+	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+	ws := newTestWorkspace(t.TempDir(), func() time.Time { return now })
+	stale := now.Add(-10 * 24 * time.Hour)
+
+	for _, id := range []string{"BUSY", "IDLE"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(ws.TreeRoot(id), "alpha"), 0o750))
+		require.NoError(t, os.Chtimes(ws.TreeRoot(id), stale, stale))
+	}
+
+	creds := newGateCreds()
+	done := make(chan error, 1)
+
+	go func() {
+		_, err := ws.Checkout(context.Background(), "BUSY", "alpha", "https://github.com/acme/alpha", creds)
+		done <- err
+	}()
+
+	<-creds.entered
+
+	removed, err := ws.Sweep(context.Background(), 7*24*time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, 1, removed)
+	assert.DirExists(t, ws.TreeRoot("BUSY"), "a blueprint mid-checkout is not swept")
+	assert.NoDirExists(t, ws.TreeRoot("IDLE"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	require.ErrorIs(t, ws.Remove(ctx, "BUSY"), context.DeadlineExceeded, "Remove waits for the checkout")
+	assert.DirExists(t, ws.TreeRoot("BUSY"))
+
+	creds.release <- struct{}{}
+
+	require.Error(t, <-done)
+
+	removed, err = ws.Sweep(context.Background(), 7*24*time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, 1, removed)
+	assert.NoDirExists(t, ws.TreeRoot("BUSY"))
+}
+
+func TestWorkspace_CheckoutsOfOneBlueprintSerialise(t *testing.T) {
+	ws := newTestWorkspace(t.TempDir(), time.Now)
+	creds := newGateCreds()
+
+	var wg sync.WaitGroup
+
+	for _, name := range []string{"alpha", "alpha@beta"} {
+		wg.Go(func() {
+			_, _ = ws.Checkout(context.Background(), "BP", name, "https://github.com/acme/"+name, creds)
+		})
+	}
+
+	<-creds.entered
+
+	select {
+	case <-creds.entered:
+		t.Error("a second checkout of the blueprint ran alongside the first")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	for range 2 {
+		creds.release <- struct{}{}
+	}
+
+	wg.Wait()
+
+	assert.Equal(t, 1, creds.peak)
+}
+
+func TestWorkspace_CheckoutStopsWaitingForTheRepoLockWithItsContext(t *testing.T) {
+	src, _ := fixtureRepo(t, map[string]string{"a.txt": "a\n"})
+	base, entered, release := gitServer(t, filepath.Dir(src), true)
+	repo := base + "/" + filepath.Base(src)
+	ws := newTestWorkspace(t.TempDir(), time.Now)
+
+	first := make(chan error, 1)
+
+	go func() {
+		_, err := ws.Checkout(context.Background(), "BP1", "alpha", repo, nil)
+		first <- err
+	}()
+
+	<-entered
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	second := make(chan error, 1)
+
+	go func() {
+		_, err := ws.Checkout(ctx, "BP2", "alpha", repo, nil)
+		second <- err
+	}()
+
+	select {
+	case err := <-second:
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(3 * time.Second):
+		t.Error("a checkout waiting for the repo lock ignored its context")
+	}
+
+	release()
+	require.NoError(t, <-first)
 }
 
 func TestWorkspace_CheckoutIsHTTPSOnly(t *testing.T) {
@@ -231,4 +453,27 @@ func TestTreeTarget(t *testing.T) {
 		require.Error(t, err, name)
 		assert.Contains(t, err.Error(), name)
 	}
+}
+
+func TestExportTree_StopsWhenCancelled(t *testing.T) {
+	src, sha := fixtureRepo(t, map[string]string{"a.txt": "a\n", "b.txt": "b\n"})
+	root := t.TempDir()
+	ws := newTestWorkspace(root, time.Now)
+
+	_, err := ws.Checkout(context.Background(), "BP", "alpha", src, nil)
+	require.NoError(t, err)
+
+	mirrors, err := filepath.Glob(filepath.Join(root, "mirrors", "*"))
+	require.NoError(t, err)
+	require.Len(t, mirrors, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	dir := filepath.Join(t.TempDir(), "tree")
+
+	err = exportTree(ctx, mirrors[0], sha, dir)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.NoDirExists(t, dir)
+	assert.NoDirExists(t, dir+".partial", "a cancelled export leaves no partial tree")
 }
