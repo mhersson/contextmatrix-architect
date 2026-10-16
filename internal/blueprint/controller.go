@@ -75,6 +75,9 @@ type Runner interface {
 type Workspace interface {
 	Checkout(ctx context.Context, blueprintID, name, repoURL string, creds code.Credentials) (code.Checkout, error)
 	TreeRoot(blueprintID string) string
+	// RemoteHead reads a repository's default branch and its sha without
+	// fetching; preflight compares it with what grounding recorded.
+	RemoteHead(ctx context.Context, repoURL string, creds code.Credentials) (string, string, error)
 	// Remove deletes a blueprint's trees; emission calls it once the cards exist.
 	Remove(ctx context.Context, blueprintID string) error
 }

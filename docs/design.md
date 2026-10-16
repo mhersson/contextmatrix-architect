@@ -430,11 +430,15 @@ holds.
 
 At sign-off, in order:
 
-1. **Preflight.** Every target project exists in CM, declares a verify command
-   and a repo URL; grounding found an instruction file; no source repo's
-   default branch has moved since grounding (a moved branch needs a re-ground
-   or an explicit, logged override); no draft card's title matches a card in
-   another runnable playbook.
+1. **Preflight**, at sign-off and again at the start of every emission
+   attempt. Blocking: a card's project is missing in CM or declares no
+   repository or verify command, or its checkout has no `AGENTS.md` or
+   `CLAUDE.md` at the root. A blocked emission waits for the fix in CM and
+   another `approve`. Warnings: a repository whose default branch moved
+   since grounding or could not be read, a checkout swept before its
+   instruction file could be re-checked, or a draft title that is a card in
+   another runnable playbook. An `approve` after the warnings were shown is
+   the logged override; an emitting mode stops for a human instead.
 2. **Cards**, in playbook order, which the contract keeps dependency-first,
    so `depends_on` carries real ids within a project. Each created id is
    stored in `emissions` at once, so a retry after a failure skips what

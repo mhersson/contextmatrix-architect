@@ -39,6 +39,9 @@ type fakeWorkspace struct {
 	mu      sync.Mutex
 	calls   []checkoutCall
 	removed []string
+	shas    map[string]string
+	heads   map[string]string
+	headErr error
 }
 
 type checkoutCall struct {
@@ -79,7 +82,32 @@ func (w *fakeWorkspace) Checkout(ctx context.Context, blueprintID, name, repoURL
 		}
 	}
 
+	w.mu.Lock()
+	if w.shas == nil {
+		w.shas = map[string]string{}
+	}
+
+	w.shas[repoURL] = "sha-" + name
+	w.mu.Unlock()
+
 	return code.Checkout{RepoURL: repoURL, DefaultBranch: "main", SHA: "sha-" + name, Dir: dir}, nil
+}
+
+// RemoteHead reports the sha Checkout recorded, a moved sha from heads, or
+// headErr.
+func (w *fakeWorkspace) RemoteHead(_ context.Context, repoURL string, _ code.Credentials) (string, string, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.headErr != nil {
+		return "", "", w.headErr
+	}
+
+	if sha, ok := w.heads[repoURL]; ok {
+		return "main", sha, nil
+	}
+
+	return "main", w.shas[repoURL], nil
 }
 
 func (w *fakeWorkspace) Remove(_ context.Context, blueprintID string) error {

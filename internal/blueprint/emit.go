@@ -130,6 +130,26 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 
 	defer func() { _ = client.Close() }()
 
+	// The blocking checks run again: ContextMatrix may have changed since
+	// the sign-off. Warnings were shown at the sign-off, and the approval
+	// overrode them.
+	pf, err := c.preflight(ctx, sess, bp, draft, client)
+	if err != nil {
+		c.emitError(bg, au, bp.ID, fmt.Errorf("preflight: %w", err))
+
+		return
+	}
+
+	if len(pf.Blocking) > 0 {
+		c.setState(bg, bp.ID, StateIdle)
+		au.event(bg, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
+			"stage":   "emission",
+			"message": "Emission is blocked until this is fixed in ContextMatrix; then reply approve:\n- " + strings.Join(pf.Blocking, "\n- "),
+		}})
+
+		return
+	}
+
 	if err := c.emitCards(ctx, au, bp, client, draft); err != nil {
 		c.emitError(bg, au, bp.ID, err)
 	}
