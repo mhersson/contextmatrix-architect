@@ -1,0 +1,100 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+)
+
+// Event is one row of the append-only audit log.
+type Event struct {
+	ID          int64
+	Time        time.Time
+	BlueprintID string
+	RunID       int64
+	Kind        string
+	Payload     json.RawMessage
+}
+
+// AppendEvent writes one event.
+func (s *Store) AppendEvent(ctx context.Context, e Event) error {
+	var payload any
+	if len(e.Payload) > 0 {
+		payload = string(e.Payload)
+	}
+
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO events (ts, blueprint_id, run_id, kind, payload)
+		VALUES (?, ?, ?, ?, ?)`, e.Time.UnixMilli(), e.BlueprintID, e.RunID, e.Kind, payload); err != nil {
+		return fmt.Errorf("store: append event: %w", err)
+	}
+
+	return nil
+}
+
+// ListEvents returns a blueprint's events oldest first.
+func (s *Store) ListEvents(ctx context.Context, blueprintID string) ([]Event, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, ts, blueprint_id, run_id, kind, payload
+		FROM events WHERE blueprint_id = ? ORDER BY id`, blueprintID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list events: %w", err)
+	}
+
+	defer rows.Close()
+
+	var out []Event
+
+	for rows.Next() {
+		var (
+			e       Event
+			ts      int64
+			payload sql.NullString
+		)
+
+		if err := rows.Scan(&e.ID, &ts, &e.BlueprintID, &e.RunID, &e.Kind, &payload); err != nil {
+			return nil, fmt.Errorf("store: scan event: %w", err)
+		}
+
+		e.Time = time.UnixMilli(ts).UTC()
+
+		if payload.Valid {
+			e.Payload = json.RawMessage(payload.String)
+		}
+
+		out = append(out, e)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: list events: %w", err)
+	}
+
+	return out, nil
+}
+
+// PutTranscript stores a run's full message history once.
+func (s *Store) PutTranscript(ctx context.Context, runID int64, messages json.RawMessage) error {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO transcripts (run_id, messages, created_at) VALUES (?, ?, ?)`,
+		runID, string(messages), time.Now().UTC().Unix()); err != nil {
+		return fmt.Errorf("store: put transcript %d: %w", runID, err)
+	}
+
+	return nil
+}
+
+// GetTranscript returns a run's stored messages, or ErrNotFound.
+func (s *Store) GetTranscript(ctx context.Context, runID int64) (json.RawMessage, error) {
+	var messages string
+
+	err := s.db.QueryRowContext(ctx, `SELECT messages FROM transcripts WHERE run_id = ?`, runID).Scan(&messages)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("store: get transcript %d: %w", runID, err)
+	}
+
+	return json.RawMessage(messages), nil
+}
