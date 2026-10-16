@@ -1,0 +1,10 @@
+# The build needs only the Go sources. config.yaml holds the HMAC key.
+.git
+.superpowers/
+docs/superpowers/
+/config.yaml
+/architect
+/dist/
+**/*.db
+**/*.db-wal
+**/*.db-shm
