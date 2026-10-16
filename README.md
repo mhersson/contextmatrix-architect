@@ -24,15 +24,47 @@ ending with the pull requests and compare links.
 
 ```bash
 make build
-./contextmatrix-architect config defaults > config.yaml   # edit contextmatrix_url, api_key, state_dir
-./contextmatrix-architect serve --config config.yaml
+mkdir -p ~/.config/contextmatrix-architect
+./contextmatrix-architect config defaults > ~/.config/contextmatrix-architect/config.yaml
+chmod 600 ~/.config/contextmatrix-architect/config.yaml   # it holds the HMAC key
+# edit contextmatrix_url, api_key and state_dir
+./contextmatrix-architect serve
 ```
+
+`serve` reads `contextmatrix-architect/config.yaml` in the user config
+directory (`$XDG_CONFIG_HOME` or `~/.config` on Linux,
+`~/Library/Application Support` on macOS) unless `--config` names another
+file. On macOS write the file to that directory instead of `~/.config`, or
+pass `--config`. `config validate <file>` loads a file exactly as `serve`
+would and exits 1 on the first error.
 
 Configure it in ContextMatrix as `backends.architect` with the same `api_key`.
 
-The default `state_dir` is `/var/lib/contextmatrix-architect`. For a local run
-as a normal user, point `state_dir` (or `CONTEXTMATRIX_ARCHITECT_STATE_DIR`) at
-a directory that user can write.
+The default `state_dir` is `/var/lib/contextmatrix-architect`, the image's
+volume. For a local run as a normal user, point `state_dir` (or
+`CONTEXTMATRIX_ARCHITECT_STATE_DIR`) at an absolute directory that user can
+write; `~` is not expanded.
+
+## User service
+
+On Linux the architect runs as a systemd user service, like the agent and chat
+backends:
+
+```bash
+make build
+./svc.sh install   # write + enable ~/.config/systemd/user/contextmatrix-architect.service
+./svc.sh start     # also: stop / status / print / verify / uninstall
+journalctl --user -u contextmatrix-architect -f
+```
+
+The unit runs `serve --config ${XDG_CONFIG_HOME:-~/.config}/contextmatrix-architect/config.yaml`
+from this checkout, sandboxed like the sibling backends, with `~/.contextmatrix`
+and the configured `state_dir` writable. `install` warns about a missing
+config, a `state_dir` the unit cannot write or create and a missing `rg`, and
+installs anyway. The sandbox only lets the service write directories that
+exist when it starts, so create `state_dir` before the first start unless it
+sits under an existing `~/.contextmatrix`. Rerun `./svc.sh install` after
+changing `state_dir`, so the new directory is whitelisted.
 
 ## Code checkouts
 
@@ -83,5 +115,6 @@ A fresh named volume inherits that ownership from the image; a bind mount must
 be chowned by hand. The mounted `config.yaml` must be readable by uid 65532.
 `config.yaml.example` documents every key.
 
-The image ships ripgrep for the read tools; a local run needs `rg` on the path
-for grep and glob.
+The image ships ripgrep for the read tools. A local run or the user service
+needs `rg` on its PATH for grep (glob also takes `fd`); `serve` logs a warning
+at startup when it is missing and runs anyway.

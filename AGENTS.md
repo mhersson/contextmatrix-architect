@@ -64,9 +64,10 @@ make test-race  # CGO_ENABLED=1
 make lint
 make fmt
 contextmatrix-architect serve --config config.yaml
+./svc.sh verify # check the generated user unit
 ```
 
-Grep and glob in stage runs exec ripgrep; install `rg` locally for manual runs.
+Grep in stage runs execs ripgrep and glob also takes fd; install `rg` locally for manual runs.
 
 Before any commit: `make fmt`, `make test`, `make lint`, `make build` clean.
 

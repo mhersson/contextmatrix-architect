@@ -535,9 +535,10 @@ Replies the server understands, besides answers to questions:
 
 ## Deployment
 
-- **One server.** `contextmatrix-architect serve` runs in a container next to
-  the agent and chat backends. It is configured in CM as a backend of kind
-  `architect` with its URL and an HMAC key, exactly like the other two.
+- **One server.** `contextmatrix-architect serve` runs next to the agent and
+  chat backends: in a container, or as a systemd user service through
+  `svc.sh`. It is configured in CM as a backend of kind `architect` with its
+  URL and an HMAC key, exactly like the other two.
 - **Provisioned per session by CM.** The start payload carries the LLM
   endpoint, the MCP key, the model and the git-credentials token. The
   architect holds none of these in config or env, and refuses a start without
@@ -548,6 +549,9 @@ Replies the server understands, besides answers to questions:
 - **Container needs.** A Go binary image with ripgrep on the path (the
   harness grep and glob tools exec it), no Docker socket, a volume for the state directory, and outbound access to CM, the
   LLM endpoint and the git host. Env: the CM base URL and the backend HMAC key.
+- **Host needs.** As a user service the same binary needs ripgrep on the
+  service's PATH and a `state_dir` the user can write. `serve` logs a
+  warning at startup when rg is missing and starts anyway.
 - **Client.** The panel, through CM. Local use is
   `contextmatrix-architect serve` on the laptop pointed at a CM instance.
   There is no CM-less mode.

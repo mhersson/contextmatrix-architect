@@ -65,7 +65,9 @@ pack: ""
 port: 9095
 
 # Directory holding architect.db. Must be writable. Also holds exports/ and
-# workspaces/. Default as below.
+# workspaces/. Default as below: the image's volume. A user service needs an
+# absolute path it can write, such as /home/<you>/.contextmatrix/architect;
+# ~ is not expanded.
 # Env: CONTEXTMATRIX_ARCHITECT_STATE_DIR
 state_dir: /var/lib/contextmatrix-architect
 
