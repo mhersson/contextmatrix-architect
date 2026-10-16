@@ -80,7 +80,7 @@ func post(t *testing.T, client *http.Client, url string, body any) *http.Respons
 func TestServe_EndToEnd(t *testing.T) {
 	cfg := &config.Config{
 		ContextMatrixURL: "http://cm.invalid", APIKey: e2eKey, Port: 0, LogLevel: "info",
-		StateDir: t.TempDir(), MaxRunCostUSD: 1, MaxTurns: 5,
+		StateDir: t.TempDir(), MaxRunCostUSD: 1, MaxTurns: 5, WorkspaceMaxAgeDays: 7,
 		ReplaySkew: 5 * time.Minute, ReplayCacheSize: 100, MessageDedupTTL: time.Minute, MessageDedupCacheSize: 100,
 	}
 

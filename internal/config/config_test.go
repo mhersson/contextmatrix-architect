@@ -57,7 +57,7 @@ func TestValidate(t *testing.T) {
 	valid := func() *Config {
 		return &Config{
 			ContextMatrixURL: "http://cm:8080", APIKey: strings.Repeat("k", 32), Port: 9094,
-			LogLevel: "info", StateDir: "/tmp/x", MaxRunCostUSD: 2, MaxTurns: 40,
+			LogLevel: "info", StateDir: "/tmp/x", MaxRunCostUSD: 2, MaxTurns: 40, WorkspaceMaxAgeDays: 7,
 		}
 	}
 
@@ -72,6 +72,7 @@ func TestValidate(t *testing.T) {
 		{"no state dir", func(c *Config) { c.StateDir = "" }, "state_dir"},
 		{"zero cost cap", func(c *Config) { c.MaxRunCostUSD = 0 }, "max_run_cost_usd"},
 		{"zero turns", func(c *Config) { c.MaxTurns = 0 }, "max_turns"},
+		{"zero workspace age", func(c *Config) { c.WorkspaceMaxAgeDays = 0 }, "workspace_max_age_days"},
 		{"bad level", func(c *Config) { c.LogLevel = "loud" }, "log_level"},
 	}
 	for _, tc := range cases {

@@ -18,6 +18,14 @@ The default `state_dir` is `/var/lib/contextmatrix-architect`. For a local run
 as a normal user, point `state_dir` (or `CONTEXTMATRIX_ARCHITECT_STATE_DIR`) at
 a directory that user can write.
 
+## Code checkouts
+
+Code lives under `<state_dir>/workspaces`: `mirrors/` holds one bare mirror per
+repository, fetched over HTTPS with credentials CM mints per session, and
+`trees/<blueprint>/<project>` holds one plain tree per blueprint and project at
+the default branch's commit, written without a git binary. Trees untouched for
+`workspace_max_age_days` are swept at startup and hourly; mirrors stay.
+
 ## Cost caps
 
 CM sends the session model's price with every blueprint start, resolved from

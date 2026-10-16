@@ -29,6 +29,7 @@ specification and must stay true at HEAD.
 - `internal/blueprint` - controller: blueprint state machine, reply handling (abort, answers, the need, notes), questions, events.
 - `internal/stage` - one harness run: persona + instructions + the ask_human and submit_artifact tools.
 - `internal/pack` - pipeline packs: stages, personas, instructions, lists.yaml and card.md; the default pack is embedded.
+- `internal/code` - read-only mirrors and per-blueprint trees for grounding; repo facts.
 - `internal/contract` - the card contract: lists data and the mechanical checks.
 - `internal/store` - SQLite: blueprints, stage runs, artifacts, transcripts, events.
 

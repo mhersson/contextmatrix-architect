@@ -36,6 +36,9 @@ type Config struct {
 	// MaxRunCostUSD is the harness per-run cap.
 	MaxRunCostUSD float64
 	MaxTurns      int
+	// WorkspaceMaxAgeDays is how long a blueprint's code trees are kept
+	// after they were last written.
+	WorkspaceMaxAgeDays int
 
 	ReplaySkew            time.Duration
 	ReplayCacheSize       int
@@ -59,6 +62,7 @@ type raw struct {
 	ReplayCacheSize        int               `koanf:"webhook_replay_cache_size"`
 	MessageDedupTTLSeconds int               `koanf:"message_dedup_ttl_seconds"`
 	MessageDedupCacheSize  int               `koanf:"message_dedup_cache_size"`
+	WorkspaceMaxAgeDays    int               `koanf:"workspace_max_age_days"`
 }
 
 func defaults() raw {
@@ -73,6 +77,7 @@ func defaults() raw {
 		ReplayCacheSize:        10000,
 		MessageDedupTTLSeconds: 600,
 		MessageDedupCacheSize:  1000,
+		WorkspaceMaxAgeDays:    7,
 	}
 }
 
@@ -91,6 +96,7 @@ func (r raw) toConfig() *Config {
 		ReplayCacheSize:       r.ReplayCacheSize,
 		MessageDedupTTL:       time.Duration(r.MessageDedupTTLSeconds) * time.Second,
 		MessageDedupCacheSize: r.MessageDedupCacheSize,
+		WorkspaceMaxAgeDays:   r.WorkspaceMaxAgeDays,
 	}
 }
 
@@ -200,6 +206,10 @@ func (c *Config) Validate() error {
 
 	if c.MaxTurns <= 0 {
 		return errors.New("max_turns must be positive")
+	}
+
+	if c.WorkspaceMaxAgeDays < 1 {
+		return errors.New("workspace_max_age_days must be at least 1")
 	}
 
 	switch c.LogLevel {

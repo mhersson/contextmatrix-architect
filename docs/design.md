@@ -406,7 +406,7 @@ starts are bounded by CM's per-card guardrails, not by the architect.
 
 | Group    | Tools                                                                                                   | Notes                                                                                                                                             |
 | -------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock at the start of grounding, and one checkout per blueprint from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. `repo_info` returns default branch, sha, instruction file presence and the project's verify command. |
+| code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock at the start of grounding, and one tree per blueprint and project from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. `repo_info` returns default branch, sha, instruction file presence and the project's verify command. |
 | research | `web_fetch`                                                                                             | Readable text, recorded as a source. A search provider is deferred.                                                                               |
 | cm       | `list_projects`, `create_card`, `create_playbook`, `add_playbook_entry`, `get_playbook`, `get_card`, `run_card`, `run_playbook` | MCP client over Streamable HTTP with the MCP key from the session's start payload and a configured caller identity (default `human:architect`). The chat backend's bridge, copied and generalised with per-server tool prefixes and an allowlist, so a second MCP server plugs in the same way. |
 | control  | `ask_human`, `submit_artifact`                                                                          | `ask_human` blocks: question, options and context in; the answer out as the tool result. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
@@ -529,10 +529,11 @@ Replies the server understands, besides answers to questions:
   so far; the ledger counts it.
 - Long intake dialogs rely on the harness's in-run compaction. Whether that is
   enough is checked in slice 3.
-- State dir: `architect.db` and `workspaces/<repo>/mirror/` plus
-  `workspaces/<repo>/<blueprint>/`. A blueprint's checkout is removed at
-  emission and by a sweep for blueprints untouched for a configured number
-  of days; mirrors stay. All of it is a disposable cache. The mirrors and checkouts arrive with grounding.
+- State dir: `architect.db`, `workspaces/mirrors/<repo>/` and
+  `workspaces/trees/<blueprint>/<project>/`. A blueprint's trees are removed at
+  emission and by a sweep, at startup and hourly, for blueprints untouched for
+  `workspace_max_age_days`; mirrors stay. Trees are written from the mirror's
+  objects; the server never runs git. All of it is a disposable cache.
 - LLM endpoint: whatever CM provisions, OpenRouter or any OpenAI-compatible
   endpoint. Never name a gateway operator in repo artifacts.
 - Builds on macOS too: no filenames differing only by case.

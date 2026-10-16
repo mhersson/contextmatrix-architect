@@ -62,3 +62,7 @@ webhook_replay_cache_size: 10000
 # Accepted clock skew on signed webhooks, in seconds. Default: 330.
 # Env: CONTEXTMATRIX_ARCHITECT_WEBHOOK_REPLAY_SKEW_SECONDS
 webhook_replay_skew_seconds: 330
+
+# Days a blueprint's code checkout is kept after it was last written; mirrors
+# are kept. Default: 7. Env: CONTEXTMATRIX_ARCHITECT_WORKSPACE_MAX_AGE_DAYS
+workspace_max_age_days: 7
