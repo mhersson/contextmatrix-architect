@@ -124,6 +124,20 @@ func TestRun_AskHumanBlocksUntilAnswered(t *testing.T) {
 	assert.Equal(t, "# Need\n\nhelm", out.Artifact.Body)
 }
 
+func TestRun_NonObjectDataIsCorrectedByTheModel(t *testing.T) {
+	f := &fakeLLM{responses: []llm.Response{
+		{ToolCalls: []llm.ToolCall{toolCall("c1", "submit_artifact", `{"body":"# Need","data":"slices: 1"}`)}, FinishReason: "tool_calls"},
+		{ToolCalls: []llm.ToolCall{toolCall("c2", "submit_artifact", `{"body":"# Need","data":{"slices":1}}`)}, FinishReason: "tool_calls"},
+	}}
+
+	out, err := runnerWith(f).Run(context.Background(), baseInput(&bytes.Buffer{}))
+	require.NoError(t, err, "a non-object data block is a tool error the model corrects, not a failed stage")
+	assert.Equal(t, 2, f.i, "the first submit did not end the run")
+	assert.Equal(t, "# Need", out.Artifact.Body)
+	assert.InDelta(t, 1.0, out.Artifact.Data["slices"], 0.0001)
+	assert.Equal(t, 1, out.Result.ToolCallFailures)
+}
+
 func TestRun_EndsWithoutArtifactIsAnError(t *testing.T) {
 	f := &fakeLLM{} // says "done" without calling submit_artifact
 

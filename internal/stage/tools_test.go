@@ -51,15 +51,35 @@ func TestAskHumanTool_PropagatesAskerError(t *testing.T) {
 	require.ErrorIs(t, err, want)
 }
 
-func TestSubmitArtifactTool_IsTerminalAndRequiresBody(t *testing.T) {
+func TestSubmitArtifactTool_IsTerminalAndValidatesArgs(t *testing.T) {
 	tool := submitArtifactTool{}
 	assert.True(t, tool.Terminal())
 	assert.Equal(t, "submit_artifact", tool.Name())
 
-	_, err := tool.Execute(context.Background(), map[string]any{"body": ""})
-	require.Error(t, err)
+	tests := []struct {
+		name    string
+		args    map[string]any
+		wantErr bool
+	}{
+		{"body and object data", map[string]any{"body": "# Need", "data": map[string]any{"slices": 1}}, false},
+		{"body without data", map[string]any{"body": "# Need"}, false},
+		{"null data is absent", map[string]any{"body": "# Need", "data": nil}, false},
+		{"empty body", map[string]any{"body": ""}, true},
+		{"string data", map[string]any{"body": "# Need", "data": "slices: 1"}, true},
+		{"array data", map[string]any{"body": "# Need", "data": []any{1}}, true},
+		{"number data", map[string]any{"body": "# Need", "data": 1.0}, true},
+	}
 
-	res, err := tool.Execute(context.Background(), map[string]any{"body": "# Need", "data": map[string]any{"slices": 1}})
-	require.NoError(t, err)
-	assert.Equal(t, "artifact accepted", res.Text)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tool.Execute(context.Background(), tt.args)
+			if tt.wantErr {
+				require.Error(t, err)
+
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
 }
