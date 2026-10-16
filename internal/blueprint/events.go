@@ -34,6 +34,8 @@ const (
 	EventNote         = "note"
 	EventAborted      = "aborted"
 	EventError        = "error"
+	// EventEnded records that CM ended the session; the blueprint persists.
+	EventEnded = "session_ended"
 	// EventHarness wraps one raw harness JSONL line; the payload is the line.
 	EventHarness = "harness"
 )

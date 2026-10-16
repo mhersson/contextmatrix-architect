@@ -101,8 +101,10 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		Secrets:      []string{sess.endpoint.APIKey},
 	})
 
-	// Crash-equivalent: no writes, so recovery re-runs the stage on the next Start.
-	if c.shuttingDown(r) {
+	// A run Shutdown cut short is crash-equivalent: no writes, so recovery
+	// re-runs the stage on the next Start. A completed run still writes;
+	// Shutdown waits for it, so the store is open.
+	if runErr != nil && c.shuttingDown(r) {
 		return
 	}
 
@@ -214,6 +216,8 @@ func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
 		return "", err
 	}
 
+	// Registered before the question is published, so an answer to it is
+	// never a lost wakeup.
 	a.run.answer = ch
 	a.c.mu.Unlock()
 

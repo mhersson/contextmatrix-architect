@@ -150,7 +150,7 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 		return nil
 	}
 
-	stageID, task, err := c.interruptedStage(ctx, bp.ID)
+	stageID, task, err := c.interruptedStage(ctx, bp)
 	if err != nil {
 		c.release(in.ID, r)
 		c.detach(in.ID, sess)
@@ -198,47 +198,52 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 }
 
 // interruptedStage marks a run a crash left running as interrupted and
-// returns its stage and the stored need to re-run it from. An empty stage
-// means nothing was interrupted. The caller holds the run slot.
-func (c *Controller) interruptedStage(ctx context.Context, id string) (string, string, error) {
-	interrupted, err := c.markInterrupted(ctx, id)
+// returns its stage and the task to re-run it with. An empty stage means
+// nothing was interrupted. The caller holds the run slot.
+func (c *Controller) interruptedStage(ctx context.Context, bp store.Blueprint) (string, string, error) {
+	interrupted, err := c.leftRunning(ctx, bp.ID)
 	if err != nil || interrupted == nil {
 		return "", "", err
 	}
 
-	need, err := c.opts.Store.LatestArtifact(ctx, id, needStage)
+	// Loaded before the run is marked: a run marked interrupted with nothing
+	// relaunched is never recovered.
+	need, err := c.opts.Store.LatestArtifact(ctx, bp.ID, needStage)
 	if err != nil {
 		return "", "", fmt.Errorf("blueprint: start: interrupted %s without a need: %w", interrupted.Stage, err)
 	}
 
-	return interrupted.Stage, need.Body, nil
+	if err := c.opts.Store.EndRun(ctx, interrupted.ID, store.RunInterrupted, "process restarted", 0, c.opts.Now().UTC()); err != nil {
+		return "", "", fmt.Errorf("blueprint: mark interrupted: %w", err)
+	}
+
+	return interrupted.Stage, stageTask(bp.Projects, need.Body), nil
 }
 
-// markInterrupted flips a run left in "running" by a crash to interrupted
-// and returns it, or nil when none exists.
-func (c *Controller) markInterrupted(ctx context.Context, id string) (*store.Run, error) {
+// leftRunning returns the latest run a crash left in "running", or nil.
+func (c *Controller) leftRunning(ctx context.Context, id string) (*store.Run, error) {
 	runs, err := c.opts.Store.ListRuns(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("blueprint: list runs: %w", err)
 	}
 
 	for i := len(runs) - 1; i >= 0; i-- {
-		if runs[i].Status != store.RunRunning {
-			continue
+		if runs[i].Status == store.RunRunning {
+			return &runs[i], nil
 		}
-
-		if err := c.opts.Store.EndRun(ctx, runs[i].ID, store.RunInterrupted, "process restarted", 0, c.opts.Now().UTC()); err != nil {
-			return nil, fmt.Errorf("blueprint: mark interrupted: %w", err)
-		}
-
-		return &runs[i], nil
 	}
 
 	return nil, nil
 }
 
+// stageTask is a stage run's first user message: the target projects and
+// the need.
+func stageTask(projects []string, need string) string {
+	return "Target projects: " + strings.Join(projects, ", ") + "\n\nNeed:\n" + need
+}
+
 // Message handles one user message: the abort command, the answer to an
-// open question, the need on a new blueprint, or a note.
+// open question, the need while the first stage has no artifact, or a note.
 func (c *Controller) Message(ctx context.Context, id, text, msgID string) error {
 	trimmed := strings.TrimSpace(text)
 
@@ -300,9 +305,11 @@ func (c *Controller) Message(ctx context.Context, id, text, msgID string) error 
 	return c.needOrNote(ctx, runCtx, r, sess, id, trimmed, msgID)
 }
 
-// needOrNote stores the message as the need and starts the first stage on a
-// new blueprint, or logs it as a note. The caller holds the run slot, so no
-// other message can take the need meanwhile.
+// needOrNote stores the message as the next need version and starts the
+// first stage while that stage has no artifact, so a canceled or failed
+// intake can be retried; otherwise it logs the message as a note. The caller
+// holds the run slot: no run is in flight, no question is open, and no other
+// message can take the need meanwhile.
 func (c *Controller) needOrNote(ctx, runCtx context.Context, r *run, sess *session, id, text, msgID string) error {
 	bp, err := c.opts.Store.GetBlueprint(ctx, id)
 	if err != nil {
@@ -311,11 +318,20 @@ func (c *Controller) needOrNote(ctx, runCtx context.Context, r *run, sess *sessi
 		return fmt.Errorf("blueprint: message: %w", err)
 	}
 
-	if bp.State != string(StateNew) {
+	first := c.opts.Pack.Stages[0].ID
+
+	_, err = c.opts.Store.LatestArtifact(ctx, id, first)
+
+	switch {
+	case err == nil:
 		c.release(id, r)
 		sess.audit.event(ctx, noteEvent(id, text, msgID))
 
 		return nil
+	case !errors.Is(err, store.ErrNotFound):
+		c.release(id, r)
+
+		return fmt.Errorf("blueprint: message: %w", err)
 	}
 
 	need := sess.audit.text(text)
@@ -325,7 +341,7 @@ func (c *Controller) needOrNote(ctx, runCtx context.Context, r *run, sess *sessi
 		return err
 	}
 
-	c.launch(runCtx, r, sess, bp, c.opts.Pack.Stages[0].ID, need)
+	c.launch(runCtx, r, sess, bp, first, stageTask(bp.Projects, need))
 
 	return nil
 }
@@ -346,6 +362,7 @@ func (c *Controller) End(ctx context.Context, id string) error {
 	}
 
 	c.mu.Lock()
+	sess := c.sessions[id]
 	delete(c.sessions, id)
 
 	if r := c.runs[id]; r != nil {
@@ -355,12 +372,20 @@ func (c *Controller) End(ctx context.Context, id string) error {
 
 	c.mu.Unlock()
 
+	au := c.newAudit()
+	if sess != nil {
+		au = sess.audit
+	}
+
+	au.event(ctx, Event{Kind: EventEnded, BlueprintID: id})
+
 	return nil
 }
 
 // Shutdown stops accepting runs, cancels every run in flight and waits for
-// the run goroutines to exit. Cancelled runs write nothing, so the store can
-// be closed afterwards and the next Start re-runs their stages.
+// the run goroutines to exit. A run the cancel cut short writes nothing, so
+// the next Start re-runs its stage; a run that completed anyway writes its
+// results first. The store can be closed afterwards.
 func (c *Controller) Shutdown(ctx context.Context) error {
 	c.mu.Lock()
 	c.closing = true
