@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Nothing is built yet.
+Status: agreed design, 2026-10-15. Slice 0 is implemented (`architect serve`, controller, store, intake stage); the rest is design.
 
 ## Purpose
 
@@ -62,7 +62,7 @@ Settled during design. Each has its reason so it is not re-litigated.
 | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Standalone Go service on `contextmatrix-harness`          | The stage controller, gates and cross-run ledger have to be written either way; the chat backend cannot host them (lossy resume, no terminal tools, no responder policy). CM stays a coordination layer rather than becoming a model runner. |
 | Not built on `contextmatrix-agent`; `backendkit` only for the CM-facing side | The agent is shaped for card work in a container, and nothing under its `internal/` is importable. backendkit's `webhookcore` and `logbridge` are the chat-backend protocol the architect speaks towards CM, so they are used for exactly that and nothing else. |
-| CM's chat panel is the only client                        | The architect implements CM's chat-backend protocol as a third backend kind, so CM's existing panel is where the need is stated, questions and gates are answered, and side operations (export, outcomes, lessons) are requested by reply. Same look and feel, session list, auth and browser for free. No UI, no CLI beyond `architect serve`, no client API. |
+| CM's chat panel is the only client                        | The architect implements CM's chat-backend protocol as a third backend kind, so CM's existing panel is where the need is stated, questions and gates are answered, and side operations (export, outcomes, lessons) are requested by reply. Same look and feel, session list, auth and browser for free. No UI, no CLI beyond `architect serve` and the `config defaults|validate` helpers, no client API. |
 | One controller process                                    | `architect serve` alone owns the store, the workspaces and the harness runs, and every session originates in CM. One record, one place code is checked out, no laptop copy of anything. |
 | Provisioned by CM, like the agent and chat backends      | Every blueprint is a CM session. The start payload delivers the LLM endpoint, the MCP key, the model and a git-credentials token. The architect's own config holds no secret but the backend HMAC key, and there is no CM-less mode. |
 | Questions block inside the run; no persisted resume       | Nobody walks away from a blueprint for days. A blocking `ask_human` keeps one transcript and a warm prompt cache. A crash re-runs the open stage from stored artifacts. |
@@ -113,7 +113,7 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   messages until it has buttons, and the reply is a message either way, so
   buttons later change nothing on the architect's side.
 - **Every blueprint is a CM session, started by CM.** The start payload is the
-  existing `ChatStartPayload`: the architect takes its LLM endpoint
+  `ChatStartPayload` with its `architect` block: the architect takes its LLM endpoint
   (fail-closed, no local fallback), MCP key, model and git-credentials token,
   and ignores `resume` and the worker image. It reopens the blueprint by id and
   runs no container. An end-session call detaches the client; the blueprint
@@ -143,7 +143,7 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
 - **Across stages only artifacts carry forward**, never transcripts. Each stage
   consumes the artifacts the pack names.
 - **Crash recovery.** Artifacts are stored per stage, so after a dead process
-  `architect open <blueprint>` re-runs the open stage from its inputs. No
+  reopening the blueprint's session re-runs the open stage from its inputs. No
   transcript is ever resumed from the store; transcripts exist for audit.
 
 ## Data model
@@ -196,6 +196,8 @@ developer (DEV), reviewer (REV).
 | 7  | Readiness       | REV     | cards             | contract check per card; failures loop back to 6, three rounds max                                    | no        |
 | 8  | Sign-off        | human   | everything        | approval; then emission                                                                               | yes       |
 | -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   |
+
+The embedded pack ships the stages as they are built; at present it holds intake.
 
 - Intake ends by stating the shape it expects (slices, projects involved) and
   the gate plan in effect, so the operator can change the overrides before
@@ -459,7 +461,7 @@ The only surface is a blueprint session in CM's chat panel. The new-session
 dialog picks the target projects, the mode and a cost cap. The need is stated
 there, questions and gates are answered there, and the stage's progress, tool
 calls and cost stream into it as log entries. The binary has one command,
-`architect serve`.
+`architect serve`, plus the `config defaults|validate` helpers.
 
 Replies the server understands, besides answers to questions:
 
@@ -504,7 +506,7 @@ Replies the server understands, besides answers to questions:
 
 - Go 1.27, `contextmatrix-harness` v0.25.0 (loop, llm client, jailed read
   tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.7.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.21.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.22.0
   for the CM-facing side, go-git for checkouts, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
@@ -522,7 +524,7 @@ Replies the server understands, besides answers to questions:
 - State dir: `architect.db` and `workspaces/<repo>/mirror/` plus
   `workspaces/<repo>/<blueprint>/`. A blueprint's checkout is removed at
   emission and by a sweep for blueprints untouched for a configured number
-  of days; mirrors stay. All of it is a disposable cache.
+  of days; mirrors stay. All of it is a disposable cache. The mirrors and checkouts arrive with grounding.
 - LLM endpoint: whatever CM provisions, OpenRouter or any OpenAI-compatible
   endpoint. Never name a gateway operator in repo artifacts.
 - Builds on macOS too: no filenames differing only by case.

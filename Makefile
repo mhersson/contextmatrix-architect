@@ -1,4 +1,4 @@
-.PHONY: build install test test-race fmt lint
+.PHONY: build install test test-race fmt lint docker
 
 build:
 	go build ./...
@@ -13,3 +13,5 @@ fmt:
 	gofumpt -w .
 lint:
 	golangci-lint run
+docker:
+	docker build -t contextmatrix-architect:dev .

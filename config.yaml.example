@@ -1,0 +1,60 @@
+# contextmatrix-architect server configuration.
+#
+# The architect holds no secret but api_key, the HMAC key shared with
+# ContextMatrix's backends.architect entry. The LLM endpoint, MCP key and git
+# credentials arrive from ContextMatrix on every session start.
+#
+# Every key can be overridden by CONTEXTMATRIX_ARCHITECT_<KEY>, with __ for a
+# nested key (CONTEXTMATRIX_ARCHITECT_MODELS__<persona>).
+
+# Shared HMAC key; must equal backends.architect.api_key in ContextMatrix.
+# Required. Env: CONTEXTMATRIX_ARCHITECT_API_KEY
+api_key: ""
+
+# Base URL of the ContextMatrix instance. Required.
+# Env: CONTEXTMATRIX_ARCHITECT_CONTEXTMATRIX_URL
+contextmatrix_url: "http://localhost:8080"
+
+# Log level: debug, info, warn or error. Default: info.
+# Env: CONTEXTMATRIX_ARCHITECT_LOG_LEVEL
+log_level: info
+
+# Harness cost cap per stage run, in USD. Default: 2.
+# Env: CONTEXTMATRIX_ARCHITECT_MAX_RUN_COST_USD
+max_run_cost_usd: 2
+
+# Harness turn cap per stage run. Default: 40.
+# Env: CONTEXTMATRIX_ARCHITECT_MAX_TURNS
+max_turns: 40
+
+# Size of the message de-duplication cache. Default: 1000.
+# Env: CONTEXTMATRIX_ARCHITECT_MESSAGE_DEDUP_CACHE_SIZE
+message_dedup_cache_size: 1000
+
+# Seconds a message id is remembered for de-duplication. Default: 600.
+# Env: CONTEXTMATRIX_ARCHITECT_MESSAGE_DEDUP_TTL_SECONDS
+message_dedup_ttl_seconds: 600
+
+# Per-persona model overrides (slugs only); the session's model is the default
+# for every persona not listed. Default: none.
+# Env: CONTEXTMATRIX_ARCHITECT_MODELS__<persona>
+models: {}
+
+# Pipeline pack directory; empty uses the pack embedded in the binary.
+# Default: empty. Env: CONTEXTMATRIX_ARCHITECT_PACK
+pack: ""
+
+# Listen port. Default: 9094. Env: CONTEXTMATRIX_ARCHITECT_PORT
+port: 9094
+
+# Directory holding architect.db. Must be writable. Default as below.
+# Env: CONTEXTMATRIX_ARCHITECT_STATE_DIR
+state_dir: /var/lib/contextmatrix-architect
+
+# Size of the webhook replay cache. Default: 10000.
+# Env: CONTEXTMATRIX_ARCHITECT_WEBHOOK_REPLAY_CACHE_SIZE
+webhook_replay_cache_size: 10000
+
+# Accepted clock skew on signed webhooks, in seconds. Default: 330.
+# Env: CONTEXTMATRIX_ARCHITECT_WEBHOOK_REPLAY_SKEW_SECONDS
+webhook_replay_skew_seconds: 330
