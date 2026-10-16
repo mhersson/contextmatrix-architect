@@ -1,0 +1,6 @@
+name: bad
+version: "1"
+stages:
+  - id: intake
+    persona: product_owner
+    consumes: [design]

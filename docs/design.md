@@ -199,7 +199,7 @@ developer (DEV), reviewer (REV).
 | 8  | Sign-off        | human   | everything        | approval; then emission                                                                               | yes       |
 | -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   |
 
-The embedded pack ships the stages as they are built; at present it holds intake.
+The embedded pack holds intake, a human-sourced design stage, grounding, decomposition and readiness; slicing, acceptance and sign-off arrive with the dialog stages.
 
 - Intake ends by stating the shape it expects (slices, projects involved) and
   the gate plan in effect, so the operator can change the overrides before
@@ -226,9 +226,8 @@ The embedded pack ships the stages as they are built; at present it holds intake
 A pack is a directory:
 
 ```
-pack.yaml          stage order; per stage: persona, consumes, produces, tools,
-                   default gate policy, gate fold condition, checks,
-                   reviewer on or off and its threshold
+pack.yaml          stage order; per stage: persona, source (model or human), consumes,
+                   produces, tools, checks, default gate policy, loop target and rounds
 personas/*.md      role text, one file per persona
 stages/*.md        instructions, one file per stage
 card.md            the card body template

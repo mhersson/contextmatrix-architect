@@ -1,7 +1,33 @@
 name: default
-version: "0.1"
+version: "0.2"
 stages:
   - id: intake
     persona: product_owner
     produces: need
     gate: questions
+  - id: design
+    source: human
+    produces: design
+    consumes: [intake]
+    gate: none
+  - id: grounding
+    persona: senior_developer
+    produces: grounding
+    consumes: [intake, design]
+    tools: [code]
+    gate: none
+  - id: decomposition
+    persona: senior_developer
+    produces: cards
+    consumes: [intake, design, grounding]
+    tools: [code]
+    checks: [cards]
+    gate: none
+  - id: readiness
+    persona: reviewer
+    produces: readiness
+    consumes: [intake, design, grounding, decomposition]
+    tools: [code]
+    loops_to: decomposition
+    max_rounds: 3
+    gate: none
