@@ -16,6 +16,7 @@ import (
 
 	"github.com/mhersson/contextmatrix-backendkit/logbridge"
 	"github.com/mhersson/contextmatrix-backendkit/webhookcore"
+	"github.com/mhersson/contextmatrix-harness/tools"
 	protocol "github.com/mhersson/contextmatrix-protocol"
 	"github.com/spf13/cobra"
 
@@ -109,6 +110,7 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 		Workspace:     workspace,
 		ExportDir:     filepath.Join(cfg.StateDir, "exports"),
 		Projects:      cmProjects(cfg.ContextMatrixURL),
+		CMTools:       cmReadTools(cfg.ContextMatrixURL),
 		Credentials: func(gitToken string) code.Credentials {
 			return code.NewCMCredentials(cfg.ContextMatrixURL, gitToken)
 		},
@@ -171,6 +173,26 @@ func cmProjects(baseURL string) func(ctx context.Context, mcpAPIKey string) ([]c
 		defer func() { _ = client.Close() }()
 
 		return client.ListProjects(ctx)
+	}
+}
+
+// cmReadTools opens one MCP session per stage run with the session's MCP key
+// and offers the run CM's read tools.
+func cmReadTools(baseURL string) func(ctx context.Context, mcpAPIKey, tag string) ([]tools.Tool, func(), error) {
+	return func(ctx context.Context, mcpAPIKey, tag string) ([]tools.Tool, func(), error) {
+		client, err := cm.Connect(ctx, baseURL, mcpAPIKey)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		ts, err := client.ReadTools(ctx, cm.StageReads(), tag)
+		if err != nil {
+			_ = client.Close()
+
+			return nil, nil, err
+		}
+
+		return ts, func() { _ = client.Close() }, nil
 	}
 }
 

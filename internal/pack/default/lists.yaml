@@ -34,7 +34,14 @@ bug_title_verbs: [fix, bugfix, repair, resolve, investigate, debug]
 maintenance_labels: [simple, chore, dependencies, infra]
 maintenance_verbs: [bump, update, rename, move, pin, upgrade, downgrade]
 forbidden_references:
+  # The first four are CM's self-containment lint patterns, copied verbatim.
   - name: local path
-    pattern: '(^|[\s"`(])(/(home|Users)/|C:\\Users\\)'
+    pattern: '(?:^|[\s"''`(\[])(?:/home/|/Users/)[^\s"''`)\]]*'
+  - name: home path
+    pattern: '(?:^|[\s"''`(\[])~/[^\s"''`)\]]*'
+  - name: windows path
+    pattern: '(?i)\b[a-z]:\\[^\s"''`)\]]*'
+  - name: file url
+    pattern: 'file://[^\s"''`)\]]*'
   - name: parent directory
     pattern: '(^|\s)\.\./'

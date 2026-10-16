@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mhersson/contextmatrix-harness/tools"
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
@@ -98,6 +99,12 @@ type Options struct {
 	// Credentials builds the git credential source for a session's token.
 	// nil means repositories are fetched without auth.
 	Credentials func(gitToken string) code.Credentials
+	// CMTools opens one MCP session with the session's key for a run of a
+	// stage with the cm tools and returns them, each result tagged with tag,
+	// and the closer the run calls when it ends; the closer may be nil. nil
+	// disables cm stages: such a stage then fails with a clear error before
+	// any checkout.
+	CMTools func(ctx context.Context, mcpAPIKey, tag string) ([]tools.Tool, func(), error)
 	// ExportDir is where export bundles are written, one directory per
 	// blueprint and time; empty refuses export.
 	ExportDir string
@@ -170,10 +177,20 @@ func effectivePrice(p *protocol.ModelPrice) *protocol.ModelPrice {
 // Start attaches a session to the blueprint with in.ID, creating it on first
 // sight. A stage left running by a crash is marked interrupted and re-run, a
 // stage whose inputs were stored but which never started runs, and a
-// human-sourced stage that waits shows its prompt again. Start on an
-// attached session only logs the reopen.
+// human-sourced stage that waits shows its prompt again. Start on a session
+// already attached does nothing.
 func (c *Controller) Start(ctx context.Context, in StartInput) error {
 	in.Price = effectivePrice(in.Price)
+
+	// CM re-sends the start on every log reconnect; a session already held
+	// changes nothing and leaves no trace.
+	c.mu.Lock()
+	_, held := c.sessions[in.ID]
+	c.mu.Unlock()
+
+	if held {
+		return nil
+	}
 
 	sess := &session{
 		endpoint: in.Endpoint, model: in.Model, price: in.Price,

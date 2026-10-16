@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
@@ -16,6 +18,38 @@ import (
 )
 
 var errNoCodeSupport = errors.New("blueprint: code stages need a workspace and the project list")
+
+var errNoCMSupport = errors.New("blueprint: cm stages need the ContextMatrix tool source")
+
+// cmSourceIdentity is the ContextMatrix board as a source: one per
+// blueprint, because CM state carries no version a read could cite.
+const cmSourceIdentity = "contextmatrix"
+
+// cmSource returns the blueprint's ContextMatrix source, recording it the
+// first time a run of a stage with the cm tools prepares them: the tag must
+// exist before the tools open, since every result carries it.
+func (c *Controller) cmSource(ctx context.Context, bp store.Blueprint, stageID string) (store.Source, error) {
+	known, err := c.opts.Store.ListSources(ctx, bp.ID)
+	if err != nil {
+		return store.Source{}, fmt.Errorf("blueprint: list sources: %w", err)
+	}
+
+	for _, s := range known {
+		if s.Kind == "cm" && s.Identity == cmSourceIdentity {
+			return s, nil
+		}
+	}
+
+	src, err := c.opts.Store.AddSource(ctx, store.Source{
+		BlueprintID: bp.ID, Kind: "cm", Identity: cmSourceIdentity,
+		FetchedAt: c.opts.Now().UTC(), FirstUsedBy: stageID,
+	})
+	if err != nil {
+		return store.Source{}, fmt.Errorf("blueprint: record source: %w", err)
+	}
+
+	return src, nil
+}
 
 // codeFacts is what a code stage knows: the jailed tool root, the facts
 // repo_info reports, and the contract view of every target project.
@@ -147,7 +181,10 @@ func (c *Controller) prepareCode(ctx context.Context, sess *session, bp store.Bl
 		}
 
 		verifies[name] = verify
-		cp := contract.Project{HasVerify: verify != ""}
+		cp := contract.Project{
+			HasVerify: verify != "", Types: p.Types, Priorities: p.Priorities,
+			ForeignRepos: foreignRepos(projects, name),
+		}
 
 		for _, t := range ts {
 			switch owner, taken := owners[t.name]; {
@@ -237,7 +274,33 @@ func (c *Controller) prepareCode(ctx context.Context, sess *session, bp store.Bl
 	return facts, nil
 }
 
-// checkoutLines describes the trees for a stage's task.
+// foreignRepos returns the repository urls of every CM project but the named
+// one, collected as CM's self-containment lint collects them: in CM's
+// project order, the legacy repo when set and then every repos url, so the
+// findings match CM's warnings and come in the same order on every run.
+func foreignRepos(projects []cm.Project, name string) []string {
+	var out []string
+
+	for _, p := range projects {
+		if p.Name == name {
+			continue
+		}
+
+		if p.Repo != "" {
+			out = append(out, p.Repo)
+		}
+
+		for _, r := range p.Repos {
+			out = append(out, r.URL)
+		}
+	}
+
+	return out
+}
+
+// checkoutLines describes the trees for a stage's task, then the card types
+// and priorities each target project declares, since the card contract
+// accepts only those.
 func checkoutLines(facts *codeFacts) string {
 	if facts == nil || len(facts.repos) == 0 {
 		return ""
@@ -249,6 +312,24 @@ func checkoutLines(facts *codeFacts) string {
 
 	for _, r := range facts.repos {
 		fmt.Fprintf(&b, "- %s/ is project %s at %s [%s]\n", r.Dir, r.Project, r.SHA, r.SourceTag)
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(facts.projects)) {
+		p := facts.projects[name]
+
+		var parts []string
+
+		if len(p.Types) > 0 {
+			parts = append(parts, "card types "+strings.Join(p.Types, ", "))
+		}
+
+		if len(p.Priorities) > 0 {
+			parts = append(parts, "priorities "+strings.Join(p.Priorities, ", "))
+		}
+
+		if len(parts) > 0 {
+			fmt.Fprintf(&b, "- project %s declares %s; use only these.\n", name, strings.Join(parts, " and "))
+		}
 	}
 
 	b.WriteString("\n")

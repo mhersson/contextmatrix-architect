@@ -16,6 +16,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
+	"github.com/go-git/go-git/v5/storage/memory"
 )
 
 const (
@@ -160,6 +161,58 @@ func (w *Workspace) Checkout(ctx context.Context, blueprintID, name, repoURL str
 	}
 
 	return Checkout{RepoURL: repoURL, DefaultBranch: branch, SHA: sha, Dir: dir}, nil
+}
+
+// RemoteHead lists the repository's refs without fetching and returns its
+// default branch and that branch's sha: what a checkout now would record.
+// It writes nothing to disk, so it needs no lock.
+func (w *Workspace) RemoteHead(ctx context.Context, repoURL string, creds Credentials) (string, string, error) {
+	repoURL = CleanURL(repoURL)
+
+	_, host, path, err := repoKey(repoURL)
+	if err != nil {
+		return "", "", err
+	}
+
+	if scheme := repoScheme(repoURL); scheme != "https" && !w.allowLocal {
+		return "", "", fmt.Errorf("code: repository scheme %q is not supported, only https", scheme)
+	}
+
+	var auth transport.AuthMethod
+
+	if creds != nil {
+		user, token, err := creds.Fetch(ctx, host, path)
+		if err != nil {
+			return "", "", err
+		}
+
+		auth = &githttp.BasicAuth{Username: user, Password: token}
+	}
+
+	listCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	defer cancel()
+
+	remote := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{Name: "origin", URLs: []string{repoURL}})
+
+	refs, err := remote.ListContext(listCtx, &git.ListOptions{Auth: auth})
+	if err != nil {
+		return "", "", fmt.Errorf("code: list %s: %w", repoURL, err)
+	}
+
+	branch := defaultBranch(refs)
+	if branch == "" {
+		return "", "", fmt.Errorf("code: %s has no default branch", repoURL)
+	}
+
+	want := plumbing.NewBranchReferenceName(branch)
+
+	for _, r := range refs {
+		if r.Name() == want {
+			return branch, r.Hash().String(), nil
+		}
+	}
+
+	return "", "", fmt.Errorf("code: %s lists no ref for its default branch %s", repoURL, branch)
 }
 
 // slotFor returns the lock for key in locks, creating it on first use.

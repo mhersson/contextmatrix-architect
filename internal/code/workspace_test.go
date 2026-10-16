@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -497,4 +498,77 @@ func TestExportTree_StopsWhenCancelled(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	assert.NoDirExists(t, dir)
 	assert.NoDirExists(t, dir+".partial", "a cancelled export leaves no partial tree")
+}
+
+func TestWorkspace_RemoteHeadFollowsTheDefaultBranch(t *testing.T) {
+	src, first := fixtureRepo(t, map[string]string{"a.txt": "1\n"})
+	ws := newTestWorkspace(t.TempDir(), time.Now)
+	ctx := context.Background()
+
+	branch, sha, err := ws.RemoteHead(ctx, src, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "main", branch)
+	assert.Equal(t, first, sha)
+
+	repo, err := git.PlainOpen(src)
+	require.NoError(t, err)
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(src, "a.txt"), []byte("2\n"), 0o600))
+
+	_, err = wt.Add("a.txt")
+	require.NoError(t, err)
+	second, err := wt.Commit("move", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.com", When: time.Now()}})
+	require.NoError(t, err)
+
+	_, sha, err = ws.RemoteHead(ctx, src, nil)
+	require.NoError(t, err)
+	assert.Equal(t, second.String(), sha, "a moved branch reads its new head")
+
+	_, err = os.Stat(filepath.Join(ws.root, mirrorsDir))
+	assert.True(t, os.IsNotExist(err), "no mirror is written")
+}
+
+func TestWorkspace_RemoteHeadIsHTTPSOnly(t *testing.T) {
+	ws := NewWorkspace(t.TempDir(), time.Now)
+
+	_, _, err := ws.RemoteHead(context.Background(), "git@example.com:acme/alpha.git", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only https")
+}
+
+// failCreds refuses every Fetch and records what it was asked for.
+type failCreds struct {
+	mu    sync.Mutex
+	asked [][2]string
+}
+
+var errNoCredential = errors.New("no credential")
+
+func (f *failCreds) Fetch(_ context.Context, host, path string) (string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.asked = append(f.asked, [2]string{host, path})
+
+	return "", "", errNoCredential
+}
+
+func TestWorkspace_RemoteHeadStopsWhenCredentialsFail(t *testing.T) {
+	var requests atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	ws := newTestWorkspace(t.TempDir(), time.Now)
+	creds := &failCreds{}
+
+	_, _, err := ws.RemoteHead(context.Background(), srv.URL+"/acme/alpha.git", creds)
+	require.ErrorIs(t, err, errNoCredential)
+
+	assert.Zero(t, requests.Load(), "nothing is listed without a credential")
+	assert.Equal(t, [][2]string{{"127.0.0.1", "acme/alpha"}}, creds.asked, "the credential is asked for the repository's host and path")
 }

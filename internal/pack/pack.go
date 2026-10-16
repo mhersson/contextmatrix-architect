@@ -28,7 +28,9 @@ const (
 	SourceModel = "model"
 	SourceHuman = "human"
 	ToolCode    = "code"
-	CheckCards  = "cards"
+	// ToolCM is the read-only ContextMatrix tool group.
+	ToolCM     = "cm"
+	CheckCards = "cards"
 )
 
 // Stage is one unit of work in the pipeline: a model run, or an artifact a
@@ -46,8 +48,8 @@ type Stage struct {
 	// Consumes lists earlier stages whose latest artifacts are this stage's
 	// input, in the order they are presented.
 	Consumes []string `yaml:"consumes"`
-	// Tools names the tool groups the run gets; "code" is the read-only
-	// checkout tools plus repo_info.
+	// Tools names the tool groups the run gets: "code" is the read-only
+	// checkout tools plus repo_info, "cm" the read-only ContextMatrix tools.
 	Tools []string `yaml:"tools"`
 	// Checks names the mechanical checks run on every submit; "cards" is the
 	// card contract.
@@ -275,7 +277,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	}
 
 	for _, tool := range s.Tools {
-		if tool != ToolCode {
+		if tool != ToolCode && tool != ToolCM {
 			return fmt.Errorf("pack: stage %q: unknown tool group %q", s.ID, tool)
 		}
 	}

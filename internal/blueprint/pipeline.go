@@ -469,11 +469,18 @@ func (c *Controller) cardsValidator(projects map[string]contract.Project) (func(
 }
 
 // draftProblems are the faults of the draft as a whole: it holds no cards,
-// or its playbook order does not list every card exactly once and nothing
-// else; emission walks the order as given.
+// several cards come without a playbook title, or its order does not list
+// every card and manual entry exactly once and nothing else; emission walks
+// the order as given.
 func draftProblems(d contract.Draft) []string {
 	if len(d.Cards) == 0 {
 		return []string{"the draft has no cards"}
+	}
+
+	var problems []string
+
+	if len(d.Cards) > 1 && strings.TrimSpace(d.Title) == "" {
+		problems = append(problems, "the draft has several cards, so it needs a playbook title")
 	}
 
 	seen := map[string]int{}
@@ -481,23 +488,30 @@ func draftProblems(d contract.Draft) []string {
 		seen[id]++
 	}
 
-	var problems []string
-
+	ids := make([]string, 0, len(d.Cards)+len(d.Manual))
 	for _, card := range d.Cards {
-		switch seen[card.ID] {
+		ids = append(ids, card.ID)
+	}
+
+	for _, m := range d.Manual {
+		ids = append(ids, m.ID)
+	}
+
+	for _, id := range ids {
+		switch seen[id] {
 		case 0:
-			problems = append(problems, card.ID+" is missing from order")
+			problems = append(problems, id+" is missing from order")
 		case 1:
 		default:
-			problems = append(problems, card.ID+" appears more than once in order")
+			problems = append(problems, id+" appears more than once in order")
 		}
 
-		delete(seen, card.ID)
+		delete(seen, id)
 	}
 
 	for _, id := range d.Order {
 		if _, stray := seen[id]; stray {
-			problems = append(problems, id+" in order is not a card")
+			problems = append(problems, id+" in order is not a card or a manual entry")
 
 			delete(seen, id)
 		}

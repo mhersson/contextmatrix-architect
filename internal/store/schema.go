@@ -8,7 +8,7 @@ import (
 
 // schemaVersion stamps PRAGMA user_version. Bump it when the schema changes;
 // a newer database is refused.
-const schemaVersion = 2
+const schemaVersion = 3
 
 func ensureSchema(ctx context.Context, db *sql.DB) error {
 	var current int
@@ -86,11 +86,32 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 			first_used_by TEXT NOT NULL DEFAULT '',
 			UNIQUE(blueprint_id, number)
 		)`,
+		`CREATE TABLE IF NOT EXISTS gates (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			blueprint_id TEXT NOT NULL,
+			stage        TEXT NOT NULL,
+			version      INTEGER NOT NULL,
+			decision     TEXT NOT NULL,
+			feedback     TEXT NOT NULL DEFAULT '',
+			responder    TEXT NOT NULL,
+			decided_at   INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_gates_blueprint ON gates(blueprint_id, stage, id)`,
+		`CREATE TABLE IF NOT EXISTS emissions (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			blueprint_id TEXT NOT NULL,
+			kind         TEXT NOT NULL,
+			draft_id     TEXT NOT NULL DEFAULT '',
+			project      TEXT NOT NULL DEFAULT '',
+			cm_id        TEXT NOT NULL,
+			created_at   INTEGER NOT NULL,
+			UNIQUE(blueprint_id, kind, draft_id)
+		)`,
 	}
 
 	// Append-only: the audit record is never rewritten. Triggers make that
 	// true for every path, including a raw SQL console.
-	for _, table := range []string{"events", "transcripts", "artifacts"} {
+	for _, table := range []string{"events", "transcripts", "artifacts", "gates", "emissions"} {
 		stmts = append(stmts,
 			fmt.Sprintf(`CREATE TRIGGER IF NOT EXISTS %s_no_update BEFORE UPDATE ON %s
 				BEGIN SELECT RAISE(ABORT, '%s is append-only'); END`, table, table, table),

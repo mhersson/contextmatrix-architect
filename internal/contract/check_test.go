@@ -288,3 +288,130 @@ func TestParseDraft(t *testing.T) {
 	_, err = ParseDraft(map[string]any{"cards": []any{map[string]any{"id": "D1", "project": "alpha", "title": "t"}, map[string]any{"id": "D1", "project": "alpha", "title": "u"}}})
 	require.Error(t, err, "duplicate ids are rejected")
 }
+
+func TestParseDraft_ManualEntries(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    map[string]any
+		wantErr string
+	}{
+		{
+			name: "card and manual entry",
+			data: map[string]any{
+				"title":  "Ship the thing",
+				"cards":  []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing", "priority": "medium"}},
+				"manual": []any{map[string]any{"id": "M1", "text": "Check the dashboard on staging"}},
+				"order":  []any{"D1", "M1"},
+			},
+		},
+		{
+			name: "manual entry without text",
+			data: map[string]any{
+				"cards":  []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing"}},
+				"manual": []any{map[string]any{"id": "M1", "text": "  "}},
+			},
+			wantErr: `manual entry "M1" needs an id and text`,
+		},
+		{
+			name: "manual entry without an id",
+			data: map[string]any{
+				"cards":  []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing"}},
+				"manual": []any{map[string]any{"id": "", "text": "Check the dashboard on staging"}},
+			},
+			wantErr: `manual entry "" needs an id and text`,
+		},
+		{
+			name: "manual id reuses a card id",
+			data: map[string]any{
+				"cards":  []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing"}},
+				"manual": []any{map[string]any{"id": "D1", "text": "Check it"}},
+			},
+			wantErr: `duplicate id "D1"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d, err := ParseDraft(tt.data)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, "Ship the thing", d.Title)
+			assert.Equal(t, "medium", d.Cards[0].Priority)
+			require.Len(t, d.Manual, 1)
+			assert.Equal(t, "Check the dashboard on staging", d.Manual[0].Text)
+			assert.Equal(t, []string{"D1", "M1"}, d.Order)
+		})
+	}
+}
+
+func validBody() string {
+	return "## Context\nwhy\n## Where\nx.go\n## Change\nadd\n## Acceptance criteria\n1. go test ./... passes.\n## Tests expected\nTestX.\n## Out of scope\nrest.\n"
+}
+
+func TestCheck_ProjectFieldsAndSelfContainment(t *testing.T) {
+	lists := Lists{ForbiddenReferences: []Pattern{
+		{Name: "home path", Pattern: `(?:^|[\s"'` + "`" + `(\[])~/[^\s"'` + "`" + `)\]]*`},
+		{Name: "file url", Pattern: `file://[^\s"'` + "`" + `)\]]*`},
+	}}
+	projects := map[string]Project{"alpha": {
+		HasRepo: true, HasVerify: true,
+		Types: []string{"feature", "bug"}, Priorities: []string{"low", "medium", "high"},
+		ForeignRepos: []string{"https://github.com/acme/beta.git"},
+	}}
+
+	card := func(mut func(*Card)) Draft {
+		c := Card{ID: "D1", Project: "alpha", Title: "Add the thing", Type: "feature", Priority: "medium", Body: validBody()}
+		mut(&c)
+
+		return Draft{Cards: []Card{c}, Order: []string{"D1"}}
+	}
+
+	tests := []struct {
+		name  string
+		draft Draft
+		want  string // check name expected among the findings; empty means none
+	}{
+		{"clean", card(func(*Card) {}), ""},
+		{"unknown type", card(func(c *Card) { c.Type = "epic" }), "type"},
+		{"type in another case", card(func(c *Card) { c.Type = "Feature" }), "type"},
+		{"missing priority", card(func(c *Card) { c.Priority = "" }), "priority"},
+		{"unknown priority", card(func(c *Card) { c.Priority = "urgent" }), "priority"},
+		{"priority in another case", card(func(c *Card) { c.Priority = "Medium" }), "priority"},
+		{"sibling repo url", card(func(c *Card) { c.Body += "\nSee https://github.com/acme/beta for the API.\n" }), "foreign_repo"},
+		{"sibling owner/name", card(func(c *Card) { c.Body += "\nMatches acme/beta.\n" }), "foreign_repo"},
+		{"sibling repo in the title only", card(func(c *Card) { c.Title = "Add the acme/beta client" }), "foreign_repo"},
+		{"longer name is not the sibling", card(func(c *Card) { c.Body += "\nUses acme/beta-api.\n" }), ""},
+		{"home path in the title", card(func(c *Card) { c.Title = "Add ~/notes support" }), "forbidden_reference"},
+		{"file url", card(func(c *Card) { c.Body += "\nfile:///tmp/x\n" }), "forbidden_reference"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var checks []string
+			for _, f := range Check(tt.draft, lists, projects) {
+				checks = append(checks, f.Check)
+			}
+
+			if tt.want == "" {
+				assert.Empty(t, checks)
+
+				return
+			}
+
+			assert.Contains(t, checks, tt.want)
+		})
+	}
+}
+
+func TestCheck_ProjectWithoutTypesOrPrioritiesSkipsThoseChecks(t *testing.T) {
+	projects := map[string]Project{"alpha": {HasRepo: true, HasVerify: true}}
+	d := Draft{Cards: []Card{{ID: "D1", Project: "alpha", Title: "Add the thing", Type: "anything", Priority: "whatever", Body: validBody()}}}
+
+	assert.Empty(t, Check(d, Lists{}, projects))
+}

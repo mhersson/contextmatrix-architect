@@ -1,6 +1,7 @@
 package pack
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -140,6 +141,22 @@ func TestEmbeddedLists_ForbiddenReferences(t *testing.T) {
 
 	assert.NotEmpty(t, forbiddenRefs(t, "See /home/dev/notes.md for the plan.\n"), "a developer's home directory")
 	assert.NotEmpty(t, forbiddenRefs(t, "Copy it from ../other-repo/x.go first.\n"), "a sibling checkout")
+
+	tests := []struct {
+		name, text, pattern string
+	}{
+		{"home-relative path", "Keep the notes in ~/notes/plan.md.\n", "home path"},
+		{"windows path", "The installer lives at D:\\tools\\setup.exe.\n", "windows path"},
+		{"file url", "Open file:///srv/app/config.yaml in a browser.\n", "file url"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := forbiddenRefs(t, tt.text)
+			assert.True(t, slices.ContainsFunc(got, func(m string) bool { return strings.HasPrefix(m, tt.pattern+": ") }),
+				"the %s pattern matches; got %v", tt.pattern, got)
+		})
+	}
 }
 
 // packFS is a one-stage pack whose stage carries the given extra yaml lines,
@@ -212,4 +229,13 @@ func TestLoad_EmptyListsYAMLIsEmptyLists(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, p.Lists().RequiredSections)
 	assert.NotEmpty(t, p.CardTemplate())
+}
+
+func TestLoad_AcceptsTheCMToolGroup(t *testing.T) {
+	p, err := load(packFS("    tools: [code, cm]\n", nil))
+	require.NoError(t, err)
+
+	s1, ok := p.Stage("s1")
+	require.True(t, ok)
+	assert.Equal(t, []string{ToolCode, ToolCM}, s1.Tools)
 }

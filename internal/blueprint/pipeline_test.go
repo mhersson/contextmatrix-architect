@@ -16,11 +16,13 @@ import (
 
 	"github.com/mhersson/contextmatrix-harness/harness"
 	"github.com/mhersson/contextmatrix-harness/llm"
+	"github.com/mhersson/contextmatrix-harness/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/code"
+	"github.com/mhersson/contextmatrix-architect/internal/contract"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
@@ -175,7 +177,7 @@ func newPipelineOn(t *testing.T, st *store.Store, script stageScript, ws *fakeWo
 	c := New(Options{
 		Store: st, Pack: pk, Runner: runner, MaxRunCostUSD: 2, MaxTurns: 10,
 		Sink: rec.sink, HarnessLine: rec.line,
-		Workspace: ws, Projects: listAlpha,
+		Workspace: ws, Projects: listAlpha, CMTools: (&fakeCMTools{}).open,
 	})
 
 	return c, st, runner, rec, ws
@@ -303,10 +305,11 @@ func TestPipeline_IntakeThenDesignThenCodeStagesThenReport(t *testing.T) {
 
 	sources, err := st.ListSources(ctx, "BP1")
 	require.NoError(t, err)
-	require.Len(t, sources, 1)
+	require.Len(t, sources, 2, "the repo, then the ContextMatrix board")
 	assert.Equal(t, "sha-alpha", sources[0].Version)
 	assert.Equal(t, "grounding", sources[0].FirstUsedBy)
 	assert.Equal(t, "https://example.com/alpha.git", sources[0].Identity)
+	assert.Equal(t, "cm", sources[1].Kind)
 }
 
 func TestPipeline_MessageDuringIntakeIsANoteNotTheDesign(t *testing.T) {
@@ -1114,7 +1117,7 @@ func TestPipeline_RepoURLCredentialsNeverReachTheRecord(t *testing.T) {
 
 	sources, err := st.ListSources(context.Background(), "BP1")
 	require.NoError(t, err)
-	require.Len(t, sources, 1)
+	require.Len(t, sources, 2, "the repo, then the ContextMatrix board")
 	assert.Equal(t, "https://example.com/alpha.git", sources[0].Identity)
 
 	grounded := eventsOf(t, st, rec, "BP1", EventGrounded)
@@ -1345,4 +1348,265 @@ func TestPrepareCode_RefusesUnsafeOrCollidingProjects(t *testing.T) {
 			assert.Equal(t, 0, ws.checkouts(), "nothing is fetched")
 		})
 	}
+}
+
+func TestDraftProblems_ManualEntriesAndTitle(t *testing.T) {
+	card := func(id string) contract.Card { return contract.Card{ID: id, Project: "alpha", Title: "Add " + id} }
+
+	tests := []struct {
+		name  string
+		draft contract.Draft
+		want  []string
+	}{
+		{
+			name:  "one card with a manual entry needs no title",
+			draft: contract.Draft{Cards: []contract.Card{card("D1")}, Manual: []contract.Manual{{ID: "M1", Text: "check"}}, Order: []string{"D1", "M1"}},
+		},
+		{
+			name:  "two cards need a playbook title",
+			draft: contract.Draft{Cards: []contract.Card{card("D1"), card("D2")}, Order: []string{"D1", "D2"}},
+			want:  []string{"the draft has several cards, so it needs a playbook title"},
+		},
+		{
+			name:  "a manual entry missing from order",
+			draft: contract.Draft{Title: "T", Cards: []contract.Card{card("D1"), card("D2")}, Manual: []contract.Manual{{ID: "M1", Text: "check"}}, Order: []string{"D1", "D2"}},
+			want:  []string{"M1 is missing from order"},
+		},
+		{
+			name:  "a manual entry twice in order",
+			draft: contract.Draft{Cards: []contract.Card{card("D1")}, Manual: []contract.Manual{{ID: "M1", Text: "check"}}, Order: []string{"D1", "M1", "M1"}},
+			want:  []string{"M1 appears more than once in order"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, draftProblems(tt.draft))
+		})
+	}
+}
+
+func TestPipeline_CodeStagesSeeTheTypesAndPrioritiesTheProjectDeclares(t *testing.T) {
+	c, _, runner, _, _ := newPipeline(t, happyScript())
+	c.opts.Projects = func(context.Context, string) ([]cm.Project, error) {
+		return []cm.Project{{
+			Name: "alpha", Repo: "https://example.com/alpha.git", Verify: &cm.Verify{Command: "make test"},
+			Types: []string{"feature", "bug"}, Priorities: []string{"low", "medium", "high"},
+		}}, nil
+	}
+
+	drive(t, c, "BP1")
+
+	require.GreaterOrEqual(t, runner.calls(), 3)
+
+	decomposition := runner.input(2)
+	require.Equal(t, "decomposition", decomposition.Stage)
+	assert.Contains(t, decomposition.Task, "- project alpha declares card types feature, bug and priorities low, medium, high; use only these.\n")
+}
+
+func TestCheckoutLines_NameWhatEachProjectDeclares(t *testing.T) {
+	facts := &codeFacts{
+		repos: []stage.RepoFacts{
+			{Project: "beta", Dir: "beta", SHA: "sha-b", SourceTag: "S2"},
+			{Project: "alpha", Dir: "alpha", SHA: "sha-a", SourceTag: "S1"},
+		},
+		projects: map[string]contract.Project{
+			"gamma": {},
+			"beta":  {Priorities: []string{"low", "high"}},
+			"alpha": {Types: []string{"feature", "bug"}, Priorities: []string{"medium"}},
+			"delta": {Types: []string{"task"}},
+		},
+	}
+
+	want := "Checkouts under the tool root (cite the tag for anything read there):\n" +
+		"- beta/ is project beta at sha-b [S2]\n" +
+		"- alpha/ is project alpha at sha-a [S1]\n" +
+		"- project alpha declares card types feature, bug and priorities medium; use only these.\n" +
+		"- project beta declares priorities low, high; use only these.\n" +
+		"- project delta declares card types task; use only these.\n" +
+		"\n"
+	assert.Equal(t, want, checkoutLines(facts), "sorted by project; a project declaring neither adds no line")
+}
+
+func TestPrepareCode_FillsProjectTypesPrioritiesAndForeignRepos(t *testing.T) {
+	c, _, _, _, _ := newPipeline(t, happyScript())
+	c.opts.Projects = func(context.Context, string) ([]cm.Project, error) {
+		return []cm.Project{
+			{Name: "gamma", Repo: "https://example.com/gamma.git"},
+			{
+				Name: "alpha", Repo: "https://example.com/alpha.git", Verify: &cm.Verify{Command: "make test"},
+				Types: []string{"feature"}, Priorities: []string{"medium"},
+			},
+			{
+				Name: "beta", Repo: "https://example.com/beta.git",
+				Repos: []cm.Repo{{Name: "api", URL: "https://example.com/beta-api.git", Primary: true}, {Name: "web", URL: "https://example.com/beta-web.git"}},
+			},
+		}, nil
+	}
+
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	c.mu.Lock()
+	sess := c.sessions["BP1"]
+	c.mu.Unlock()
+
+	bp, err := c.opts.Store.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	facts, err := c.prepareCode(ctx, sess, bp, "grounding")
+	require.NoError(t, err)
+
+	alpha := facts.projects["alpha"]
+	assert.Equal(t, []string{"feature"}, alpha.Types)
+	assert.Equal(t, []string{"medium"}, alpha.Priorities)
+	assert.Equal(t, []string{
+		"https://example.com/gamma.git",
+		"https://example.com/beta.git", "https://example.com/beta-api.git", "https://example.com/beta-web.git",
+	}, alpha.ForeignRepos, "CM's project order; the legacy repo and every repos url, as CM's lint collects them")
+}
+
+// fakeCMTools hands a cm stage one read tool and counts the sessions it
+// opened and closed.
+type fakeCMTools struct {
+	mu     sync.Mutex
+	opened int
+	closed int
+	tags   []string
+	keys   []string
+	err    error
+}
+
+func (f *fakeCMTools) open(_ context.Context, mcpKey, tag string) ([]tools.Tool, func(), error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.err != nil {
+		return nil, nil, f.err
+	}
+
+	f.opened++
+	f.tags = append(f.tags, tag)
+	f.keys = append(f.keys, mcpKey)
+
+	return []tools.Tool{cmReadStub{}}, func() {
+		f.mu.Lock()
+		f.closed++
+		f.mu.Unlock()
+	}, nil
+}
+
+func (f *fakeCMTools) counts() (opened, closed int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.opened, f.closed
+}
+
+type cmReadStub struct{}
+
+func (cmReadStub) Name() string   { return "cm_list_cards" }
+func (cmReadStub) ReadOnly() bool { return true }
+func (cmReadStub) Schema() llm.Tool {
+	return llm.Tool{Type: "function", Function: llm.ToolFunction{Name: "cm_list_cards", Parameters: json.RawMessage(`{"type":"object"}`)}}
+}
+
+func (cmReadStub) Execute(context.Context, map[string]any) (tools.Result, error) {
+	return tools.Result{Text: "[]"}, nil
+}
+
+func toolNames(in stage.Input) []string {
+	names := make([]string, 0, len(in.Tools))
+	for _, t := range in.Tools {
+		names = append(names, t.Name())
+	}
+
+	return names
+}
+
+func TestPipeline_CMStagesGetTheReadToolsAndOneSource(t *testing.T) {
+	c, st, runner, _, _ := newPipeline(t, happyScript())
+	fake := &fakeCMTools{}
+	c.opts.CMTools = fake.open
+
+	drive(t, c, "BP1")
+
+	// intake, grounding, decomposition, readiness
+	require.Equal(t, 4, runner.calls())
+	assert.Equal(t, []string{"read", "grep", "glob", "repo_info", "cm_list_cards"}, toolNames(runner.input(1)), "grounding: code tools, then cm")
+	assert.NotContains(t, toolNames(runner.input(2)), "cm_list_cards", "decomposition has no cm tools")
+	assert.Contains(t, toolNames(runner.input(3)), "cm_list_cards", "readiness has the cm tools")
+
+	sources, err := st.ListSources(context.Background(), "BP1")
+	require.NoError(t, err)
+
+	var cmTags []string
+
+	for _, s := range sources {
+		if s.Kind == "cm" {
+			cmTags = append(cmTags, s.Tag())
+		}
+	}
+
+	require.Len(t, cmTags, 1, "one cm source per blueprint")
+	assert.Equal(t, []string{cmTags[0], cmTags[0]}, fake.tags)
+	assert.Equal(t, []string{testMCPKey, testMCPKey}, fake.keys, "the session's MCP key")
+	assert.Contains(t, runner.input(1).Task, "["+cmTags[0]+"]")
+
+	opened, closed := fake.counts()
+	assert.Equal(t, 2, opened)
+	assert.Equal(t, 2, closed, "every run closes its CM session")
+}
+
+func TestPipeline_CMStageWithoutTheToolSourceFails(t *testing.T) {
+	c, _, runner, rec, ws := newPipeline(t, happyScript())
+	c.opts.CMTools = nil
+
+	drive(t, c, "BP1")
+
+	assert.Equal(t, 1, runner.calls(), "grounding never ran")
+	assert.Zero(t, ws.checkouts(), "a server without the tool source fails before any fetch")
+
+	ev, ok := rec.first(EventError)
+	require.True(t, ok)
+	assert.Equal(t, "prepare", ev.Payload["reason"])
+	assert.Equal(t, errNoCMSupport.Error(), ev.Payload["message"])
+}
+
+func TestPipeline_CMToolsThatFailToOpenFailTheStage(t *testing.T) {
+	c, st, runner, rec, _ := newPipeline(t, happyScript())
+	fake := &fakeCMTools{err: errors.New("cm: connect to mcp endpoint: connection refused")}
+	c.opts.CMTools = fake.open
+
+	drive(t, c, "BP1")
+
+	assert.Equal(t, 1, runner.calls(), "grounding never ran and no later stage started")
+
+	ev, ok := rec.first(EventError)
+	require.True(t, ok)
+	assert.Equal(t, "prepare", ev.Payload["reason"])
+	assert.Contains(t, ev.Payload["message"], "open the ContextMatrix tools")
+	assert.Contains(t, ev.Payload["message"], "connection refused")
+
+	runs, err := st.ListRuns(context.Background(), "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 2)
+	assert.Equal(t, "grounding", runs[1].Stage)
+	assert.Equal(t, store.RunFailed, runs[1].Status)
+
+	opened, closed := fake.counts()
+	assert.Zero(t, opened)
+	assert.Zero(t, closed)
+}
+
+func TestPipeline_CMToolsWithoutACloserRun(t *testing.T) {
+	c, _, runner, rec, _ := newPipeline(t, happyScript())
+	c.opts.CMTools = func(context.Context, string, string) ([]tools.Tool, func(), error) {
+		return []tools.Tool{cmReadStub{}}, nil, nil
+	}
+
+	drive(t, c, "BP1")
+
+	assert.Equal(t, 4, runner.calls())
+	assert.True(t, rec.has(EventReport), "a nil closer is not called when the run ends")
 }

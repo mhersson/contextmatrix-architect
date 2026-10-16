@@ -1,5 +1,5 @@
 name: default
-version: "0.2"
+version: "0.3"
 stages:
   - id: intake
     persona: product_owner
@@ -14,7 +14,7 @@ stages:
     persona: senior_developer
     produces: grounding
     consumes: [intake, design]
-    tools: [code]
+    tools: [code, cm]
     gate: none
   - id: decomposition
     persona: senior_developer
@@ -27,7 +27,7 @@ stages:
     persona: reviewer
     produces: readiness
     consumes: [intake, design, grounding, decomposition]
-    tools: [code]
+    tools: [code, cm]
     loops_to: decomposition
     max_rounds: 3
     gate: none

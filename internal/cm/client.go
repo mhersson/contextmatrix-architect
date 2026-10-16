@@ -94,6 +94,12 @@ func (c *Client) CallText(ctx context.Context, tool string, args map[string]any)
 		args = map[string]any{}
 	}
 
+	return c.callArgs(ctx, tool, args)
+}
+
+// callArgs calls a tool with any JSON-encodable arguments and returns its
+// text, as CallText does.
+func (c *Client) callArgs(ctx context.Context, tool string, args any) (string, error) {
 	result, err := c.call(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
 	if err != nil {
 		return "", fmt.Errorf("cm: call %s: %w", tool, err)
@@ -176,6 +182,9 @@ type Project struct {
 	Repo   string  `json:"repo"`
 	Repos  []Repo  `json:"repos"`
 	Verify *Verify `json:"verify"`
+
+	Types      []string `json:"types"`
+	Priorities []string `json:"priorities"`
 }
 
 // RepoURLs returns the project's repositories: the repos list when set,

@@ -13,6 +13,7 @@ import (
 	"github.com/mhersson/contextmatrix-harness/harness"
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
+	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/contract"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
@@ -116,7 +117,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	// The input is built inside the run: a failed checkout is a failed run
 	// the next message retries, and abort, End and Shutdown cancel a fetch.
-	in, checked, err := c.stageInput(ctx, sess, bp, st)
+	in, checked, closeTools, err := c.stageInput(ctx, sess, bp, st)
 	if err != nil {
 		switch {
 		case c.shuttingDown(r):
@@ -138,6 +139,8 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 		return false
 	}
+
+	defer closeTools()
 
 	// runCtx is cancelled with errCostCap by the sink when the priced usage
 	// passes the run cap; the harness's own cap only sees the wire cost.
@@ -250,13 +253,16 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 // stageInput builds what a run of st is given besides its model and limits:
 // the persona, the instructions, the task from the artifacts it consumes,
-// the code tools over the blueprint's checkouts, and the card contract on
-// submit with the card template. The validator state is nil unless the
-// stage checks cards.
-func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blueprint, st pack.Stage) (stage.Input, *validatorState, error) {
+// the code tools over the blueprint's checkouts, the CM read tools, and the
+// card contract on submit with the card template. The validator state is
+// nil unless the stage checks cards. The closer ends the run's CM session;
+// it is a no-op without cm tools and never nil when err is nil.
+func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blueprint, st pack.Stage) (stage.Input, *validatorState, func(), error) {
+	noop := func() {}
+
 	task, err := c.taskFor(context.WithoutCancel(ctx), bp, st)
 	if err != nil {
-		return stage.Input{}, nil, err
+		return stage.Input{}, nil, nil, err
 	}
 
 	in := stage.Input{
@@ -264,17 +270,45 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		Instructions: c.opts.Pack.Instructions(st.ID), Task: task,
 	}
 
+	// Checked before any checkout, so a server without the tool source fails
+	// the stage without a fetch.
+	useCM := slices.Contains(st.Tools, pack.ToolCM)
+	if useCM && c.opts.CMTools == nil {
+		return stage.Input{}, nil, nil, errNoCMSupport
+	}
+
 	var projects map[string]contract.Project
 
 	if slices.Contains(st.Tools, pack.ToolCode) {
 		facts, err := c.prepareCode(ctx, sess, bp, st.ID)
 		if err != nil {
-			return stage.Input{}, nil, err
+			return stage.Input{}, nil, nil, err
 		}
 
 		in.Tools = stage.CodeTools(facts.root, facts.repos)
 		in.Task = checkoutLines(facts) + in.Task
 		projects = facts.projects
+	}
+
+	closeCM := noop
+
+	if useCM {
+		src, err := c.cmSource(context.WithoutCancel(ctx), bp, st.ID)
+		if err != nil {
+			return stage.Input{}, nil, nil, err
+		}
+
+		cmTools, closer, err := c.opts.CMTools(ctx, sess.mcpKey, src.Tag())
+		if err != nil {
+			return stage.Input{}, nil, nil, fmt.Errorf("blueprint: open the ContextMatrix tools: %w", err)
+		}
+
+		if closer != nil {
+			closeCM = closer
+		}
+
+		in.Tools = append(in.Tools, cmTools...)
+		in.Task = fmt.Sprintf("ContextMatrix board reads (the %s tools) are source [%s]; cite it for anything read there.\n\n", cm.ToolPrefix+"*", src.Tag()) + in.Task
 	}
 
 	var checked *validatorState
@@ -284,7 +318,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		in.Instructions += "\n\n# Card template\n\n" + c.opts.Pack.CardTemplate()
 	}
 
-	return in, checked, nil
+	return in, checked, closeCM, nil
 }
 
 // nextAttempt numbers a new run of stageID after every earlier one.
