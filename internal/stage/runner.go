@@ -39,6 +39,12 @@ type Input struct {
 	Secrets []string
 	// History seeds the conversation for a critique round; nil starts fresh.
 	History []llm.Message
+	// Tools are offered to the model next to ask_human and submit_artifact;
+	// the code stages pass CodeTools.
+	Tools []tools.Tool
+	// Validate runs on every submit_artifact call. An error goes back to
+	// the model as the tool result and the run continues; nil accepts.
+	Validate func(Artifact) error
 }
 
 // Output is the artifact and the harness result.
@@ -59,7 +65,8 @@ func NewRunner() *Runner {
 
 // Run executes one stage and returns its artifact.
 func (r *Runner) Run(ctx context.Context, in Input) (Output, error) {
-	reg := tools.NewRegistry(askHumanTool{asker: in.Asker}, submitArtifactTool{})
+	all := append([]tools.Tool{askHumanTool{asker: in.Asker}, submitArtifactTool{validate: in.Validate}}, in.Tools...)
+	reg := tools.NewRegistry(all...)
 
 	sink := in.Events
 	if sink == nil {

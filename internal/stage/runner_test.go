@@ -3,12 +3,15 @@ package stage
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/mhersson/contextmatrix-harness/llm"
+	"github.com/mhersson/contextmatrix-harness/tools"
 	protocol "github.com/mhersson/contextmatrix-protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -213,4 +216,75 @@ func TestRun_SecretInToolResultIsRedactedFromEventsAndConversation(t *testing.T)
 	}
 
 	assert.True(t, sawResult)
+}
+
+type echoTool struct{}
+
+func (echoTool) Name() string { return "echo" }
+func (echoTool) Schema() llm.Tool {
+	return llm.Tool{Type: "function", Function: llm.ToolFunction{Name: "echo", Parameters: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}}}`)}}
+}
+
+func (echoTool) Execute(_ context.Context, args map[string]any) (tools.Result, error) {
+	return tools.Result{Text: stringArg(args, "text")}, nil
+}
+func (echoTool) ReadOnly() bool { return true }
+
+func TestRun_ExtraToolsAreOffered(t *testing.T) {
+	f := &fakeLLM{responses: []llm.Response{
+		{ToolCalls: []llm.ToolCall{toolCall("c1", "echo", `{"text":"hi"}`)}, FinishReason: "tool_calls"},
+		{ToolCalls: []llm.ToolCall{toolCall("c2", "submit_artifact", `{"body":"done"}`)}, FinishReason: "tool_calls"},
+	}}
+
+	var events bytes.Buffer
+
+	in := baseInput(&events)
+	in.Tools = []tools.Tool{echoTool{}}
+
+	out, err := runnerWith(f).Run(context.Background(), in)
+	require.NoError(t, err)
+	assert.Equal(t, "done", out.Artifact.Body)
+
+	names := make([]string, 0, len(f.requests[0].Tools))
+	for _, tool := range f.requests[0].Tools {
+		names = append(names, tool.Function.Name)
+	}
+
+	assert.Contains(t, names, "echo")
+	assert.Contains(t, names, "submit_artifact")
+}
+
+func TestRun_ValidateRejectsASubmitUntilItPasses(t *testing.T) {
+	f := &fakeLLM{responses: []llm.Response{
+		{ToolCalls: []llm.ToolCall{toolCall("c1", "submit_artifact", `{"body":"draft one"}`)}, FinishReason: "tool_calls"},
+		{ToolCalls: []llm.ToolCall{toolCall("c2", "submit_artifact", `{"body":"draft two"}`)}, FinishReason: "tool_calls"},
+	}}
+
+	var events bytes.Buffer
+
+	in := baseInput(&events)
+	in.Validate = func(a Artifact) error {
+		if a.Body == "draft one" {
+			return errors.New("the body must say two")
+		}
+
+		return nil
+	}
+
+	out, err := runnerWith(f).Run(context.Background(), in)
+	require.NoError(t, err)
+	assert.Equal(t, "draft two", out.Artifact.Body)
+
+	// The rejection reached the model as the tool result of the first submit.
+	var sawRejection bool
+
+	for _, req := range f.requests {
+		for _, m := range req.Messages {
+			if m.Role == "tool" && strings.Contains(m.Content, "the body must say two") {
+				sawRejection = true
+			}
+		}
+	}
+
+	assert.True(t, sawRejection)
 }
