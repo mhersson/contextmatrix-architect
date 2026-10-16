@@ -57,13 +57,15 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	// Controller calls are several store steps (Start adds crash recovery);
 	// a client that hangs up must not cut one off midway.
 	err := s.ctl.Start(context.WithoutCancel(r.Context()), blueprint.StartInput{
-		ID:         p.SessionID,
-		Projects:   p.Architect.Projects,
-		Mode:       p.Architect.Mode,
-		CostCapUSD: p.Architect.CostCapUSD,
-		Model:      p.Model,
-		Endpoint:   *p.LLMEndpoint,
-		Price:      p.Architect.Price,
+		ID:                  p.SessionID,
+		Projects:            p.Architect.Projects,
+		Mode:                p.Architect.Mode,
+		CostCapUSD:          p.Architect.CostCapUSD,
+		Model:               p.Model,
+		Endpoint:            *p.LLMEndpoint,
+		Price:               p.Architect.Price,
+		MCPAPIKey:           p.MCPAPIKey,
+		GitCredentialsToken: p.GitCredentialsToken,
 	})
 
 	switch {

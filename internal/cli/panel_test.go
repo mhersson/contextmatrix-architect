@@ -46,7 +46,12 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		wantIdle bool
 	}{
 		{"question", blueprint.EventQuestion, nil, true},
-		{"stage ended", blueprint.EventStageEnded, nil, true},
+		{"stage canceled", blueprint.EventStageEnded, map[string]any{"status": "canceled"}, true},
+		{"stage done, what follows decides", blueprint.EventStageEnded, map[string]any{"status": "done"}, false},
+		{"design awaited", blueprint.EventAwaitInput, map[string]any{"stage": "design", "prompt": "Paste the design."}, true},
+		{"report", blueprint.EventReport, map[string]any{"ready": true}, true},
+		{"grounded", blueprint.EventGrounded, nil, false},
+		{"note that re-runs a stage", blueprint.EventNote, map[string]any{"during_run": false, "retries": "grounding"}, false},
 		{"error", blueprint.EventError, nil, true},
 		{"note on an idle blueprint", blueprint.EventNote, map[string]any{"during_run": false}, true},
 		{"note while a stage runs", blueprint.EventNote, map[string]any{"during_run": true}, false},

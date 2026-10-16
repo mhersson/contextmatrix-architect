@@ -8,6 +8,7 @@ import (
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/blueprint"
+	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
 // eventSink renders each controller event onto the hub. The blueprint's key
@@ -44,13 +45,22 @@ func eventSink(hub *logbridge.Hub) func(blueprint.Event) {
 
 func waitsOnUser(e blueprint.Event) bool {
 	switch e.Kind {
-	case blueprint.EventQuestion, blueprint.EventStageEnded, blueprint.EventError, blueprint.EventAborted:
+	case blueprint.EventQuestion, blueprint.EventError, blueprint.EventAborted,
+		blueprint.EventAwaitInput, blueprint.EventReport:
 		return true
-	case blueprint.EventNote:
-		// A note taken while a stage runs leaves the run working.
-		duringRun, _ := e.Payload["during_run"].(bool)
+	case blueprint.EventStageEnded:
+		// After a completed stage the next one may start at once; the await,
+		// report or error that ends the chain is followed by the idle frame.
+		status, _ := e.Payload["status"].(string)
 
-		return !duringRun
+		return status != store.RunDone
+	case blueprint.EventNote:
+		// A note taken while a stage runs leaves the run working, and a note
+		// that re-runs a stage starts one.
+		duringRun, _ := e.Payload["during_run"].(bool)
+		retries, _ := e.Payload["retries"].(string)
+
+		return !duringRun && retries == ""
 	default:
 		return false
 	}

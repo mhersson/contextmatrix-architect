@@ -31,6 +31,18 @@ func TestLogEntryFor(t *testing.T) {
 		{"harness lines go through the bridge", blueprint.Event{Kind: blueprint.EventHarness, BlueprintID: "S1"}, "", nil, true},
 		{"CM ended the session itself", blueprint.Event{Kind: blueprint.EventEnded, BlueprintID: "S1"}, "", nil, true},
 		{"reopened", blueprint.Event{Kind: blueprint.EventReopened, BlueprintID: "S1", Payload: map[string]any{"state": "idle"}}, "system", []string{"idle"}, false},
+		{"design awaited", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "design", "prompt": "Paste the design."}}, "text", []string{"Paste the design."}, false},
+		{"awaited without a prompt", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "design", "prompt": ""}}, "text", []string{"design"}, false},
+		{"pasted design", blueprint.Event{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{"stage": "design", "body": "the long design", "source": "human", "version": 1}}, "system", []string{"design"}, false},
+		{"note that re-runs a stage", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "go on", "retries": "grounding"}}, "system", []string{"grounding"}, false},
+		{"grounded", blueprint.Event{Kind: blueprint.EventGrounded, BlueprintID: "S1", Payload: map[string]any{"stage": "grounding", "sources": []any{
+			map[string]any{"tag": "S1", "project": "alpha", "identity": "https://example.com/alpha.git", "sha": "0123456789abcdef0123"},
+			map[string]any{"tag": "S2", "project": "alpha", "identity": "https://example.com/docs.git", "sha": "fedcba9876543210fedc"},
+		}}}, "system", []string{"alpha at 0123456789ab [S1]", "fedcba987654 [S2]"}, false},
+		{"report ready", blueprint.Event{Kind: blueprint.EventReport, BlueprintID: "S1", Payload: map[string]any{"body": "# Ready", "ready": true, "rounds": 1}}, "text", []string{"# Ready"}, false},
+		{"report not ready", blueprint.Event{Kind: blueprint.EventReport, BlueprintID: "S1", Payload: map[string]any{
+			"body": "# Cards", "ready": false, "rounds": 3, "findings": []string{"D1: two deliverables"},
+		}}, "text", []string{"# Cards", "Not ready", "D1: two deliverables"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -62,4 +74,20 @@ func TestLogEntryFor_RefusedNeedShowsOnlyTheMessage(t *testing.T) {
 	}})
 	require.True(t, ok)
 	assert.Equal(t, "cost cap 1.00 USD would be breached (spent 1.00)", entry.Content, "the need stays in the audit log, not the panel")
+}
+
+func TestLogEntryFor_PastedDesignIsNotEchoed(t *testing.T) {
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{
+		"stage": "design", "body": "the long design", "source": "human", "version": 1,
+	}})
+	require.True(t, ok)
+	assert.NotContains(t, entry.Content, "the long design", "CM already shows the message the design came from")
+}
+
+func TestLogEntryFor_GroundedShowsNoRepositoryURL(t *testing.T) {
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventGrounded, BlueprintID: "S1", Payload: map[string]any{
+		"sources": []map[string]any{{"tag": "S1", "project": "alpha", "identity": "https://example.com/alpha.git", "sha": "abc"}},
+	}})
+	require.True(t, ok)
+	assert.Equal(t, "Checked out alpha at abc [S1].", entry.Content)
 }

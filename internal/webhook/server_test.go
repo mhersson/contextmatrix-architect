@@ -147,6 +147,8 @@ func TestStart_HappyPath(t *testing.T) {
 	assert.InDelta(t, 2.0, in.CostCapUSD, 1e-9)
 	assert.Equal(t, "anthropic/claude-sonnet-4", in.Model)
 	assert.Equal(t, "sk-or-key", in.Endpoint.APIKey)
+	assert.Equal(t, "mcp-key", in.MCPAPIKey, "code stages list projects with the session's MCP key")
+	assert.Equal(t, "01HZZ.mac", in.GitCredentialsToken, "and fetch git credentials with its token")
 	require.NotNil(t, in.Price)
 	assert.InDelta(t, 3.0, in.Price.PromptUSDPerMTok, 1e-9)
 }

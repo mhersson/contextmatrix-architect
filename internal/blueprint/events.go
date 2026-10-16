@@ -34,6 +34,14 @@ const (
 	EventNote         = "note"
 	EventAborted      = "aborted"
 	EventError        = "error"
+	// EventAwaitInput says the next stage takes the user's next message as
+	// its artifact; the payload carries the stage and the prompt to show.
+	EventAwaitInput = "await_input"
+	// EventGrounded lists the sources a code stage checked out.
+	EventGrounded = "grounded"
+	// EventReport is the pipeline's end: the final artifact and whether the
+	// cards are ready.
+	EventReport = "report"
 	// EventEnded records that CM ended the session; the blueprint persists.
 	EventEnded = "session_ended"
 	// EventHarness wraps one raw harness JSONL line; the payload is the line.

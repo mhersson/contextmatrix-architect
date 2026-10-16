@@ -14,6 +14,8 @@ import (
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
+	"github.com/mhersson/contextmatrix-architect/internal/cm"
+	"github.com/mhersson/contextmatrix-architect/internal/code"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
@@ -51,11 +53,22 @@ type StartInput struct {
 	// Price is the session model's resolved price from CM; nil, or all four
 	// rates zero, means CM has none, and then a capped blueprint cannot run.
 	Price *protocol.ModelPrice
+	// MCPAPIKey lists CM's projects for the code stages.
+	MCPAPIKey string
+	// GitCredentialsToken is the bearer CM mints repository credentials for.
+	GitCredentialsToken string
 }
 
 // Runner runs one stage. internal/stage implements it; tests fake it.
 type Runner interface {
 	Run(ctx context.Context, in stage.Input) (stage.Output, error)
+}
+
+// Workspace is the code checkout the stages with code tools read.
+// internal/code implements it; tests fake it.
+type Workspace interface {
+	Checkout(ctx context.Context, blueprintID, name, repoURL string, creds code.Credentials) (code.Checkout, error)
+	TreeRoot(blueprintID string) string
 }
 
 // Options wires a Controller.
@@ -73,15 +86,31 @@ type Options struct {
 	// HarnessLine receives every raw harness JSONL line. nil discards.
 	HarnessLine func(blueprintID string, line []byte)
 	Now         func() time.Time
+	// Workspace holds the read-only trees code stages read. nil disables
+	// code stages: a stage with code tools then fails with a clear error.
+	Workspace Workspace
+	// Projects lists CM's projects with the session's MCP key; code stages
+	// need it for repository urls and verify commands. nil disables them.
+	Projects func(ctx context.Context, mcpAPIKey string) ([]cm.Project, error)
+	// Credentials builds the git credential source for a session's token.
+	// nil means repositories are fetched without auth.
+	Credentials func(gitToken string) code.Credentials
 }
 
-// session is an attached CM session: the provisioned endpoint and model, and
-// the audit writer that masks the session's secrets.
+// session is an attached CM session: the provisioned endpoint, model and
+// keys, and the audit writer that masks the session's secrets.
 type session struct {
 	endpoint protocol.LLMEndpoint
 	model    string
 	price    *protocol.ModelPrice
+	mcpKey   string
+	gitToken string
 	audit    audit
+}
+
+// secrets are the session's secrets, masked in every record and tool result.
+func (s *session) secrets() []string {
+	return []string{s.endpoint.APIKey, s.mcpKey, s.gitToken}
 }
 
 // run holds a blueprint's run slot: a run in flight, or a caller deciding
@@ -133,16 +162,28 @@ func effectivePrice(p *protocol.ModelPrice) *protocol.ModelPrice {
 }
 
 // Start attaches a session to the blueprint with in.ID, creating it on first
-// sight. A stage left running by a crash is marked interrupted and re-run.
-// Start on an attached session only logs the reopen.
+// sight. A stage left running by a crash is marked interrupted and re-run,
+// and a stage whose inputs were stored but which never started runs. Start
+// on an attached session only logs the reopen.
 func (c *Controller) Start(ctx context.Context, in StartInput) error {
 	in.Price = effectivePrice(in.Price)
 
-	sess := &session{endpoint: in.Endpoint, model: in.Model, price: in.Price, audit: c.newAudit(in.Endpoint.APIKey)}
+	sess := &session{
+		endpoint: in.Endpoint, model: in.Model, price: in.Price,
+		mcpKey: in.MCPAPIKey, gitToken: in.GitCredentialsToken,
+	}
+	sess.audit = c.newAudit(sess.secrets()...)
 
 	bp, err := c.openBlueprint(ctx, in, sess.audit)
 	if err != nil {
 		return err
+	}
+
+	// A reopen whose start lost the price (CM's lookup failed) keeps pricing
+	// at the rate the blueprint was created with, but only on the model that
+	// rate belongs to.
+	if sess.price == nil && bp.Price != nil && in.Model == bp.Model {
+		sess.price = bp.Price
 	}
 
 	c.mu.Lock()
@@ -168,7 +209,7 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 		return nil
 	}
 
-	stageID, task, err := c.interruptedStage(ctx, bp)
+	next, err := c.resumePoint(ctx, bp)
 	if err != nil {
 		c.release(in.ID, r)
 		c.detach(in.ID, sess)
@@ -176,13 +217,13 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 		return err
 	}
 
-	if stageID == "" {
+	if next == "" {
 		c.release(in.ID, r)
 
 		return nil
 	}
 
-	c.launch(runCtx, r, sess, bp, stageID, task)
+	c.launch(runCtx, r, sess, bp, next)
 
 	return nil
 }
@@ -216,34 +257,34 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 }
 
 // interruptedStage marks a run a crash left running as interrupted and
-// returns its stage and the task to re-run it with. An empty stage means
-// nothing was interrupted. The caller holds the run slot.
-func (c *Controller) interruptedStage(ctx context.Context, bp store.Blueprint) (string, string, error) {
+// returns its stage to re-run. Empty means nothing was interrupted. The
+// caller holds the run slot.
+func (c *Controller) interruptedStage(ctx context.Context, bp store.Blueprint) (string, error) {
 	interrupted, err := c.leftRunning(ctx, bp.ID)
 	if err != nil || interrupted == nil {
-		return "", "", err
+		return "", err
 	}
 
-	// Loaded before the run is marked: a run marked interrupted after a
+	// Checked before the run is marked: a run marked interrupted after a
 	// transient error, with nothing relaunched, is never recovered. With no
 	// need stored there is nothing to re-run from; the run is closed and the
 	// next message becomes the need.
-	need, err := c.opts.Store.LatestArtifact(ctx, bp.ID, needStage)
+	_, err = c.opts.Store.LatestArtifact(ctx, bp.ID, needStage)
 
 	noNeed := errors.Is(err, store.ErrNotFound)
 	if err != nil && !noNeed {
-		return "", "", fmt.Errorf("blueprint: start: load the need for interrupted %s: %w", interrupted.Stage, err)
+		return "", fmt.Errorf("blueprint: start: load the need for interrupted %s: %w", interrupted.Stage, err)
 	}
 
 	if err := c.opts.Store.EndRun(ctx, interrupted.ID, store.RunInterrupted, "process restarted", store.RunUsage{}, c.opts.Now().UTC()); err != nil {
-		return "", "", fmt.Errorf("blueprint: mark interrupted: %w", err)
+		return "", fmt.Errorf("blueprint: mark interrupted: %w", err)
 	}
 
 	if noNeed {
-		return "", "", nil
+		return "", nil
 	}
 
-	return interrupted.Stage, stageTask(bp.Projects, need.Body), nil
+	return interrupted.Stage, nil
 }
 
 // leftRunning returns the latest run a crash left in "running", or nil.
@@ -262,14 +303,9 @@ func (c *Controller) leftRunning(ctx context.Context, id string) (*store.Run, er
 	return nil, nil
 }
 
-// stageTask is a stage run's first user message: the target projects and
-// the need.
-func stageTask(projects []string, need string) string {
-	return "Target projects: " + strings.Join(projects, ", ") + "\n\nNeed:\n" + need
-}
-
 // Message handles one user message: the abort command, the answer to an
-// open question, the need while the first stage has no artifact, or a note.
+// open question, the need while the first stage has no artifact, the
+// artifact of a human-sourced stage that waits for it, or a note.
 func (c *Controller) Message(ctx context.Context, id, text, msgID string) error {
 	trimmed := strings.TrimSpace(text)
 
@@ -328,59 +364,7 @@ func (c *Controller) Message(ctx context.Context, id, text, msgID string) error 
 	r, runCtx, _ := c.claimLocked(id)
 	c.mu.Unlock()
 
-	return c.needOrNote(ctx, runCtx, r, sess, id, trimmed, msgID)
-}
-
-// needOrNote stores the message as the next need version and starts the
-// first stage while that stage has no artifact, so a canceled or failed
-// intake can be retried; otherwise it logs the message as a note. The caller
-// holds the run slot: no run is in flight, no question is open, and no other
-// message can take the need meanwhile.
-func (c *Controller) needOrNote(ctx, runCtx context.Context, r *run, sess *session, id, text, msgID string) error {
-	bp, err := c.opts.Store.GetBlueprint(ctx, id)
-	if err != nil {
-		c.release(id, r)
-
-		return fmt.Errorf("blueprint: message: %w", err)
-	}
-
-	first := c.opts.Pack.Stages[0].ID
-
-	_, err = c.opts.Store.LatestArtifact(ctx, id, first)
-
-	switch {
-	case err == nil:
-		c.release(id, r)
-		sess.audit.event(ctx, noteEvent(id, text, msgID, false))
-
-		return nil
-	case !errors.Is(err, store.ErrNotFound):
-		c.release(id, r)
-
-		return fmt.Errorf("blueprint: message: %w", err)
-	}
-
-	// The cap is checked before the need is stored, so a spent blueprint
-	// does not pile up refused need versions; the refusal's event keeps the
-	// need in the audit log instead.
-	need := sess.audit.text(text)
-	m := c.modelFor(sess, c.opts.Pack.Stages[0].Persona)
-
-	if _, ok := c.capAllows(ctx, sess.audit, bp, first, m, map[string]any{"message_id": msgID, "need": need}); !ok {
-		c.release(id, r)
-
-		return nil
-	}
-
-	if _, err := sess.audit.artifact(ctx, id, needStage, need, nil); err != nil {
-		c.release(id, r)
-
-		return err
-	}
-
-	c.launch(runCtx, r, sess, bp, first, stageTask(bp.Projects, need))
-
-	return nil
+	return c.input(ctx, runCtx, r, sess, id, trimmed, msgID)
 }
 
 // runModel is the model a run uses and its price; price is nil when the run

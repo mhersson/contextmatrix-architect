@@ -4,6 +4,16 @@ Turns a stated need into a blueprint of ContextMatrix cards. Runs as a third
 ContextMatrix backend next to the agent and chat backends; ContextMatrix's
 chat panel is its client. See `docs/design.md`.
 
+## What it does today
+
+A blueprint session runs intake on the first message, the need, and stores
+the next message as the design. Grounding, decomposition and readiness then
+run in turn over read-only checkouts of the target projects' repositories.
+Every decomposition submit is checked against the card contract inside the
+run, and readiness sends cards that are not ready back to decomposition for up
+to three rounds. The session ends with a report of the last stage's artifact
+and whether the cards are ready; nothing is emitted into ContextMatrix yet.
+
 ## Run
 
 ```bash

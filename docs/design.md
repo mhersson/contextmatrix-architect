@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slice 0 is implemented (`architect serve`, controller, store, intake stage) and slice 1 is under way; the rest is design.
+Status: agreed design, 2026-10-15. Slice 0 is implemented, and slice 1 runs intake, a pasted design, grounding, decomposition and readiness and reports in the session; export, emission and the dialog stages are design.
 
 ## Purpose
 
@@ -129,15 +129,16 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
 - **A run ends on `submit_artifact`**, a terminal tool carrying the markdown
   body and the stage's structured yaml block. The controller stores the
   artifact and the full transcript.
-- **Critique loop inside a stage.** On submit, the mechanical checks run. On
-  failure the controller resumes the same conversation in process (the run's
-  messages plus the failures as a user message) for another round. When they
-  pass and the pack declares a reviewer for the stage, a reviewer run (next
-  stage's persona, no access to the builder's transcript) scores the artifact
-  1-5. Below the pack's threshold its feedback resumes the builder the same
-  way. Three rounds per attempt, then the stage stops and waits for a human
-  regardless of policy. Each round is a harness run with its own cap; the
-  ledger sums them.
+- **Critique loop inside a stage.** On submit, the mechanical checks run
+  inside the run: a failing submit is returned to the model as the tool
+  result and it submits again; the third failing submit is accepted with its
+  findings and the pipeline stops and reports. When the checks pass and the
+  pack declares a reviewer for the stage, a reviewer run (next stage's
+  persona, no access to the builder's transcript) scores the artifact 1-5.
+  Below the pack's threshold its feedback resumes the builder's conversation
+  for another round. Three reviewer rounds per attempt, then the stage stops
+  and waits for a human regardless of policy. Each reviewer round is a
+  harness run with its own cap; the ledger sums them.
 - **A gate waits between runs.** The controller holds the stage's artifact and
   asks the client. Nothing runs meanwhile.
 - **A human rejection starts a new attempt**: a fresh run with the previous
@@ -202,6 +203,7 @@ developer (DEV), reviewer (REV).
 | -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   |
 
 The embedded pack holds intake, a human-sourced design stage, grounding, decomposition and readiness; slicing, acceptance and sign-off arrive with the dialog stages.
+The design stage is human-sourced until the dialog stages arrive: the message after intake's artifact is stored as the design.
 
 - Intake ends by stating the shape it expects (slices, projects involved) and
   the gate plan in effect, so the operator can change the overrides before
@@ -413,7 +415,7 @@ starts are bounded by CM's per-card guardrails, not by the architect.
 
 | Group    | Tools                                                                                                   | Notes                                                                                                                                             |
 | -------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock at the start of grounding, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. `repo_info` returns default branch, sha, instruction file presence and the project's verify command. |
+| code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock at the start of grounding, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. `repo_info` returns the sha, instruction file presence, the project's verify command and, to the stage that fetched the tree, the default branch. |
 | research | `web_fetch`                                                                                             | Readable text, recorded as a source. A search provider is deferred.                                                                               |
 | cm       | `list_projects`, `create_card`, `create_playbook`, `add_playbook_entry`, `get_playbook`, `get_card`, `run_card`, `run_playbook` | MCP client over Streamable HTTP with the MCP key from the session's start payload and a configured caller identity (default `human:architect`). The chat backend's bridge, copied and generalised with per-server tool prefixes and an allowlist, so a second MCP server plugs in the same way. |
 | control  | `ask_human`, `submit_artifact`                                                                          | `ask_human` blocks: question, options and context in; the answer out as the tool result. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
@@ -486,8 +488,12 @@ Replies the server understands, besides answers to questions:
 
 - A run does not start if it would breach the blueprint's cost cap.
 - Reopening a session makes CM send a start for it; a stage interrupted by a
-  server restart is re-run from its inputs. Completed artifacts are never
-  lost.
+  server restart is re-run from its inputs, and a stage whose inputs were
+  stored but which never started runs. Completed artifacts are never lost.
+- After a stage fails or is aborted, the next message is logged as a note
+  and re-runs that stage. A pipeline stopped by the card contract or by
+  readiness's rounds is not re-run; the user starts a new blueprint with a
+  better design.
 - A project may opt into automatic export in config: a target repo, branch and
   directory; the bundle is committed there at each gate or at sign-off. Off by
   default.
@@ -623,8 +629,9 @@ Ordered so a real card comes out as early as possible.
 - **Controller**: driven through its command and event interface, table-driven
   state transitions. A question test blocks a run on `ask_human`, answers
   through the interface and asserts the run continues with the answer.
-- **Critique loop**: a submit that fails a mechanical check resumes the same
-  conversation with the failures, and the cap stops it after three rounds.
+- **Critique loop**: a submit that fails a mechanical check is returned to
+  the model as the tool result, and the third failing submit is accepted,
+  stored and reported.
 - **Emission**: an in-test MCP server asserting call order, and that a re-run
   after a simulated partial failure creates nothing twice.
 - **Webhook**: an in-test CM that signs requests starts a session with a
