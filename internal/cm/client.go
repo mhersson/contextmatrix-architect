@@ -16,11 +16,16 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Client is one MCP session to CM. A poisoned session is redialled once.
+// ErrClosed is returned by a call on a closed Client.
+var ErrClosed = errors.New("cm: client is closed")
+
+// Client is one MCP session to CM. A poisoned session is redialled once; a
+// closed Client never dials again.
 type Client struct {
 	mu      sync.Mutex
 	session *mcp.ClientSession
 	dial    func(ctx context.Context) (*mcp.ClientSession, error)
+	closed  bool
 }
 
 type bearerTransport struct {
@@ -63,10 +68,17 @@ func Connect(ctx context.Context, baseURL, apiKey string) (*Client, error) {
 	return &Client{session: session, dial: dial}, nil
 }
 
-// Close ends the session.
+// Close ends the session. Later calls fail with ErrClosed; closing twice is
+// a no-op.
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if c.closed {
+		return nil
+	}
+
+	c.closed = true
 
 	if err := c.session.Close(); err != nil {
 		return fmt.Errorf("cm: close mcp session: %w", err)
@@ -104,6 +116,13 @@ func (c *Client) CallText(ctx context.Context, tool string, args map[string]any)
 
 func (c *Client) call(ctx context.Context, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
 	c.mu.Lock()
+
+	if c.closed {
+		c.mu.Unlock()
+
+		return nil, ErrClosed
+	}
+
 	sess := c.session
 	c.mu.Unlock()
 
@@ -113,6 +132,13 @@ func (c *Client) call(ctx context.Context, params *mcp.CallToolParams) (*mcp.Cal
 	}
 
 	c.mu.Lock()
+
+	// A Close during the call closed the session; it is not redialled.
+	if c.closed {
+		c.mu.Unlock()
+
+		return nil, errors.Join(ErrClosed, err)
+	}
 
 	if c.session == sess {
 		fresh, derr := c.dial(ctx)
