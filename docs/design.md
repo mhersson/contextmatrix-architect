@@ -525,8 +525,10 @@ Replies the server understands, besides answers to questions:
   a run within one model call of passing it, and a capped blueprint whose
   model has no price does not run. An unpriced model on an uncapped blueprint
   counts only the cost the endpoint reports, and max_turns still bounds every
-  run. A critique round re-bills the conversation
-  so far; the ledger counts it.
+  run. CM prices only the session model, so a run on a per-persona override
+  is unpriced: a capped blueprint refuses it, an uncapped one counts the
+  reported cost. A critique round re-bills the conversation so far; the
+  ledger counts it.
 - Long intake dialogs rely on the harness's in-run compaction. Whether that is
   enough is checked in slice 3.
 - State dir: `architect.db`, `workspaces/mirrors/<repo>/` and

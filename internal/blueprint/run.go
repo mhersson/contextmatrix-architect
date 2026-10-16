@@ -69,7 +69,9 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		return
 	}
 
-	runCap, ok := c.capAllows(bg, au, sess, bp, stageID)
+	m := c.modelFor(sess, st.Persona)
+
+	runCap, ok := c.capAllows(bg, au, bp, stageID, m, nil)
 	if !ok {
 		return
 	}
@@ -81,14 +83,9 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		return
 	}
 
-	model := sess.model
-	if override, ok := c.opts.Models[st.Persona]; ok && override != "" {
-		model = override
-	}
-
 	runID, err := c.opts.Store.StartRun(bg, store.Run{
 		BlueprintID: id, Stage: stageID, Attempt: attempt, Round: 1,
-		Status: store.RunRunning, Model: model, StartedAt: c.opts.Now().UTC(),
+		Status: store.RunRunning, Model: m.name, StartedAt: c.opts.Now().UTC(),
 	})
 	if err != nil {
 		c.fail(bg, au, id, 0, "start run failed: "+err.Error())
@@ -98,7 +95,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	c.setState(bg, id, StateRunning)
 	au.event(bg, Event{Kind: EventStageStarted, BlueprintID: id, RunID: runID, Payload: map[string]any{
-		"stage": stageID, "persona": st.Persona, "attempt": attempt, "model": model,
+		"stage": stageID, "persona": st.Persona, "attempt": attempt, "model": m.name,
 		"pack": c.opts.Pack.Name, "pack_version": c.opts.Pack.Version,
 	}})
 
@@ -109,7 +106,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	sink := &harnessSink{
 		audit: au, id: id, runID: runID, canceled: runCtx.Done(),
-		price: sess.price, capUSD: runCap, stop: stop,
+		price: m.price, capUSD: runCap, stop: stop,
 	}
 
 	out, runErr := c.opts.Runner.Run(runCtx, stage.Input{
@@ -117,7 +114,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		Persona:      c.opts.Pack.Persona(st.Persona),
 		Instructions: c.opts.Pack.Instructions(stageID),
 		Task:         task,
-		Model:        model,
+		Model:        m.name,
 		Endpoint:     sess.endpoint,
 		MaxCostUSD:   runCap,
 		MaxTurns:     c.opts.MaxTurns,
@@ -139,8 +136,8 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		}
 	}
 
-	usage := usageOf(sess.price, out.Result)
-	isPriced := sess.price != nil
+	usage := usageOf(m.price, out.Result)
+	isPriced := m.price != nil
 
 	switch {
 	case runErr == nil:
@@ -161,7 +158,9 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
 			"stage": stageID, "status": store.RunDone, "cost_usd": usage.CostUSD, "priced": isPriced,
 		}})
-	case errors.Is(context.Cause(runCtx), errCostCap):
+	case errors.Is(context.Cause(runCtx), errCostCap) || out.Result.Reason == "max_cost":
+		// The sink's stop and the harness's own cap on the reported cost are
+		// one condition: the run cap was reached.
 		c.endRun(bg, runID, store.RunFailed, "max_cost", usage)
 		c.setState(bg, id, StateIdle)
 		au.event(bg, Event{Kind: EventError, BlueprintID: id, RunID: runID, Payload: map[string]any{

@@ -25,12 +25,14 @@ log_level: info
 # Runs are priced from their tokens at the price CM sends per session, so this
 # binds on every endpoint and a run is stopped within one model call of passing
 # it. A model CM cannot price counts only the cost the endpoint reports, and
-# max_turns still bounds every run.
+# max_turns still bounds every run. CM prices only the session model, so a
+# persona overridden in models runs unpriced.
 # Env: CONTEXTMATRIX_ARCHITECT_MAX_RUN_COST_USD
 max_run_cost_usd: 5
 
 # Turn cap per stage run. Default: 80. Grounding and decomposition read many
-# files, one tool call per turn; the cost cap, not this, is the spend bound.
+# files, one tool call per turn. The cost cap bounds spend when the run's model
+# is priced; otherwise this does.
 # Env: CONTEXTMATRIX_ARCHITECT_MAX_TURNS
 max_turns: 80
 

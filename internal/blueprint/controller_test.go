@@ -207,8 +207,7 @@ func newControllerOn(t *testing.T, st *store.Store, fn func(context.Context, sta
 	rec := newRecorder()
 	c := New(Options{
 		Store: st, Pack: pk, Runner: runner, MaxRunCostUSD: 2, MaxTurns: 10,
-		Models: map[string]string{"product_owner": "po/model"},
-		Sink:   rec.sink, HarnessLine: rec.line,
+		Sink: rec.sink, HarnessLine: rec.line,
 	})
 
 	return c, st, runner, rec
@@ -252,6 +251,7 @@ func TestStart_CreatesOnceThenReopens(t *testing.T) {
 
 func TestMessage_FirstMessageIsTheNeedAndRunsIntake(t *testing.T) {
 	c, st, runner, rec := newController(t, artifactRun("# Need\n\nk8s"))
+	c.opts.Models = map[string]string{"product_owner": "po/model"}
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 
@@ -864,7 +864,15 @@ func TestMessage_CostCap(t *testing.T) {
 
 			if !tt.wantRun {
 				assert.Equal(t, 0, runner.calls())
-				assert.True(t, rec.has(EventError))
+
+				ev, ok := rec.first(EventError)
+				require.True(t, ok)
+				assert.Equal(t, "m1", ev.Payload["message_id"], "the refused need stays in the audit log")
+				assert.Equal(t, "the need", ev.Payload["need"])
+
+				if tt.noPrice {
+					assert.Contains(t, ev.Payload["message"], "session/model", "the refusal names the model")
+				}
 
 				return
 			}
@@ -1022,45 +1030,148 @@ func TestMessage_CappedWithoutPriceStoresNoNeed(t *testing.T) {
 }
 
 func TestRunError_IsRecorded(t *testing.T) {
-	c, st, _, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
-		_, _ = in.Events.Write([]byte(`{"seq":1,"kind":"error","data":{"message":"boom"}}` + "\n"))
-
-		return stage.Output{Result: harness.Result{Reason: "max_cost", Messages: []llm.Message{{Role: "user", Content: "x"}}}},
-			errors.New("stage intake: cost cap")
-	})
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	c.Wait("BP1")
-
-	runs, err := st.ListRuns(ctx, "BP1")
-	require.NoError(t, err)
-	require.Len(t, runs, 1)
-	assert.Equal(t, store.RunFailed, runs[0].Status)
-	assert.Equal(t, "max_cost", runs[0].Reason)
-
-	_, err = st.GetTranscript(ctx, runs[0].ID)
-	require.NoError(t, err, "a failed run still stores its transcript")
-
-	bp, err := st.GetBlueprint(ctx, "BP1")
-	require.NoError(t, err)
-	assert.Equal(t, string(StateFailed), bp.State)
-	assert.True(t, rec.has(EventError))
-
-	stored, err := st.ListEvents(ctx, "BP1")
-	require.NoError(t, err)
-
-	var sawHarness bool
-
-	for _, e := range stored {
-		if e.Kind == EventHarness {
-			var line map[string]any
-			require.NoError(t, json.Unmarshal(e.Payload, &line))
-			sawHarness = line["kind"] == "error"
-		}
+	tests := []struct {
+		name        string
+		reason      string
+		line        string
+		wantState   State
+		wantMessage string
+		forwarded   bool
+	}{
+		{
+			name: "a failed run", reason: "max_turns",
+			line:      `{"seq":1,"kind":"error","data":{"message":"boom"}}`,
+			wantState: StateFailed, wantMessage: "stage intake: no artifact", forwarded: true,
+		},
+		{
+			// The harness's own cap is the same condition as the sink's stop.
+			name: "the harness's own cost cap", reason: "max_cost",
+			line:      `{"seq":1,"kind":"state_change","data":{"stop":"max_cost","cost_usd":2.1}}`,
+			wantState: StateIdle, wantMessage: "run cost cap 2.00 USD reached",
+		},
 	}
 
-	assert.True(t, sawHarness, "harness events are audited even when the run errors")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, _, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+				_, _ = in.Events.Write([]byte(tt.line + "\n"))
+
+				return stage.Output{Result: harness.Result{Reason: tt.reason, TotalCostUSD: 2.1, Messages: []llm.Message{{Role: "user", Content: "x"}}}},
+					errors.New("stage intake: no artifact")
+			})
+			ctx := context.Background()
+			require.NoError(t, c.Start(ctx, startInput("BP1")))
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			c.Wait("BP1")
+
+			runs, err := st.ListRuns(ctx, "BP1")
+			require.NoError(t, err)
+			require.Len(t, runs, 1)
+			assert.Equal(t, store.RunFailed, runs[0].Status)
+			assert.Equal(t, tt.reason, runs[0].Reason)
+
+			_, err = st.GetTranscript(ctx, runs[0].ID)
+			require.NoError(t, err, "a failed run still stores its transcript")
+
+			bp, err := st.GetBlueprint(ctx, "BP1")
+			require.NoError(t, err)
+			assert.Equal(t, string(tt.wantState), bp.State)
+
+			ev, ok := rec.first(EventError)
+			require.True(t, ok)
+			assert.Contains(t, ev.Payload["message"], tt.wantMessage)
+			assert.Equal(t, 1, rec.count(EventError))
+
+			stored, err := st.ListEvents(ctx, "BP1")
+			require.NoError(t, err)
+
+			var audited int
+
+			for _, e := range stored {
+				if e.Kind == EventHarness {
+					audited++
+				}
+			}
+
+			assert.Equal(t, 1, audited, "harness events are audited even when the run errors")
+
+			rec.mu.Lock()
+			defer rec.mu.Unlock()
+
+			var forwardedError bool
+
+			for _, l := range rec.lines {
+				if strings.Contains(string(l), `"kind":"error"`) {
+					forwardedError = true
+				}
+			}
+
+			assert.Equal(t, tt.forwarded, forwardedError)
+		})
+	}
+}
+
+func TestRun_PersonaOverrideIsUnpriced(t *testing.T) {
+	tests := []struct {
+		name      string
+		override  string
+		capUSD    float64
+		wantRun   bool
+		wantModel string
+		wantCost  float64
+		priced    bool
+	}{
+		{name: "capped blueprint refuses an overridden persona", override: "po/model", capUSD: 10},
+		{name: "uncapped blueprint runs it unpriced", override: "po/model", wantRun: true, wantModel: "po/model", wantCost: 0.05},
+		{name: "an override naming the session model keeps its price", override: "session/model", capUSD: 10, wantRun: true, wantModel: "session/model", wantCost: 0.20, priced: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, runner, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+				out := artifactOutput("# Need", in)
+				out.Result.TotalCostUSD = 0.05
+				out.Result.PromptTokens = 100_000
+				out.Result.CompletionTokens = 10_000
+
+				return out, nil
+			})
+			c.opts.Models = map[string]string{"product_owner": tt.override}
+			ctx := context.Background()
+			in := startInput("BP1")
+			in.Price = testPrice()
+			in.CostCapUSD = tt.capUSD
+			require.NoError(t, c.Start(ctx, in))
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			c.Wait("BP1")
+
+			runs, err := st.ListRuns(ctx, "BP1")
+			require.NoError(t, err)
+
+			if !tt.wantRun {
+				assert.Equal(t, 0, runner.calls())
+				assert.Empty(t, runs)
+
+				ev, ok := rec.first(EventError)
+				require.True(t, ok)
+				assert.Contains(t, ev.Payload["message"], tt.override, "the refusal names the model")
+
+				bp, err := st.GetBlueprint(ctx, "BP1")
+				require.NoError(t, err)
+				assert.Equal(t, string(StateIdle), bp.State)
+
+				return
+			}
+
+			require.Len(t, runs, 1)
+			assert.Equal(t, tt.wantModel, runs[0].Model)
+			assert.InDelta(t, tt.wantCost, runs[0].Usage.CostUSD, 1e-9)
+
+			ended, ok := rec.first(EventStageEnded)
+			require.True(t, ok)
+			assert.Equal(t, tt.priced, ended.Payload["priced"])
+		})
+	}
 }
 
 func TestRun_ArtifactSubmittedAsTheSessionEndsIsKept(t *testing.T) {

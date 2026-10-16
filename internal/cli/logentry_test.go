@@ -54,3 +54,12 @@ func TestLogEntryFor(t *testing.T) {
 		})
 	}
 }
+
+func TestLogEntryFor_RefusedNeedShowsOnlyTheMessage(t *testing.T) {
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventError, BlueprintID: "S1", Payload: map[string]any{
+		"stage": "intake", "message": "cost cap 1.00 USD would be breached (spent 1.00)",
+		"message_id": "m1", "need": "containerise this project",
+	}})
+	require.True(t, ok)
+	assert.Equal(t, "cost cap 1.00 USD would be breached (spent 1.00)", entry.Content, "the need stays in the audit log, not the panel")
+}

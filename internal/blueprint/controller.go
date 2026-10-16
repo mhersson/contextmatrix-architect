@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -347,14 +348,17 @@ func (c *Controller) needOrNote(ctx, runCtx context.Context, r *run, sess *sessi
 	}
 
 	// The cap is checked before the need is stored, so a spent blueprint
-	// does not pile up refused need versions.
-	if _, ok := c.capAllows(ctx, sess.audit, sess, bp, first); !ok {
+	// does not pile up refused need versions; the refusal's event keeps the
+	// need in the audit log instead.
+	need := sess.audit.text(text)
+	m := c.modelFor(sess, c.opts.Pack.Stages[0].Persona)
+
+	if _, ok := c.capAllows(ctx, sess.audit, bp, first, m, map[string]any{"message_id": msgID, "need": need}); !ok {
 		c.release(id, r)
 
 		return nil
 	}
 
-	need := sess.audit.text(text)
 	if _, err := sess.audit.artifact(ctx, id, needStage, need, nil); err != nil {
 		c.release(id, r)
 
@@ -366,26 +370,53 @@ func (c *Controller) needOrNote(ctx, runCtx context.Context, r *run, sess *sessi
 	return nil
 }
 
-// capAllows reports whether a run of stageID may start under the blueprint's
-// cost cap, and the cap the run must stay under: the configured per-run cap,
-// or what is left of the blueprint cap when that is smaller. A capped
-// blueprint whose model has no price is refused, because the cap could not
-// bind. A refusal is reported to the panel and leaves the blueprint idle.
-func (c *Controller) capAllows(ctx context.Context, au audit, sess *session, bp store.Blueprint, stageID string) (float64, bool) {
+// runModel is the model a run uses and its price; price is nil when the run
+// is unpriced. override marks a per-persona override of the session model.
+type runModel struct {
+	name     string
+	price    *protocol.ModelPrice
+	override bool
+}
+
+// modelFor resolves the model a run of persona uses. CM prices only the
+// session model, so an override naming another model runs unpriced.
+func (c *Controller) modelFor(sess *session, persona string) runModel {
+	if o := c.opts.Models[persona]; o != "" && o != sess.model {
+		return runModel{name: o, override: true}
+	}
+
+	return runModel{name: sess.model, price: sess.price}
+}
+
+// capAllows reports whether a run of stageID on model m may start under the
+// blueprint's cost cap, and the cap the run must stay under: the configured
+// per-run cap, or what is left of the blueprint cap when that is smaller. A
+// capped blueprint whose run would be unpriced is refused, because the cap
+// could not bind. A refusal is reported to the panel, with refused merged
+// into its event payload, and leaves the blueprint idle.
+func (c *Controller) capAllows(ctx context.Context, au audit, bp store.Blueprint, stageID string, m runModel, refused map[string]any) (float64, bool) {
 	runCap := c.opts.MaxRunCostUSD
 
 	if bp.CostCapUSD <= 0 {
 		return runCap, true
 	}
 
-	if sess.price == nil {
-		au.event(ctx, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
-			"stage":   stageID,
-			"message": fmt.Sprintf("cost cap %.2f USD is set but the model has no price, so the cap cannot bind; pick a priced model, or start a new blueprint without a cap", bp.CostCapUSD),
-		}})
+	refuse := func(msg string) (float64, bool) {
+		payload := map[string]any{"stage": stageID, "message": msg}
+		maps.Copy(payload, refused)
+
+		au.event(ctx, Event{Kind: EventError, BlueprintID: bp.ID, Payload: payload})
 		c.setState(ctx, bp.ID, StateIdle)
 
 		return 0, false
+	}
+
+	if m.price == nil {
+		if m.override {
+			return refuse(fmt.Sprintf("cost cap %.2f USD is set but model %q, the configured override for stage %s, has no price (CM prices only the session model), so the cap cannot bind; drop the override, or start a new blueprint without a cap", bp.CostCapUSD, m.name, stageID))
+		}
+
+		return refuse(fmt.Sprintf("cost cap %.2f USD is set but model %q has no price, so the cap cannot bind; pick a priced model, or start a new blueprint without a cap", bp.CostCapUSD, m.name))
 	}
 
 	spent, err := c.opts.Store.BlueprintCost(ctx, bp.ID)
@@ -400,13 +431,7 @@ func (c *Controller) capAllows(ctx context.Context, au audit, sess *session, bp 
 	}
 
 	if runCap <= 0 {
-		au.event(ctx, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
-			"stage":   stageID,
-			"message": fmt.Sprintf("cost cap %.2f USD would be breached (spent %.2f)", bp.CostCapUSD, spent),
-		}})
-		c.setState(ctx, bp.ID, StateIdle)
-
-		return 0, false
+		return refuse(fmt.Sprintf("cost cap %.2f USD would be breached (spent %.2f)", bp.CostCapUSD, spent))
 	}
 
 	return runCap, true

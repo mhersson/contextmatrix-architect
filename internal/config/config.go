@@ -33,7 +33,8 @@ type Config struct {
 	// Models overrides the model per persona; the session's model is the
 	// default for every persona not listed.
 	Models map[string]string
-	// MaxRunCostUSD is the harness per-run cap.
+	// MaxRunCostUSD caps each stage run: the harness stops at the endpoint's
+	// reported cost, the controller at the run's priced usage.
 	MaxRunCostUSD float64
 	MaxTurns      int
 	// WorkspaceMaxAgeDays is how long a blueprint's code trees are kept
