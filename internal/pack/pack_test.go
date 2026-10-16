@@ -3,6 +3,7 @@ package pack
 import (
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -139,4 +140,70 @@ func TestEmbeddedLists_ForbiddenReferences(t *testing.T) {
 
 	assert.NotEmpty(t, forbiddenRefs(t, "See /home/dev/notes.md for the plan.\n"), "a developer's home directory")
 	assert.NotEmpty(t, forbiddenRefs(t, "Copy it from ../other-repo/x.go first.\n"), "a sibling checkout")
+}
+
+// packFS is a one-stage pack whose stage carries the given extra yaml lines,
+// plus files that replace or add to the defaults; an empty content removes
+// a file.
+func packFS(stageYAML string, files map[string]string) fstest.MapFS {
+	fsys := fstest.MapFS{
+		"pack.yaml":      {Data: []byte("name: t\nversion: \"1\"\nstages:\n  - id: s1\n    persona: po\n" + stageYAML)},
+		"personas/po.md": {Data: []byte("persona")},
+		"stages/s1.md":   {Data: []byte("instructions")},
+		"lists.yaml":     {Data: []byte("required_sections: [Context]\n")},
+		"card.md":        {Data: []byte("## Context\n")},
+	}
+
+	for name, content := range files {
+		if content == "" {
+			delete(fsys, name)
+
+			continue
+		}
+
+		fsys[name] = &fstest.MapFile{Data: []byte(content)}
+	}
+
+	return fsys
+}
+
+func TestLoad_Invalid(t *testing.T) {
+	tests := []struct {
+		name  string
+		stage string
+		files map[string]string
+		want  string
+	}{
+		{name: "unknown source", stage: "    source: robot\n", want: "unknown source"},
+		{name: "unknown gate", stage: "    gate: sometimes\n", want: "unknown gate"},
+		{name: "unknown tool", stage: "    tools: [shell]\n", want: "unknown tool group"},
+		{name: "unknown check", stage: "    checks: [style]\n", want: "unknown check"},
+		{name: "loops_to without max_rounds", stage: "  - id: s2\n    persona: po\n    loops_to: s1\n", files: map[string]string{"stages/s2.md": "x"}, want: "max_rounds"},
+		{name: "bad regex", files: map[string]string{"lists.yaml": "forbidden_references:\n  - name: broken\n    pattern: '(['\n"}, want: "forbidden reference"},
+		{name: "unknown lists.yaml key", files: map[string]string{"lists.yaml": "required_section: [Context]\n"}, want: "lists.yaml"},
+		{name: "card checks without lists.yaml", stage: "    checks: [cards]\n", files: map[string]string{"lists.yaml": ""}, want: "lists.yaml"},
+		{name: "card checks without card.md", stage: "    checks: [cards]\n", files: map[string]string{"card.md": ""}, want: "card.md"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := load(packFS(tt.stage, tt.files))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+func TestLoad_ListsAndCardAreOptionalWithoutCardChecks(t *testing.T) {
+	p, err := load(packFS("", map[string]string{"lists.yaml": "", "card.md": ""}))
+	require.NoError(t, err)
+	assert.Empty(t, p.Lists().RequiredSections)
+	assert.Empty(t, p.CardTemplate())
+}
+
+func TestLoad_EmptyListsYAMLIsEmptyLists(t *testing.T) {
+	p, err := load(packFS("    checks: [cards]\n", map[string]string{"lists.yaml": "\n"}))
+	require.NoError(t, err)
+	assert.Empty(t, p.Lists().RequiredSections)
+	assert.NotEmpty(t, p.CardTemplate())
 }

@@ -3,13 +3,16 @@
 package pack
 
 import (
+	"bytes"
 	"embed"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -159,30 +162,73 @@ func load(fsys fs.FS) (*Pack, error) {
 
 	p.Stages = m.Stages
 
-	if raw, err := fs.ReadFile(fsys, "lists.yaml"); err == nil {
-		dec := yaml.NewDecoder(strings.NewReader(string(raw)))
-		dec.KnownFields(true)
+	// A stage that checks cards needs the data the checks read and the
+	// template the cards follow; without them the contract would silently
+	// pass every card.
+	checker := ""
 
-		if err := dec.Decode(&p.lists); err != nil {
-			return nil, fmt.Errorf("pack: parse lists.yaml: %w", err)
-		}
+	for _, s := range p.Stages {
+		if slices.Contains(s.Checks, CheckCards) {
+			checker = s.ID
 
-		for _, pat := range p.lists.ForbiddenReferences {
-			if _, err := regexp.Compile(pat.Pattern); err != nil {
-				return nil, fmt.Errorf("pack: lists.yaml: forbidden reference %q: %w", pat.Name, err)
-			}
+			break
 		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("pack: read lists.yaml: %w", err)
 	}
 
-	if raw, err := fs.ReadFile(fsys, "card.md"); err == nil {
-		p.card = string(raw)
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("pack: read card.md: %w", err)
+	raw, err = optionalFile(fsys, "lists.yaml", checker)
+	if err != nil {
+		return nil, err
 	}
+
+	if p.lists, err = parseLists(raw); err != nil {
+		return nil, err
+	}
+
+	card, err := optionalFile(fsys, "card.md", checker)
+	if err != nil {
+		return nil, err
+	}
+
+	p.card = string(card)
 
 	return p, nil
+}
+
+// optionalFile reads name from the pack; a missing file is empty unless
+// checker names a stage that checks cards, which needs it.
+func optionalFile(fsys fs.FS, name, checker string) ([]byte, error) {
+	raw, err := fs.ReadFile(fsys, name)
+
+	switch {
+	case err == nil:
+		return raw, nil
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("pack: read %s: %w", name, err)
+	case checker != "":
+		return nil, fmt.Errorf("pack: stage %q checks cards, so the pack needs %s", checker, name)
+	default:
+		return nil, nil
+	}
+}
+
+// parseLists decodes lists.yaml; an empty file is empty lists.
+func parseLists(raw []byte) (contract.Lists, error) {
+	var lists contract.Lists
+
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec.KnownFields(true)
+
+	if err := dec.Decode(&lists); err != nil && !errors.Is(err, io.EOF) {
+		return contract.Lists{}, fmt.Errorf("pack: parse lists.yaml: %w", err)
+	}
+
+	for _, pat := range lists.ForbiddenReferences {
+		if _, err := regexp.Compile(pat.Pattern); err != nil {
+			return contract.Lists{}, fmt.Errorf("pack: lists.yaml: forbidden reference %q: %w", pat.Name, err)
+		}
+	}
+
+	return lists, nil
 }
 
 func validateStage(s Stage, seen map[string]bool) error {

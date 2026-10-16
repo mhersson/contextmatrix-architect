@@ -238,6 +238,9 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
 - The default pack is embedded in the binary. The `pack` config key
   (`CONTEXTMATRIX_ARCHITECT_PACK`) names a pack directory that overrides it.
   The pack name and version are logged with every run.
+- A pack with a stage that checks cards must carry `lists.yaml` and
+  `card.md`; the loader refuses it otherwise, so an override pack cannot
+  silently disable the card contract.
 - No include mechanism. Each file stands alone; shared text is duplicated. If
   that hurts, build-time expansion comes later.
 - Gate and question policies come from the pack, overridable per blueprint.
