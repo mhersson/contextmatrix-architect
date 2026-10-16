@@ -177,8 +177,13 @@ func TestOpen_FailedMigrationLeavesV1(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, stmt := range []string{
-		`CREATE TABLE blueprints (id TEXT PRIMARY KEY, model TEXT NOT NULL DEFAULT '', state TEXT NOT NULL)`,
-		`CREATE TABLE stage_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, prompt_tokens INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE blueprints (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', projects TEXT NOT NULL DEFAULT '[]',
+			mode TEXT NOT NULL DEFAULT '', cost_cap_usd REAL NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '',
+			state TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+		`CREATE TABLE stage_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, blueprint_id TEXT NOT NULL, stage TEXT NOT NULL,
+			attempt INTEGER NOT NULL, round INTEGER NOT NULL, status TEXT NOT NULL, model TEXT NOT NULL DEFAULT '',
+			started_at INTEGER NOT NULL, ended_at INTEGER, cost_usd REAL NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '',
+			prompt_tokens INTEGER NOT NULL DEFAULT 0)`,
 		`PRAGMA user_version = 1`,
 	} {
 		_, err := db.Exec(stmt)
