@@ -11,12 +11,19 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
 // ErrSessionNotLive is returned when CM refuses credentials because the
-// blueprint's session is not attached.
+// blueprint's session is not running or not known to it.
 var ErrSessionNotLive = errors.New("code: credentials refused, the session is not live")
+
+// CM's error codes for a session that cannot mint credentials.
+const (
+	codeWorkerNotRunning = "WORKER_NOT_RUNNING"
+	codeChatNotFound     = "CHAT_NOT_FOUND"
+)
 
 // Credentials mints a git credential for one repository. The architect
 // implements it over CM; tests use nil for public fixtures.
@@ -36,13 +43,15 @@ type CMCredentials struct {
 func NewCMCredentials(baseURL, bearer string) *CMCredentials {
 	return &CMCredentials{
 		client: &http.Client{Timeout: 15 * time.Second},
-		url:    baseURL + "/api/worker/git-credentials",
+		url:    strings.TrimRight(baseURL, "/") + "/api/worker/git-credentials",
 		bearer: bearer,
 	}
 }
 
-// Fetch mints a credential for (host, path). A 409 is ErrSessionNotLive; any
-// other failure is an error that never carries the bearer.
+// Fetch mints a credential for (host, path). A session CM reports as not
+// running (409 WORKER_NOT_RUNNING) or unknown (404 CHAT_NOT_FOUND) is
+// ErrSessionNotLive; any other refusal is an error carrying CM's error text.
+// No error ever carries the bearer.
 func (c *CMCredentials) Fetch(ctx context.Context, host, path string) (string, string, error) {
 	u, err := url.Parse(c.url)
 	if err != nil {
@@ -70,11 +79,8 @@ func (c *CMCredentials) Fetch(ctx context.Context, host, path string) (string, s
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
-	switch {
-	case resp.StatusCode == http.StatusConflict:
-		return "", "", ErrSessionNotLive
-	case resp.StatusCode >= 400:
-		return "", "", fmt.Errorf("code: credentials endpoint returned %d", resp.StatusCode)
+	if resp.StatusCode >= http.StatusBadRequest {
+		return "", "", c.refusal(resp.StatusCode, body)
 	}
 
 	var cred struct {
@@ -91,4 +97,31 @@ func (c *CMCredentials) Fetch(ctx context.Context, host, path string) (string, s
 	}
 
 	return cred.Username, cred.Token, nil
+}
+
+// refusal maps CM's APIError body to an error: the session codes to
+// ErrSessionNotLive, anything else to CM's error text and code.
+func (c *CMCredentials) refusal(status int, body []byte) error {
+	var apiErr struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+
+	if json.Unmarshal(body, &apiErr) != nil || apiErr.Error == "" {
+		return fmt.Errorf("code: credentials endpoint returned %d", status)
+	}
+
+	if status == http.StatusConflict && apiErr.Code == codeWorkerNotRunning ||
+		status == http.StatusNotFound && apiErr.Code == codeChatNotFound {
+		return ErrSessionNotLive
+	}
+
+	// CM's error text holds no secret; the bearer is masked in case a
+	// server ever echoes it.
+	text := apiErr.Error
+	if c.bearer != "" {
+		text = strings.ReplaceAll(text, c.bearer, "[redacted]")
+	}
+
+	return fmt.Errorf("code: credentials refused (%d %s): %s", status, apiErr.Code, text)
 }
