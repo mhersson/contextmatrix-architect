@@ -128,16 +128,8 @@ func checkBody(c Card, lists Lists) []Finding {
 	}
 
 	for _, h := range hs {
-		for _, s := range lists.StrippedHeadings {
-			if strings.EqualFold(h, s) {
-				out = append(out, Finding{c.ID, "stripped_heading", fmt.Sprintf("heading %q is stripped by the agent", h)})
-			}
-		}
-
-		for _, prefix := range lists.StrippedHeadingPrefixes {
-			if len(h) >= len(prefix) && strings.EqualFold(h[:len(prefix)], prefix) {
-				out = append(out, Finding{c.ID, "stripped_heading", fmt.Sprintf("heading %q is stripped by the agent", h)})
-			}
+		if isStripped(h, lists) {
+			out = append(out, Finding{c.ID, "stripped_heading", fmt.Sprintf("heading %q is stripped by the agent", h)})
 		}
 	}
 
@@ -151,7 +143,7 @@ func checkBody(c Card, lists Lists) []Finding {
 		}
 	}
 
-	if !isBug(c, lists) {
+	if !isBug(c) {
 		lower := strings.ToLower(c.Title + "\n" + c.Body)
 
 		for _, phrase := range lists.DefectPhrases {
@@ -175,25 +167,28 @@ func checkBody(c Card, lists Lists) []Finding {
 	return out
 }
 
-// isBug reports whether a card takes the bug path: its type is "bug" or its
-// title opens with a bug verb.
-func isBug(c Card, lists Lists) bool {
-	if strings.EqualFold(c.Type, "bug") {
-		return true
+// isStripped reports whether the agent removes a heading before prompting:
+// it matches a stripped heading exactly or starts with a stripped prefix.
+func isStripped(h string, lists Lists) bool {
+	for _, s := range lists.StrippedHeadings {
+		if strings.EqualFold(h, s) {
+			return true
+		}
 	}
 
-	words := strings.Fields(c.Title)
-	if len(words) == 0 {
-		return false
-	}
-
-	for _, verb := range lists.BugTitleVerbs {
-		if strings.EqualFold(words[0], verb) {
+	for _, prefix := range lists.StrippedHeadingPrefixes {
+		if len(h) >= len(prefix) && strings.EqualFold(h[:len(prefix)], prefix) {
 			return true
 		}
 	}
 
 	return false
+}
+
+// isBug reports whether a card takes the bug path. Only a bug-typed card may
+// name a defect in its body; a feature card must not, whatever its title says.
+func isBug(c Card) bool {
+	return strings.EqualFold(c.Type, "bug")
 }
 
 func checkTitle(c Card, lists Lists) []Finding {

@@ -115,13 +115,38 @@ func TestCheck_BugCardMayNameTheDefect(t *testing.T) {
 	assert.Empty(t, findings)
 }
 
-func TestCheck_BugTitleVerbRoutesToBugPath(t *testing.T) {
+func TestCheck_FeatureTitledFixMayNotNameTheDefect(t *testing.T) {
 	c := goodCard("D1")
 	c.Title = "Fix the empty route"
 	c.Body += "\nThe handler panics when the path is empty.\n"
 
 	findings := Check(Draft{Cards: []Card{c}, Order: []string{"D1"}}, testLists(), withRoot(t))
-	assert.Empty(t, findings, "a title opening with a bug verb takes the bug path")
+	assert.Contains(t, checkNames(findings), "D1:defect_phrase", "only a bug-typed card takes the bug path")
+}
+
+func TestCheck_StrippedHeadingReportedOnce(t *testing.T) {
+	c := goodCard("D1")
+	c.Body += "## Verify Command\nmake test\n"
+
+	lists := testLists()
+	lists.StrippedHeadingPrefixes = []string{"Verify"}
+
+	findings := Check(Draft{Cards: []Card{c}, Order: []string{"D1"}}, lists, withRoot(t))
+
+	var n int
+
+	for _, name := range checkNames(findings) {
+		if name == "D1:stripped_heading" {
+			n++
+		}
+	}
+
+	assert.Equal(t, 1, n, "a heading matching both a name and a prefix is one finding")
+}
+
+func TestFinding_StringNamesCardAndCheck(t *testing.T) {
+	f := Finding{CardID: "D7", Check: "depends_on_acyclic", Message: "depends_on forms a cycle"}
+	assert.Equal(t, "D7: depends_on_acyclic: depends_on forms a cycle", f.String())
 }
 
 func TestCheck_MaintenanceVerbWithLabelPasses(t *testing.T) {
@@ -142,6 +167,12 @@ func TestCheck_DependsOn(t *testing.T) {
 		cards []Card
 		want  string
 	}{
+		{name: "self dependency", cards: func() []Card {
+			a := goodCard("D1")
+			a.DependsOn = []string{"D1"}
+
+			return []Card{a}
+		}(), want: "depends_on_acyclic"},
 		{name: "cycle", cards: func() []Card {
 			a, b := goodCard("D1"), goodCard("D2")
 			a.DependsOn, b.DependsOn = []string{"D2"}, []string{"D1"}
