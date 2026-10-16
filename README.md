@@ -27,7 +27,7 @@ make build
 mkdir -p ~/.config/contextmatrix-architect
 ./contextmatrix-architect config defaults > ~/.config/contextmatrix-architect/config.yaml
 chmod 600 ~/.config/contextmatrix-architect/config.yaml   # it holds the HMAC key
-# edit contextmatrix_url, api_key and state_dir
+# edit contextmatrix_url and api_key
 ./contextmatrix-architect serve
 ```
 
@@ -40,10 +40,11 @@ would and exits 1 on the first error.
 
 Configure it in ContextMatrix as `backends.architect` with the same `api_key`.
 
-The default `state_dir` is `/var/lib/contextmatrix-architect`, the image's
-volume. For a local run as a normal user, point `state_dir` (or
-`CONTEXTMATRIX_ARCHITECT_STATE_DIR`) at an absolute directory that user can
-write; `~` is not expanded.
+An empty `state_dir`, the default, resolves to
+`$XDG_STATE_HOME/contextmatrix-architect`, else
+`~/.local/state/contextmatrix-architect`, on every OS. To use another
+directory, set `state_dir` (or `CONTEXTMATRIX_ARCHITECT_STATE_DIR`) to an
+absolute path the user can write; `~` is not expanded.
 
 ## User service
 
@@ -59,12 +60,14 @@ journalctl --user -u contextmatrix-architect -f
 
 The unit runs `serve --config ${XDG_CONFIG_HOME:-~/.config}/contextmatrix-architect/config.yaml`
 from this checkout, sandboxed like the sibling backends, with `~/.contextmatrix`
-and the configured `state_dir` writable. `install` warns about a missing
-config, a `state_dir` the unit cannot write or create and a missing `rg`, and
-installs anyway. The sandbox only lets the service write directories that
-exist when it starts, so create `state_dir` before the first start unless it
-sits under an existing `~/.contextmatrix`. Rerun `./svc.sh install` after
-changing `state_dir`, so the new directory is whitelisted.
+and the resolved `state_dir` writable. `install` creates that directory,
+because the sandbox only lets the service write directories that exist when it
+starts, and pins `XDG_STATE_HOME` in the unit so the service resolves the same
+default as the script. It warns about a missing config, an explicit
+`/var/lib/contextmatrix-architect` (the image's volume), a `state_dir` that is
+not absolute, contains whitespace or is not writable, a directory it could not
+create and a missing `rg`, and installs anyway. Rerun `./svc.sh install` after
+changing `state_dir` or `XDG_STATE_HOME`.
 
 ## Code checkouts
 
@@ -110,9 +113,10 @@ docker run --rm -p 9095:9095 \
   contextmatrix-architect:dev
 ```
 
-The state volume must be writable by uid 65532 (the distroless `nonroot` user).
-A fresh named volume inherits that ownership from the image; a bind mount must
-be chowned by hand. The mounted `config.yaml` must be readable by uid 65532.
+The image sets `XDG_STATE_HOME=/var/lib`, so the default `state_dir` is the
+volume. The state volume must be writable by uid 65532 (the distroless
+`nonroot` user). A fresh named volume inherits that ownership from the image; a
+bind mount must be chowned by hand. The mounted `config.yaml` must be readable by uid 65532.
 `config.yaml.example` documents every key.
 
 The image ships ripgrep for the read tools. A local run or the user service

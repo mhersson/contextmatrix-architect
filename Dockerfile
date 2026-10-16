@@ -25,6 +25,9 @@ RUN set -eu; \
     install -m 0755 "/tmp/ripgrep-${RIPGREP_VERSION}-${arch}-unknown-linux-musl/rg" /usr/local/bin/rg
 
 FROM gcr.io/distroless/static-debian12:nonroot
+# The default state_dir is $XDG_STATE_HOME/contextmatrix-architect; this keeps
+# it on the volume below.
+ENV XDG_STATE_HOME=/var/lib
 COPY --from=build /contextmatrix-architect /contextmatrix-architect
 COPY --from=build /usr/local/bin/rg /usr/local/bin/rg
 COPY --from=build --chown=65532:65532 /state /var/lib/contextmatrix-architect

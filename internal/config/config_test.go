@@ -154,3 +154,57 @@ func TestDefaultsYAMLListsEveryKey(t *testing.T) {
 	assert.IsType(t, map[string]any{}, got["models"])
 	assert.Empty(t, got["models"])
 }
+
+func TestLoad_StateDirResolution(t *testing.T) {
+	base := "contextmatrix_url: http://cm:8080\napi_key: " + strings.Repeat("k", 32) + "\n"
+	xdg := t.TempDir()
+	home := t.TempDir()
+
+	tests := []struct {
+		name    string
+		file    string
+		envDir  string
+		xdg     string
+		home    string
+		want    string
+		wantErr string
+	}{
+		{name: "xdg state home", xdg: xdg, home: home, want: filepath.Join(xdg, "contextmatrix-architect")},
+		{name: "home fallback", home: home, want: filepath.Join(home, ".local", "state", "contextmatrix-architect")},
+		{name: "neither is empty and invalid", wantErr: "state_dir"},
+		{name: "file wins over xdg", file: "state_dir: /srv/from-file\n", xdg: xdg, home: home, want: "/srv/from-file"},
+		{name: "env wins over xdg", envDir: "/srv/from-env", xdg: xdg, home: home, want: "/srv/from-env"},
+		{name: "env wins over file", file: "state_dir: /srv/from-file\n", envDir: "/srv/from-env", xdg: xdg, home: home, want: "/srv/from-env"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", tt.xdg)
+			t.Setenv("HOME", tt.home)
+			// An empty env value would override the file, so unset it.
+			t.Setenv("CONTEXTMATRIX_ARCHITECT_STATE_DIR", "")
+
+			if tt.envDir != "" {
+				t.Setenv("CONTEXTMATRIX_ARCHITECT_STATE_DIR", tt.envDir)
+			} else {
+				require.NoError(t, os.Unsetenv("CONTEXTMATRIX_ARCHITECT_STATE_DIR"))
+			}
+
+			cfg, err := Load(writeFile(t, base+tt.file))
+			require.NoError(t, err)
+
+			if tt.wantErr != "" {
+				assert.Empty(t, cfg.StateDir)
+
+				err := cfg.Validate()
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+
+				return
+			}
+
+			assert.Equal(t, tt.want, cfg.StateDir)
+			require.NoError(t, cfg.Validate())
+		})
+	}
+}

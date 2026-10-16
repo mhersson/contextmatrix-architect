@@ -65,11 +65,12 @@ pack: ""
 port: 9095
 
 # Directory holding architect.db. Must be writable. Also holds exports/ and
-# workspaces/. Default as below: the image's volume. A user service needs an
-# absolute path it can write, such as /home/<you>/.contextmatrix/architect;
-# ~ is not expanded.
+# workspaces/. Empty (the default) means $XDG_STATE_HOME/contextmatrix-architect,
+# else ~/.local/state/contextmatrix-architect, on every OS. The image sets
+# XDG_STATE_HOME=/var/lib, so there it is /var/lib/contextmatrix-architect, the
+# image's volume. An explicit value must be absolute; ~ is not expanded.
 # Env: CONTEXTMATRIX_ARCHITECT_STATE_DIR
-state_dir: /var/lib/contextmatrix-architect
+state_dir: ""
 
 # Seconds between two polls of an emitted blueprint's cards and playbook run
 # in ContextMatrix while its session is open; each change is posted to the

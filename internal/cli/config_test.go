@@ -165,3 +165,25 @@ func TestConfigDefaults_FilledInValidates(t *testing.T) {
 	_, err = runCLI(t, "config", "validate", writeConfig(t, t.TempDir(), string(body)))
 	require.NoError(t, err)
 }
+
+// The default state_dir is empty and resolves at load time, so a file that
+// fills only the two remaining required keys validates.
+func TestConfigDefaults_EmptyStateDirValidates(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	out, err := runCLI(t, "config", "defaults")
+	require.NoError(t, err)
+
+	var tree map[string]any
+	require.NoError(t, yaml.Unmarshal([]byte(out), &tree))
+	require.Empty(t, tree["state_dir"])
+
+	tree["api_key"] = strings.Repeat("k", 32)
+	tree["contextmatrix_url"] = "http://localhost:18080"
+
+	body, err := yaml.Marshal(tree)
+	require.NoError(t, err)
+
+	_, err = runCLI(t, "config", "validate", writeConfig(t, t.TempDir(), string(body)))
+	require.NoError(t, err)
+}

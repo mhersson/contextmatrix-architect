@@ -17,14 +17,16 @@
 #
 # State.
 # ------
-# The default state_dir, /var/lib/contextmatrix-architect, is the image's
-# volume and is not writable by a user service. Set state_dir in the config
-# to an absolute path you can write, such as $HOME/.contextmatrix/architect;
-# the architect does not expand ~. %h/.contextmatrix is whitelisted, and an
-# absolute state_dir elsewhere is read from the config and whitelisted too.
-# The sandbox only lets the service write directories that exist when it
-# starts, so create state_dir before the first start unless it sits under an
-# existing ~/.contextmatrix. install warns when it does not.
+# An empty or absent state_dir resolves to
+# ${XDG_STATE_HOME:-$HOME/.local/state}/contextmatrix-architect, which a
+# user service can write. install whitelists that path in ReadWritePaths,
+# creates it, and pins XDG_STATE_HOME in the unit, because the user manager
+# may not carry this shell's value. An absolute state_dir in the config is
+# whitelisted and created instead; the architect does not expand ~.
+# /var/lib/contextmatrix-architect is the image's volume and not writable by
+# a user service. The sandbox only lets the service write directories that
+# exist when it starts, which is why install creates the directory. Rerun
+# install after changing state_dir or XDG_STATE_HOME.
 #
 # ripgrep.
 # --------
@@ -47,16 +49,17 @@
 #   Restart=on-failure, RestartSec + RestartSteps + RestartMaxDelaySec
 #   - exponential backoff.
 #   ReadWritePaths - narrow the filesystem to %h/.contextmatrix and the
-#   configured state_dir. Paths are prefixed with `-` so a missing dir does
-#   not block startup; systemd skips it, so the architect can create
-#   state_dir only under an existing %h/.contextmatrix.
+#   resolved state_dir. Paths are prefixed with `-` so a missing dir does
+#   not block startup; systemd skips it, so install creates state_dir
+#   up front.
 #
 # Subcommands:
 #   install [--dry-run]  Write the unit file (or print to stdout), reload
 #                        daemon, enable, and restart if already running.
 #                        Both forms warn on stderr about a missing config,
-#                        a state_dir the service cannot write or create and
-#                        a missing rg; install goes ahead anyway.
+#                        a state_dir the service cannot write and a missing
+#                        rg; install creates state_dir first and goes ahead
+#                        anyway, with a warning if it cannot.
 #   uninstall            Stop, disable, and remove the service file.
 #   start / stop / status
 #   print                Print the generated unit file to stdout.
@@ -89,6 +92,34 @@ Subcommands:
 EOF
 }
 
+# resolve_state_base is the XDG base the service pins as XDG_STATE_HOME.
+resolve_state_base() {
+    printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}"
+}
+
+# configured_state_dir is read_state_dir with YAML null spellings treated as
+# empty, as the binary does.
+configured_state_dir() {
+    local v
+    v="$(read_state_dir)"
+    case "${v}" in
+        "~" | null | Null | NULL) v="" ;;
+    esac
+    printf '%s' "${v}"
+}
+
+# resolve_state_dir is the directory the service uses: the config's
+# state_dir when set, else the XDG default the binary computes itself.
+resolve_state_dir() {
+    local configured
+    configured="$(configured_state_dir)"
+    if [ -n "${configured}" ]; then
+        printf '%s' "${configured}"
+    else
+        printf '%s/contextmatrix-architect' "$(resolve_state_base)"
+    fi
+}
+
 # read_state_dir extracts the state_dir value from the config so it can be
 # whitelisted in ReadWritePaths. Strips a trailing inline comment,
 # surrounding whitespace, and optional quotes. Empty if the file or key is
@@ -112,44 +143,34 @@ read_state_dir() {
 # stopping the install.
 warn_preflight() {
     if [ ! -f "${CONFIG}" ]; then
-        echo "warning: ${CONFIG} not found; create it with 'mkdir -p $(dirname "${CONFIG}") && ${BINARY} config defaults > ${CONFIG} && chmod 600 ${CONFIG}' and set contextmatrix_url, api_key and state_dir" >&2
+        echo "warning: ${CONFIG} not found; create it with 'mkdir -p $(dirname "${CONFIG}") && ${BINARY} config defaults > ${CONFIG} && chmod 600 ${CONFIG}' and set contextmatrix_url and api_key" >&2
     fi
 
-    local state_dir
-    state_dir="$(read_state_dir)"
+    local state_dir what
+    state_dir="$(resolve_state_dir)"
+    what="state_dir"
+    if [ -z "$(configured_state_dir)" ]; then
+        what="XDG_STATE_HOME (state_dir is empty)"
+    fi
     case "${state_dir}" in
-        "" | "${IMAGE_STATE_DIR}")
-            echo "warning: state_dir is ${IMAGE_STATE_DIR}, the image's volume, which a user service cannot write; set it to an absolute path such as ${HOME}/.contextmatrix/architect" >&2
+        "${IMAGE_STATE_DIR}")
+            echo "warning: ${what} resolves to ${IMAGE_STATE_DIR}, the image's volume, which a user service cannot write; set state_dir to an absolute path you can write, or unset XDG_STATE_HOME for the XDG default" >&2
             ;;
         /*)
             # systemd splits ReadWritePaths on whitespace.
             case "${state_dir}" in
                 *[[:space:]]*)
-                    echo "warning: state_dir '${state_dir}' contains whitespace, which splits the ReadWritePaths entry; use a path without spaces" >&2
+                    echo "warning: ${what} gives '${state_dir}', which contains whitespace, which splits the ReadWritePaths entry; use a path without spaces" >&2
                     ;;
             esac
             if [ -e "${state_dir}" ]; then
                 if [ ! -d "${state_dir}" ] || [ ! -w "${state_dir}" ]; then
-                    echo "warning: state_dir '${state_dir}' is not a directory this user can write" >&2
+                    echo "warning: ${what} gives '${state_dir}', which is not a directory this user can write" >&2
                 fi
-            else
-                # A missing '-' ReadWritePaths entry is skipped, so the
-                # service can create state_dir only under an existing,
-                # writable ~/.contextmatrix.
-                case "${state_dir}" in
-                    "${HOME}/.contextmatrix/"*)
-                        if [ ! -d "${HOME}/.contextmatrix" ] || [ ! -w "${HOME}/.contextmatrix" ]; then
-                            echo "warning: ${HOME}/.contextmatrix does not exist or is not writable, so the service cannot create state_dir '${state_dir}'; run 'mkdir -p ${state_dir}' before start" >&2
-                        fi
-                        ;;
-                    *)
-                        echo "warning: state_dir '${state_dir}' does not exist; the sandbox only lets the service write directories that exist when it starts, so run 'mkdir -p ${state_dir}' before start" >&2
-                        ;;
-                esac
             fi
             ;;
         *)
-            echo "warning: state_dir '${state_dir}' is not absolute; ~ is not expanded and a relative path resolves under the read-only checkout; use an absolute path" >&2
+            echo "warning: ${what} gives '${state_dir}', which is not absolute; ~ is not expanded and a relative path resolves under the read-only checkout; use an absolute path" >&2
             ;;
     esac
 
@@ -162,10 +183,17 @@ warn_preflight() {
 generate_unit() {
     local rw_paths="-%h/.contextmatrix"
     local state_dir
-    state_dir="$(read_state_dir)"
+    state_dir="$(resolve_state_dir)"
     case "${state_dir}" in
         /*) rw_paths="${rw_paths} -${state_dir//[%]/%%}" ;;
     esac
+
+    # Pin the base so the service resolves the same default as this script.
+    # Always quote the whole assignment so whitespace survives.
+    local state_base env_line
+    state_base="$(resolve_state_base)"
+    env_line="XDG_STATE_HOME=${state_base//[%]/%%}"
+    env_line="\"${env_line}\""
 
     cat <<EOF
 [Unit]
@@ -174,6 +202,7 @@ Description=ContextMatrix Architect (blueprint backend)
 [Service]
 Type=simple
 WorkingDirectory=${SCRIPT_DIR}
+Environment=${env_line}
 ExecStart=${BINARY} serve --config ${CONFIG}
 KillMode=mixed
 TimeoutStopSec=60
@@ -183,8 +212,8 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
 # The architect writes only its state_dir. Paths are prefixed with '-' so a
-# missing dir does not block startup; systemd skips it, so the architect can
-# create state_dir only under an existing %h/.contextmatrix.
+# missing dir does not block startup; systemd skips it, so install creates
+# state_dir before the unit starts.
 ReadWritePaths=${rw_paths}
 PrivateTmp=yes
 PrivateDevices=yes
@@ -219,7 +248,7 @@ EOF
 # EXPECTED_DIRECTIVES is the set of hardening lines that must appear in
 # the generated unit. `verify` grep-asserts each one; keep in sync with
 # generate_unit. The ReadWritePaths entry is asserted as a substring
-# because the state_dir suffix is dynamic.
+# because the state_dir suffix is dynamic; the Environment line likewise.
 EXPECTED_DIRECTIVES=(
     "NoNewPrivileges=yes"
     "ProtectSystem=strict"
@@ -245,6 +274,7 @@ EXPECTED_DIRECTIVES=(
     "RestartSteps=5"
     "RestartMaxDelaySec=300"
     "ReadWritePaths=-%h/.contextmatrix"
+    'Environment="XDG_STATE_HOME='
 )
 
 cmd_install() {
@@ -267,6 +297,19 @@ cmd_install() {
         was_active=1
         systemctl --user stop "${SERVICE_NAME}"
     fi
+
+    # A missing '-' ReadWritePaths entry is skipped under ProtectHome, so
+    # the directory must exist before the service starts.
+    local state_dir
+    state_dir="$(resolve_state_dir)"
+    case "${state_dir}" in
+        /*)
+            # 0750 like the service's own mkdir; the dir holds architect.db.
+            if ! (umask 027 && mkdir -p "${state_dir}"); then
+                echo "warning: could not create state_dir '${state_dir}'; create it and make it writable by this user before start" >&2
+            fi
+            ;;
+    esac
 
     mkdir -p "$(dirname "${SERVICE_FILE}")"
     generate_unit > "${SERVICE_FILE}"

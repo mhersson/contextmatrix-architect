@@ -547,10 +547,13 @@ Replies the server understands, besides answers to questions:
   reports, into its own workspace cache, with credentials fetched per repo from
   CM. Nothing is checked out on a client.
 - **Container needs.** A Go binary image with ripgrep on the path (the
-  harness grep and glob tools exec it), no Docker socket, a volume for the state directory, and outbound access to CM, the
-  LLM endpoint and the git host. Env: the CM base URL and the backend HMAC key.
+  harness grep and glob tools exec it), no Docker socket, a volume for the
+  state directory (the image sets `XDG_STATE_HOME=/var/lib`, so the default
+  state directory is that volume), and outbound access to CM, the LLM endpoint
+  and the git host. Env: the CM base URL and the backend HMAC key.
 - **Host needs.** As a user service the same binary needs ripgrep on the
-  service's PATH and a `state_dir` the user can write. `serve` logs a
+  service's PATH. `state_dir` defaults to the XDG state directory, which
+  `svc.sh` whitelists and creates. `serve` logs a
   warning at startup when rg is missing and starts anyway.
 - **Client.** The panel, through CM. Local use is
   `contextmatrix-architect serve` on the laptop pointed at a CM instance.
