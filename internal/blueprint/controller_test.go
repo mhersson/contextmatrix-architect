@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -25,7 +27,14 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-const testKey = "sk-secret-0123456789"
+// The session's secrets: the endpoint API key, the MCP key and the
+// git-credentials token. Each must be masked everywhere the record and the
+// panel carry text.
+const (
+	testKey      = "sk-secret-0123456789"
+	testMCPKey   = "mcp-key-0123456789"
+	testGitToken = "BP.mac"
+)
 
 type fakeRunner struct {
 	mu     sync.Mutex
@@ -200,7 +209,8 @@ func newController(t *testing.T, fn func(context.Context, stage.Input) (stage.Ou
 func newControllerOn(t *testing.T, st *store.Store, fn func(context.Context, stage.Input) (stage.Output, error)) (*Controller, *store.Store, *fakeRunner, *recorder) {
 	t.Helper()
 
-	pk, err := pack.LoadEmbedded()
+	// One stage: nothing follows intake, so these tests see a single run.
+	pk, err := pack.LoadDir("testdata/single")
 	require.NoError(t, err)
 
 	runner := &fakeRunner{fn: fn}
@@ -231,7 +241,8 @@ func newControllerWithRunCap(t *testing.T, runCap float64, fn func(context.Conte
 func startInput(id string) StartInput {
 	return StartInput{
 		ID: id, Projects: []string{"alpha"}, Mode: "default", CostCapUSD: 0, Model: "session/model",
-		Endpoint: protocol.LLMEndpoint{Type: "openrouter", APIKey: testKey},
+		Endpoint:  protocol.LLMEndpoint{Type: "openrouter", APIKey: testKey},
+		MCPAPIKey: testMCPKey, GitCredentialsToken: testGitToken,
 	}
 }
 
@@ -264,7 +275,7 @@ func TestMessage_FirstMessageIsTheNeedAndRunsIntake(t *testing.T) {
 	assert.Contains(t, in.Task, "containerise this project")
 	assert.Equal(t, "po/model", in.Model, "persona override wins over the session model")
 	assert.Equal(t, testKey, in.Endpoint.APIKey)
-	assert.Contains(t, in.Secrets, testKey)
+	assert.Subset(t, in.Secrets, []string{testKey, testMCPKey, testGitToken}, "the harness masks every session secret in tool output")
 	assert.InDelta(t, 2.0, in.MaxCostUSD, 1e-9)
 	assert.Equal(t, 10, in.MaxTurns)
 
@@ -291,7 +302,8 @@ func TestMessage_FirstMessageIsTheNeedAndRunsIntake(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(tr), "containerise this project")
 
-	assert.Equal(t, []string{EventCreated, EventStageStarted, EventArtifact, EventStageEnded}, rec.kinds())
+	assert.Equal(t, []string{EventCreated, EventStageStarted, EventArtifact, EventStageEnded, EventReport}, rec.kinds(),
+		"nothing follows intake in a one-stage pack, so the pipeline reports")
 
 	started, ok := rec.first(EventStageStarted)
 	require.True(t, ok)
@@ -392,7 +404,7 @@ func TestMessage_AfterAFailedIntakeIsTheNeed(t *testing.T) {
 	assert.Equal(t, 2, runs[1].Attempt)
 }
 
-func TestStageTask_CarriesTheProjectsAndTheNeed(t *testing.T) {
+func TestFirstStageTask_CarriesTheProjectsAndTheNeed(t *testing.T) {
 	projects := []string{"alpha", "beta"}
 
 	tests := []struct {
@@ -485,7 +497,7 @@ func TestMessage_AnswersAPendingQuestion(t *testing.T) {
 	assert.True(t, rec.has(EventAnswer))
 }
 
-func TestMessage_AbortCancelsTheRun(t *testing.T) {
+func TestAbort_CancelsTheRun(t *testing.T) {
 	started := make(chan struct{})
 	c, st, _, rec := newController(t, func(ctx context.Context, _ stage.Input) (stage.Output, error) {
 		close(started)
@@ -498,7 +510,7 @@ func TestMessage_AbortCancelsTheRun(t *testing.T) {
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
 	<-started
 
-	require.NoError(t, c.Message(ctx, "BP1", "abort", "m2"))
+	require.NoError(t, c.Abort(ctx, "BP1", "m2"))
 	c.Wait("BP1")
 
 	runs, err := st.ListRuns(ctx, "BP1")
@@ -652,7 +664,7 @@ func TestCancel_WhileParkedInAskHumanUnblocksTheRun(t *testing.T) {
 		name   string
 		cancel func(ctx context.Context, c *Controller) error
 	}{
-		{"abort", func(ctx context.Context, c *Controller) error { return c.Message(ctx, "BP1", "abort", "m2") }},
+		{"abort", func(ctx context.Context, c *Controller) error { return c.Abort(ctx, "BP1", "m2") }},
 		{"end", func(ctx context.Context, c *Controller) error { return c.End(ctx, "BP1") }},
 	}
 
@@ -818,6 +830,52 @@ func TestStart_TransientRecoveryErrorLeavesTheRunRecoverable(t *testing.T) {
 	require.Len(t, runs, 2)
 	assert.Equal(t, store.RunInterrupted, runs[0].Status)
 	assert.Equal(t, store.RunDone, runs[1].Status)
+}
+
+func TestRunCapZero_DisablesThePerRunCap(t *testing.T) {
+	tests := []struct {
+		name       string
+		capUSD     float64
+		spentUSD   float64
+		wantRunCap float64
+		wantRefuse bool
+	}{
+		{name: "no caps at all runs unbounded", capUSD: 0, wantRunCap: 0},
+		{name: "blueprint cap alone bounds the run by what is left", capUSD: 1.5, spentUSD: 0.5, wantRunCap: 1},
+		{name: "an exhausted blueprint cap is refused, not read as no cap", capUSD: 1, spentUSD: 1, wantRefuse: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, runner, rec := newControllerWithRunCap(t, 0, artifactRun("# Need"))
+			ctx := context.Background()
+			in := startInput("BP1")
+			in.CostCapUSD = tt.capUSD
+			in.Price = testPrice()
+			require.NoError(t, c.Start(ctx, in))
+
+			if tt.spentUSD > 0 {
+				now := time.Now().UTC()
+				prior, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+				require.NoError(t, err)
+				require.NoError(t, st.EndRun(ctx, prior, store.RunDone, "done", store.RunUsage{CostUSD: tt.spentUSD}, now))
+			}
+
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			c.Wait("BP1")
+
+			if tt.wantRefuse {
+				assert.Zero(t, runner.calls(), "no run starts")
+				assert.True(t, rec.has(EventError))
+
+				return
+			}
+
+			require.Equal(t, 1, runner.calls(), "the run starts")
+			assert.InDelta(t, tt.wantRunCap, runner.input(0).MaxCostUSD, 1e-9)
+			assert.False(t, rec.has(EventError))
+		})
+	}
 }
 
 func TestMessage_CostCap(t *testing.T) {
@@ -1204,6 +1262,10 @@ func TestRun_ArtifactSubmittedAsTheSessionEndsIsKept(t *testing.T) {
 func TestSecrets_AreMaskedInTheRecordAndTheSink(t *testing.T) {
 	const mask = "[REDACTED]"
 
+	secrets := []string{testKey, testMCPKey, testGitToken}
+	// leak carries every session secret, the way a model might echo them.
+	leak := strings.Join(secrets, " ")
+
 	tests := []struct {
 		name   string
 		answer bool
@@ -1213,10 +1275,10 @@ func TestSecrets_AreMaskedInTheRecordAndTheSink(t *testing.T) {
 			name:   "question, harness line, transcript and artifact",
 			answer: true,
 			run: func(ctx context.Context, in stage.Input) (stage.Output, error) {
-				_, _ = in.Events.Write([]byte(`{"seq":1,"kind":"model_response","data":{"content":"key ` + testKey + `"}}` + "\n"))
+				_, _ = in.Events.Write([]byte(`{"seq":1,"kind":"model_response","data":{"content":"keys ` + leak + `"}}` + "\n"))
 
 				answer, err := in.Asker.Ask(ctx, stage.Question{
-					Text: "Is " + testKey + " yours?", Options: []string{testKey, "no"}, Context: "seen " + testKey,
+					Text: "Are " + leak + " yours?", Options: append([]string{"no"}, secrets...), Context: "seen " + leak,
 				})
 				if err != nil {
 					return stage.Output{}, err
@@ -1224,12 +1286,12 @@ func TestSecrets_AreMaskedInTheRecordAndTheSink(t *testing.T) {
 
 				return stage.Output{
 					Artifact: stage.Artifact{
-						Body: "# Need\n\nuse " + testKey + ", " + answer,
-						Data: map[string]any{"key": testKey, "list": []any{testKey}},
+						Body: "# Need\n\nuse " + leak + ", " + answer,
+						Data: map[string]any{"key": leak, "list": []any{testKey, testMCPKey, testGitToken}},
 					},
 					Result: harness.Result{
 						Completed: true, Reason: "done",
-						Messages: []llm.Message{{Role: "assistant", Content: "the key is " + testKey}},
+						Messages: []llm.Message{{Role: "assistant", Content: "the keys are " + leak}},
 					},
 				}, nil
 			},
@@ -1239,9 +1301,9 @@ func TestSecrets_AreMaskedInTheRecordAndTheSink(t *testing.T) {
 			run: func(_ context.Context, _ stage.Input) (stage.Output, error) {
 				return stage.Output{Result: harness.Result{
 						Reason:   "error",
-						Messages: []llm.Message{{Role: "assistant", Content: "the key is " + testKey}},
+						Messages: []llm.Message{{Role: "assistant", Content: "the keys are " + leak}},
 					}},
-					fmt.Errorf("llm: 401 from provider: invalid key %s", testKey)
+					fmt.Errorf("llm: 401 from provider: invalid keys %s", leak)
 			},
 		},
 	}
@@ -1251,19 +1313,22 @@ func TestSecrets_AreMaskedInTheRecordAndTheSink(t *testing.T) {
 			c, st, runner, rec := newController(t, tt.run)
 			ctx := context.Background()
 			require.NoError(t, c.Start(ctx, startInput("BP1")))
-			require.NoError(t, c.Message(ctx, "BP1", "deploy with "+testKey, "m1"))
+			require.NoError(t, c.Message(ctx, "BP1", "deploy with "+leak, "m1"))
 
 			if tt.answer {
 				rec.waitFor(t, EventQuestion)
-				require.NoError(t, c.Message(ctx, "BP1", "yes, "+testKey, "m2"))
+				require.NoError(t, c.Message(ctx, "BP1", "yes, "+leak, "m2"))
 			}
 
 			c.Wait("BP1")
 
 			require.Equal(t, 1, runner.calls())
-			assert.NotContains(t, runner.input(0).Task, testKey, "the task is the stored, masked need")
 
-			// Every place the run put the key, by name.
+			for _, secret := range secrets {
+				assert.NotContains(t, runner.input(0).Task, secret, "the task is the stored, masked need")
+			}
+
+			// Every place the run put the secrets, by name.
 			places := map[string]string{}
 
 			stored, err := st.ListEvents(ctx, "BP1")
@@ -1312,8 +1377,11 @@ func TestSecrets_AreMaskedInTheRecordAndTheSink(t *testing.T) {
 			places["transcript"] = string(tr)
 
 			for place, text := range places {
-				assert.NotContains(t, text, testKey, place)
-				assert.Contains(t, text, mask, place+" carried the key")
+				for _, secret := range secrets {
+					assert.NotContains(t, text, secret, place)
+				}
+
+				assert.Contains(t, text, mask, place+" carried the secrets")
 			}
 		})
 	}
@@ -1462,7 +1530,7 @@ func TestCancel_IsNotShownAsAnError(t *testing.T) {
 		name   string
 		cancel func(ctx context.Context, c *Controller) error
 	}{
-		{"abort", func(ctx context.Context, c *Controller) error { return c.Message(ctx, "BP1", "abort", "m2") }},
+		{"abort", func(ctx context.Context, c *Controller) error { return c.Abort(ctx, "BP1", "m2") }},
 		{"end", func(ctx context.Context, c *Controller) error { return c.End(ctx, "BP1") }},
 	}
 
@@ -1611,4 +1679,174 @@ func TestStart_AllZeroPriceIsNoPrice(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, bp.Price)
 	})
+}
+
+func TestStart_ReopenWithoutAPriceKeepsTheCreationPrice(t *testing.T) {
+	tests := []struct {
+		name        string
+		reopenModel string
+		reopenPrice *protocol.ModelPrice
+		wantPriced  bool
+		wantCost    float64
+	}{
+		{name: "same model keeps the price it was created with", reopenModel: "session/model", wantPriced: true, wantCost: 0.20},
+		{name: "an all-zero price is no price", reopenModel: "session/model", reopenPrice: &protocol.ModelPrice{}, wantPriced: true, wantCost: 0.20},
+		{name: "another model runs unpriced", reopenModel: "other/model", wantCost: 0},
+		{
+			name: "a new price on the same model wins", reopenModel: "session/model", wantPriced: true, wantCost: 0.40,
+			reopenPrice: &protocol.ModelPrice{PromptUSDPerMTok: 2, CompletionUSDPerMTok: 20},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, _, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+				out := artifactOutput("# Need", in)
+				out.Result.TotalCostUSD = 0
+				out.Result.PromptTokens = 100_000
+				out.Result.CompletionTokens = 10_000
+
+				return out, nil
+			})
+			ctx := context.Background()
+			in := startInput("BP1")
+			in.Price = testPrice()
+			require.NoError(t, c.Start(ctx, in))
+			require.NoError(t, c.End(ctx, "BP1"))
+
+			// CM's price lookup failed on this start.
+			reopen := startInput("BP1")
+			reopen.Model = tt.reopenModel
+			reopen.Price = tt.reopenPrice
+			require.NoError(t, c.Start(ctx, reopen))
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			c.Wait("BP1")
+
+			runs, err := st.ListRuns(ctx, "BP1")
+			require.NoError(t, err)
+			require.Len(t, runs, 1)
+			assert.Equal(t, tt.reopenModel, runs[0].Model)
+			assert.InDelta(t, tt.wantCost, runs[0].Usage.CostUSD, 1e-9)
+
+			ended, ok := rec.first(EventStageEnded)
+			require.True(t, ok)
+			assert.Equal(t, tt.wantPriced, ended.Payload["priced"])
+		})
+	}
+}
+
+func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
+	c, _, _, rec := newController(t, artifactRun("# Need with "+testKey+" "+testMCPKey+" "+testGitToken))
+	c.opts.ExportDir = t.TempDir()
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	require.NoError(t, c.Export(ctx, "BP1", "m2"))
+
+	ev, ok := rec.first(EventExported)
+	require.True(t, ok)
+
+	dir, _ := ev.Payload["path"].(string)
+	require.DirExists(t, dir)
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.NotEmpty(t, entries)
+	assert.Equal(t, false, ev.Payload["during_run"], "an idle blueprint leaves nothing working")
+
+	var all []byte
+
+	require.NoError(t, filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+
+		b, err := os.ReadFile(path) //nolint:gosec // a walk of the test's own temp dir
+		all = append(all, b...)
+
+		return err
+	}))
+
+	assert.NotContains(t, string(all), testKey, "the bundle is rendered from the masked record")
+	assert.NotContains(t, string(all), testMCPKey)
+	assert.NotContains(t, string(all), testGitToken)
+	assert.Contains(t, string(all), "# Need with")
+}
+
+func TestExport_UnknownBlueprint(t *testing.T) {
+	c, _, _, _ := newController(t, artifactRun("# Need"))
+	c.opts.ExportDir = t.TempDir()
+
+	assert.ErrorIs(t, c.Export(context.Background(), "nope", "m1"), ErrNotFound)
+}
+
+func TestExport_RefusesWithoutADirectoryAndUnsafeIDs(t *testing.T) {
+	c, st, _, _ := newController(t, artifactRun("# Need"))
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	require.Error(t, c.Export(ctx, "BP1", "m1"), "no export directory")
+
+	c.opts.ExportDir = t.TempDir()
+	now := time.Now().UTC()
+	require.NoError(t, st.CreateBlueprint(ctx, store.Blueprint{ID: "../escape", State: "new", CreatedAt: now, UpdatedAt: now}))
+	require.ErrorIs(t, c.Export(ctx, "../escape", "m2"), ErrNotFound)
+	assert.NoDirExists(t, filepath.Join(c.opts.ExportDir, "..", "escape"))
+}
+
+func TestExport_DoesNotDisturbARunningStage(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	c, st, _, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+		close(started)
+		<-release
+
+		return artifactOutput("# Need", in), nil
+	})
+	c.opts.ExportDir = t.TempDir()
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	<-started
+
+	require.NoError(t, c.Export(ctx, "BP1", "m2"))
+	close(release)
+	c.Wait("BP1")
+
+	ev, ok := rec.first(EventExported)
+	require.True(t, ok)
+	assert.Equal(t, true, ev.Payload["during_run"], "the run goes on working after the export")
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, store.RunDone, runs[0].Status)
+}
+
+func TestHarnessErrorLineIsForwardedWhenTheRunWasNotCancelled(t *testing.T) {
+	c, _, _, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+		_, _ = in.Events.Write([]byte(`{"seq":1,"kind":"error","data":{"message":"boom"}}` + "\n"))
+
+		return stage.Output{Result: harness.Result{Reason: "error"}}, errors.New("stage intake: boom")
+	})
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+
+	var forwarded bool
+
+	for _, line := range rec.lines {
+		if bytes.Contains(line, []byte(`"kind":"error"`)) {
+			forwarded = true
+		}
+	}
+
+	assert.True(t, forwarded, "an error line on a run that was not cancelled reaches the panel")
 }

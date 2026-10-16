@@ -179,10 +179,16 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "unknown tool", stage: "    tools: [shell]\n", want: "unknown tool group"},
 		{name: "unknown check", stage: "    checks: [style]\n", want: "unknown check"},
 		{name: "loops_to without max_rounds", stage: "  - id: s2\n    persona: po\n    loops_to: s1\n", files: map[string]string{"stages/s2.md": "x"}, want: "max_rounds"},
+		{name: "human first stage", stage: "    source: human\n", want: "first stage"},
+		{name: "human stage with tools", stage: "  - id: s2\n    source: human\n    tools: [code]\n", want: "human"},
+		{name: "human stage with checks", stage: "  - id: s2\n    source: human\n    checks: [cards]\n", want: "human"},
+		{name: "human stage with loops_to", stage: "  - id: s2\n    source: human\n    loops_to: s1\n    max_rounds: 2\n", want: "human"},
+		{name: "loops_to a human stage", stage: "  - id: s2\n    source: human\n  - id: s3\n    persona: po\n    loops_to: s2\n    max_rounds: 2\n", files: map[string]string{"stages/s3.md": "x"}, want: "human"},
 		{name: "bad regex", files: map[string]string{"lists.yaml": "forbidden_references:\n  - name: broken\n    pattern: '(['\n"}, want: "forbidden reference"},
 		{name: "unknown lists.yaml key", files: map[string]string{"lists.yaml": "required_section: [Context]\n"}, want: "lists.yaml"},
-		{name: "card checks without lists.yaml", stage: "    checks: [cards]\n", files: map[string]string{"lists.yaml": ""}, want: "lists.yaml"},
-		{name: "card checks without card.md", stage: "    checks: [cards]\n", files: map[string]string{"card.md": ""}, want: "card.md"},
+		{name: "card checks without lists.yaml", stage: "    tools: [code]\n    checks: [cards]\n", files: map[string]string{"lists.yaml": ""}, want: "lists.yaml"},
+		{name: "card checks without card.md", stage: "    tools: [code]\n    checks: [cards]\n", files: map[string]string{"card.md": ""}, want: "card.md"},
+		{name: "card checks without code tools", stage: "    checks: [cards]\n", want: "tools: [code]"},
 	}
 
 	for _, tt := range tests {
@@ -202,7 +208,7 @@ func TestLoad_ListsAndCardAreOptionalWithoutCardChecks(t *testing.T) {
 }
 
 func TestLoad_EmptyListsYAMLIsEmptyLists(t *testing.T) {
-	p, err := load(packFS("    checks: [cards]\n", map[string]string{"lists.yaml": "\n"}))
+	p, err := load(packFS("    tools: [code]\n    checks: [cards]\n", map[string]string{"lists.yaml": "\n"}))
 	require.NoError(t, err)
 	assert.Empty(t, p.Lists().RequiredSections)
 	assert.NotEmpty(t, p.CardTemplate())

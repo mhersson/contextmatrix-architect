@@ -20,6 +20,8 @@ import (
 type Controller interface {
 	Start(ctx context.Context, in blueprint.StartInput) error
 	Message(ctx context.Context, id, text, msgID string) error
+	Abort(ctx context.Context, id, msgID string) error
+	Export(ctx context.Context, id, msgID string) error
 	End(ctx context.Context, id string) error
 }
 

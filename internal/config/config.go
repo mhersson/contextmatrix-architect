@@ -34,7 +34,8 @@ type Config struct {
 	// default for every persona not listed.
 	Models map[string]string
 	// MaxRunCostUSD caps each stage run: the harness stops at the endpoint's
-	// reported cost, the controller at the run's priced usage.
+	// reported cost, the controller at the run's priced usage. Zero disables
+	// the cap.
 	MaxRunCostUSD float64
 	MaxTurns      int
 	// WorkspaceMaxAgeDays is how long a blueprint's code trees are kept
@@ -201,8 +202,8 @@ func (c *Config) Validate() error {
 		return errors.New("state_dir is required")
 	}
 
-	if c.MaxRunCostUSD <= 0 {
-		return errors.New("max_run_cost_usd must be positive")
+	if c.MaxRunCostUSD < 0 {
+		return errors.New("max_run_cost_usd must not be negative; 0 disables the per-run cap")
 	}
 
 	if c.MaxTurns <= 0 {

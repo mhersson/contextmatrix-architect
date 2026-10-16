@@ -356,3 +356,25 @@ func TestAppendOnlyTablesRefuseRawWrites(t *testing.T) {
 		})
 	}
 }
+
+func TestListArtifacts_AllStagesAllVersions(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: "BP1", State: "new", CreatedAt: now, UpdatedAt: now}))
+
+	for _, a := range []Artifact{
+		{BlueprintID: "BP1", Stage: "need", Body: "n1"},
+		{BlueprintID: "BP1", Stage: "intake", Body: "i1"},
+		{BlueprintID: "BP1", Stage: "intake", Body: "i2"},
+	} {
+		_, err := s.PutArtifact(ctx, a)
+		require.NoError(t, err)
+	}
+
+	got, err := s.ListArtifacts(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	assert.Equal(t, "need", got[0].Stage)
+	assert.Equal(t, 2, got[2].Version)
+}

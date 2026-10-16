@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/mhersson/contextmatrix-backendkit/webhookcore"
 	protocol "github.com/mhersson/contextmatrix-protocol"
@@ -57,13 +58,15 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	// Controller calls are several store steps (Start adds crash recovery);
 	// a client that hangs up must not cut one off midway.
 	err := s.ctl.Start(context.WithoutCancel(r.Context()), blueprint.StartInput{
-		ID:         p.SessionID,
-		Projects:   p.Architect.Projects,
-		Mode:       p.Architect.Mode,
-		CostCapUSD: p.Architect.CostCapUSD,
-		Model:      p.Model,
-		Endpoint:   *p.LLMEndpoint,
-		Price:      p.Architect.Price,
+		ID:                  p.SessionID,
+		Projects:            p.Architect.Projects,
+		Mode:                p.Architect.Mode,
+		CostCapUSD:          p.Architect.CostCapUSD,
+		Model:               p.Model,
+		Endpoint:            *p.LLMEndpoint,
+		Price:               p.Architect.Price,
+		MCPAPIKey:           p.MCPAPIKey,
+		GitCredentialsToken: p.GitCredentialsToken,
 	})
 
 	switch {
@@ -127,7 +130,18 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := s.ctl.Message(context.WithoutCancel(r.Context()), p.SessionID, p.Content, p.MessageID)
+	ctx := context.WithoutCancel(r.Context())
+
+	var err error
+
+	switch command(p.Content) {
+	case "abort":
+		err = s.ctl.Abort(ctx, p.SessionID, p.MessageID)
+	case "export":
+		err = s.ctl.Export(ctx, p.SessionID, p.MessageID)
+	default:
+		err = s.ctl.Message(ctx, p.SessionID, p.Content, p.MessageID)
+	}
 
 	switch {
 	case errors.Is(err, blueprint.ErrNotFound):
@@ -149,4 +163,17 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 // controller that is shutting down like a draining backend.
 func writeDraining(w http.ResponseWriter) {
 	webhookcore.WriteError(w, http.StatusServiceUnavailable, protocol.CodeDraining, "backend is draining")
+}
+
+// command recognises a reply that is a command rather than text for the
+// blueprint: the whole message, trimmed and lowercased, is the command word.
+func command(text string) string {
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "abort":
+		return "abort"
+	case "export":
+		return "export"
+	default:
+		return ""
+	}
 }

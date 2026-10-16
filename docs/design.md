@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slice 0 is implemented (`architect serve`, controller, store, intake stage) and slice 1 is under way; the rest is design.
+Status: agreed design, 2026-10-15. Slice 0 is implemented, and slice 1 runs intake, a pasted design, grounding, decomposition and readiness and reports in the session; emission and the dialog stages are design, and so is the export's commit to a repository; the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -117,8 +117,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   (fail-closed, no local fallback), MCP key, model and git-credentials token,
   and ignores `resume` and the worker image. It reopens the blueprint by id and
   runs no container. An end-session call detaches the client; the blueprint
-  persists. A message that arrives while no question is pending is queued as a
-  note for the next stage and logged, never dropped. Entries published before
+  persists. A message that arrives while no question is pending is logged as a
+  note, never dropped; delivering notes to the next stage arrives with the
+  dialog stages. Entries published before
   CM's consumer connects, or while it is reconnecting, are retained on the
   server and replayed to it once, ahead of live entries.
 - **A question blocks the run.** `ask_human` is an ordinary tool: its
@@ -129,15 +130,16 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
 - **A run ends on `submit_artifact`**, a terminal tool carrying the markdown
   body and the stage's structured yaml block. The controller stores the
   artifact and the full transcript.
-- **Critique loop inside a stage.** On submit, the mechanical checks run. On
-  failure the controller resumes the same conversation in process (the run's
-  messages plus the failures as a user message) for another round. When they
-  pass and the pack declares a reviewer for the stage, a reviewer run (next
-  stage's persona, no access to the builder's transcript) scores the artifact
-  1-5. Below the pack's threshold its feedback resumes the builder the same
-  way. Three rounds per attempt, then the stage stops and waits for a human
-  regardless of policy. Each round is a harness run with its own cap; the
-  ledger sums them.
+- **Critique loop inside a stage.** On submit, the mechanical checks run
+  inside the run: a failing submit is returned to the model as the tool
+  result and it submits again; the third failing submit is accepted with its
+  findings and the pipeline stops and reports. When the checks pass and the
+  pack declares a reviewer for the stage, a reviewer run (next stage's
+  persona, no access to the builder's transcript) scores the artifact 1-5.
+  Below the pack's threshold its feedback resumes the builder's conversation
+  for another round. Three reviewer rounds per attempt, then the stage stops
+  and waits for a human regardless of policy. Each reviewer round is a
+  harness run with its own cap; the ledger sums them.
 - **A gate waits between runs.** The controller holds the stage's artifact and
   asks the client. Nothing runs meanwhile.
 - **A human rejection starts a new attempt**: a fresh run with the previous
@@ -202,6 +204,7 @@ developer (DEV), reviewer (REV).
 | -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   |
 
 The embedded pack holds intake, a human-sourced design stage, grounding, decomposition and readiness; slicing, acceptance and sign-off arrive with the dialog stages.
+The design stage is human-sourced until the dialog stages arrive: the message after intake's artifact is stored as the design. The loader refuses a human-sourced first stage, a human-sourced stage with tools, checks or loops_to, and a loops_to naming a human-sourced stage.
 
 - Intake ends by stating the shape it expects (slices, projects involved) and
   the gate plan in effect, so the operator can change the overrides before
@@ -241,9 +244,9 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
 - The default pack is embedded in the binary. The `pack` config key
   (`CONTEXTMATRIX_ARCHITECT_PACK`) names a pack directory that overrides it.
   The pack name and version are logged with every run.
-- A pack with a stage that checks cards must carry `lists.yaml` and
-  `card.md`; the loader refuses it otherwise, so an override pack cannot
-  silently disable the card contract.
+- A stage that checks cards must have the code tools, and its pack must
+  carry `lists.yaml` and `card.md`; the loader refuses it otherwise, so an
+  override pack cannot silently disable the card contract.
 - No include mechanism. Each file stands alone; shared text is duplicated. If
   that hurts, build-time expansion comes later.
 - Gate and question policies come from the pack, overridable per blueprint.
@@ -413,7 +416,7 @@ starts are bounded by CM's per-card guardrails, not by the architect.
 
 | Group    | Tools                                                                                                   | Notes                                                                                                                                             |
 | -------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock at the start of grounding, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. `repo_info` returns default branch, sha, instruction file presence and the project's verify command. |
+| code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock at the start of grounding, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. `repo_info` returns the sha, instruction file presence, the project's verify command and, to the stage that fetched the tree, the default branch. |
 | research | `web_fetch`                                                                                             | Readable text, recorded as a source. A search provider is deferred.                                                                               |
 | cm       | `list_projects`, `create_card`, `create_playbook`, `add_playbook_entry`, `get_playbook`, `get_card`, `run_card`, `run_playbook` | MCP client over Streamable HTTP with the MCP key from the session's start payload and a configured caller identity (default `human:architect`). The chat backend's bridge, copied and generalised with per-server tool prefixes and an allowlist, so a second MCP server plugs in the same way. |
 | control  | `ask_human`, `submit_artifact`                                                                          | `ask_human` blocks: question, options and context in; the answer out as the tool result. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
@@ -479,20 +482,28 @@ Replies the server understands, besides answers to questions:
 | ----------------------------- | ---------------------------------------------------------------------- |
 | `approve`, `reject <feedback>` | Decides the open gate, or the proposed lesson the reply answers.        |
 | `gate <stage> human\|auto`    | Changes a gate's policy for this blueprint; offered at the gate plan.   |
-| `export`                      | Writes the markdown bundle (artifacts, decisions, questions, events, transcripts) under the server's state directory, and commits it to the repo when the project opted in. |
+| `export`                      | Writes the markdown bundle (blueprint summary, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with emission. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
 | `lessons`                     | Lists lessons and their state.                                          |
 | `abort`                       | Ends the open run; the blueprint stays and can be reopened.             |
 
 - A run does not start if it would breach the blueprint's cost cap.
 - Reopening a session makes CM send a start for it; a stage interrupted by a
-  server restart is re-run from its inputs. Completed artifacts are never
-  lost.
+  server restart is re-run from its inputs, a stage whose inputs were stored
+  but which never started runs, and a human-sourced stage that waits shows
+  its prompt again. Completed artifacts are never lost. A record the pack
+  cannot place, such as a stage the pack no longer has, is reported in the
+  session and nothing runs.
+- After a later stage fails or is aborted, the next message is logged as a
+  note and re-runs that stage; after intake fails or is aborted, the next
+  message is the need again and intake re-runs on it. A pipeline stopped by the card contract or by
+  readiness's rounds is not re-run; the user starts a new blueprint with a
+  better design.
 - A project may opt into automatic export in config: a target repo, branch and
   directory; the bundle is committed there at each gate or at sign-off. Off by
   default.
-- A message that arrives while no question or gate is open is queued as a
-  note for the next stage and logged.
+- A message that arrives while no question or gate is open is logged as a
+  note; delivering notes to the next stage arrives with the dialog stages.
 
 ## Deployment
 
@@ -506,8 +517,8 @@ Replies the server understands, besides answers to questions:
 - **Code.** The server checks out each target project's repo from the URL CM
   reports, into its own workspace cache, with credentials fetched per repo from
   CM. Nothing is checked out on a client.
-- **Container needs.** A Go binary image with no Docker socket (it spawns
-  nothing), a volume for the state directory, and outbound access to CM, the
+- **Container needs.** A Go binary image with ripgrep on the path (the
+  harness grep and glob tools exec it), no Docker socket, a volume for the state directory, and outbound access to CM, the
   LLM endpoint and the git host. Env: the CM base URL and the backend HMAC key.
 - **Client.** The panel, through CM. Local use is `architect serve` on the
   laptop pointed at a CM instance. There is no CM-less mode.
@@ -517,7 +528,7 @@ Replies the server understands, besides answers to questions:
 - Go 1.27, `contextmatrix-harness` v0.25.0 (loop, llm client, jailed read
   tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.8.0
   (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.23.0
-  for the CM-facing side, go-git for checkouts, `modernc.org/sqlite`, the Go
+  for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
   URL, backend HMAC key, listen address, state directory, pack, per-project
@@ -528,9 +539,9 @@ Replies the server understands, besides answers to questions:
   may override per persona. Priors-based selection through
   `contextmatrix-protocol`'s `selection` package comes later.
 - Cost: every run's token buckets are priced at the model price CM sends in
-  the start payload; the ledger sums runs per blueprint, the per-run cap stops
-  a run within one model call of passing it, and a capped blueprint whose
-  model has no price does not run. An unpriced model on an uncapped blueprint
+  the start payload; the ledger sums runs per blueprint. The per-run cap
+  (off at zero) stops a run within one model call of passing it, and a
+  capped blueprint whose model has no price does not run. An unpriced model on an uncapped blueprint
   counts only the cost the endpoint reports, and max_turns still bounds every
   run. CM prices only the session model, so a run on a per-persona override
   is unpriced: a capped blueprint refuses it, an uncapped one counts the
@@ -538,13 +549,14 @@ Replies the server understands, besides answers to questions:
   ledger counts it.
 - Long intake dialogs rely on the harness's in-run compaction. Whether that is
   enough is checked in slice 3.
-- State dir: `architect.db`, `workspaces/mirrors/<repo>/` and
+- State dir: `architect.db`, `exports/<blueprint>/<time>/`,
+  `workspaces/mirrors/<repo>/` and
   `workspaces/trees/<blueprint>/<project>/`, with a project's secondary
   repository beside it at `<project>@<repo>/`. A blueprint's trees are
   removed at emission and by a sweep, at startup and hourly, for blueprints
   not written for `workspace_max_age_days`; mirrors stay. Trees are written
-  from the mirror's objects; the server never runs git. All of it is a
-  disposable cache.
+  from the mirror's objects; the server never runs git. `workspaces/` is a
+  disposable cache; `exports/` is the operator's record and is never swept.
 - LLM endpoint: whatever CM provisions, OpenRouter or any OpenAI-compatible
   endpoint. Never name a gateway operator in repo artifacts.
 - Builds on macOS too: no filenames differing only by case.
@@ -562,7 +574,7 @@ internal/code        workspace checkout and repo_info
 internal/research    web_fetch
 internal/cm          MCP client (list_projects; emission arrives with the emission slice)
 internal/outcomes    outcomes stage and lessons
-internal/export      markdown rendering into the state directory and the opted-in repo
+internal/export      markdown rendering into the state directory
 internal/config
 internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; reply parsing
 ```
@@ -623,8 +635,9 @@ Ordered so a real card comes out as early as possible.
 - **Controller**: driven through its command and event interface, table-driven
   state transitions. A question test blocks a run on `ask_human`, answers
   through the interface and asserts the run continues with the answer.
-- **Critique loop**: a submit that fails a mechanical check resumes the same
-  conversation with the failures, and the cap stops it after three rounds.
+- **Critique loop**: a submit that fails a mechanical check is returned to
+  the model as the tool result, and the third failing submit is accepted,
+  stored and reported.
 - **Emission**: an in-test MCP server asserting call order, and that a re-run
   after a simulated partial failure creates nothing twice.
 - **Webhook**: an in-test CM that signs requests starts a session with a

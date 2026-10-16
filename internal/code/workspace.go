@@ -19,9 +19,11 @@ import (
 )
 
 const (
-	mirrorsDir   = "mirrors"
-	treesDir     = "trees"
-	fetchTimeout = 2 * time.Minute
+	mirrorsDir = "mirrors"
+	treesDir   = "trees"
+	// fetchTimeout bounds one fetch. The first fetch of a large repository is
+	// a full mirror clone; the caller's context still ends it earlier.
+	fetchTimeout = 10 * time.Minute
 )
 
 // Workspace is the on-disk cache: <root>/mirrors/<repoKey> holds one bare
@@ -110,7 +112,7 @@ func (w *Workspace) Checkout(ctx context.Context, blueprintID, name, repoURL str
 		return Checkout{}, fmt.Errorf("code: tree name %q is not valid", name)
 	}
 
-	repoURL = stripUserinfo(strings.TrimSpace(repoURL))
+	repoURL = CleanURL(repoURL)
 
 	key, host, path, err := repoKey(repoURL)
 	if err != nil {
@@ -422,6 +424,14 @@ func repoKey(repoURL string) (key, host, path string, err error) {
 	}
 
 	return key, host, path, nil
+}
+
+// CleanURL is the repository url as Checkout uses and reports it: trimmed,
+// with any userinfo dropped. Callers that record a repository key it on
+// this form, so a credential embedded in a project's url never reaches a
+// store row, an event or the panel.
+func CleanURL(raw string) string {
+	return stripUserinfo(strings.TrimSpace(raw))
 }
 
 // stripUserinfo drops userinfo from a url, so a credential embedded in it

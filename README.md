@@ -4,6 +4,17 @@ Turns a stated need into a blueprint of ContextMatrix cards. Runs as a third
 ContextMatrix backend next to the agent and chat backends; ContextMatrix's
 chat panel is its client. See `docs/design.md`.
 
+## What it does today
+
+A blueprint session runs intake on the first message, the need, and stores
+the next message as the design. Grounding, decomposition and readiness then
+run in turn over read-only checkouts of the target projects' repositories.
+Every decomposition submit is checked against the card contract inside the
+run, and readiness sends cards that are not ready back to decomposition for up
+to three rounds. The session ends with a report of whether the cards are
+ready, with the findings when they are not; nothing is emitted into
+ContextMatrix yet.
+
 ## Run
 
 ```bash
@@ -28,6 +39,15 @@ secondary repository sits beside it at `trees/<blueprint>/<project>@<repo>`.
 Trees not written for `workspace_max_age_days` are swept at startup and hourly;
 mirrors stay.
 
+## Export
+
+Reply `export` in the chat panel to write the blueprint's record as markdown
+under `<state_dir>/exports/<blueprint>/<time>`: a summary with the runs and
+their cost, every artifact version, the questions and answers, the sources,
+the event log and the run transcripts. It reads the store, which holds
+records with the session's secrets already masked, so a running stage is not
+disturbed. Committing the bundle to a repository is not built yet.
+
 ## Cost caps
 
 CM sends the session model's price with every blueprint start, resolved from
@@ -39,6 +59,8 @@ runs and counts only the endpoint's reported cost (`max_turns` still bounds
 every run), a capped one refuses to run until a priced model is chosen or a
 new blueprint is started without a cap. A per-persona override in `models`
 names a model CM did not price, so its runs are unpriced the same way.
+`max_run_cost_usd: 0` disables the per-run cap; `max_turns` still bounds every
+run, and a blueprint's own cap still applies.
 
 ## Docker
 
@@ -54,3 +76,6 @@ The state volume must be writable by uid 65532 (the distroless `nonroot` user).
 A fresh named volume inherits that ownership from the image; a bind mount must
 be chowned by hand. The mounted `config.yaml` must be readable by uid 65532.
 `config.yaml.example` documents every key.
+
+The image ships ripgrep for the read tools; a local run needs `rg` on the path
+for grep and glob.

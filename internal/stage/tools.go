@@ -81,7 +81,9 @@ func (t askHumanTool) Execute(ctx context.Context, args map[string]any) (tools.R
 	return tools.Result{Text: answer}, nil
 }
 
-type submitArtifactTool struct{}
+type submitArtifactTool struct {
+	validate func(Artifact) error
+}
 
 func (submitArtifactTool) Name() string   { return "submit_artifact" }
 func (submitArtifactTool) Terminal() bool { return true }
@@ -101,17 +103,28 @@ func (submitArtifactTool) Schema() llm.Tool {
 	}}
 }
 
-// Execute validates what the runner decodes into an Artifact: a refusal here
-// is a tool error the model can correct, while a decode failure after the
-// terminal call would fail the stage.
-func (submitArtifactTool) Execute(_ context.Context, args map[string]any) (tools.Result, error) {
-	if strings.TrimSpace(stringArg(args, "body")) == "" {
+// Execute validates the submit: shape first, then the stage's validator. A
+// refusal is a tool error the model can correct within the same run, while a
+// decode failure after the terminal call would fail the stage.
+func (t submitArtifactTool) Execute(_ context.Context, args map[string]any) (tools.Result, error) {
+	art := Artifact{Body: stringArg(args, "body")}
+
+	if strings.TrimSpace(art.Body) == "" {
 		return tools.Result{}, errors.New("submit_artifact: body is required")
 	}
 
 	if data, ok := args["data"]; ok && data != nil {
-		if _, isObject := data.(map[string]any); !isObject {
+		obj, isObject := data.(map[string]any)
+		if !isObject {
 			return tools.Result{}, errors.New("submit_artifact: data must be a JSON object")
+		}
+
+		art.Data = obj
+	}
+
+	if t.validate != nil {
+		if err := t.validate(art); err != nil {
+			return tools.Result{}, fmt.Errorf("submit_artifact rejected: %w", err)
 		}
 	}
 

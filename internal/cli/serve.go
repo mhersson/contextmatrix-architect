@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mhersson/contextmatrix-architect/internal/blueprint"
+	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/code"
 	"github.com/mhersson/contextmatrix-architect/internal/config"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
@@ -91,6 +92,10 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 
 	hub := logbridge.NewHub(func(e protocol.LogEntry) string { return e.SessionID }, nil)
 
+	// One instance: its per-repository and per-blueprint locks only hold
+	// within it, so the code stages and the sweep share it.
+	workspace := code.NewWorkspace(filepath.Join(cfg.StateDir, "workspaces"), time.Now)
+
 	ctl := blueprint.New(blueprint.Options{
 		Store:         st,
 		Pack:          pk,
@@ -101,10 +106,15 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 		Models:        cfg.Models,
 		Sink:          eventSink(hub),
 		HarnessLine:   harnessForwarder(hub),
+		Workspace:     workspace,
+		ExportDir:     filepath.Join(cfg.StateDir, "exports"),
+		Projects:      cmProjects(cfg.ContextMatrixURL),
+		Credentials: func(gitToken string) code.Credentials {
+			return code.NewCMCredentials(cfg.ContextMatrixURL, gitToken)
+		},
 	})
 
 	// Removes trees not written for workspace_max_age_days, at startup and hourly.
-	workspace := code.NewWorkspace(filepath.Join(cfg.StateDir, "workspaces"), time.Now)
 
 	sweepCtx, stopSweep := context.WithCancel(context.Background())
 
@@ -149,6 +159,21 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 	return srv, cleanup, nil
 }
 
+// cmProjects lists CM's projects over one MCP session per call, keyed with
+// the session's MCP key.
+func cmProjects(baseURL string) func(ctx context.Context, mcpAPIKey string) ([]cm.Project, error) {
+	return func(ctx context.Context, mcpAPIKey string) ([]cm.Project, error) {
+		client, err := cm.Connect(ctx, baseURL, mcpAPIKey)
+		if err != nil {
+			return nil, err
+		}
+
+		defer func() { _ = client.Close() }()
+
+		return client.ListProjects(ctx)
+	}
+}
+
 func runServe(ctx context.Context, cfg *config.Config) error {
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
@@ -170,6 +195,7 @@ func runServe(ctx context.Context, cfg *config.Config) error {
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           srv.Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	httpServer.RegisterOnShutdown(srv.CloseSSE)
 
@@ -198,6 +224,9 @@ func runServe(ctx context.Context, cfg *config.Config) error {
 	defer cancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		// Lingering connections must not hold the process.
+		_ = httpServer.Close()
+
 		return fmt.Errorf("shutdown: %w", err)
 	}
 

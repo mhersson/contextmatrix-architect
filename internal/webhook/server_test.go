@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,13 +27,17 @@ import (
 const testKey = "test-secret-key-0123456789abcdef"
 
 type stubController struct {
-	mu       sync.Mutex
-	starts   []blueprint.StartInput
-	messages []string
-	ends     []string
-	startErr error
-	msgErr   error
-	endErr   error
+	mu        sync.Mutex
+	starts    []blueprint.StartInput
+	messages  []string
+	aborts    []string
+	exports   []string
+	ends      []string
+	startErr  error
+	msgErr    error
+	endErr    error
+	abortErr  error
+	exportErr error
 	// ctxErrs is the context's error as each call saw it, in call order.
 	ctxErrs []error
 }
@@ -54,6 +60,26 @@ func (s *stubController) Message(ctx context.Context, id, text, msgID string) er
 	s.ctxErrs = append(s.ctxErrs, ctx.Err())
 
 	return s.msgErr
+}
+
+func (s *stubController) Abort(ctx context.Context, id, msgID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.aborts = append(s.aborts, id+"|"+msgID)
+	s.ctxErrs = append(s.ctxErrs, ctx.Err())
+
+	return s.abortErr
+}
+
+func (s *stubController) Export(ctx context.Context, id, msgID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.exports = append(s.exports, id+"|"+msgID)
+	s.ctxErrs = append(s.ctxErrs, ctx.Err())
+
+	return s.exportErr
 }
 
 func (s *stubController) End(ctx context.Context, id string) error {
@@ -147,6 +173,8 @@ func TestStart_HappyPath(t *testing.T) {
 	assert.InDelta(t, 2.0, in.CostCapUSD, 1e-9)
 	assert.Equal(t, "anthropic/claude-sonnet-4", in.Model)
 	assert.Equal(t, "sk-or-key", in.Endpoint.APIKey)
+	assert.Equal(t, "mcp-key", in.MCPAPIKey, "code stages list projects with the session's MCP key")
+	assert.Equal(t, "01HZZ.mac", in.GitCredentialsToken, "and fetch git credentials with its token")
 	require.NotNil(t, in.Price)
 	assert.InDelta(t, 3.0, in.Price.PromptUSDPerMTok, 1e-9)
 }
@@ -373,4 +401,104 @@ func TestHealthAndReadyz(t *testing.T) {
 
 	w = do(srv, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestMessage_CommandsAreRouted(t *testing.T) {
+	tests := []struct {
+		text         string
+		wantAborts   int
+		wantExports  int
+		wantMessages int
+	}{
+		{text: "abort", wantAborts: 1},
+		{text: "  Export ", wantExports: 1},
+		{text: "please abort this", wantMessages: 1},
+		{text: "the design", wantMessages: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.text, func(t *testing.T) {
+			ctl := &stubController{}
+			srv, _ := newTestServer(t, ctl)
+
+			rec := httptest.NewRecorder()
+			srv.Routes().ServeHTTP(rec, signed(t, http.MethodPost, "/message",
+				protocol.MessagePayload{SessionID: "BP1", Content: tt.text, MessageID: "m-" + strings.TrimSpace(tt.text)}, nextTS()))
+			require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+			assert.Len(t, ctl.aborts, tt.wantAborts)
+			assert.Len(t, ctl.exports, tt.wantExports)
+			assert.Len(t, ctl.messages, tt.wantMessages)
+		})
+	}
+}
+
+func TestStart_RefusedWhileDraining(t *testing.T) {
+	ctl := &stubController{}
+	hub := logbridge.NewHub(func(e protocol.LogEntry) string { return e.SessionID }, nil)
+
+	var draining atomic.Bool
+	draining.Store(true)
+
+	srv := NewServer(Config{APIKey: testKey, Hub: hub, Controller: ctl, Draining: &draining, Logger: slog.New(slog.DiscardHandler)})
+
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, signed(t, http.MethodPost, "/chat/start", validStart(), nextTS()))
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	assert.Empty(t, ctl.starts)
+}
+
+func TestMessage_FailedDeliveryIsNotDeduplicated(t *testing.T) {
+	ctl := &stubController{msgErr: errors.New("boom")}
+	srv, _ := newTestServer(t, ctl)
+
+	payload := protocol.MessagePayload{SessionID: "BP1", Content: "hello", MessageID: "m-same"}
+
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, signed(t, http.MethodPost, "/message", payload, nextTS()))
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+
+	ctl.mu.Lock()
+	ctl.msgErr = nil
+	ctl.mu.Unlock()
+
+	rec = httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, signed(t, http.MethodPost, "/message", payload, nextTS()))
+	assert.Equal(t, http.StatusAccepted, rec.Code, "a rolled-back id is delivered on retry")
+	assert.Len(t, ctl.messages, 2)
+}
+
+func TestCommand_FailedDeliveryIsNotDeduplicated(t *testing.T) {
+	tests := []struct {
+		text string
+		fail func(*stubController)
+		heal func(*stubController)
+		got  func(*stubController) int
+	}{
+		{"abort", func(c *stubController) { c.abortErr = errors.New("boom") }, func(c *stubController) { c.abortErr = nil }, func(c *stubController) int { return len(c.aborts) }},
+		{"export", func(c *stubController) { c.exportErr = errors.New("boom") }, func(c *stubController) { c.exportErr = nil }, func(c *stubController) int { return len(c.exports) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.text, func(t *testing.T) {
+			ctl := &stubController{}
+			tt.fail(ctl)
+
+			srv, _ := newTestServer(t, ctl)
+			payload := protocol.MessagePayload{SessionID: "BP1", Content: tt.text, MessageID: "m-same"}
+
+			rec := httptest.NewRecorder()
+			srv.Routes().ServeHTTP(rec, signed(t, http.MethodPost, "/message", payload, nextTS()))
+			require.Equal(t, http.StatusInternalServerError, rec.Code)
+
+			ctl.mu.Lock()
+			tt.heal(ctl)
+			ctl.mu.Unlock()
+
+			rec = httptest.NewRecorder()
+			srv.Routes().ServeHTTP(rec, signed(t, http.MethodPost, "/message", payload, nextTS()))
+			assert.Equal(t, http.StatusAccepted, rec.Code, "a rolled-back id is delivered on retry")
+			assert.Equal(t, 2, tt.got(ctl))
+		})
+	}
 }

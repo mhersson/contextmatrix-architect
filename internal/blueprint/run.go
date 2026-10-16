@@ -6,11 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/mhersson/contextmatrix-harness/harness"
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
+	"github.com/mhersson/contextmatrix-architect/internal/contract"
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
@@ -47,17 +51,28 @@ func usageOf(p *protocol.ModelPrice, res harness.Result) store.RunUsage {
 	return u
 }
 
-// launch runs a stage in the background on the run slot r, which the caller
-// holds; the slot is released when the run has recorded its end.
-func (c *Controller) launch(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID, task string) {
+// launch runs stageID and whatever follows it on the run slot r, which the
+// caller holds. The chain stops at a run that did not complete, a stage that
+// waits for the user, the pipeline's end, or a cancel between stages; the
+// slot is released then.
+func (c *Controller) launch(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string) {
 	go func() {
 		defer c.release(bp.ID, r)
 
-		c.runStage(ctx, r, sess, bp, stageID, task)
+		for stageID != "" && ctx.Err() == nil {
+			if !c.runStage(ctx, r, sess, bp, stageID) {
+				return
+			}
+
+			// What follows is decided and recorded even when a cancel
+			// landed as the stage completed; the loop then stops.
+			stageID = c.advance(context.WithoutCancel(ctx), sess, bp, stageID)
+		}
 	}()
 }
 
-func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID, task string) {
+// runStage runs one stage and reports whether it completed with an artifact.
+func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string) bool {
 	bg := context.Background()
 	id := bp.ID
 	au := sess.audit
@@ -66,21 +81,21 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	if !ok {
 		c.fail(bg, au, id, 0, fmt.Sprintf("unknown stage %q", stageID))
 
-		return
+		return false
 	}
 
 	m := c.modelFor(sess, st.Persona)
 
 	runCap, ok := c.capAllows(bg, au, bp, stageID, m, nil)
 	if !ok {
-		return
+		return false
 	}
 
 	attempt, err := c.nextAttempt(bg, id, stageID)
 	if err != nil {
 		c.fail(bg, au, id, 0, err.Error())
 
-		return
+		return false
 	}
 
 	runID, err := c.opts.Store.StartRun(bg, store.Run{
@@ -90,7 +105,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	if err != nil {
 		c.fail(bg, au, id, 0, "start run failed: "+err.Error())
 
-		return
+		return false
 	}
 
 	c.setState(bg, id, StateRunning)
@@ -98,6 +113,31 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		"stage": stageID, "persona": st.Persona, "attempt": attempt, "model": m.name,
 		"pack": c.opts.Pack.Name, "pack_version": c.opts.Pack.Version,
 	}})
+
+	// The input is built inside the run: a failed checkout is a failed run
+	// the next message retries, and abort, End and Shutdown cancel a fetch.
+	in, checked, err := c.stageInput(ctx, sess, bp, st)
+	if err != nil {
+		switch {
+		case c.shuttingDown(r):
+			// Crash-equivalent, as below: the next Start re-runs the stage.
+		case ctx.Err() != nil:
+			c.endRun(bg, runID, store.RunCanceled, "canceled", store.RunUsage{})
+			c.setState(bg, id, StateIdle)
+			au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
+				"stage": stageID, "status": store.RunCanceled, "cost_usd": 0.0, "priced": m.price != nil,
+			}})
+		default:
+			c.opts.Logger.Error("blueprint: prepare stage", "blueprint", id, "run", runID, "stage", stageID, "error", au.text(err.Error()))
+			c.endRun(bg, runID, store.RunFailed, "prepare", store.RunUsage{})
+			c.setState(bg, id, StateFailed)
+			au.event(bg, Event{Kind: EventError, BlueprintID: id, RunID: runID, Payload: map[string]any{
+				"stage": stageID, "reason": "prepare", "message": err.Error(),
+			}})
+		}
+
+		return false
+	}
 
 	// runCtx is cancelled with errCostCap by the sink when the priced usage
 	// passes the run cap; the harness's own cap only sees the wire cost.
@@ -109,25 +149,21 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		price: m.price, capUSD: runCap, stop: stop,
 	}
 
-	out, runErr := c.opts.Runner.Run(runCtx, stage.Input{
-		Stage:        stageID,
-		Persona:      c.opts.Pack.Persona(st.Persona),
-		Instructions: c.opts.Pack.Instructions(stageID),
-		Task:         task,
-		Model:        m.name,
-		Endpoint:     sess.endpoint,
-		MaxCostUSD:   runCap,
-		MaxTurns:     c.opts.MaxTurns,
-		Asker:        &asker{c: c, id: id, runID: runID, run: r, audit: au},
-		Events:       sink,
-		Secrets:      []string{sess.endpoint.APIKey},
-	})
+	in.Model = m.name
+	in.Endpoint = sess.endpoint
+	in.MaxCostUSD = runCap
+	in.MaxTurns = c.opts.MaxTurns
+	in.Asker = &asker{c: c, id: id, runID: runID, run: r, audit: au}
+	in.Events = sink
+	in.Secrets = sess.secrets()
+
+	out, runErr := c.opts.Runner.Run(runCtx, in)
 
 	// A run Shutdown cut short is crash-equivalent: no result writes, so
 	// recovery re-runs the stage on the next Start. A completed run still
 	// writes; Shutdown waits for it, so the store is open.
 	if runErr != nil && c.shuttingDown(r) {
-		return
+		return false
 	}
 
 	if len(out.Result.Messages) > 0 {
@@ -141,23 +177,43 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	switch {
 	case runErr == nil:
+		// Cards accepted on the last contract round carry their findings, and
+		// the stopped flag ends the pipeline at this stage. On a checked stage
+		// both keys are the controller's, whatever the model put there.
+		var findings []string
+
+		if checked != nil {
+			findings = checked.last()
+
+			data := maps.Clone(out.Artifact.Data)
+			if data == nil {
+				data = map[string]any{}
+			}
+
+			data["stopped"] = len(findings) > 0
+			data["findings"] = findings
+			out.Artifact.Data = data
+		}
+
 		// A submitted artifact is kept even when a cancel raced it.
 		version, err := au.artifact(bg, id, stageID, out.Artifact.Body, out.Artifact.Data)
 		if err != nil {
 			c.endRun(bg, runID, store.RunFailed, "store artifact failed", usage)
 			c.fail(bg, au, id, runID, err.Error())
 
-			return
+			return false
 		}
 
 		c.endRun(bg, runID, store.RunDone, out.Result.Reason, usage)
 		c.setState(bg, id, StateIdle)
 		au.event(bg, Event{Kind: EventArtifact, BlueprintID: id, RunID: runID, Payload: map[string]any{
-			"stage": stageID, "version": version, "body": out.Artifact.Body, "data": out.Artifact.Data,
+			"stage": stageID, "version": version, "body": out.Artifact.Body, "data": out.Artifact.Data, "findings": findings,
 		}})
 		au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
 			"stage": stageID, "status": store.RunDone, "cost_usd": usage.CostUSD, "priced": isPriced,
 		}})
+
+		return true
 	case errors.Is(context.Cause(runCtx), errCostCap) || out.Result.Reason == "max_cost":
 		// The sink's stop and the harness's own cap on the reported cost are
 		// one condition: the run cap was reached.
@@ -188,6 +244,47 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			"stage": stageID, "reason": reason, "message": runErr.Error(),
 		}})
 	}
+
+	return false
+}
+
+// stageInput builds what a run of st is given besides its model and limits:
+// the persona, the instructions, the task from the artifacts it consumes,
+// the code tools over the blueprint's checkouts, and the card contract on
+// submit with the card template. The validator state is nil unless the
+// stage checks cards.
+func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blueprint, st pack.Stage) (stage.Input, *validatorState, error) {
+	task, err := c.taskFor(context.WithoutCancel(ctx), bp, st)
+	if err != nil {
+		return stage.Input{}, nil, err
+	}
+
+	in := stage.Input{
+		Stage: st.ID, Persona: c.opts.Pack.Persona(st.Persona),
+		Instructions: c.opts.Pack.Instructions(st.ID), Task: task,
+	}
+
+	var projects map[string]contract.Project
+
+	if slices.Contains(st.Tools, pack.ToolCode) {
+		facts, err := c.prepareCode(ctx, sess, bp, st.ID)
+		if err != nil {
+			return stage.Input{}, nil, err
+		}
+
+		in.Tools = stage.CodeTools(facts.root, facts.repos)
+		in.Task = checkoutLines(facts) + in.Task
+		projects = facts.projects
+	}
+
+	var checked *validatorState
+
+	if slices.Contains(st.Checks, pack.CheckCards) {
+		in.Validate, checked = c.cardsValidator(projects)
+		in.Instructions += "\n\n# Card template\n\n" + c.opts.Pack.CardTemplate()
+	}
+
+	return in, checked, nil
 }
 
 // nextAttempt numbers a new run of stageID after every earlier one.
