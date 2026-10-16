@@ -88,7 +88,6 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 	}
 
 	hub := logbridge.NewHub(func(e protocol.LogEntry) string { return e.SessionID }, nil)
-	bridge := logbridge.NewBridge(logbridge.BridgeConfig{Hub: hub, SurfaceRunState: true})
 
 	ctl := blueprint.New(blueprint.Options{
 		Store:         st,
@@ -98,18 +97,12 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 		MaxRunCostUSD: cfg.MaxRunCostUSD,
 		MaxTurns:      cfg.MaxTurns,
 		Models:        cfg.Models,
-		Sink: func(e blueprint.Event) {
-			if entry, ok := logEntryFor(e); ok {
-				hub.Publish(entry)
-			}
-		},
-		HarnessLine: func(id string, line []byte) {
-			bridge.BridgeLine(logbridge.Key{SessionID: id}, line, false)
-		},
+		Sink:          eventSink(hub),
+		HarnessLine:   harnessForwarder(hub),
 	})
 
-	// Never set yet: the drain gate matters once a run can outlive a shutdown
-	// window, which a later slice handles by waiting on every attached blueprint.
+	// Never set: the controller's Shutdown refuses new starts and runs itself,
+	// so the drain gate is wired but stays open.
 	var draining atomic.Bool
 
 	replay := webhookcore.NewReplayCache(cfg.ReplaySkew, cfg.ReplayCacheSize)

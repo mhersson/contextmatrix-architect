@@ -62,7 +62,9 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = str(p["body"])
 	case blueprint.EventStageEnded:
 		entry.Type = "system"
-		entry.Content = fmt.Sprintf("Stage %s %s (cost %.2f USD).", str(p["stage"]), str(p["status"]), num(p["cost_usd"]))
+		// The harness cannot tell a zero cost from an endpoint that reports
+		// none, so the figure is labelled as reported, not measured.
+		entry.Content = fmt.Sprintf("Stage %s %s (reported cost %.2f USD).", str(p["stage"]), str(p["status"]), num(p["cost_usd"]))
 	case blueprint.EventNote:
 		entry.Type = "system"
 		entry.Content = "Message recorded in the audit log. It is not delivered to a stage and starts none."

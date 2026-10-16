@@ -24,7 +24,12 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 )
 
-const e2eKey = "end-to-end-key-0123456789abcdef0"
+const (
+	e2eKey = "end-to-end-key-0123456789abcdef0"
+	// e2eLLMKey is the session's LLM API key. The fake model writes it into
+	// the artifact, so only the architect's masking keeps it off the panel.
+	e2eLLMKey = "sk-or-0123456789"
+)
 
 // fakeLLM answers the intake with one submit_artifact call.
 type fakeLLM struct{ calls int }
@@ -42,7 +47,7 @@ func (f *fakeLLM) respond() llm.Response {
 
 	return llm.Response{FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{{
 		ID: "c1", Type: "function",
-		Function: llm.FunctionCall{Name: "submit_artifact", Arguments: `{"body":"# Need\n\nRun alpha on Kubernetes.","data":{"slices":1}}`},
+		Function: llm.FunctionCall{Name: "submit_artifact", Arguments: `{"body":"# Need\n\nRun alpha on Kubernetes with ` + e2eLLMKey + `.","data":{"slices":1}}`},
 	}}}
 }
 
@@ -88,8 +93,12 @@ func TestServe_EndToEnd(t *testing.T) {
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
 
-	// Subscribe to the session's log stream before anything happens.
-	logsReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/logs?session_id=S1", nil)
+	// Subscribe to the session's log stream before anything happens. The
+	// deadline ends a read that would otherwise block forever.
+	logsCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+
+	logsReq, err := http.NewRequestWithContext(logsCtx, http.MethodGet, ts.URL+"/logs?session_id=S1", nil)
 	require.NoError(t, err)
 	sign(t, logsReq, nil)
 
@@ -106,7 +115,7 @@ func TestServe_EndToEnd(t *testing.T) {
 	// Start the blueprint session the way CM does.
 	resp := post(t, ts.Client(), ts.URL+"/chat/start", protocol.ChatStartPayload{
 		SessionID: "S1", Model: "test/model", MCPAPIKey: "mcp", GitCredentialsToken: "S1.mac",
-		LLMEndpoint: &protocol.LLMEndpoint{Type: "openrouter", APIKey: "sk-or-0123456789"},
+		LLMEndpoint: &protocol.LLMEndpoint{Type: "openrouter", APIKey: e2eLLMKey},
 		Architect:   &protocol.ArchitectStart{Projects: []string{"alpha"}, Mode: "default"},
 	})
 	require.Equal(t, http.StatusAccepted, resp.StatusCode)
@@ -115,23 +124,16 @@ func TestServe_EndToEnd(t *testing.T) {
 	resp = post(t, ts.Client(), ts.URL+"/message", protocol.MessagePayload{SessionID: "S1", Content: "run alpha on kubernetes", MessageID: "m1"})
 	require.Equal(t, http.StatusAccepted, resp.StatusCode)
 
-	// Collect entries until the artifact arrives.
-	deadline := time.After(10 * time.Second)
-
+	// Collect entries until the artifact arrives and the indicator is idle.
 	var (
 		types       []string
 		sawArtifact bool
+		idle        bool
 	)
 
-	for !sawArtifact {
-		select {
-		case <-deadline:
-			t.Fatalf("no artifact entry; saw %v", types)
-		default:
-		}
-
+	for !idle {
 		line, err := reader.ReadString('\n')
-		require.NoError(t, err)
+		require.NoError(t, err, "stream ended; saw %v", types)
 
 		if !strings.HasPrefix(line, "data: ") {
 			continue
@@ -145,7 +147,9 @@ func TestServe_EndToEnd(t *testing.T) {
 			sawArtifact = true
 		}
 
-		assert.NotContains(t, entry.Content, "sk-or-0123456789", "the API key never reaches the panel")
+		idle = sawArtifact && entry.Type == "status" && entry.Content == "idle"
+
+		assert.NotContains(t, entry.Content, e2eLLMKey, "the API key never reaches the panel")
 	}
 
 	assert.Contains(t, types, "system", "stage boundaries are system entries")
