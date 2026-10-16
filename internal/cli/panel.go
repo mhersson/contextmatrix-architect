@@ -10,12 +10,19 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/blueprint"
 )
 
-// eventSink renders each controller event onto the hub. An event after which
-// nothing runs until the user replies is followed by an idle status frame:
-// CM clears its working indicator only on that frame. Status frames are
-// published, never stored.
+// eventSink renders each controller event onto the hub. The blueprint's key
+// is retained from its first event, so entries published during /chat/start,
+// before CM connects to /logs, and during a consumer reconnect reach the
+// panel when the consumer arrives. An ended session releases the backlog.
+// An event after which nothing runs until the user replies is followed by an
+// idle status frame: CM clears its working indicator only on that frame.
+// Status frames are published, never stored.
 func eventSink(hub *logbridge.Hub) func(blueprint.Event) {
 	return func(e blueprint.Event) {
+		if e.Kind == blueprint.EventCreated || e.Kind == blueprint.EventReopened {
+			hub.Retain(e.BlueprintID)
+		}
+
 		if entry, ok := logEntryFor(e); ok {
 			hub.Publish(entry)
 		}
@@ -27,6 +34,10 @@ func eventSink(hub *logbridge.Hub) func(blueprint.Event) {
 			}
 
 			hub.Publish(protocol.LogEntry{Timestamp: ts, SessionID: e.BlueprintID, Type: "status", Content: "idle"})
+		}
+
+		if e.Kind == blueprint.EventEnded {
+			hub.Release(e.BlueprintID)
 		}
 	}
 }

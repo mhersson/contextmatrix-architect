@@ -2,11 +2,13 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
 
+	protocol "github.com/mhersson/contextmatrix-protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,6 +50,165 @@ func TestBlueprintRoundTrip(t *testing.T) {
 	require.Error(t, s.CreateBlueprint(ctx, bp), "duplicate id must fail")
 }
 
+func TestBlueprintPriceRoundTrip(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	price := &protocol.ModelPrice{PromptUSDPerMTok: 3, CompletionUSDPerMTok: 15, CacheReadUSDPerMTok: 0.3, CacheWriteUSDPerMTok: 3.75}
+
+	require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: "priced", State: "new", Price: price, CreatedAt: now, UpdatedAt: now}))
+	require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: "unpriced", State: "new", CreatedAt: now, UpdatedAt: now}))
+
+	got, err := s.GetBlueprint(ctx, "priced")
+	require.NoError(t, err)
+	require.NotNil(t, got.Price)
+	assert.Equal(t, *price, *got.Price)
+
+	got, err = s.GetBlueprint(ctx, "unpriced")
+	require.NoError(t, err)
+	assert.Nil(t, got.Price)
+}
+
+func TestRunUsageRoundTrip(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: "BP1", State: "new", CreatedAt: now, UpdatedAt: now}))
+
+	id, err := s.StartRun(ctx, Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: RunRunning, Model: "m", StartedAt: now})
+	require.NoError(t, err)
+
+	usage := RunUsage{PromptTokens: 1000, CompletionTokens: 200, CacheReadTokens: 300, CacheWriteTokens: 50, CostUSD: 0.0123}
+	require.NoError(t, s.EndRun(ctx, id, RunDone, "done", usage, now))
+
+	runs, err := s.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, usage, runs[0].Usage)
+
+	cost, err := s.BlueprintCost(ctx, "BP1")
+	require.NoError(t, err)
+	assert.InDelta(t, 0.0123, cost, 1e-9)
+}
+
+func TestSourcesNumberPerBlueprint(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	for _, id := range []string{"BP1", "BP2"} {
+		require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: id, State: "new", CreatedAt: now, UpdatedAt: now}))
+	}
+
+	first, err := s.AddSource(ctx, Source{BlueprintID: "BP1", Kind: "repo", Identity: "https://example.com/alpha.git", Version: "abc", FetchedAt: now, FirstUsedBy: "grounding"})
+	require.NoError(t, err)
+	second, err := s.AddSource(ctx, Source{BlueprintID: "BP1", Kind: "repo", Identity: "https://example.com/beta.git", Version: "def", FetchedAt: now, FirstUsedBy: "grounding"})
+	require.NoError(t, err)
+	other, err := s.AddSource(ctx, Source{BlueprintID: "BP2", Kind: "url", Identity: "https://example.com/doc", FetchedAt: now})
+	require.NoError(t, err)
+
+	assert.Equal(t, "S1", first.Tag())
+	assert.Equal(t, "S2", second.Tag())
+	assert.Equal(t, "S1", other.Tag(), "numbers restart per blueprint")
+
+	got, err := s.ListSources(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, "abc", got[0].Version)
+	assert.Equal(t, now, got[0].FetchedAt)
+}
+
+func TestOpen_MigratesV1(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "architect.db")
+
+	// A v1 file: the slice 0 tables without the price and token columns.
+	db, err := sql.Open("sqlite", "file:"+path)
+	require.NoError(t, err)
+
+	for _, stmt := range []string{
+		`CREATE TABLE blueprints (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', projects TEXT NOT NULL DEFAULT '[]',
+			mode TEXT NOT NULL DEFAULT '', cost_cap_usd REAL NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '',
+			state TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+		`CREATE TABLE stage_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, blueprint_id TEXT NOT NULL, stage TEXT NOT NULL,
+			attempt INTEGER NOT NULL, round INTEGER NOT NULL, status TEXT NOT NULL, model TEXT NOT NULL DEFAULT '',
+			started_at INTEGER NOT NULL, ended_at INTEGER, cost_usd REAL NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '')`,
+		`INSERT INTO blueprints (id, state, created_at, updated_at) VALUES ('old', 'idle', 1, 1)`,
+		`PRAGMA user_version = 1`,
+	} {
+		_, err := db.Exec(stmt)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, db.Close())
+
+	s, err := Open(context.Background(), path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	got, err := s.GetBlueprint(context.Background(), "old")
+	require.NoError(t, err)
+	assert.Nil(t, got.Price)
+
+	var version int
+	require.NoError(t, s.db.QueryRow("PRAGMA user_version").Scan(&version))
+	assert.Equal(t, 2, version)
+
+	// Every ALTER landed: usage written to the migrated table reads back.
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	id, err := s.StartRun(ctx, Run{BlueprintID: "old", Stage: "intake", Attempt: 1, Round: 1, Status: RunRunning, StartedAt: now})
+	require.NoError(t, err)
+
+	usage := RunUsage{PromptTokens: 1, CompletionTokens: 2, CacheReadTokens: 3, CacheWriteTokens: 4, CostUSD: 0.5}
+	require.NoError(t, s.EndRun(ctx, id, RunDone, "done", usage, now))
+
+	runs, err := s.ListRuns(ctx, "old")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, usage, runs[0].Usage)
+}
+
+func TestOpen_FailedMigrationLeavesV1(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "architect.db")
+
+	// stage_runs already has one of the new columns, so a later ALTER fails
+	// after the blueprints ALTER succeeded.
+	db, err := sql.Open("sqlite", "file:"+path)
+	require.NoError(t, err)
+
+	for _, stmt := range []string{
+		`CREATE TABLE blueprints (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', projects TEXT NOT NULL DEFAULT '[]',
+			mode TEXT NOT NULL DEFAULT '', cost_cap_usd REAL NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '',
+			state TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+		`CREATE TABLE stage_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, blueprint_id TEXT NOT NULL, stage TEXT NOT NULL,
+			attempt INTEGER NOT NULL, round INTEGER NOT NULL, status TEXT NOT NULL, model TEXT NOT NULL DEFAULT '',
+			started_at INTEGER NOT NULL, ended_at INTEGER, cost_usd REAL NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '',
+			prompt_tokens INTEGER NOT NULL DEFAULT 0)`,
+		`PRAGMA user_version = 1`,
+	} {
+		_, err := db.Exec(stmt)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, db.Close())
+
+	_, err = Open(context.Background(), path)
+	require.Error(t, err)
+
+	db, err = sql.Open("sqlite", "file:"+path)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	var version int
+	require.NoError(t, db.QueryRow("PRAGMA user_version").Scan(&version))
+	assert.Equal(t, 1, version)
+
+	var n int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('blueprints') WHERE name = 'price'`).Scan(&n))
+	assert.Zero(t, n, "the blueprints ALTER was rolled back")
+}
+
 func TestRunsAndCost(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
@@ -61,8 +222,8 @@ func TestRunsAndCost(t *testing.T) {
 	assert.NotEqual(t, id1, id2)
 
 	ended := now.Add(time.Minute)
-	require.NoError(t, s.EndRun(ctx, id1, RunDone, "done", 0.25, ended))
-	require.NoError(t, s.EndRun(ctx, id2, RunFailed, "max_cost", 1.5, ended))
+	require.NoError(t, s.EndRun(ctx, id1, RunDone, "done", RunUsage{CostUSD: 0.25}, ended))
+	require.NoError(t, s.EndRun(ctx, id2, RunFailed, "max_cost", RunUsage{CostUSD: 1.5}, ended))
 
 	runs, err := s.ListRuns(ctx, "BP1")
 	require.NoError(t, err)

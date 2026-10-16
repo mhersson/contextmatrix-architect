@@ -12,5 +12,5 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /architect /architect
 COPY --from=build --chown=65532:65532 /state /var/lib/contextmatrix-architect
 VOLUME ["/var/lib/contextmatrix-architect"]
-EXPOSE 9094
+EXPOSE 9095
 ENTRYPOINT ["/architect", "serve", "--config", "/etc/contextmatrix-architect/config.yaml"]

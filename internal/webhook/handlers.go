@@ -63,6 +63,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		CostCapUSD: p.Architect.CostCapUSD,
 		Model:      p.Model,
 		Endpoint:   *p.LLMEndpoint,
+		Price:      p.Architect.Price,
 	})
 
 	switch {

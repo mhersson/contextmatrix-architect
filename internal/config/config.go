@@ -33,9 +33,13 @@ type Config struct {
 	// Models overrides the model per persona; the session's model is the
 	// default for every persona not listed.
 	Models map[string]string
-	// MaxRunCostUSD is the harness per-run cap.
+	// MaxRunCostUSD caps each stage run: the harness stops at the endpoint's
+	// reported cost, the controller at the run's priced usage.
 	MaxRunCostUSD float64
 	MaxTurns      int
+	// WorkspaceMaxAgeDays is how long a blueprint's code trees are kept
+	// after they were last written.
+	WorkspaceMaxAgeDays int
 
 	ReplaySkew            time.Duration
 	ReplayCacheSize       int
@@ -59,20 +63,22 @@ type raw struct {
 	ReplayCacheSize        int               `koanf:"webhook_replay_cache_size"`
 	MessageDedupTTLSeconds int               `koanf:"message_dedup_ttl_seconds"`
 	MessageDedupCacheSize  int               `koanf:"message_dedup_cache_size"`
+	WorkspaceMaxAgeDays    int               `koanf:"workspace_max_age_days"`
 }
 
 func defaults() raw {
 	return raw{
-		Port:                   9094,
+		Port:                   9095,
 		LogLevel:               "info",
 		StateDir:               "/var/lib/contextmatrix-architect",
 		Models:                 map[string]string{},
-		MaxRunCostUSD:          2,
-		MaxTurns:               40,
+		MaxRunCostUSD:          5,
+		MaxTurns:               80,
 		ReplaySkewSeconds:      330,
 		ReplayCacheSize:        10000,
 		MessageDedupTTLSeconds: 600,
 		MessageDedupCacheSize:  1000,
+		WorkspaceMaxAgeDays:    7,
 	}
 }
 
@@ -91,6 +97,7 @@ func (r raw) toConfig() *Config {
 		ReplayCacheSize:       r.ReplayCacheSize,
 		MessageDedupTTL:       time.Duration(r.MessageDedupTTLSeconds) * time.Second,
 		MessageDedupCacheSize: r.MessageDedupCacheSize,
+		WorkspaceMaxAgeDays:   r.WorkspaceMaxAgeDays,
 	}
 }
 
@@ -200,6 +207,10 @@ func (c *Config) Validate() error {
 
 	if c.MaxTurns <= 0 {
 		return errors.New("max_turns must be positive")
+	}
+
+	if c.WorkspaceMaxAgeDays < 1 {
+		return errors.New("workspace_max_age_days must be at least 1")
 	}
 
 	switch c.LogLevel {

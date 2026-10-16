@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mhersson/contextmatrix-architect/internal/blueprint"
+	"github.com/mhersson/contextmatrix-architect/internal/code"
 	"github.com/mhersson/contextmatrix-architect/internal/config"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
@@ -101,6 +103,17 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 		HarnessLine:   harnessForwarder(hub),
 	})
 
+	// Removes trees not written for workspace_max_age_days, at startup and hourly.
+	workspace := code.NewWorkspace(filepath.Join(cfg.StateDir, "workspaces"), time.Now)
+
+	sweepCtx, stopSweep := context.WithCancel(context.Background())
+
+	var sweepDone sync.WaitGroup
+
+	sweepDone.Go(func() {
+		sweepWorkspaces(sweepCtx, workspace, time.Duration(cfg.WorkspaceMaxAgeDays)*24*time.Hour, sweepInterval, logger)
+	})
+
 	// Never set: the controller's Shutdown refuses new starts and runs itself,
 	// so the drain gate is wired but stays open.
 	var draining atomic.Bool
@@ -122,6 +135,8 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 	// Stops the runs before closing the store, so no run writes to a closed DB.
 	cleanup := func(ctx context.Context) error {
 		stopJanitor()
+		stopSweep()
+		sweepDone.Wait()
 
 		err := ctl.Shutdown(ctx)
 		if closeErr := st.Close(); err == nil {

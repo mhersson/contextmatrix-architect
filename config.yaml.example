@@ -19,16 +19,22 @@ contextmatrix_url: "http://localhost:8080"
 # Env: CONTEXTMATRIX_ARCHITECT_LOG_LEVEL
 log_level: info
 
-# Harness cost cap per stage run, in USD. Default: 2.
-# Cost is what the LLM endpoint reports per call. An endpoint that reports no
-# cost shows 0 USD, and neither this cap nor a blueprint's cost cap binds;
-# max_turns still bounds every run.
+# Cost cap per stage run, in USD. Default: 5. Stages run capable models over
+# real code, so a small cap starves them; raise it per deployment when a stage
+# keeps hitting it.
+# Runs are priced from their tokens at the price CM sends per session, so this
+# binds on every endpoint and a run is stopped within one model call of passing
+# it. A model CM cannot price counts only the cost the endpoint reports, and
+# max_turns still bounds every run. CM prices only the session model, so a
+# persona overridden in models runs unpriced.
 # Env: CONTEXTMATRIX_ARCHITECT_MAX_RUN_COST_USD
-max_run_cost_usd: 2
+max_run_cost_usd: 5
 
-# Harness turn cap per stage run. Default: 40.
+# Turn cap per stage run. Default: 80. Grounding and decomposition read many
+# files, one tool call per turn. The cost cap bounds spend when the run's model
+# is priced; otherwise this does.
 # Env: CONTEXTMATRIX_ARCHITECT_MAX_TURNS
-max_turns: 40
+max_turns: 80
 
 # Size of the message de-duplication cache. Default: 1000.
 # Env: CONTEXTMATRIX_ARCHITECT_MESSAGE_DEDUP_CACHE_SIZE
@@ -47,8 +53,8 @@ models: {}
 # Default: empty. Env: CONTEXTMATRIX_ARCHITECT_PACK
 pack: ""
 
-# Listen port. Default: 9094. Env: CONTEXTMATRIX_ARCHITECT_PORT
-port: 9094
+# Listen port. Default: 9095. Env: CONTEXTMATRIX_ARCHITECT_PORT
+port: 9095
 
 # Directory holding architect.db. Must be writable. Default as below.
 # Env: CONTEXTMATRIX_ARCHITECT_STATE_DIR
@@ -61,3 +67,7 @@ webhook_replay_cache_size: 10000
 # Accepted clock skew on signed webhooks, in seconds. Default: 330.
 # Env: CONTEXTMATRIX_ARCHITECT_WEBHOOK_REPLAY_SKEW_SECONDS
 webhook_replay_skew_seconds: 330
+
+# Days a blueprint's code checkout is kept after it was last written; mirrors
+# are kept. Default: 7. Env: CONTEXTMATRIX_ARCHITECT_WORKSPACE_MAX_AGE_DAYS
+workspace_max_age_days: 7

@@ -8,7 +8,7 @@ import (
 
 // schemaVersion stamps PRAGMA user_version. Bump it when the schema changes;
 // a newer database is refused.
-const schemaVersion = 1
+const schemaVersion = 2
 
 func ensureSchema(ctx context.Context, db *sql.DB) error {
 	var current int
@@ -28,6 +28,7 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 			mode         TEXT NOT NULL DEFAULT '',
 			cost_cap_usd REAL NOT NULL DEFAULT 0,
 			model        TEXT NOT NULL DEFAULT '',
+			price        TEXT,
 			state        TEXT NOT NULL,
 			created_at   INTEGER NOT NULL,
 			updated_at   INTEGER NOT NULL
@@ -43,7 +44,11 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 			started_at   INTEGER NOT NULL,
 			ended_at     INTEGER,
 			cost_usd     REAL NOT NULL DEFAULT 0,
-			reason       TEXT NOT NULL DEFAULT ''
+			reason       TEXT NOT NULL DEFAULT '',
+			prompt_tokens      INTEGER NOT NULL DEFAULT 0,
+			completion_tokens  INTEGER NOT NULL DEFAULT 0,
+			cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+			cache_write_tokens INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_stage_runs_blueprint ON stage_runs(blueprint_id, id)`,
 		`CREATE TABLE IF NOT EXISTS artifacts (
@@ -70,6 +75,17 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 			payload      TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_events_blueprint ON events(blueprint_id, id)`,
+		`CREATE TABLE IF NOT EXISTS sources (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			blueprint_id  TEXT NOT NULL,
+			number        INTEGER NOT NULL,
+			kind          TEXT NOT NULL,
+			identity      TEXT NOT NULL,
+			version       TEXT NOT NULL DEFAULT '',
+			fetched_at    INTEGER NOT NULL,
+			first_used_by TEXT NOT NULL DEFAULT '',
+			UNIQUE(blueprint_id, number)
+		)`,
 	}
 
 	// Append-only: the audit record is never rewritten. Triggers make that
@@ -83,14 +99,40 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 		)
 	}
 
+	// A v1 file has the tables without these columns; a fresh file (version
+	// 0) gets them from the CREATE statements above, so only v1 is altered.
+	// The sources table is new and created by the statement above either way.
+	if current == 1 {
+		stmts = append(stmts,
+			`ALTER TABLE blueprints ADD COLUMN price TEXT`,
+			`ALTER TABLE stage_runs ADD COLUMN prompt_tokens INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE stage_runs ADD COLUMN completion_tokens INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE stage_runs ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE stage_runs ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0`,
+		)
+	}
+
+	// One transaction: a failed or interrupted migration leaves the file
+	// exactly as it was, never half-altered at the old version.
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin schema: %w", err)
+	}
+
+	defer func() { _ = tx.Rollback() }()
+
 	for _, stmt := range stmts {
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("store: ensure schema: %w", err)
 		}
 	}
 
-	if _, err := db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		return fmt.Errorf("store: stamp schema version: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit schema: %w", err)
 	}
 
 	return nil

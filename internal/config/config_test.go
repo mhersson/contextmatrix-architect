@@ -49,15 +49,17 @@ func TestLoad_MissingFileIsDefaultsPlusEnv(t *testing.T) {
 
 	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
 	require.NoError(t, err)
-	assert.Equal(t, 9094, cfg.Port)
+	assert.Equal(t, 9095, cfg.Port)
+	assert.InDelta(t, 5, cfg.MaxRunCostUSD, 1e-9)
+	assert.Equal(t, 80, cfg.MaxTurns)
 	require.NoError(t, cfg.Validate())
 }
 
 func TestValidate(t *testing.T) {
 	valid := func() *Config {
 		return &Config{
-			ContextMatrixURL: "http://cm:8080", APIKey: strings.Repeat("k", 32), Port: 9094,
-			LogLevel: "info", StateDir: "/tmp/x", MaxRunCostUSD: 2, MaxTurns: 40,
+			ContextMatrixURL: "http://cm:8080", APIKey: strings.Repeat("k", 32), Port: 9095,
+			LogLevel: "info", StateDir: "/tmp/x", MaxRunCostUSD: 5, MaxTurns: 80, WorkspaceMaxAgeDays: 7,
 		}
 	}
 
@@ -72,6 +74,7 @@ func TestValidate(t *testing.T) {
 		{"no state dir", func(c *Config) { c.StateDir = "" }, "state_dir"},
 		{"zero cost cap", func(c *Config) { c.MaxRunCostUSD = 0 }, "max_run_cost_usd"},
 		{"zero turns", func(c *Config) { c.MaxTurns = 0 }, "max_turns"},
+		{"zero workspace age", func(c *Config) { c.WorkspaceMaxAgeDays = 0 }, "workspace_max_age_days"},
 		{"bad level", func(c *Config) { c.LogLevel = "loud" }, "log_level"},
 	}
 	for _, tc := range cases {
@@ -100,7 +103,7 @@ func TestDefaultsYAMLRoundTrips(t *testing.T) {
 
 	cfg, err := Load(p)
 	require.NoError(t, err)
-	assert.Equal(t, 9094, cfg.Port)
+	assert.Equal(t, 9095, cfg.Port)
 	assert.Contains(t, string(out), "contextmatrix_url:")
 	assert.Contains(t, string(out), "max_run_cost_usd:")
 }

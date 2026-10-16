@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slice 0 is implemented (`architect serve`, controller, store, intake stage); the rest is design.
+Status: agreed design, 2026-10-15. Slice 0 is implemented (`architect serve`, controller, store, intake stage) and slice 1 is under way; the rest is design.
 
 ## Purpose
 
@@ -92,7 +92,7 @@ controller (internal/blueprint)     blueprint state machine, gates, responder po
      |
 stage runner (internal/stage)       one harness.Run per round: persona + stage prompt +
      |                              pack rules + lessons + tool set + output schema
-     |-- code tools      read-only shallow clone per project at a recorded sha;
+     |-- code tools      read-only tree per project from a bare mirror, at a recorded sha;
      |                   harness read/grep/glob jailed to it; repo_info
      |-- research tools  web_fetch
      |-- cm tools        MCP client: list_projects, create_card, create_playbook,
@@ -118,7 +118,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   and ignores `resume` and the worker image. It reopens the blueprint by id and
   runs no container. An end-session call detaches the client; the blueprint
   persists. A message that arrives while no question is pending is queued as a
-  note for the next stage and logged, never dropped.
+  note for the next stage and logged, never dropped. Entries published before
+  CM's consumer connects, or while it is reconnecting, are retained on the
+  server and replayed to it once, ahead of live entries.
 - **A question blocks the run.** `ask_human` is an ordinary tool: its
   execution waits until the attached client answers or, under `auto`, until a
   responder run returns. The model's run continues with the answer as the tool
@@ -152,8 +154,8 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 
 | Table         | Holds                                                                                                                        |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| blueprints    | id, title, target CM projects, pack name and version, policy overrides, state, cost cap, CM playbook id after emission         |
-| stage_runs    | blueprint, stage, attempt, round, status, model, started, ended, cost                                                          |
+| blueprints    | id, title, target CM projects, pack name and version, policy overrides, state, cost cap, model price as CM sent it, CM playbook id after emission         |
+| stage_runs    | blueprint, stage, attempt, round, status, model, started, ended, cost, token buckets                                                          |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results, reviewer score                   |
 | questions     | append-only: run, number, text, options, answer, responder (`human`, `auto`), assumption flag, verified flag                   |
 | gates         | append-only: blueprint, stage, attempt, decision, feedback, responder, decided at                                             |
@@ -164,6 +166,8 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | emissions     | draft card id to CM project and card id; playbook id; created at                                                              |
 | outcomes      | per emitted card: final state, review attempts, parked reason, cost, finding text, proposed lesson                            |
 | lessons       | text, rationale, evidence card ids, scope (pack or project), state (`proposed`, `active`, `rejected`), decided by             |
+
+Schema bumps are one-way: an older binary refuses a newer file.
 
 **Audit.** Every action produces an event: blueprint created, run started
 (model, pack version, persona, config snapshot), tool call made, question
@@ -197,7 +201,7 @@ developer (DEV), reviewer (REV).
 | 8  | Sign-off        | human   | everything        | approval; then emission                                                                               | yes       |
 | -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   |
 
-The embedded pack ships the stages as they are built; at present it holds intake.
+The embedded pack holds intake, a human-sourced design stage, grounding, decomposition and readiness; slicing, acceptance and sign-off arrive with the dialog stages.
 
 - Intake ends by stating the shape it expects (slices, projects involved) and
   the gate plan in effect, so the operator can change the overrides before
@@ -224,9 +228,9 @@ The embedded pack ships the stages as they are built; at present it holds intake
 A pack is a directory:
 
 ```
-pack.yaml          stage order; per stage: persona, consumes, produces, tools,
-                   default gate policy, gate fold condition, checks,
-                   reviewer on or off and its threshold
+pack.yaml          stage order; per stage: persona, source (model or human), consumes,
+                   produces, tools, checks, default gate policy, gate fold condition,
+                   reviewer on or off and its threshold, loop target and rounds
 personas/*.md      role text, one file per persona
 stages/*.md        instructions, one file per stage
 card.md            the card body template
@@ -237,6 +241,9 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
 - The default pack is embedded in the binary. The `pack` config key
   (`CONTEXTMATRIX_ARCHITECT_PACK`) names a pack directory that overrides it.
   The pack name and version are logged with every run.
+- A pack with a stage that checks cards must carry `lists.yaml` and
+  `card.md`; the loader refuses it otherwise, so an override pack cannot
+  silently disable the card contract.
 - No include mechanism. Each file stands alone; shared text is duplicated. If
   that hurts, build-time expansion comes later.
 - Gate and question policies come from the pack, overridable per blueprint.
@@ -300,7 +307,8 @@ release.
 
 - Title starts with an imperative verb. Not a maintenance verb unless the card
   is mechanical work with a maintenance label.
-- Type `bug` only for a real defect.
+- Type `bug` only for a real defect. Only a bug's title opens with a bug verb:
+  the agent routes on the title's first word, whatever the type.
 - `skills` names the task skills the work needs.
 - `depends_on` within the project only.
 
@@ -342,7 +350,7 @@ release.
 | ------------------------------------------------------------------ | -------------------------- |
 | Required sections present, criteria numbered                       | mechanical                 |
 | No local paths, other repos, cluster or deploy references          | mechanical                 |
-| No defect phrase in a feature card; no criteria under a stripped heading | mechanical (lists.yaml) |
+| No defect phrase or bug title verb in a card that is not a bug; no criteria under a stripped heading | mechanical (lists.yaml) |
 | Every path and symbol in Where exists at the recorded sha          | mechanical (code tool)     |
 | `depends_on` graph acyclic within each project                     | mechanical                 |
 | Every acceptance criterion of the slice maps to exactly one card   | mechanical                 |
@@ -353,7 +361,8 @@ release.
 
 The contract lives here: the default pack's `card.md` and `lists.yaml` plus
 `internal/contract`. The agent is the consumer and its prompts are the ground
-truth the lists are copied from.
+truth the lists are copied from. The mechanical rows run on every decomposition
+submit as the critique loop; the model-judged rows are the readiness stage.
 
 ## Interaction
 
@@ -404,7 +413,7 @@ starts are bounded by CM's per-card guardrails, not by the architect.
 
 | Group    | Tools                                                                                                   | Notes                                                                                                                                             |
 | -------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock at the start of grounding, and one checkout per blueprint from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. `repo_info` returns default branch, sha, instruction file presence and the project's verify command. |
+| code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock at the start of grounding, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. `repo_info` returns default branch, sha, instruction file presence and the project's verify command. |
 | research | `web_fetch`                                                                                             | Readable text, recorded as a source. A search provider is deferred.                                                                               |
 | cm       | `list_projects`, `create_card`, `create_playbook`, `add_playbook_entry`, `get_playbook`, `get_card`, `run_card`, `run_playbook` | MCP client over Streamable HTTP with the MCP key from the session's start payload and a configured caller identity (default `human:architect`). The chat backend's bridge, copied and generalised with per-server tool prefixes and an allowlist, so a second MCP server plugs in the same way. |
 | control  | `ask_human`, `submit_artifact`                                                                          | `ask_human` blocks: question, options and context in; the answer out as the tool result. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
@@ -506,8 +515,8 @@ Replies the server understands, besides answers to questions:
 ## Runtime
 
 - Go 1.27, `contextmatrix-harness` v0.25.0 (loop, llm client, jailed read
-  tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.7.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.22.0
+  tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.8.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.23.0
   for the CM-facing side, go-git for checkouts, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
@@ -518,14 +527,24 @@ Replies the server understands, besides answers to questions:
 - Models: the start payload's model is the default for every persona; config
   may override per persona. Priors-based selection through
   `contextmatrix-protocol`'s `selection` package comes later.
-- Cost: the harness per-run cap plus the blueprint ledger across runs. A
-  critique round re-bills the conversation so far; the ledger counts it.
+- Cost: every run's token buckets are priced at the model price CM sends in
+  the start payload; the ledger sums runs per blueprint, the per-run cap stops
+  a run within one model call of passing it, and a capped blueprint whose
+  model has no price does not run. An unpriced model on an uncapped blueprint
+  counts only the cost the endpoint reports, and max_turns still bounds every
+  run. CM prices only the session model, so a run on a per-persona override
+  is unpriced: a capped blueprint refuses it, an uncapped one counts the
+  reported cost. A critique round re-bills the conversation so far; the
+  ledger counts it.
 - Long intake dialogs rely on the harness's in-run compaction. Whether that is
   enough is checked in slice 3.
-- State dir: `architect.db` and `workspaces/<repo>/mirror/` plus
-  `workspaces/<repo>/<blueprint>/`. A blueprint's checkout is removed at
-  emission and by a sweep for blueprints untouched for a configured number
-  of days; mirrors stay. All of it is a disposable cache. The mirrors and checkouts arrive with grounding.
+- State dir: `architect.db`, `workspaces/mirrors/<repo>/` and
+  `workspaces/trees/<blueprint>/<project>/`, with a project's secondary
+  repository beside it at `<project>@<repo>/`. A blueprint's trees are
+  removed at emission and by a sweep, at startup and hourly, for blueprints
+  not written for `workspace_max_age_days`; mirrors stay. Trees are written
+  from the mirror's objects; the server never runs git. All of it is a
+  disposable cache.
 - LLM endpoint: whatever CM provisions, OpenRouter or any OpenAI-compatible
   endpoint. Never name a gateway operator in repo artifacts.
 - Builds on macOS too: no filenames differing only by case.
@@ -541,7 +560,7 @@ internal/contract    card contract checks, mechanical and model-judged
 internal/store       SQLite: schema, append-only tables, queries
 internal/code        workspace checkout and repo_info
 internal/research    web_fetch
-internal/cm          MCP client and emission
+internal/cm          MCP client (list_projects; emission arrives with the emission slice)
 internal/outcomes    outcomes stage and lessons
 internal/export      markdown rendering into the state directory and the opted-in repo
 internal/config

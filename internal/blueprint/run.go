@@ -4,11 +4,48 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sync"
+
+	"github.com/mhersson/contextmatrix-harness/harness"
+	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
+
+// errCostCap is the cancel cause when a run's priced usage passes its cap.
+var errCostCap = errors.New("run cost cap reached")
+
+// priced is the cost of u at p, in USD. CM resolves the cache rates before
+// it sends the price, so this only multiplies. Zero without a price.
+func priced(p *protocol.ModelPrice, u store.RunUsage) float64 {
+	if p == nil {
+		return 0
+	}
+
+	const perMTok = 1e6
+
+	return (float64(u.PromptTokens)*p.PromptUSDPerMTok +
+		float64(u.CompletionTokens)*p.CompletionUSDPerMTok +
+		float64(u.CacheReadTokens)*p.CacheReadUSDPerMTok +
+		float64(u.CacheWriteTokens)*p.CacheWriteUSDPerMTok) / perMTok
+}
+
+// usageOf is what the ledger records for a run: the harness's token buckets
+// and the higher of the endpoint's reported cost and the priced tokens.
+func usageOf(p *protocol.ModelPrice, res harness.Result) store.RunUsage {
+	u := store.RunUsage{
+		PromptTokens:     res.PromptTokens,
+		CompletionTokens: res.CompletionTokens,
+		CacheReadTokens:  res.CacheReadTokens,
+		CacheWriteTokens: res.CacheCreationTokens,
+	}
+	u.CostUSD = max(res.TotalCostUSD, priced(p, u))
+
+	return u
+}
 
 // launch runs a stage in the background on the run slot r, which the caller
 // holds; the slot is released when the run has recorded its end.
@@ -32,32 +69,11 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		return
 	}
 
-	// The blueprint cap bounds the whole blueprint; the run cap is what is
-	// left of it, never more than the configured per-run cap.
-	runCap := c.opts.MaxRunCostUSD
+	m := c.modelFor(sess, st.Persona)
 
-	if bp.CostCapUSD > 0 {
-		spent, err := c.opts.Store.BlueprintCost(bg, id)
-		if err != nil {
-			c.fail(bg, au, id, 0, "cost lookup failed: "+err.Error())
-
-			return
-		}
-
-		remaining := bp.CostCapUSD - spent
-		if remaining < runCap {
-			runCap = remaining
-		}
-
-		if runCap <= 0 {
-			au.event(bg, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{
-				"stage":   stageID,
-				"message": fmt.Sprintf("cost cap %.2f USD would be breached (spent %.2f)", bp.CostCapUSD, spent),
-			}})
-			c.setState(bg, id, StateIdle)
-
-			return
-		}
+	runCap, ok := c.capAllows(bg, au, bp, stageID, m, nil)
+	if !ok {
+		return
 	}
 
 	attempt, err := c.nextAttempt(bg, id, stageID)
@@ -67,14 +83,9 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		return
 	}
 
-	model := sess.model
-	if override, ok := c.opts.Models[st.Persona]; ok && override != "" {
-		model = override
-	}
-
 	runID, err := c.opts.Store.StartRun(bg, store.Run{
 		BlueprintID: id, Stage: stageID, Attempt: attempt, Round: 1,
-		Status: store.RunRunning, Model: model, StartedAt: c.opts.Now().UTC(),
+		Status: store.RunRunning, Model: m.name, StartedAt: c.opts.Now().UTC(),
 	})
 	if err != nil {
 		c.fail(bg, au, id, 0, "start run failed: "+err.Error())
@@ -84,21 +95,31 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	c.setState(bg, id, StateRunning)
 	au.event(bg, Event{Kind: EventStageStarted, BlueprintID: id, RunID: runID, Payload: map[string]any{
-		"stage": stageID, "persona": st.Persona, "attempt": attempt, "model": model,
+		"stage": stageID, "persona": st.Persona, "attempt": attempt, "model": m.name,
 		"pack": c.opts.Pack.Name, "pack_version": c.opts.Pack.Version,
 	}})
 
-	out, runErr := c.opts.Runner.Run(ctx, stage.Input{
+	// runCtx is cancelled with errCostCap by the sink when the priced usage
+	// passes the run cap; the harness's own cap only sees the wire cost.
+	runCtx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+
+	sink := &harnessSink{
+		audit: au, id: id, runID: runID, canceled: runCtx.Done(),
+		price: m.price, capUSD: runCap, stop: stop,
+	}
+
+	out, runErr := c.opts.Runner.Run(runCtx, stage.Input{
 		Stage:        stageID,
 		Persona:      c.opts.Pack.Persona(st.Persona),
 		Instructions: c.opts.Pack.Instructions(stageID),
 		Task:         task,
-		Model:        model,
+		Model:        m.name,
 		Endpoint:     sess.endpoint,
 		MaxCostUSD:   runCap,
 		MaxTurns:     c.opts.MaxTurns,
 		Asker:        &asker{c: c, id: id, runID: runID, run: r, audit: au},
-		Events:       &harnessSink{audit: au, id: id, runID: runID, canceled: ctx.Done()},
+		Events:       sink,
 		Secrets:      []string{sess.endpoint.APIKey},
 	})
 
@@ -115,34 +136,45 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		}
 	}
 
-	cost := out.Result.TotalCostUSD
+	usage := usageOf(m.price, out.Result)
+	isPriced := m.price != nil
 
 	switch {
 	case runErr == nil:
 		// A submitted artifact is kept even when a cancel raced it.
 		version, err := au.artifact(bg, id, stageID, out.Artifact.Body, out.Artifact.Data)
 		if err != nil {
-			c.endRun(bg, runID, store.RunFailed, "store artifact failed", cost)
+			c.endRun(bg, runID, store.RunFailed, "store artifact failed", usage)
 			c.fail(bg, au, id, runID, err.Error())
 
 			return
 		}
 
-		c.endRun(bg, runID, store.RunDone, out.Result.Reason, cost)
+		c.endRun(bg, runID, store.RunDone, out.Result.Reason, usage)
 		c.setState(bg, id, StateIdle)
 		au.event(bg, Event{Kind: EventArtifact, BlueprintID: id, RunID: runID, Payload: map[string]any{
 			"stage": stageID, "version": version, "body": out.Artifact.Body, "data": out.Artifact.Data,
 		}})
 		au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
-			"stage": stageID, "status": store.RunDone, "cost_usd": cost,
+			"stage": stageID, "status": store.RunDone, "cost_usd": usage.CostUSD, "priced": isPriced,
+		}})
+	case errors.Is(context.Cause(runCtx), errCostCap) || out.Result.Reason == "max_cost":
+		// The sink's stop and the harness's own cap on the reported cost are
+		// one condition: the run cap was reached.
+		c.endRun(bg, runID, store.RunFailed, "max_cost", usage)
+		c.setState(bg, id, StateIdle)
+		au.event(bg, Event{Kind: EventError, BlueprintID: id, RunID: runID, Payload: map[string]any{
+			"stage":   stageID,
+			"reason":  "max_cost",
+			"message": fmt.Sprintf("run cost cap %.2f USD reached after %.2f USD; the stage stopped", runCap, usage.CostUSD),
 		}})
 	case ctx.Err() != nil:
 		// The harness reports a cancelled run as an error; abort and End
 		// cancel, so this is a canceled run, not a failed one.
-		c.endRun(bg, runID, store.RunCanceled, "canceled", cost)
+		c.endRun(bg, runID, store.RunCanceled, "canceled", usage)
 		c.setState(bg, id, StateIdle)
 		au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
-			"stage": stageID, "status": store.RunCanceled, "cost_usd": cost,
+			"stage": stageID, "status": store.RunCanceled, "cost_usd": usage.CostUSD, "priced": isPriced,
 		}})
 	default:
 		reason := out.Result.Reason
@@ -150,7 +182,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			reason = "error"
 		}
 
-		c.endRun(bg, runID, store.RunFailed, reason, cost)
+		c.endRun(bg, runID, store.RunFailed, reason, usage)
 		c.setState(bg, id, StateFailed)
 		au.event(bg, Event{Kind: EventError, BlueprintID: id, RunID: runID, Payload: map[string]any{
 			"stage": stageID, "reason": reason, "message": runErr.Error(),
@@ -189,8 +221,8 @@ func (c *Controller) setState(ctx context.Context, id string, s State) {
 	}
 }
 
-func (c *Controller) endRun(ctx context.Context, runID int64, status, reason string, costUSD float64) {
-	if err := c.opts.Store.EndRun(ctx, runID, status, reason, costUSD, c.opts.Now().UTC()); err != nil {
+func (c *Controller) endRun(ctx context.Context, runID int64, status, reason string, usage store.RunUsage) {
+	if err := c.opts.Store.EndRun(ctx, runID, status, reason, usage, c.opts.Now().UTC()); err != nil {
 		c.opts.Logger.Error("blueprint: end run", "run", runID, "status", status, "error", err)
 	}
 }
@@ -253,8 +285,18 @@ type harnessSink struct {
 	audit audit
 	id    string
 	runID int64
-	// canceled is closed once abort, End or Shutdown cancels the run.
+	// canceled is closed once abort, End, Shutdown or the cost cap cancels
+	// the run.
 	canceled <-chan struct{}
+	// price, capUSD and stop bind the run cap on endpoints that report no
+	// cost: every usage line is priced and the run is stopped once the sum
+	// passes capUSD. Idle when price is nil or capUSD is zero.
+	price  *protocol.ModelPrice
+	capUSD float64
+	stop   context.CancelCauseFunc
+
+	mu    sync.Mutex
+	spent float64
 }
 
 func (s *harnessSink) Write(p []byte) (int, error) {
@@ -268,8 +310,42 @@ func (s *harnessSink) Write(p []byte) (int, error) {
 	forward := !s.isCanceled() || !isErrorLine(line)
 
 	s.audit.harness(context.Background(), s.id, s.runID, line, forward)
+	s.account(line)
 
 	return len(p), nil
+}
+
+// account prices a usage line and stops the run once the cap is passed.
+func (s *harnessSink) account(line []byte) {
+	if s.price == nil || s.capUSD <= 0 || s.stop == nil {
+		return
+	}
+
+	var ev struct {
+		Kind string `json:"kind"`
+		Data struct {
+			Prompt     int64 `json:"prompt_tokens"`
+			Completion int64 `json:"completion_tokens"`
+			CacheRead  int64 `json:"cache_read_tokens"`
+			CacheWrite int64 `json:"cache_creation_tokens"`
+		} `json:"data"`
+	}
+
+	if json.Unmarshal(line, &ev) != nil || ev.Kind != "usage" {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.spent += priced(s.price, store.RunUsage{
+		PromptTokens: ev.Data.Prompt, CompletionTokens: ev.Data.Completion,
+		CacheReadTokens: ev.Data.CacheRead, CacheWriteTokens: ev.Data.CacheWrite,
+	})
+
+	if s.spent > s.capUSD {
+		s.stop(errCostCap)
+	}
 }
 
 func (s *harnessSink) isCanceled() bool {
