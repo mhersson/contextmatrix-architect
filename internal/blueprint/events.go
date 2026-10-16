@@ -41,6 +41,10 @@ const (
 	EventAwaitInput = "await_input"
 	// EventGrounded lists the sources a code stage checked out.
 	EventGrounded = "grounded"
+	// EventSetupGaps lists, when grounding ends, what each target project
+	// lacks for an agent run: a verify command, an instruction file, any
+	// commit. None of it blocks; decomposition plans it as setup.
+	EventSetupGaps = "setup_gaps"
 	// EventReport is the pipeline's end: the final artifact and whether the
 	// cards are ready.
 	EventReport = "report"

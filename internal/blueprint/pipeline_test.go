@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1885,4 +1886,145 @@ func TestPipeline_CMToolsWithoutACloserRun(t *testing.T) {
 
 	assert.Equal(t, 4, runner.calls())
 	assert.True(t, rec.has(EventReport), "a nil closer is not called when the run ends")
+}
+
+func TestPipeline_GroundingReportsTheSetupGaps(t *testing.T) {
+	const (
+		core = "https://example.com/core.git"
+		docs = "https://example.com/docs.git"
+	)
+
+	twoRepos := func(context.Context, string) ([]cm.Project, error) {
+		return []cm.Project{{
+			Name: "alpha", Verify: &cm.Verify{Command: "make test"},
+			Repos: []cm.Repo{{Name: "core", URL: core, Primary: true}, {Name: "docs", URL: docs}},
+		}}, nil
+	}
+
+	gap := func(verify, file, empty bool) []any {
+		return []any{map[string]any{"project": "alpha", "has_verify": verify, "has_instruction_file": file, "empty": empty}}
+	}
+
+	tests := []struct {
+		name     string
+		projects func(context.Context, string) ([]cm.Project, error)
+		noAgents bool
+		empty    map[string]bool
+		want     []any // nil: no report
+	}{
+		{name: "set up", projects: listAlpha},
+		{name: "no verify command", projects: listAlphaUnset, want: gap(false, true, false)},
+		{name: "no instruction file", projects: listAlpha, noAgents: true, want: gap(true, false, false)},
+		{name: "both", projects: listAlphaUnset, noAgents: true, want: gap(false, false, false)},
+		{name: "an empty repository", projects: listAlpha, empty: map[string]bool{"alpha": true}, want: gap(true, false, true)},
+		{name: "an empty secondary repository", projects: twoRepos, empty: map[string]bool{"alpha@docs": true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _, _, rec, ws := newPipeline(t, happyScript())
+			c.opts.Projects = tt.projects
+			ws.noAgents = tt.noAgents
+			ws.empty = tt.empty
+
+			drive(t, c, "BP1")
+
+			ev, ok := rec.first(EventSetupGaps)
+			if tt.want == nil {
+				assert.False(t, ok, "nothing to report")
+
+				return
+			}
+
+			require.True(t, ok)
+			assert.Equal(t, tt.want, ev.Payload["projects"])
+
+			rec.mu.Lock()
+			events := slices.Clone(rec.events)
+			rec.mu.Unlock()
+
+			at := func(kind, stage string) int {
+				return slices.IndexFunc(events, func(e Event) bool {
+					return e.Kind == kind && (stage == "" || e.Payload["stage"] == stage)
+				})
+			}
+
+			assert.Less(t, at(EventStageEnded, "grounding"), at(EventSetupGaps, ""), "reported when grounding ends")
+			assert.Less(t, at(EventSetupGaps, ""), at(EventStageStarted, "decomposition"), "before the paid stages")
+		})
+	}
+}
+
+func TestPipeline_AVerifyCommandSetDuringGroundingIsNotReported(t *testing.T) {
+	var set atomic.Bool
+
+	script := happyScript()
+	script["grounding"] = func(context.Context, stage.Input) (stage.Output, error) {
+		set.Store(true) // the user sets it in ContextMatrix while grounding runs
+
+		return done("# Grounding", nil), nil
+	}
+
+	c, _, _, rec, _ := newPipeline(t, script)
+	c.opts.Projects = func(ctx context.Context, key string) ([]cm.Project, error) {
+		if set.Load() {
+			return listAlpha(ctx, key)
+		}
+
+		return listAlphaUnset(ctx, key)
+	}
+
+	drive(t, c, "BP1")
+
+	assert.False(t, rec.has(EventSetupGaps), "the report reads ContextMatrix when grounding ends")
+}
+
+func TestPipeline_AnUnreadableSetupIsNotReportedAndThePipelineGoesOn(t *testing.T) {
+	var calls atomic.Int32
+
+	c, _, runner, rec, _ := newPipeline(t, happyScript())
+	c.opts.Projects = func(ctx context.Context, key string) ([]cm.Project, error) {
+		// The second read is the report's: after grounding's checkout,
+		// before decomposition's.
+		if calls.Add(1) == 2 {
+			return nil, errors.New("cm: list_projects: remote unreachable")
+		}
+
+		return listAlphaUnset(ctx, key)
+	}
+
+	drive(t, c, "BP1")
+
+	assert.False(t, rec.has(EventSetupGaps))
+	assert.GreaterOrEqual(t, runner.calls(), 3, "decomposition still runs")
+}
+
+// abortedCtx reports a cancel without cutting the I/O under it short, so a
+// report that ignores the abort would still read and publish.
+type abortedCtx struct{ context.Context } //nolint:containedctx // a test double that wraps a context
+
+func (abortedCtx) Err() error { return context.Canceled }
+
+func TestReportSetup_AnAbortedRunReportsNothing(t *testing.T) {
+	var reads atomic.Int32
+
+	c, st, _, rec, _ := newPipeline(t, happyScript())
+	c.opts.Projects = func(ctx context.Context, key string) ([]cm.Project, error) {
+		reads.Add(1)
+
+		return listAlphaUnset(ctx, key)
+	}
+
+	drive(t, c, "BP1")
+	require.Equal(t, 1, rec.count(EventSetupGaps), "the drive reported the gap")
+
+	before := reads.Load()
+
+	bp, err := st.GetBlueprint(context.Background(), "BP1")
+	require.NoError(t, err)
+
+	c.reportSetup(abortedCtx{context.Background()}, sessionOf(t, c, "BP1"), bp)
+
+	assert.Equal(t, before, reads.Load(), "an aborted run reads nothing")
+	assert.Equal(t, 1, rec.count(EventSetupGaps), "an aborted run tells the session nothing more")
 }

@@ -196,7 +196,7 @@ developer (DEV), reviewer (REV).
 | 1  | Intake          | PO      | the need          | need: problem, value, scope in and out, measurable outcomes; the expected shape and the gate plan     | questions |
 | 2  | Slicing         | PO      | need              | slices, each delivering standalone value; one slice is fine                                           | yes; folds into 3 when there is one slice |
 | 3  | Solution design | SD      | need, slices      | per slice: projects involved, decisions with rejected options, cross-project contracts               | yes       |
-| 4  | Grounding       | DEV     | design            | per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        |
+| 4  | Grounding       | DEV     | design            | per project: files, symbols and patterns verified at a sha, verify command, instruction file presence; when it ends, the session is told what each project lacks for an agent run | no        |
 | 5  | Acceptance      | DEV     | design, grounding | per slice: criteria checkable inside one repo; human and live checks split into manual steps         | `auto` by default |
 | 6  | Decomposition   | DEV     | all above         | draft cards with type and priority, `depends_on` per project, manual entries for human and live checks, a playbook title and order, and the setup for a project without a verify command or instruction file | no        |
 | 7  | Readiness       | REV     | cards             | contract check per card; failures loop back to 6, three rounds max                                    | no        |
@@ -209,6 +209,11 @@ The design stage is human-sourced until the dialog stages arrive: the message af
 - Intake ends by stating the shape it expects (slices, projects involved) and
   the gate plan in effect, so the operator can change the overrides before
   grounding spends anything.
+- Grounding ends by telling the session what each target project lacks for
+  an agent run: a verify command in CM (read again then), an instruction
+  file at the root, or any commit. None of it blocks. Decomposition plans
+  it as setup, and the user may set the verify command in CM meanwhile; the
+  next decomposition submit reads it.
 - A gate folds when the pack's condition on its artifact holds: the slicing
   gate folds into the solution design gate when there is exactly one slice.
   Folding is decided by the artifact, never by an estimate of size.

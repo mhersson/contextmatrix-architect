@@ -121,6 +121,9 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		if strings.TrimSpace(entry.Content) == "" {
 			entry.Content = fmt.Sprintf("Stage %s takes your next message.", str(p["stage"]))
 		}
+	case blueprint.EventSetupGaps:
+		entry.Type = "text"
+		entry.Content = setupGapsText(p)
 	case blueprint.EventGrounded:
 		entry.Type = "system"
 
@@ -445,6 +448,32 @@ func signoffText(p map[string]any) string {
 	}
 
 	b.WriteString(", or `reject <feedback>` to re-run decomposition with your feedback.")
+
+	return b.String()
+}
+
+// setupGapsText renders what grounding found the target projects lack for
+// an agent run, and what happens to each gap.
+func setupGapsText(p map[string]any) string {
+	var b strings.Builder
+
+	b.WriteString("**Setup.** Grounding found what the target projects lack for an agent run. None of it blocks; the cards plan it as work:")
+
+	for _, g := range anyMaps(p["projects"]) {
+		name := str(g["project"])
+
+		if verify, _ := g["has_verify"].(bool); !verify {
+			fmt.Fprintf(&b, "\n- %s declares no verify command in ContextMatrix. Decomposition proposes one, and the manual steps shown before the cards run include setting it; setting it now works too.", name)
+		}
+
+		if file, _ := g["has_instruction_file"].(bool); !file {
+			fmt.Fprintf(&b, "\n- %s has no AGENTS.md or CLAUDE.md at the root. Its first card also writes AGENTS.md.", name)
+		}
+
+		if empty, _ := g["empty"].(bool); empty {
+			fmt.Fprintf(&b, "\n- %s is an empty repository. Its default branch needs an initial commit before the cards run, because the agent needs a base branch; the manual steps shown before the cards run include it. A commit pushed before emission is shown at the sign-off as a moved branch to review, because the cards were planned on an empty repository.", name)
+		}
+	}
 
 	return b.String()
 }

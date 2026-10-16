@@ -19,6 +19,15 @@ func TestLogEntryFor(t *testing.T) {
 		carries  []string
 		skipped  bool
 	}{
+		{"setup gaps", blueprint.Event{Kind: blueprint.EventSetupGaps, BlueprintID: "S1", Payload: map[string]any{"projects": []any{
+			map[string]any{"project": "alpha", "has_verify": false, "has_instruction_file": false, "empty": true},
+			map[string]any{"project": "beta", "has_verify": true, "has_instruction_file": false, "empty": false},
+		}}}, "text", []string{
+			"alpha declares no verify command in ContextMatrix",
+			"alpha has no AGENTS.md or CLAUDE.md",
+			"alpha is an empty repository",
+			"beta has no AGENTS.md or CLAUDE.md",
+		}, false},
 		{"created", blueprint.Event{Kind: blueprint.EventCreated, BlueprintID: "S1", Payload: map[string]any{"projects": []string{"alpha", "beta"}, "mode": "yolo"}}, "system", []string{"alpha", "beta", "yolo"}, false},
 		{"stage started", blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "persona": "product_owner", "pack": "default", "pack_version": "1"}}, "system", []string{"intake"}, false},
 		{"question", blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: map[string]any{"text": "Helm or kustomize?", "options": []string{"helm", "kustomize"}}}, "text", []string{"Helm or kustomize?", "helm", "kustomize"}, false},

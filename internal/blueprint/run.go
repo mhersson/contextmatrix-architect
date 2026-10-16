@@ -65,6 +65,10 @@ func (c *Controller) launch(ctx context.Context, r *run, sess *session, bp store
 				return
 			}
 
+			if stageID == c.groundingStage() {
+				c.reportSetup(ctx, sess, bp)
+			}
+
 			// What follows is decided and recorded even when a cancel
 			// landed as the stage completed; the loop then stops.
 			var end outcome
