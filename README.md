@@ -59,6 +59,8 @@ runs and counts only the endpoint's reported cost (`max_turns` still bounds
 every run), a capped one refuses to run until a priced model is chosen or a
 new blueprint is started without a cap. A per-persona override in `models`
 names a model CM did not price, so its runs are unpriced the same way.
+`max_run_cost_usd: 0` disables the per-run cap; `max_turns` still bounds every
+run, and a blueprint's own cap still applies.
 
 ## Docker
 

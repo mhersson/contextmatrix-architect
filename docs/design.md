@@ -538,7 +538,7 @@ Replies the server understands, besides answers to questions:
   `contextmatrix-protocol`'s `selection` package comes later.
 - Cost: every run's token buckets are priced at the model price CM sends in
   the start payload; the ledger sums runs per blueprint, the per-run cap stops
-  a run within one model call of passing it, and a capped blueprint whose
+  a run within one model call of passing it, or is off at zero, and a capped blueprint whose
   model has no price does not run. An unpriced model on an uncapped blueprint
   counts only the cost the endpoint reports, and max_turns still bounds every
   run. CM prices only the session model, so a run on a per-persona override

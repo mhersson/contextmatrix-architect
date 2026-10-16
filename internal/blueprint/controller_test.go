@@ -832,6 +832,43 @@ func TestStart_TransientRecoveryErrorLeavesTheRunRecoverable(t *testing.T) {
 	assert.Equal(t, store.RunDone, runs[1].Status)
 }
 
+func TestRunCapZero_DisablesThePerRunCap(t *testing.T) {
+	tests := []struct {
+		name       string
+		capUSD     float64
+		spentUSD   float64
+		wantRunCap float64
+	}{
+		{name: "no caps at all runs unbounded", capUSD: 0, wantRunCap: 0},
+		{name: "blueprint cap alone bounds the run by what is left", capUSD: 1.5, spentUSD: 0.5, wantRunCap: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, runner, rec := newControllerWithRunCap(t, 0, artifactRun("# Need"))
+			ctx := context.Background()
+			in := startInput("BP1")
+			in.CostCapUSD = tt.capUSD
+			in.Price = testPrice()
+			require.NoError(t, c.Start(ctx, in))
+
+			if tt.spentUSD > 0 {
+				now := time.Now().UTC()
+				prior, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+				require.NoError(t, err)
+				require.NoError(t, st.EndRun(ctx, prior, store.RunDone, "done", store.RunUsage{CostUSD: tt.spentUSD}, now))
+			}
+
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			c.Wait("BP1")
+
+			require.Equal(t, 1, runner.calls(), "the run starts")
+			assert.InDelta(t, tt.wantRunCap, runner.input(0).MaxCostUSD, 1e-9)
+			assert.False(t, rec.has(EventError))
+		})
+	}
+}
+
 func TestMessage_CostCap(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -529,7 +529,9 @@ func (c *Controller) capAllows(ctx context.Context, au audit, bp store.Blueprint
 		return 0, false
 	}
 
-	if remaining := bp.CostCapUSD - spent; remaining < runCap {
+	// A run cap of zero means no per-run cap; the blueprint cap alone
+	// bounds the run by what is left of it.
+	if remaining := bp.CostCapUSD - spent; runCap <= 0 || remaining < runCap {
 		runCap = remaining
 	}
 

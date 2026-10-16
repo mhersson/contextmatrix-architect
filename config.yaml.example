@@ -27,6 +27,8 @@ log_level: info
 # it. A model CM cannot price counts only the cost the endpoint reports, and
 # max_turns still bounds every run. CM prices only the session model, so a
 # persona overridden in models runs unpriced.
+# 0 disables the per-run cap; max_turns still bounds every run, and a
+# blueprint's own cap still applies.
 # Env: CONTEXTMATRIX_ARCHITECT_MAX_RUN_COST_USD
 max_run_cost_usd: 5
 

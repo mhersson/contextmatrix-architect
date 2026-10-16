@@ -69,10 +69,11 @@ func TestValidate(t *testing.T) {
 		want   string
 	}{
 		{"ok", func(*Config) {}, ""},
+		{"zero cost cap disables the per-run cap", func(c *Config) { c.MaxRunCostUSD = 0 }, ""},
 		{"no url", func(c *Config) { c.ContextMatrixURL = "" }, "contextmatrix_url"},
 		{"short key", func(c *Config) { c.APIKey = "short" }, "api_key"},
 		{"no state dir", func(c *Config) { c.StateDir = "" }, "state_dir"},
-		{"zero cost cap", func(c *Config) { c.MaxRunCostUSD = 0 }, "max_run_cost_usd"},
+		{"negative cost cap", func(c *Config) { c.MaxRunCostUSD = -1 }, "max_run_cost_usd"},
 		{"zero turns", func(c *Config) { c.MaxTurns = 0 }, "max_turns"},
 		{"zero workspace age", func(c *Config) { c.WorkspaceMaxAgeDays = 0 }, "workspace_max_age_days"},
 		{"bad level", func(c *Config) { c.LogLevel = "loud" }, "log_level"},
