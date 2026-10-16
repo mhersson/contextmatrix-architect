@@ -513,7 +513,7 @@ Replies the server understands, besides answers to questions:
 ## Runtime
 
 - Go 1.27, `contextmatrix-harness` v0.25.0 (loop, llm client, jailed read
-  tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.7.0
+  tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.8.0
   (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.23.0
   for the CM-facing side, go-git for checkouts, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
