@@ -203,7 +203,7 @@ developer (DEV), reviewer (REV).
 | -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   |
 
 The embedded pack holds intake, a human-sourced design stage, grounding, decomposition and readiness; slicing, acceptance and sign-off arrive with the dialog stages.
-The design stage is human-sourced until the dialog stages arrive: the message after intake's artifact is stored as the design.
+The design stage is human-sourced until the dialog stages arrive: the message after intake's artifact is stored as the design. The loader refuses a human-sourced first stage, a human-sourced stage with tools, checks or loops_to, and a loops_to naming a human-sourced stage.
 
 - Intake ends by stating the shape it expects (slices, projects involved) and
   the gate plan in effect, so the operator can change the overrides before

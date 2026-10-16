@@ -115,7 +115,7 @@ func load(fsys fs.FS) (*Pack, error) {
 		personas: map[string]string{}, instructions: map[string]string{},
 	}
 
-	seen := map[string]bool{}
+	seen := map[string]Stage{}
 
 	for i := range m.Stages {
 		s := &m.Stages[i]
@@ -128,7 +128,14 @@ func load(fsys fs.FS) (*Pack, error) {
 			return nil, err
 		}
 
-		seen[s.ID] = true
+		// The controller launches the first stage on the need and runs every
+		// other stage through the model unless its source is human, so a
+		// human-sourced first stage would be run as a model stage.
+		if i == 0 && s.Source == SourceHuman {
+			return nil, fmt.Errorf("pack: stage %q: the first stage cannot be human-sourced", s.ID)
+		}
+
+		seen[s.ID] = *s
 
 		if s.Source == SourceHuman {
 			// A human-sourced stage has no persona; its instructions file,
@@ -231,12 +238,12 @@ func parseLists(raw []byte) (contract.Lists, error) {
 	return lists, nil
 }
 
-func validateStage(s Stage, seen map[string]bool) error {
+func validateStage(s Stage, seen map[string]Stage) error {
 	if s.ID == "" {
 		return fmt.Errorf("pack: stage needs an id: %+v", s)
 	}
 
-	if seen[s.ID] {
+	if _, dup := seen[s.ID]; dup {
 		return fmt.Errorf("pack: duplicate stage %q", s.ID)
 	}
 
@@ -246,6 +253,11 @@ func validateStage(s Stage, seen map[string]bool) error {
 			return fmt.Errorf("pack: stage %q needs a persona", s.ID)
 		}
 	case SourceHuman:
+		// The panel waits for the user at a human-sourced stage, so nothing
+		// a model run would use applies; refuse rather than ignore it.
+		if len(s.Tools) > 0 || len(s.Checks) > 0 || s.LoopsTo != "" {
+			return fmt.Errorf("pack: stage %q is human-sourced, so it takes no tools, checks or loops_to", s.ID)
+		}
 	default:
 		return fmt.Errorf("pack: stage %q: unknown source %q", s.ID, s.Source)
 	}
@@ -257,7 +269,7 @@ func validateStage(s Stage, seen map[string]bool) error {
 	}
 
 	for _, c := range s.Consumes {
-		if !seen[c] {
+		if _, ok := seen[c]; !ok {
 			return fmt.Errorf("pack: stage %q consumes %q, which is not an earlier stage", s.ID, c)
 		}
 	}
@@ -281,8 +293,13 @@ func validateStage(s Stage, seen map[string]bool) error {
 	}
 
 	if s.LoopsTo != "" {
-		if !seen[s.LoopsTo] {
+		target, ok := seen[s.LoopsTo]
+		if !ok {
 			return fmt.Errorf("pack: stage %q loops to %q, which is not an earlier stage", s.ID, s.LoopsTo)
+		}
+
+		if target.Source == SourceHuman {
+			return fmt.Errorf("pack: stage %q loops to %q, which is human-sourced and would run through the model", s.ID, s.LoopsTo)
 		}
 
 		if s.MaxRounds <= 0 {
