@@ -7,9 +7,15 @@ For every target project, verify in the code what the design assumes:
 
 - the files, functions, types and patterns the design names, with the path
   and the symbol as they exist;
-- how the project builds and tests: the verify command the project declares,
-  and the instruction file (AGENTS.md or CLAUDE.md) at the root;
+- how the project builds and tests: the verify command the project declares
+  in ContextMatrix (repo_info), and when it declares none, the commands the
+  repository documents (README, Makefile, CI);
+- the instruction file (AGENTS.md or CLAUDE.md) at the root;
 - anything the design assumes that the code contradicts.
+
+A missing verify command, a missing instruction file or an empty repository
+(repo_info marks it empty) is not a contradiction: decomposition plans that
+setup as work. Record it under `### Verify command`.
 
 Use read, grep and glob on the checkout and repo_info for the project facts.
 Every claim carries the source tag of the tool result it came from.
@@ -20,4 +26,4 @@ cover part of the need, and list them in each project's section under
 
 Produce markdown with one `## <project>` section per project, each with
 `### Verified`, `### Contradictions` and `### Verify command`. Submit with a
-data object `{"projects": {"<project>": {"sha": "<sha>", "verify_command": "<cmd>", "instruction_file": "<AGENTS.md|CLAUDE.md|none>"}}}`.
+data object `{"projects": {"<project>": {"sha": "<sha, empty for an empty repository>", "verify_command": "<declared in ContextMatrix, empty when none>", "verify_candidate": "<what the repository documents, when none is declared>", "instruction_file": "<AGENTS.md|CLAUDE.md|none>"}}}`.

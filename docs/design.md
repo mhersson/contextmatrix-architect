@@ -198,7 +198,7 @@ developer (DEV), reviewer (REV).
 | 3  | Solution design | SD      | need, slices      | per slice: projects involved, decisions with rejected options, cross-project contracts               | yes       |
 | 4  | Grounding       | DEV     | design            | per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        |
 | 5  | Acceptance      | DEV     | design, grounding | per slice: criteria checkable inside one repo; human and live checks split into manual steps         | `auto` by default |
-| 6  | Decomposition   | DEV     | all above         | draft cards with type and priority, `depends_on` per project, manual entries for human and live checks, a playbook title and order | no        |
+| 6  | Decomposition   | DEV     | all above         | draft cards with type and priority, `depends_on` per project, manual entries for human and live checks, a playbook title and order, and the setup for a project without a verify command or instruction file | no        |
 | 7  | Readiness       | REV     | cards             | contract check per card; failures loop back to 6, three rounds max                                    | no        |
 | 8  | Sign-off        | human   | everything        | approval; then emission                                                                               | yes       |
 | -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   |
@@ -340,6 +340,19 @@ release.
   fail".
 - Polish or hardening requests as criteria: review does not block on them.
 
+**Setup**
+
+- A project without a verify command in CM: the draft proposes one in
+  `setup.<project>.verify_command`, and every card of the project runs it
+  in its acceptance criteria, written exactly as proposed. The architect
+  cannot set it: `create_card` has no verify field, and `update_project`
+  keeps the operator's.
+- A repository without `AGENTS.md` or `CLAUDE.md` at the root: the
+  project's first card also writes `AGENTS.md` (stack, verify command,
+  layout, conventions), `setup.<project>.instruction_card` names it, and
+  every other card of the project depends on it. A repository that has an
+  instruction file names no such card.
+
 **Target project prerequisites**
 
 - A `verify.command` in the project's `.board.yaml`. The architect refuses to
@@ -357,7 +370,9 @@ release.
 | Every path and symbol in Where exists at the recorded sha          | mechanical (code tool)     |
 | `depends_on` graph acyclic within each project                     | mechanical                 |
 | Every acceptance criterion of the slice maps to exactly one card   | mechanical                 |
-| Target project declares a verify command and a repo                | mechanical (`list_projects`) |
+| Target project declares a repo                                     | mechanical (`list_projects`) |
+| A project without a verify command: the proposed command in every card's criteria | mechanical (`list_projects`) |
+| A repository without an instruction file: one card writes `AGENTS.md`, every other card of the project depends on it | mechanical (code tool) |
 | Type and priority are ones the project declares                    | mechanical (`list_projects`) |
 | One deliverable, no open decisions, no optional scope              | model-judged               |
 | Estimated planner split of two subtasks or fewer                   | model-judged               |

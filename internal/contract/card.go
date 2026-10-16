@@ -37,13 +37,24 @@ type Manual struct {
 	Note string `json:"note,omitempty"`
 }
 
+// Setup is what decomposition plans for a target project an agent run is
+// not set up for yet: the verify command it proposes when ContextMatrix
+// declares none, and the draft id of the card that also writes AGENTS.md
+// when the repository has no instruction file.
+type Setup struct {
+	VerifyCommand   string `json:"verify_command,omitempty"`
+	InstructionCard string `json:"instruction_card,omitempty"`
+}
+
 // Draft is decomposition's structured block: the cards, the manual steps,
-// the playbook title and the playbook order over both.
+// the playbook title, the playbook order over both, and the setup per
+// target project.
 type Draft struct {
-	Title  string   `json:"title"`
-	Cards  []Card   `json:"cards"`
-	Manual []Manual `json:"manual"`
-	Order  []string `json:"order"`
+	Title  string           `json:"title"`
+	Cards  []Card           `json:"cards"`
+	Manual []Manual         `json:"manual"`
+	Order  []string         `json:"order"`
+	Setup  map[string]Setup `json:"setup,omitempty"`
 }
 
 // ParseDraft decodes an artifact's data block into a Draft. Ids must be
@@ -84,6 +95,10 @@ func ParseDraft(data map[string]any) (Draft, error) {
 		}
 
 		seen[m.ID] = true
+	}
+
+	for name, s := range d.Setup {
+		d.Setup[name] = Setup{VerifyCommand: strings.TrimSpace(s.VerifyCommand), InstructionCard: strings.TrimSpace(s.InstructionCard)}
 	}
 
 	return d, nil

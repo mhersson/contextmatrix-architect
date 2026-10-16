@@ -479,10 +479,11 @@ func (s *validatorState) last() []string {
 // problems and the contract run on every submit, and a failing submit goes
 // back to the model. Every submit reads the project list from ContextMatrix
 // again, so a fix made there during the run counts at the next submit; a
-// read that fails refuses the submit without spending a round. The third
-// failing submit is accepted with its findings recorded, so the pipeline
-// stops and reports instead of looping until the run's turns are spent. A
-// draft that does not decode is refused without spending a round.
+// read of ContextMatrix or the checkout that fails refuses the submit
+// without spending a round. The third failing submit is accepted with its
+// findings recorded, so the pipeline stops and reports instead of looping
+// until the run's turns are spent. A draft that does not decode is refused
+// without spending a round.
 func (c *Controller) cardsValidator(sess *session, bp store.Blueprint) (func(context.Context, stage.Artifact) error, *validatorState) {
 	state := &validatorState{}
 	lists := c.opts.Pack.Lists()
@@ -495,7 +496,7 @@ func (c *Controller) cardsValidator(sess *session, bp store.Blueprint) (func(con
 
 		projects, err := c.freshView(ctx, sess, bp)
 		if err != nil {
-			return fmt.Errorf("the cards were not judged, because ContextMatrix could not be read (%w); submit the same draft again", err)
+			return fmt.Errorf("the cards were not judged (%w); submit the same draft again", err)
 		}
 
 		problems := draftProblems(draft)
@@ -526,7 +527,7 @@ func (c *Controller) freshView(ctx context.Context, sess *session, bp store.Blue
 		return nil, fmt.Errorf("list projects: %w", err)
 	}
 
-	return contractView(projects, bp.Projects, c.opts.Workspace.TreeRoot(bp.ID))
+	return contractView(ctx, projects, bp.Projects, c.opts.Workspace.TreeRoot(bp.ID))
 }
 
 // draftProblems are the faults of the draft as a whole: it holds no cards,

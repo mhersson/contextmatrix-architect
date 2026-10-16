@@ -134,10 +134,10 @@ func safeSegment(s string) bool {
 // contractView is the card contract's view of each target project: from a
 // project list, what ContextMatrix declares (repository, verify command,
 // card types and priorities, every other project's repositories), and from
-// the blueprint's trees under root, the primary tree the where check reads.
-// A target missing from the list is left out, so the contract reports its
-// cards.
-func contractView(projects []cm.Project, targets []string, root string) (map[string]contract.Project, error) {
+// the blueprint's trees under root, the primary tree the where check reads
+// and whether it has an instruction file. A target missing from the list is
+// left out, so the contract reports its cards.
+func contractView(ctx context.Context, projects []cm.Project, targets []string, root string) (map[string]contract.Project, error) {
 	byName := map[string]cm.Project{}
 	for _, p := range projects {
 		byName[p.Name] = p
@@ -165,6 +165,13 @@ func contractView(projects []cm.Project, targets []string, root string) (map[str
 		if len(ts) > 0 {
 			cp.HasRepo = true
 			cp.Root = filepath.Join(root, ts[0].name)
+
+			info, err := code.Inspect(ctx, cp.Root)
+			if err != nil {
+				return nil, fmt.Errorf("blueprint: inspect %s: %w", ts[0].name, err)
+			}
+
+			cp.HasInstructionFile = info.InstructionFile != ""
 		}
 
 		out[name] = cp
@@ -303,7 +310,7 @@ func (c *Controller) prepareCode(ctx context.Context, sess *session, bp store.Bl
 		})
 	}
 
-	facts.projects, err = contractView(projects, bp.Projects, facts.root)
+	facts.projects, err = contractView(ctx, projects, bp.Projects, facts.root)
 	if err != nil {
 		return nil, err
 	}
