@@ -66,6 +66,8 @@ make fmt
 architect serve --config config.yaml
 ```
 
+Grep and glob in stage runs exec ripgrep; install `rg` locally for manual runs.
+
 Before any commit: `make fmt`, `make test`, `make lint`, `make build` clean.
 
 ## Commit discipline

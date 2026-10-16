@@ -74,3 +74,6 @@ The state volume must be writable by uid 65532 (the distroless `nonroot` user).
 A fresh named volume inherits that ownership from the image; a bind mount must
 be chowned by hand. The mounted `config.yaml` must be readable by uid 65532.
 `config.yaml.example` documents every key.
+
+The image ships ripgrep for the read tools; a local run needs `rg` on the path
+for grep and glob.

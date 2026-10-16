@@ -515,8 +515,8 @@ Replies the server understands, besides answers to questions:
 - **Code.** The server checks out each target project's repo from the URL CM
   reports, into its own workspace cache, with credentials fetched per repo from
   CM. Nothing is checked out on a client.
-- **Container needs.** A Go binary image with no Docker socket (it spawns
-  nothing), a volume for the state directory, and outbound access to CM, the
+- **Container needs.** A Go binary image with ripgrep on the path (the
+  harness grep and glob tools exec it), no Docker socket, a volume for the state directory, and outbound access to CM, the
   LLM endpoint and the git host. Env: the CM base URL and the backend HMAC key.
 - **Client.** The panel, through CM. Local use is `architect serve` on the
   laptop pointed at a CM instance. There is no CM-less mode.
@@ -526,7 +526,7 @@ Replies the server understands, besides answers to questions:
 - Go 1.27, `contextmatrix-harness` v0.25.0 (loop, llm client, jailed read
   tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.8.0
   (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.23.0
-  for the CM-facing side, go-git for checkouts, `modernc.org/sqlite`, the Go
+  for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
   URL, backend HMAC key, listen address, state directory, pack, per-project
