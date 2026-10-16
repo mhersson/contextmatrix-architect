@@ -434,6 +434,27 @@ func TestWorkspace_CheckoutIsHTTPSOnly(t *testing.T) {
 	}
 }
 
+func TestCleanURL(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{name: "user and password", in: "https://user:s3cr3t@example.com/acme/alpha.git", want: "https://example.com/acme/alpha.git"},
+		{name: "token as user", in: "https://s3cr3t@example.com/acme/alpha.git", want: "https://example.com/acme/alpha.git"},
+		{name: "surrounding space", in: "  https://user:s3cr3t@example.com/alpha.git \n", want: "https://example.com/alpha.git"},
+		{name: "already clean", in: "https://example.com/acme/alpha.git", want: "https://example.com/acme/alpha.git"},
+		{name: "scp-like form is not a url", in: "git@example.com:acme/alpha.git", want: "git@example.com:acme/alpha.git"},
+		{name: "empty", in: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CleanURL(tt.in)
+			assert.Equal(t, tt.want, got)
+			assert.NotContains(t, got, "s3cr3t")
+		})
+	}
+}
+
 func TestRepoKey_RefusesUnsafeKeys(t *testing.T) {
 	for _, in := range []string{"git@../../..:x", "https://github.com/../../etc", "https://github.com/a/..", "git@host:a\\b"} {
 		_, _, _, err := repoKey(in)
