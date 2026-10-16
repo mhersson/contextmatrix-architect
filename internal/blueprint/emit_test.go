@@ -2,9 +2,12 @@ package blueprint
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
+	protocol "github.com/mhersson/contextmatrix-protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -263,4 +266,288 @@ func TestDraftProblems_AMissingCardIsNotAlsoOutOfOrder(t *testing.T) {
 	}
 
 	assert.Equal(t, []string{"D2 is missing from order"}, draftProblems(d))
+}
+
+func yoloInput(id string) StartInput {
+	in := startInput(id)
+	in.Mode = protocol.ArchitectModeYolo
+
+	return in
+}
+
+func TestYolo_StartsOneCardWithRunCard(t *testing.T) {
+	c, st, _, rec, _ := newPipeline(t, happyScript())
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+
+	driveIn(t, c, yoloInput("BP1"))
+
+	assert.Equal(t, []string{"alpha/ALPHA-001|human:architect"}, fake.runCards)
+	assert.Empty(t, fake.runBooks)
+
+	recs, err := st.ListEmissions(context.Background(), "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, store.EmitRun, recs[len(recs)-1].Kind)
+	assert.Equal(t, "ALPHA-001", recs[len(recs)-1].CMID)
+	assert.True(t, rec.has(EventRunStarted))
+
+	ev, ok := rec.first(EventEmitted)
+	require.True(t, ok)
+	assert.Equal(t, true, ev.Payload["run_follows"], "the run start follows the announcement")
+}
+
+func TestYolo_StartsSeveralCardsWithRunPlaybook(t *testing.T) {
+	c, _, _, _, _ := newPipeline(t, twoCardScript())
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+
+	driveIn(t, c, yoloInput("BP1"))
+
+	assert.Equal(t, []string{"ship-the-parser|human:architect"}, fake.runBooks)
+	assert.Empty(t, fake.runCards)
+}
+
+func TestYolo_ARefusedStartIsReportedAndApproveRetriesItOnce(t *testing.T) {
+	c, st, _, rec, _ := newPipeline(t, happyScript())
+	fake := newFakeCM()
+	fake.runErr = errors.New("cm: run_card: no execution backend is configured")
+	c.opts.ConnectCM = fake.connect
+	ctx := context.Background()
+
+	driveIn(t, c, yoloInput("BP1"))
+
+	ev, ok := rec.first(EventError)
+	require.True(t, ok)
+	assert.Contains(t, ev.Payload["message"], "no execution backend is configured")
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, string(StateEmitted), bp.State, "the cards exist")
+
+	fake.mu.Lock()
+	fake.runErr = nil
+	fake.mu.Unlock()
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	assert.Len(t, fake.runCards, 2, "the refused start, then the retry")
+	assert.Len(t, fake.titles(), 1, "no card is created twice")
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m4"))
+	c.Wait("BP1")
+
+	assert.Len(t, fake.runCards, 2, "a started run is never started again")
+}
+
+// ContextMatrix may start a run whose caller gave up, so a cancel waits for
+// the run start in flight: the start is recorded and never made twice.
+func TestYolo_AnAbortDuringTheRunStartRecordsItOnce(t *testing.T) {
+	cases := []struct {
+		name   string
+		script stageScript
+		target string
+	}{
+		{name: "run_card", script: happyScript(), target: "ALPHA-001"},
+		{name: "run_playbook", script: twoCardScript(), target: "ship-the-parser"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, st, _, rec, _ := newPipeline(t, tc.script)
+			fake := newFakeCM()
+			hold := newHoldCM(t, fake)
+			hold.run = true
+			c.opts.ConnectCM = hold.connect
+			ctx := context.Background()
+
+			require.NoError(t, c.Start(ctx, yoloInput("BP1")))
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			c.Wait("BP1")
+			require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
+			receive(t, hold.entered, "the held run start")
+
+			require.NoError(t, c.Abort(ctx, "BP1", "m3"))
+			hold.free()
+			c.Wait("BP1")
+
+			recs, err := st.ListEmissions(ctx, "BP1")
+			require.NoError(t, err)
+
+			last := recs[len(recs)-1]
+			assert.Equal(t, store.EmitRun, last.Kind, "the start the abort waited for is recorded")
+			assert.Equal(t, tc.target, last.CMID)
+			assert.True(t, rec.has(EventRunStarted))
+
+			require.NoError(t, c.Message(ctx, "BP1", "approve", "m4"))
+			c.Wait("BP1")
+
+			assert.Len(t, slices.Concat(fake.runCards, fake.runBooks), 1, "the run is started once")
+		})
+	}
+}
+
+// After a refused start, a human may start the run in ContextMatrix; approve
+// then records that run instead of starting another. A card whose trigger
+// failed in todo, or a playbook run stopped there, is started again.
+func TestYolo_ApproveRecordsARunAlreadyInContextMatrix(t *testing.T) {
+	cases := []struct {
+		name     string
+		script   stageScript
+		inCM     func(f *fakeCM)
+		runs     int
+		existing bool
+	}{
+		{
+			name: "a queued card", script: happyScript(), runs: 1, existing: true,
+			inCM: func(f *fakeCM) {
+				f.setCards("ALPHA-001", cm.Card{ID: "ALPHA-001", State: "todo", WorkerStatus: "queued"})
+			},
+		},
+		{
+			name: "a card past todo", script: happyScript(), runs: 1, existing: true,
+			inCM: func(f *fakeCM) { f.setCards("ALPHA-001", cm.Card{ID: "ALPHA-001", State: "review"}) },
+		},
+		{
+			name: "a card whose trigger failed", script: happyScript(), runs: 2,
+			inCM: func(f *fakeCM) {
+				f.setCards("ALPHA-001", cm.Card{ID: "ALPHA-001", State: "todo", WorkerStatus: "failed"})
+			},
+		},
+		{
+			name: "a running playbook", script: twoCardScript(), runs: 1, existing: true,
+			inCM: func(f *fakeCM) {
+				f.setBooks("ship-the-parser", cm.Playbook{ID: "ship-the-parser", Total: 3, Run: &cm.PlaybookRun{Status: "running"}})
+			},
+		},
+		{
+			name: "a stopped playbook", script: twoCardScript(), runs: 2,
+			inCM: func(f *fakeCM) {
+				f.setBooks("ship-the-parser", cm.Playbook{ID: "ship-the-parser", Total: 3, Run: &cm.PlaybookRun{Status: "stopped"}})
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, st, _, rec, _ := newPipeline(t, tc.script)
+			fake := newFakeCM()
+			fake.runErr = errors.New("cm: run_card: no execution backend is configured")
+			c.opts.ConnectCM = fake.connect
+			ctx := context.Background()
+
+			driveIn(t, c, yoloInput("BP1"))
+			require.False(t, rec.has(EventRunStarted), "the first start is refused")
+
+			fake.mu.Lock()
+			fake.runErr = nil
+			fake.mu.Unlock()
+			tc.inCM(fake)
+
+			require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+			c.Wait("BP1")
+
+			assert.Len(t, slices.Concat(fake.runCards, fake.runBooks), tc.runs)
+
+			recs, err := st.ListEmissions(ctx, "BP1")
+			require.NoError(t, err)
+			assert.Equal(t, store.EmitRun, recs[len(recs)-1].Kind, "the start is recorded")
+
+			ev, ok := rec.first(EventRunStarted)
+			require.True(t, ok)
+			assert.Equal(t, tc.existing, ev.Payload["existing"])
+		})
+	}
+}
+
+// resentCM starts the run, then fails the call: the MCP client re-sends a
+// call after a dropped connection, and ContextMatrix refuses the re-send of
+// a start it made.
+type resentCM struct {
+	*fakeCM
+}
+
+func (r resentCM) connect(context.Context, string) (CMClient, error) {
+	return r, nil
+}
+
+func (r resentCM) RunCard(ctx context.Context, project, id, agentID string) (cm.Card, error) {
+	card, err := r.fakeCM.RunCard(ctx, project, id, agentID)
+	if err != nil {
+		return cm.Card{}, err
+	}
+
+	r.setCards(id, card)
+
+	return cm.Card{}, errors.New("cm: run_card: card is already being executed by a worker")
+}
+
+func (r resentCM) RunPlaybook(ctx context.Context, id, agentID string) error {
+	if err := r.fakeCM.RunPlaybook(ctx, id, agentID); err != nil {
+		return err
+	}
+
+	r.setBooks(id, cm.Playbook{ID: id, Total: 3, Run: &cm.PlaybookRun{Status: "running"}})
+
+	return errors.New("cm: run_playbook: a running or waiting run is refused")
+}
+
+// A run start whose call fails after ContextMatrix started the run is the
+// start: it is recorded once, not reported as a run that did not start.
+func TestYolo_AStartThatFailsAfterTheRunStartedIsRecorded(t *testing.T) {
+	cases := []struct {
+		name   string
+		script stageScript
+		target string
+	}{
+		{name: "run_card", script: happyScript(), target: "ALPHA-001"},
+		{name: "run_playbook", script: twoCardScript(), target: "ship-the-parser"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, st, _, rec, _ := newPipeline(t, tc.script)
+			fake := resentCM{fakeCM: newFakeCM()}
+			c.opts.ConnectCM = fake.connect
+			ctx := context.Background()
+
+			driveIn(t, c, yoloInput("BP1"))
+
+			assert.False(t, rec.has(EventError), "no failed start is reported")
+
+			starts := rec.all(EventRunStarted)
+			require.Len(t, starts, 1, "the start is recorded once")
+			assert.Equal(t, tc.target, starts[0].Payload["target"])
+			assert.Equal(t, true, starts[0].Payload["existing"])
+
+			recs, err := st.ListEmissions(ctx, "BP1")
+			require.NoError(t, err)
+
+			runs := slices.DeleteFunc(recs, func(e store.Emission) bool { return e.Kind != store.EmitRun })
+			require.Len(t, runs, 1)
+			assert.Equal(t, tc.target, runs[0].CMID)
+
+			require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+			c.Wait("BP1")
+
+			assert.Len(t, slices.Concat(fake.runCards, fake.runBooks), 1, "the run is started once")
+		})
+	}
+}
+
+func TestDefaultMode_NeverStartsARun(t *testing.T) {
+	c, _, _, rec, _ := newPipeline(t, happyScript())
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+
+	drive(t, c, "BP1")
+	require.NoError(t, c.Message(context.Background(), "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	assert.Len(t, fake.titles(), 1)
+	assert.Empty(t, fake.runCards)
+
+	ev, ok := rec.first(EventEmitted)
+	require.True(t, ok)
+	assert.Equal(t, false, ev.Payload["run_follows"])
 }

@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slices 0 and 1 are implemented, and slice 2 signs off ready cards and emits them and a playbook into CM; the dialog stages are design, and so is the export's commit to a repository (slice 4); the export writes the bundle under the state directory.
+Status: agreed design, 2026-10-15. Slices 0 and 1 are implemented, and slice 2 signs off ready cards, emits them and a playbook into CM and starts them in yolo mode; the dialog stages are design, and so is the export's commit to a repository (slice 4); the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -407,9 +407,9 @@ blueprint.
   branch under the card's own settings. Several cards are started with
   `run_playbook`, which makes the playbook runnable and plays it; every card
   then runs with `autonomous`, `create_pr`, `await_ci` and `merge_pr` on, each
-  pull request merges into `playbook/<id>` on CI pass, and a compare link
-  offers one final pull request to the default branch. That final merge stays
-  human. The session reports the run's progress and end.
+  pull request merges into `playbook/<id>` on CI pass, and one compare link
+  per repository offers the final pull request to its default branch. Those
+  final merges stay human. The session reports the run's progress and end.
 
 The architect's cost cap bounds the architect. The CM runs a yolo blueprint
 starts are bounded by CM's per-card guardrails, not by the architect.
@@ -456,7 +456,8 @@ stop for one otherwise. Every decision is a row in `gates`. Then, in order:
    and assumptions. A single card carries the problem and the assumptions in
    its Context section, and its manual checks are listed in the session.
 4. The blueprint's trees are removed and its state is `emitted`. Running is
-   a human action in CM, or `run_card` and `run_playbook` in yolo mode.
+   a human action in CM, or in yolo mode `run_card` for one card and
+   `run_playbook` for several, started once and recorded in `emissions`.
 
 The architect does not use CM's Jira import for cards. Its traps hit exactly
 what the contract tunes: imported titles start with the issue key, no labels

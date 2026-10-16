@@ -49,6 +49,9 @@ const (
 	EventPlaybookCreated = "playbook_created"
 	// EventEmitted says every card (and the playbook) exists in ContextMatrix.
 	EventEmitted = "emitted"
+	// EventRunStarted records the yolo run start: run_card for one card,
+	// run_playbook for several.
+	EventRunStarted = "run_started"
 	// EventSignOff shows the ready cards, the preflight result and how to
 	// decide; the blueprint waits for approve or reject.
 	EventSignOff = "signoff"

@@ -49,6 +49,7 @@ func TestLogEntryFor(t *testing.T) {
 		{"card created", blueprint.Event{Kind: blueprint.EventCardCreated, BlueprintID: "S1", Payload: map[string]any{"card": "ALPHA-001", "draft": "D1", "project": "alpha", "title": "Add the parser", "warnings": []string{"w1"}}}, "system", []string{"ALPHA-001", "w1"}, false},
 		{"playbook created", blueprint.Event{Kind: blueprint.EventPlaybookCreated, BlueprintID: "S1", Payload: map[string]any{"playbook": "ship-the-parser", "entries": 3}}, "system", []string{"ship-the-parser"}, false},
 		{"emitted", blueprint.Event{Kind: blueprint.EventEmitted, BlueprintID: "S1", Payload: map[string]any{"cards": []any{map[string]any{"card": "ALPHA-001"}}, "playbook": "", "manual": []any{"Check the dashboard"}}}, "text", []string{"ALPHA-001", "Check the dashboard"}, false},
+		{"run started", blueprint.Event{Kind: blueprint.EventRunStarted, BlueprintID: "S1", Payload: map[string]any{"kind": "playbook", "target": "ship-the-parser"}}, "system", []string{"ship-the-parser"}, false},
 		{"signoff", blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
 			"cards":    []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing", "type": "feature", "priority": "medium"}},
 			"order":    []any{"D1"},
@@ -180,6 +181,52 @@ func TestLogEntryFor_SignoffSaysWhatPreflightFound(t *testing.T) {
 			}
 
 			assert.Contains(t, entry.Content, "`reject <feedback>`")
+		})
+	}
+}
+
+func TestLogEntryFor_ARunAlreadyThereIsRecordedNotStarted(t *testing.T) {
+	cases := []struct {
+		name     string
+		payload  map[string]any
+		want     string
+		wantSays string
+	}{
+		{
+			name:    "a card",
+			payload: map[string]any{"kind": "card", "target": "ALPHA-001", "existing": true},
+			want:    "ALPHA-001 is already running in ContextMatrix; the architect recorded it.",
+		},
+		{
+			name:    "a playbook",
+			payload: map[string]any{"kind": "playbook", "target": "ship-the-parser", "existing": true},
+			want:    "Playbook ship-the-parser already runs in ContextMatrix; the architect recorded it.",
+		},
+		{
+			name:     "a card the architect started",
+			payload:  map[string]any{"kind": "card", "target": "ALPHA-001", "existing": false},
+			wantSays: "Started ALPHA-001",
+		},
+		{
+			name:     "a playbook the architect started",
+			payload:  map[string]any{"kind": "playbook", "target": "ship-the-parser", "existing": false},
+			wantSays: "Started playbook ship-the-parser",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRunStarted, BlueprintID: "S1", Payload: tc.payload})
+			require.True(t, ok)
+			assert.Equal(t, "system", entry.Type)
+
+			if tc.want != "" {
+				assert.Equal(t, tc.want, entry.Content)
+
+				return
+			}
+
+			assert.Contains(t, entry.Content, tc.wantSays)
 		})
 	}
 }

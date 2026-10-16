@@ -171,6 +171,27 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventPlaybookCreated:
 		entry.Type = "system"
 		entry.Content = fmt.Sprintf("Created playbook %s with %.0f entries.", str(p["playbook"]), num(p["entries"]))
+	case blueprint.EventRunStarted:
+		entry.Type = "system"
+
+		// A run ContextMatrix already had was recorded, not started.
+		if existing, _ := p["existing"].(bool); existing {
+			if str(p["kind"]) == "card" {
+				entry.Content = fmt.Sprintf("%s is already running in ContextMatrix; the architect recorded it.", str(p["target"]))
+			} else {
+				entry.Content = fmt.Sprintf("Playbook %s already runs in ContextMatrix; the architect recorded it.", str(p["target"]))
+			}
+
+			break
+		}
+
+		if str(p["kind"]) == "card" {
+			entry.Content = fmt.Sprintf("Started %s in ContextMatrix; it opens one pull request to the default branch.", str(p["target"]))
+
+			break
+		}
+
+		entry.Content = fmt.Sprintf("Started playbook %s in ContextMatrix. Each card's pull request merges into the playbook branch once CI passes.", str(p["target"]))
 	case blueprint.EventEmitted:
 		entry.Type = "text"
 

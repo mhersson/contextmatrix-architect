@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	protocol "github.com/mhersson/contextmatrix-protocol"
+
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/contract"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
@@ -77,8 +79,8 @@ func (c *Controller) draft(ctx context.Context, id string) (contract.Draft, erro
 	return contract.ParseDraft(data)
 }
 
-// emitted reports whether everything emission creates is recorded: every
-// draft card and, for two or more cards, the playbook.
+// emitted reports whether everything emission does is recorded: every draft
+// card, for two or more cards the playbook, and in yolo mode the run start.
 func (c *Controller) emitted(ctx context.Context, bp store.Blueprint) (bool, error) {
 	draft, err := c.draft(ctx, bp.ID)
 	if err != nil {
@@ -90,7 +92,7 @@ func (c *Controller) emitted(ctx context.Context, bp store.Blueprint) (bool, err
 		return false, fmt.Errorf("blueprint: list emissions: %w", err)
 	}
 
-	cards, playbook := 0, false
+	cards, playbook, run := 0, false, false
 
 	for _, e := range recs {
 		switch e.Kind {
@@ -98,10 +100,13 @@ func (c *Controller) emitted(ctx context.Context, bp store.Blueprint) (bool, err
 			cards++
 		case store.EmitPlaybook:
 			playbook = true
+		case store.EmitRun:
+			run = true
 		}
 	}
 
-	return cards == len(draft.Cards) && (len(draft.Cards) < 2 || playbook), nil
+	return cards == len(draft.Cards) && (len(draft.Cards) < 2 || playbook) &&
+		(bp.Mode != protocol.ArchitectModeYolo || run), nil
 }
 
 // emit creates an approved blueprint's cards and playbook in ContextMatrix.
@@ -150,7 +155,136 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 
 	if err := c.emitCards(ctx, au, bp, client, draft); err != nil {
 		c.emitError(bg, au, bp.ID, err)
+
+		return
 	}
+
+	if bp.Mode == protocol.ArchitectModeYolo {
+		if err := c.startRun(ctx, au, bp, client, draft); err != nil {
+			c.opts.Logger.Error("blueprint: run start", "blueprint", bp.ID, "error", au.text(err.Error()))
+			au.event(bg, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
+				"stage":   "run",
+				"message": "The cards are emitted, but the run did not start: " + err.Error() + ". Reply approve to retry the start, or start it in ContextMatrix and reply approve.",
+			}})
+		}
+	}
+}
+
+// startRun starts the emitted cards once: run_card for one card, which
+// opens one pull request to the default branch under the card's own
+// settings, and run_playbook for several. The start is recorded, so a
+// retry or a reopen never starts a run twice. A run ContextMatrix already
+// has, started there by a human or by a start whose record was lost, is
+// recorded without starting another, and so is a run found after a start
+// failed: the MCP client re-sends a call after a dropped connection, and
+// ContextMatrix refuses the re-send of a start it made.
+func (c *Controller) startRun(ctx context.Context, au audit, bp store.Blueprint, client CMClient, draft contract.Draft) error {
+	bg := context.WithoutCancel(ctx)
+
+	recs, err := c.opts.Store.ListEmissions(bg, bp.ID)
+	if err != nil {
+		return fmt.Errorf("list emissions: %w", err)
+	}
+
+	cards := map[string]store.Emission{}
+	playbook := ""
+
+	for _, e := range recs {
+		switch e.Kind {
+		case store.EmitRun:
+			return nil
+		case store.EmitCard:
+			cards[e.DraftID] = e
+		case store.EmitPlaybook:
+			playbook = e.CMID
+		}
+	}
+
+	// A cancel after the cards exist stops before the run start.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	rec := store.Emission{BlueprintID: bp.ID, Kind: store.EmitRun, CreatedAt: c.opts.Now().UTC()}
+	kind, name := "playbook", "playbook "+playbook
+
+	// running reads whether ContextMatrix has the run; start starts it.
+	var (
+		running func(context.Context) (bool, error)
+		start   func(context.Context) error
+	)
+
+	if len(draft.Cards) == 1 {
+		e := cards[draft.Cards[0].ID]
+		rec.Project, rec.CMID, kind, name = e.Project, e.CMID, "card", e.CMID
+
+		running = func(ctx context.Context) (bool, error) {
+			card, err := client.GetCard(ctx, e.Project, e.CMID)
+
+			return err == nil && hasRun(card), err
+		}
+		start = func(ctx context.Context) error {
+			_, err := client.RunCard(ctx, e.Project, e.CMID, c.opts.CallerIdentity)
+
+			return err
+		}
+	} else {
+		rec.CMID = playbook
+
+		running = func(ctx context.Context) (bool, error) {
+			pb, err := client.GetPlaybook(ctx, playbook)
+
+			return err == nil && playedRun(pb), err
+		}
+		start = func(ctx context.Context) error {
+			return client.RunPlaybook(ctx, playbook, c.opts.CallerIdentity)
+		}
+	}
+
+	existing, err := running(ctx)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", name, err)
+	}
+
+	if !existing {
+		wctx, cancel := writeContext(ctx)
+		err = start(wctx)
+
+		cancel()
+
+		// A read after a failed start decides the write's outcome, so it
+		// outlives a cancel as the write does. It gets a context of its own:
+		// the write's may have run out, which may be why it failed.
+		if err != nil {
+			rctx, rcancel := writeContext(ctx)
+			ran, rerr := running(rctx)
+
+			rcancel()
+
+			switch {
+			case rerr != nil:
+				c.opts.Logger.Warn("blueprint: read the run start again", "blueprint", bp.ID, "error", au.text(rerr.Error()))
+			case ran:
+				c.opts.Logger.Warn("blueprint: the run start failed, but the run is there", "blueprint", bp.ID, "error", au.text(err.Error()))
+
+				existing, err = true, nil
+			}
+		}
+
+		if err != nil {
+			return fmt.Errorf("start %s: %w", name, err)
+		}
+	}
+
+	if err := c.opts.Store.AddEmission(bg, rec); err != nil {
+		return fmt.Errorf("record the start of %s, which runs in ContextMatrix: %w", rec.CMID, err)
+	}
+
+	au.event(bg, Event{Kind: EventRunStarted, BlueprintID: bp.ID, Payload: map[string]any{
+		"kind": kind, "target": rec.CMID, "existing": existing,
+	}})
+
+	return nil
 }
 
 // emitError reports a stopped emission and leaves the blueprint idle.
@@ -178,6 +312,7 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 
 	cmIDs := map[string]string{}
 	playbookID := ""
+	started := false
 
 	for _, e := range recs {
 		switch e.Kind {
@@ -185,6 +320,8 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 			cmIDs[e.DraftID] = e.CMID
 		case store.EmitPlaybook:
 			playbookID = e.CMID
+		case store.EmitRun:
+			started = true
 		}
 	}
 
@@ -341,8 +478,10 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 		}
 	}
 
+	// run_follows tells the panel that the run start comes next.
 	au.event(bg, Event{Kind: EventEmitted, BlueprintID: bp.ID, Payload: map[string]any{
 		"cards": cards, "playbook": playbookID, "manual": manual,
+		"run_follows": bp.Mode == protocol.ArchitectModeYolo && !started,
 	}})
 
 	return nil
@@ -460,4 +599,25 @@ func withContext(body, text string) string {
 	out := slices.Concat(lines[:end], []string{"", text, ""}, lines[end:])
 
 	return strings.Join(out, "\n")
+}
+
+// hasRun reports whether a card has a run, in flight or over. run_card
+// starts only a todo card with no run queued or running, and marks it
+// queued. Claimed, the card leaves todo, and a run that ends clears the
+// worker status or parks it. A todo card whose worker failed or was killed
+// is a start that never ran, such as a trigger CM could not send.
+func hasRun(card cm.Card) bool {
+	switch card.WorkerStatus {
+	case "queued", "running", "parked":
+		return true
+	}
+
+	return card.State != "todo"
+}
+
+// playedRun reports whether a playbook has a run, in flight or over: it is
+// running, waiting or completed. Only a stopped run is played again, which
+// resumes it; a completed one is not started over.
+func playedRun(pb cm.Playbook) bool {
+	return pb.Run != nil && pb.Run.Status != "stopped"
 }

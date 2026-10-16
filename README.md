@@ -15,7 +15,8 @@ to three rounds. The session then reports whether the cards are ready. Ready car
 sign-off: reply approve to create them in ContextMatrix, with a playbook for
 two or more, or reject with feedback to re-run decomposition. The auto+emit
 and yolo modes approve on their own when the preflight finds nothing for a
-human.
+human. In yolo mode the architect then starts the run: one card with run_card,
+several with run_playbook.
 
 ## Run
 
