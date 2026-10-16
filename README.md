@@ -25,8 +25,9 @@ its `token_costs` and model catalog. The architect prices every run's tokens
 with it, so `max_run_cost_usd` and a blueprint's cost cap bind on any
 endpoint, and a run is stopped within one model call of passing its cap. A
 model CM cannot price arrives without a price: an uncapped blueprint still
-runs and shows the endpoint's reported cost, a capped one refuses to run until
-the cap is removed or a priced model chosen.
+runs and counts only the endpoint's reported cost (`max_turns` still bounds
+every run), a capped one refuses to run until
+a priced model is chosen or a new blueprint is started without a cap.
 
 ## Docker
 

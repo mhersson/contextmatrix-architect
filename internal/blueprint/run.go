@@ -108,7 +108,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	defer stop(nil)
 
 	sink := &harnessSink{
-		audit: au, id: id, runID: runID, canceled: ctx.Done(),
+		audit: au, id: id, runID: runID, canceled: runCtx.Done(),
 		price: sess.price, capUSD: runCap, stop: stop,
 	}
 
@@ -286,7 +286,8 @@ type harnessSink struct {
 	audit audit
 	id    string
 	runID int64
-	// canceled is closed once abort, End or Shutdown cancels the run.
+	// canceled is closed once abort, End, Shutdown or the cost cap cancels
+	// the run.
 	canceled <-chan struct{}
 	// price, capUSD and stop bind the run cap on endpoints that report no
 	// cost: every usage line is priced and the run is stopped once the sum

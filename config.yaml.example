@@ -21,7 +21,9 @@ log_level: info
 
 # Harness cost cap per stage run, in USD. Default: 2.
 # Runs are priced from their tokens at the price CM sends per session, so this
-# binds on every endpoint. A run is stopped within one model call of passing it.
+# binds on every endpoint and a run is stopped within one model call of passing
+# it. A model CM cannot price counts only the cost the endpoint reports, and
+# max_turns still bounds every run.
 # Env: CONTEXTMATRIX_ARCHITECT_MAX_RUN_COST_USD
 max_run_cost_usd: 2
 

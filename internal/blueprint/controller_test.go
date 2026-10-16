@@ -929,11 +929,25 @@ func TestRun_StopsWhenPricedUsagePassesTheRunCap(t *testing.T) {
 	// The fake model "spends" through usage lines and then blocks until the
 	// run is stopped, as a real model call would be cut off by the context.
 	c, st, _, rec := newControllerWithRunCap(t, 0.5, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		// 0.20 and 0.40 USD are under the 0.5 cap; 0.60 passes it.
+		var stopped []bool
+
 		for range 3 {
 			_, _ = in.Events.Write([]byte(`{"seq":1,"kind":"usage","data":{"prompt_tokens":100000,"completion_tokens":10000,"cost_usd":0}}` + "\n"))
+
+			stopped = append(stopped, ctx.Err() != nil)
 		}
 
-		<-ctx.Done()
+		assert.Equal(t, []bool{false, false, true}, stopped, "the run stops on the usage line that passes the cap")
+
+		select {
+		case <-ctx.Done():
+		case <-time.After(5 * time.Second):
+			return stage.Output{}, errors.New("run was not stopped by the cap")
+		}
+
+		// The harness reports the cut-off model call as an error line.
+		_, _ = in.Events.Write([]byte(`{"seq":4,"kind":"error","data":{"error":"context canceled"}}` + "\n"))
 
 		return stage.Output{Result: harness.Result{Reason: "error", PromptTokens: 300_000, CompletionTokens: 30_000}}, ctx.Err()
 	})
@@ -959,6 +973,13 @@ func TestRun_StopsWhenPricedUsagePassesTheRunCap(t *testing.T) {
 	ev, ok := rec.first(EventError)
 	require.True(t, ok)
 	assert.Contains(t, ev.Payload["message"], "run cost cap")
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+
+	for _, l := range rec.lines {
+		assert.NotContains(t, string(l), `"kind":"error"`, "the cut-off call's cancel error is not forwarded")
+	}
 }
 
 func TestMessage_NeedRefusedWhenTheCapIsSpent(t *testing.T) {

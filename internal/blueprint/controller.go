@@ -381,7 +381,7 @@ func (c *Controller) capAllows(ctx context.Context, au audit, sess *session, bp 
 	if sess.price == nil {
 		au.event(ctx, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
 			"stage":   stageID,
-			"message": fmt.Sprintf("cost cap %.2f USD is set but the model has no price, so the cap cannot bind; remove the cap or pick a priced model", bp.CostCapUSD),
+			"message": fmt.Sprintf("cost cap %.2f USD is set but the model has no price, so the cap cannot bind; pick a priced model, or start a new blueprint without a cap", bp.CostCapUSD),
 		}})
 		c.setState(ctx, bp.ID, StateIdle)
 

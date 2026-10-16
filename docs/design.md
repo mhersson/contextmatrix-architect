@@ -523,7 +523,9 @@ Replies the server understands, besides answers to questions:
 - Cost: every run's token buckets are priced at the model price CM sends in
   the start payload; the ledger sums runs per blueprint, the per-run cap stops
   a run within one model call of passing it, and a capped blueprint whose
-  model has no price does not run. A critique round re-bills the conversation
+  model has no price does not run. An unpriced model on an uncapped blueprint
+  counts only the cost the endpoint reports, and max_turns still bounds every
+  run. A critique round re-bills the conversation
   so far; the ledger counts it.
 - Long intake dialogs rely on the harness's in-run compaction. Whether that is
   enough is checked in slice 3.
