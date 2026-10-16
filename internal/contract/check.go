@@ -10,12 +10,17 @@ import (
 )
 
 // Project is what the checks know about a target project: whether CM
-// declares a repository and a verify command for it, and the checkout root
-// the where check reads. An empty Root skips the where check.
+// declares a repository and a verify command for it, the checkout root the
+// where check reads (empty skips it), the card types and priorities it
+// declares (empty skips that check), and the repository urls of every other
+// CM project, which no card may name.
 type Project struct {
-	HasRepo   bool
-	HasVerify bool
-	Root      string
+	HasRepo      bool
+	HasVerify    bool
+	Root         string
+	Types        []string
+	Priorities   []string
+	ForeignRepos []string
 }
 
 // Finding is one failed check on one card.
@@ -58,12 +63,35 @@ func Check(d Draft, lists Lists, projects map[string]Project) []Finding {
 			out = append(out, Finding{c.ID, "project_verify", fmt.Sprintf("project %q declares no verify command", c.Project)})
 		}
 
+		out = append(out, checkFields(c, p)...)
+		out = append(out, checkForeignRepos(c, p.ForeignRepos)...)
+
 		if p.Root != "" {
 			out = append(out, checkWhere(c, p.Root)...)
 		}
 	}
 
 	out = append(out, checkAcyclic(d.Cards)...)
+
+	return out
+}
+
+// checkFields requires a type and a priority the project declares, matched
+// exactly as CM's create_card does; each is checked only when the project
+// declares any.
+func checkFields(c Card, p Project) []Finding {
+	var out []Finding
+
+	if len(p.Types) > 0 && !slices.Contains(p.Types, c.Type) {
+		out = append(out, Finding{c.ID, "type", fmt.Sprintf("type %q is not one of the project's types %v", c.Type, p.Types)})
+	}
+
+	switch {
+	case strings.TrimSpace(c.Priority) == "" && len(p.Priorities) > 0:
+		out = append(out, Finding{c.ID, "priority", fmt.Sprintf("priority is required, one of %v", p.Priorities)})
+	case len(p.Priorities) > 0 && !slices.Contains(p.Priorities, c.Priority):
+		out = append(out, Finding{c.ID, "priority", fmt.Sprintf("priority %q is not one of the project's priorities %v", c.Priority, p.Priorities)})
+	}
 
 	return out
 }
@@ -168,7 +196,7 @@ func checkBody(c Card, lists Lists) []Finding {
 			continue // the pack loader rejects a bad pattern; nothing to do here
 		}
 
-		if m := re.FindString(c.Body); m != "" {
+		if m := re.FindString(c.Title + "\n" + c.Body); m != "" {
 			out = append(out, Finding{c.ID, "forbidden_reference", fmt.Sprintf("%s: %q", pat.Name, strings.TrimSpace(m))})
 		}
 	}

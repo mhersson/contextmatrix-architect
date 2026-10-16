@@ -349,3 +349,69 @@ func TestParseDraft_ManualEntries(t *testing.T) {
 		})
 	}
 }
+
+func validBody() string {
+	return "## Context\nwhy\n## Where\nx.go\n## Change\nadd\n## Acceptance criteria\n1. go test ./... passes.\n## Tests expected\nTestX.\n## Out of scope\nrest.\n"
+}
+
+func TestCheck_ProjectFieldsAndSelfContainment(t *testing.T) {
+	lists := Lists{ForbiddenReferences: []Pattern{
+		{Name: "home path", Pattern: `(?:^|[\s"'` + "`" + `(\[])~/[^\s"'` + "`" + `)\]]*`},
+		{Name: "file url", Pattern: `file://[^\s"'` + "`" + `)\]]*`},
+	}}
+	projects := map[string]Project{"alpha": {
+		HasRepo: true, HasVerify: true,
+		Types: []string{"feature", "bug"}, Priorities: []string{"low", "medium", "high"},
+		ForeignRepos: []string{"https://github.com/acme/beta.git"},
+	}}
+
+	card := func(mut func(*Card)) Draft {
+		c := Card{ID: "D1", Project: "alpha", Title: "Add the thing", Type: "feature", Priority: "medium", Body: validBody()}
+		mut(&c)
+
+		return Draft{Cards: []Card{c}, Order: []string{"D1"}}
+	}
+
+	tests := []struct {
+		name  string
+		draft Draft
+		want  string // check name expected among the findings; empty means none
+	}{
+		{"clean", card(func(*Card) {}), ""},
+		{"unknown type", card(func(c *Card) { c.Type = "epic" }), "type"},
+		{"type in another case", card(func(c *Card) { c.Type = "Feature" }), "type"},
+		{"missing priority", card(func(c *Card) { c.Priority = "" }), "priority"},
+		{"unknown priority", card(func(c *Card) { c.Priority = "urgent" }), "priority"},
+		{"priority in another case", card(func(c *Card) { c.Priority = "Medium" }), "priority"},
+		{"sibling repo url", card(func(c *Card) { c.Body += "\nSee https://github.com/acme/beta for the API.\n" }), "foreign_repo"},
+		{"sibling owner/name", card(func(c *Card) { c.Body += "\nMatches acme/beta.\n" }), "foreign_repo"},
+		{"sibling repo in the title only", card(func(c *Card) { c.Title = "Add the acme/beta client" }), "foreign_repo"},
+		{"longer name is not the sibling", card(func(c *Card) { c.Body += "\nUses acme/beta-api.\n" }), ""},
+		{"home path in the title", card(func(c *Card) { c.Title = "Add ~/notes support" }), "forbidden_reference"},
+		{"file url", card(func(c *Card) { c.Body += "\nfile:///tmp/x\n" }), "forbidden_reference"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var checks []string
+			for _, f := range Check(tt.draft, lists, projects) {
+				checks = append(checks, f.Check)
+			}
+
+			if tt.want == "" {
+				assert.Empty(t, checks)
+
+				return
+			}
+
+			assert.Contains(t, checks, tt.want)
+		})
+	}
+}
+
+func TestCheck_ProjectWithoutTypesOrPrioritiesSkipsThoseChecks(t *testing.T) {
+	projects := map[string]Project{"alpha": {HasRepo: true, HasVerify: true}}
+	d := Draft{Cards: []Card{{ID: "D1", Project: "alpha", Title: "Add the thing", Type: "anything", Priority: "whatever", Body: validBody()}}}
+
+	assert.Empty(t, Check(d, Lists{}, projects))
+}

@@ -1383,3 +1383,83 @@ func TestDraftProblems_ManualEntriesAndTitle(t *testing.T) {
 		})
 	}
 }
+
+func TestPipeline_CodeStagesSeeTheTypesAndPrioritiesTheProjectDeclares(t *testing.T) {
+	c, _, runner, _, _ := newPipeline(t, happyScript())
+	c.opts.Projects = func(context.Context, string) ([]cm.Project, error) {
+		return []cm.Project{{
+			Name: "alpha", Repo: "https://example.com/alpha.git", Verify: &cm.Verify{Command: "make test"},
+			Types: []string{"feature", "bug"}, Priorities: []string{"low", "medium", "high"},
+		}}, nil
+	}
+
+	drive(t, c, "BP1")
+
+	require.GreaterOrEqual(t, runner.calls(), 3)
+
+	decomposition := runner.input(2)
+	require.Equal(t, "decomposition", decomposition.Stage)
+	assert.Contains(t, decomposition.Task, "- project alpha declares card types feature, bug and priorities low, medium, high; use only these.\n")
+}
+
+func TestCheckoutLines_NameWhatEachProjectDeclares(t *testing.T) {
+	facts := &codeFacts{
+		repos: []stage.RepoFacts{
+			{Project: "beta", Dir: "beta", SHA: "sha-b", SourceTag: "S2"},
+			{Project: "alpha", Dir: "alpha", SHA: "sha-a", SourceTag: "S1"},
+		},
+		projects: map[string]contract.Project{
+			"gamma": {},
+			"beta":  {Priorities: []string{"low", "high"}},
+			"alpha": {Types: []string{"feature", "bug"}, Priorities: []string{"medium"}},
+			"delta": {Types: []string{"task"}},
+		},
+	}
+
+	want := "Checkouts under the tool root (cite the tag for anything read there):\n" +
+		"- beta/ is project beta at sha-b [S2]\n" +
+		"- alpha/ is project alpha at sha-a [S1]\n" +
+		"- project alpha declares card types feature, bug and priorities medium; use only these.\n" +
+		"- project beta declares priorities low, high; use only these.\n" +
+		"- project delta declares card types task; use only these.\n" +
+		"\n"
+	assert.Equal(t, want, checkoutLines(facts), "sorted by project; a project declaring neither adds no line")
+}
+
+func TestPrepareCode_FillsProjectTypesPrioritiesAndForeignRepos(t *testing.T) {
+	c, _, _, _, _ := newPipeline(t, happyScript())
+	c.opts.Projects = func(context.Context, string) ([]cm.Project, error) {
+		return []cm.Project{
+			{Name: "gamma", Repo: "https://example.com/gamma.git"},
+			{
+				Name: "alpha", Repo: "https://example.com/alpha.git", Verify: &cm.Verify{Command: "make test"},
+				Types: []string{"feature"}, Priorities: []string{"medium"},
+			},
+			{
+				Name: "beta", Repo: "https://example.com/beta.git",
+				Repos: []cm.Repo{{Name: "api", URL: "https://example.com/beta-api.git", Primary: true}, {Name: "web", URL: "https://example.com/beta-web.git"}},
+			},
+		}, nil
+	}
+
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	c.mu.Lock()
+	sess := c.sessions["BP1"]
+	c.mu.Unlock()
+
+	bp, err := c.opts.Store.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	facts, err := c.prepareCode(ctx, sess, bp, "grounding")
+	require.NoError(t, err)
+
+	alpha := facts.projects["alpha"]
+	assert.Equal(t, []string{"feature"}, alpha.Types)
+	assert.Equal(t, []string{"medium"}, alpha.Priorities)
+	assert.Equal(t, []string{
+		"https://example.com/gamma.git",
+		"https://example.com/beta.git", "https://example.com/beta-api.git", "https://example.com/beta-web.git",
+	}, alpha.ForeignRepos, "CM's project order; the legacy repo and every repos url, as CM's lint collects them")
+}

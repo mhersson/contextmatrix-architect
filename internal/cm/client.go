@@ -176,6 +176,9 @@ type Project struct {
 	Repo   string  `json:"repo"`
 	Repos  []Repo  `json:"repos"`
 	Verify *Verify `json:"verify"`
+
+	Types      []string `json:"types"`
+	Priorities []string `json:"priorities"`
 }
 
 // RepoURLs returns the project's repositories: the repos list when set,

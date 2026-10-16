@@ -352,12 +352,13 @@ release.
 | Check                                                              | How                        |
 | ------------------------------------------------------------------ | -------------------------- |
 | Required sections present, criteria numbered                       | mechanical                 |
-| No local paths, other repos, cluster or deploy references          | mechanical                 |
+| No local paths, file URLs or another CM project's repository, as CM's self-containment lint finds them | mechanical (lists.yaml and list_projects) |
 | No defect phrase or bug title verb in a card that is not a bug; no criteria under a stripped heading | mechanical (lists.yaml) |
 | Every path and symbol in Where exists at the recorded sha          | mechanical (code tool)     |
 | `depends_on` graph acyclic within each project                     | mechanical                 |
 | Every acceptance criterion of the slice maps to exactly one card   | mechanical                 |
 | Target project declares a verify command and a repo                | mechanical (`list_projects`) |
+| Type and priority are ones the project declares                    | mechanical (`list_projects`) |
 | One deliverable, no open decisions, no optional scope              | model-judged               |
 | Estimated planner split of two subtasks or fewer                   | model-judged               |
 | "Could an agent with only this repo finish this card?"             | model-judged, adversarial  |
