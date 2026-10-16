@@ -73,6 +73,34 @@ func (s *Store) ListEvents(ctx context.Context, blueprintID string) ([]Event, er
 	return out, nil
 }
 
+// LatestEvent returns a blueprint's newest event of kind, or ErrNotFound.
+func (s *Store) LatestEvent(ctx context.Context, blueprintID, kind string) (Event, error) {
+	var (
+		e       Event
+		ts      int64
+		payload sql.NullString
+	)
+
+	err := s.db.QueryRowContext(ctx, `SELECT id, ts, blueprint_id, run_id, kind, payload
+		FROM events WHERE blueprint_id = ? AND kind = ? ORDER BY id DESC LIMIT 1`, blueprintID, kind).
+		Scan(&e.ID, &ts, &e.BlueprintID, &e.RunID, &e.Kind, &payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Event{}, ErrNotFound
+	}
+
+	if err != nil {
+		return Event{}, fmt.Errorf("store: latest event: %w", err)
+	}
+
+	e.Time = time.UnixMilli(ts).UTC()
+
+	if payload.Valid {
+		e.Payload = json.RawMessage(payload.String)
+	}
+
+	return e, nil
+}
+
 // PutTranscript stores a run's full message history once.
 func (s *Store) PutTranscript(ctx context.Context, runID int64, messages json.RawMessage) error {
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO transcripts (run_id, messages, created_at) VALUES (?, ?, ?)`,

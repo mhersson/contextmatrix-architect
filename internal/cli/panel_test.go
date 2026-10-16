@@ -58,6 +58,7 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		{"run started", blueprint.EventRunStarted, map[string]any{"kind": "card", "target": "ALPHA-001"}, true},
 		{"watch line", blueprint.EventWatch, map[string]any{"line": "ALPHA-001: todo"}, false},
 		{"watch ended", blueprint.EventWatchEnded, map[string]any{"playbook": "p"}, true},
+		{"watch state", blueprint.EventWatchState, map[string]any{"cards": []any{}}, false},
 		{"card created", blueprint.EventCardCreated, nil, false},
 		{"playbook created", blueprint.EventPlaybookCreated, nil, false},
 		{"grounded", blueprint.EventGrounded, nil, false},

@@ -557,3 +557,95 @@ func TestDefaultMode_NeverStartsARun(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, false, ev.Payload["run_follows"])
 }
+
+// An emission stopped by abort or End says so; the cancel stays in the log.
+// One a ContextMatrix error stopped shows the error.
+func TestEmit_AStopSaysWhatStoppedIt(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		stop func(t *testing.T, c *Controller, fake *fakeCM)
+		want string
+	}{
+		{
+			name: "an abort",
+			stop: func(t *testing.T, c *Controller, _ *fakeCM) {
+				t.Helper()
+
+				require.NoError(t, c.Abort(ctx, "BP1", "m4"))
+			},
+			want: "Emission stopped by abort. Cards already created are kept; reply approve to resume.",
+		},
+		{
+			name: "End",
+			stop: func(t *testing.T, c *Controller, _ *fakeCM) {
+				t.Helper()
+
+				require.NoError(t, c.End(ctx, "BP1"))
+			},
+			want: "Emission stopped by abort. Cards already created are kept; reply approve to resume.",
+		},
+		{
+			name: "a ContextMatrix error",
+			stop: func(t *testing.T, _ *Controller, fake *fakeCM) {
+				t.Helper()
+
+				fake.mu.Lock()
+				fake.failCreate["Wire the parser"] = 1
+				fake.mu.Unlock()
+			},
+			want: "Emission stopped: create D2: cm: create_card: remote unreachable. Cards already created are kept; reply approve to resume.",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, st, _, rec, _ := newPipeline(t, twoCardScript())
+			fake := newFakeCM()
+			hold := newHoldCM(t, fake)
+			hold.title = "Add the parser"
+			c.opts.ConnectCM = hold.connect
+
+			drive(t, c, "BP1")
+			require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+			receive(t, hold.entered, "the held card")
+			tc.stop(t, c, fake)
+			hold.free()
+			c.Wait("BP1")
+
+			errs := rec.all(EventError)
+			require.Len(t, errs, 1)
+			assert.Equal(t, tc.want, errs[0].Payload["message"])
+			assert.Equal(t, []string{"Add the parser"}, fake.titles())
+			assert.Equal(t, string(StateIdle), stateOf(t, st, "BP1"))
+		})
+	}
+}
+
+// An abort that lands after the cards exist stops before the run start and
+// says so; the cancel stays in the log.
+func TestYolo_AnAbortBeforeTheRunStartSaysSo(t *testing.T) {
+	c, st, _, rec, _ := newPipeline(t, happyScript())
+	fake := newFakeCM()
+	hold := newHoldCM(t, fake)
+	hold.title = "Add the thing"
+	c.opts.ConnectCM = hold.connect
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, yoloInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
+	receive(t, hold.entered, "the held card")
+	require.NoError(t, c.Abort(ctx, "BP1", "m3"))
+	hold.free()
+	c.Wait("BP1")
+
+	errs := rec.all(EventError)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "The cards are emitted, but the run start was stopped by abort. Reply approve to retry the start, or start it in ContextMatrix and reply approve.", errs[0].Payload["message"])
+	assert.Empty(t, fake.cardRuns(), "no run is started")
+	assert.Equal(t, []string{"Add the thing"}, fake.titles())
+	assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
+}

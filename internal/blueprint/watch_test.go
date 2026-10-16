@@ -190,6 +190,124 @@ func TestWatch_ShutdownWaitsForIt(t *testing.T) {
 	assert.Nil(t, watcherOf(c, "BP1"), "Shutdown stopped the watch")
 }
 
+// A watch ended by End and restarted on a reopen posts only what changed
+// while nobody watched.
+func TestWatch_AReopenPostsOnlyWhatChanged(t *testing.T) {
+	cases := []struct {
+		name string
+		now  cm.Card
+		want []string
+	}{
+		{name: "unchanged", now: cm.Card{ID: "ALPHA-002", State: "todo"}, want: []string{}},
+		{
+			name: "a changed card",
+			now:  cm.Card{ID: "ALPHA-002", State: "in_progress", WorkerStatus: "running", Phase: "execute"},
+			want: []string{"ALPHA-002 (D2) Wire the parser: in_progress, worker running, phase execute"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _, _, rec, _ := newPipeline(t, twoCardScript())
+			fake := newFakeCM()
+			c.opts.ConnectCM = fake.connect
+			c.opts.WatchInterval = 5 * time.Millisecond
+			ctx := context.Background()
+
+			drive(t, c, "BP1")
+			require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+			c.Wait("BP1")
+
+			require.Eventually(t, func() bool { return len(watchLines(rec)) >= 2 }, time.Second, 5*time.Millisecond, "both cards are posted")
+			require.NoError(t, c.End(ctx, "BP1"))
+
+			before := len(watchLines(rec))
+
+			fake.setCards("ALPHA-002", tc.now)
+			require.NoError(t, c.Start(ctx, startInput("BP1")))
+			c.Wait("BP1")
+			require.NotNil(t, watcherOf(c, "BP1"), "the reopen restarts the watch")
+
+			gets := fake.getCount()
+
+			require.Eventually(t, func() bool { return fake.getCount() > gets+6 }, time.Second, 5*time.Millisecond)
+
+			assert.Equal(t, tc.want, watchLines(rec)[before:])
+		})
+	}
+}
+
+func TestWatch_ARunWaitingForAHumanIsPostedOnceAcrossARestart(t *testing.T) {
+	c, st, _, rec, ws := newPipeline(t, twoCardScript())
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	c.opts.WatchInterval = 5 * time.Millisecond
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	fake.setBooks("ship-the-parser", cm.Playbook{
+		ID: "ship-the-parser", Total: 3, Run: &cm.PlaybookRun{Status: "waiting", Entry: "e3", Reason: "ALPHA-002 worker failed"},
+	})
+
+	const needsAHuman = "needs a human: ALPHA-002 worker failed"
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(strings.Join(watchLines(rec), "\n"), needsAHuman)
+	}, time.Second, 5*time.Millisecond)
+
+	c2, rec2 := reopen(t, c, st, ws, twoCardScript(), fake, startInput("BP1"))
+	require.NotNil(t, watcherOf(c2, "BP1"), "the restart restarts the watch")
+
+	gets := fake.getCount()
+
+	require.Eventually(t, func() bool { return fake.getCount() > gets+6 }, time.Second, 5*time.Millisecond)
+
+	lines := strings.Join(append(watchLines(rec), watchLines(rec2)...), "\n")
+	assert.Equal(t, 1, strings.Count(lines, needsAHuman), "posted once in total")
+	assert.Empty(t, watchLines(rec2), "nothing changed while nobody watched")
+}
+
+// The stored state is an append-only record, so its keys are fixed
+// snake_case names, not Go's field names.
+func TestWatch_StoresTheReportedStateUnderStableKeys(t *testing.T) {
+	c, st, _, rec, _ := newPipeline(t, twoCardScript())
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	c.opts.WatchInterval = 5 * time.Millisecond
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	fake.setBooks("ship-the-parser", cm.Playbook{
+		ID: "ship-the-parser", Total: 3, Repos: []cm.PlaybookRepo{{Project: "alpha", CompareURL: "https://example.com/compare"}},
+		Run: &cm.PlaybookRun{Status: "waiting", Entry: "e3", Reason: "ALPHA-002 worker failed"},
+	})
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(strings.Join(watchLines(rec), "\n"), "needs a human")
+	}, time.Second, 5*time.Millisecond)
+	require.NoError(t, c.End(ctx, "BP1"))
+
+	ev, err := st.LatestEvent(ctx, "BP1", EventWatchState)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"cards": [
+			{"draft": "D1", "project": "alpha", "id": "ALPHA-001", "title": "Add the parser", "state": "todo", "worker": "", "phase": "", "pr": ""},
+			{"draft": "D2", "project": "alpha", "id": "ALPHA-002", "title": "Wire the parser", "state": "todo", "worker": "", "phase": "", "pr": ""}
+		],
+		"playbook": "ship-the-parser",
+		"run": {"status": "waiting", "entry": "e3", "reason": "ALPHA-002 worker failed"},
+		"waiting": "",
+		"repos": [{"project": "alpha", "compare_url": "https://example.com/compare"}],
+		"manual": null
+	}`, string(ev.Payload))
+}
+
 // anyList reads a list payload, typed or JSON-decoded.
 func anyList(v any) []any {
 	switch s := v.(type) {

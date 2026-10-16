@@ -36,7 +36,8 @@ const (
 	EventExported     = "exported"
 	EventError        = "error"
 	// EventAwaitInput says the next stage takes the user's next message as
-	// its artifact; the payload carries the stage and the prompt to show.
+	// its artifact, or, with stage signoff, that a stopped emission waits for
+	// approve; the payload carries the stage and the prompt to show.
 	EventAwaitInput = "await_input"
 	// EventGrounded lists the sources a code stage checked out.
 	EventGrounded = "grounded"
@@ -56,6 +57,9 @@ const (
 	// the end of the run with its pull requests and compare links.
 	EventWatch      = "watch"
 	EventWatchEnded = "watch_ended"
+	// EventWatchState stores the snapshot the watch last reported, so a
+	// watch that restarts posts only what changed; the panel never shows it.
+	EventWatchState = "watch_state"
 	// EventSignOff shows the ready cards, the preflight result and how to
 	// decide; the blueprint waits for approve or reject.
 	EventSignOff = "signoff"

@@ -255,6 +255,30 @@ func TestEventsRoundTrip(t *testing.T) {
 	assert.Equal(t, int64(7), got[1].RunID)
 }
 
+func TestLatestEvent_IsTheNewestOfAKindForABlueprint(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	require.NoError(t, s.AppendEvent(ctx, Event{Time: now, BlueprintID: "BP1", Kind: "a", Payload: json.RawMessage(`{"n":1}`)}))
+	require.NoError(t, s.AppendEvent(ctx, Event{Time: now, BlueprintID: "BP1", RunID: 3, Kind: "a", Payload: json.RawMessage(`{"n":2}`)}))
+	require.NoError(t, s.AppendEvent(ctx, Event{Time: now, BlueprintID: "BP1", Kind: "b", Payload: json.RawMessage(`{"n":3}`)}))
+	require.NoError(t, s.AppendEvent(ctx, Event{Time: now, BlueprintID: "OTHER", Kind: "a", Payload: json.RawMessage(`{"n":4}`)}))
+
+	got, err := s.LatestEvent(ctx, "BP1", "a")
+	require.NoError(t, err)
+	assert.Equal(t, "a", got.Kind)
+	assert.Equal(t, "BP1", got.BlueprintID)
+	assert.Equal(t, int64(3), got.RunID)
+	assert.JSONEq(t, `{"n":2}`, string(got.Payload))
+
+	_, err = s.LatestEvent(ctx, "BP1", "c")
+	require.ErrorIs(t, err, ErrNotFound)
+
+	_, err = s.LatestEvent(ctx, "BP2", "a")
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestTranscriptsRoundTrip(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()

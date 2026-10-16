@@ -305,3 +305,18 @@ func (f *fakeCM) closeCount() int {
 
 	return f.closes
 }
+
+func (f *fakeCM) connectCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.connects
+}
+
+// cardRuns returns the run_card calls, in call order.
+func (f *fakeCM) cardRuns() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]string(nil), f.runCards...)
+}

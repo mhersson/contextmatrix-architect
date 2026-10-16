@@ -149,7 +149,8 @@ func (c *Controller) position(ctx context.Context, bp store.Blueprint) (outcome,
 // started (a crash between storing one artifact and starting the next run),
 // or await a human-sourced stage, returned with human set. A failed or
 // aborted stage waits for the user's next message and an ended pipeline for
-// a new blueprint. A position the record does not yield is reported, not
+// a new blueprint. A ready end is returned for the sign-off, emission or
+// watch to resume. A position the record does not yield is reported, not
 // returned: the session still attaches. The caller holds the run slot.
 func (c *Controller) resumePoint(ctx context.Context, au audit, bp store.Blueprint) (outcome, error) {
 	interrupted, err := c.interruptedStage(ctx, bp)
@@ -165,6 +166,8 @@ func (c *Controller) resumePoint(ctx context.Context, au audit, bp store.Bluepri
 
 		return outcome{}, nil
 	case out.human:
+		return out, nil
+	case out.end && out.ready && c.cardsStage() != "":
 		return out, nil
 	case out.stage == "" || status != "":
 		return outcome{}, nil

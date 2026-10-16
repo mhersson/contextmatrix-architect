@@ -2,6 +2,8 @@ package blueprint
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
@@ -154,6 +156,11 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 		return
 	}
 
+	// A sign-off Shutdown cut short is not shown: the restart runs it again.
+	if c.closingDown() {
+		return
+	}
+
 	// A need that cannot be read shows as no assumptions, and the log says why.
 	assumptions := ""
 
@@ -191,7 +198,8 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 }
 
 // decide records a sign-off decision and announces it; false when it could
-// not be stored, which fails the blueprint.
+// not be stored, which fails the blueprint. An approve makes the blueprint
+// emitting, so a crash before emission ends leaves it for the restart.
 func (c *Controller) decide(ctx context.Context, au audit, id string, version int, decision, feedback, responder, msgID string) bool {
 	if _, err := c.opts.Store.AddGate(ctx, store.Gate{
 		BlueprintID: id, Stage: signoffStage, Version: version, Decision: decision,
@@ -200,6 +208,10 @@ func (c *Controller) decide(ctx context.Context, au audit, id string, version in
 		c.fail(ctx, au, id, 0, "sign-off: record the decision: "+err.Error())
 
 		return false
+	}
+
+	if decision == store.GateApprove {
+		c.setState(ctx, id, StateEmitting)
 	}
 
 	au.event(ctx, Event{Kind: EventDecided, BlueprintID: id, Payload: map[string]any{
@@ -211,8 +223,9 @@ func (c *Controller) decide(ctx context.Context, au audit, id string, version in
 
 // atReadyEnd handles a message after the pipeline ended ready. Undecided:
 // approve emits, reject with feedback re-runs the loop's target stage.
-// Approved with emission unfinished: approve resumes it. Anything else is a
-// note. The caller holds the run slot.
+// Approved with emission unfinished: approve resumes it, and other text is
+// a note with that hint, or without one when the record cannot be read.
+// Anything else is a note. The caller holds the run slot.
 func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, out outcome, text, msgID string) error {
 	decision, err := c.decision(ctx, bp.ID, out.art.Version)
 	if err != nil {
@@ -261,14 +274,23 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 			note.Payload["hint"] = signoffHint
 		}
 	case store.GateApprove:
-		if approve {
-			// An error resumes too: emit reports the draft or store error.
-			complete, err := c.emitted(ctx, bp)
-			if err != nil || !complete {
-				c.launchEnd(runCtx, r, sess, bp, out)
+		cards, complete, err := c.emitted(ctx, bp)
 
-				return nil
-			}
+		switch {
+		case err == nil && complete:
+			// Nothing is left to resume.
+		case approve:
+			// An error resumes too: emit reports the draft or store error.
+			c.launchEnd(runCtx, r, sess, bp, out)
+
+			return nil
+		case err != nil:
+			// A plain note: without the record, a hint could point the wrong way.
+			c.opts.Logger.Warn("blueprint: read the emission for a note", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
+		case cards:
+			note.Payload["hint"] = "The cards are approved; reply approve to retry the run start."
+		default:
+			note.Payload["hint"] = "The cards are approved; reply approve to resume emission."
 		}
 	}
 
@@ -293,4 +315,111 @@ func parseReject(text string) (string, bool) {
 	}
 
 	return strings.TrimSpace(rest), true
+}
+
+// resumeEnd picks up a ready end on reopen. An undecided sign-off that was
+// shown is shown again as it was, without preflight or an automatic
+// approval, and one never shown runs. An approved emission still emitting
+// was cut short by a restart and resumes; one a stop left idle or emitted
+// waits for approve, and the user is reminded. An emitted blueprint's watch
+// restarts, and a blueprint whose run ended stays done. The caller holds the
+// run slot; unless a sign-off or emission resumes, it is free when this
+// returns, so a message CM re-sends right after the start is the decision.
+func (c *Controller) resumeEnd(ctx context.Context, r *run, sess *session, bp store.Blueprint, out outcome) {
+	bg := context.WithoutCancel(ctx)
+	au := sess.audit
+
+	// Read again on the slot: Start loaded bp before it claimed the slot,
+	// which the ended session's last run may have released after a stop.
+	cur, err := c.opts.Store.GetBlueprint(bg, bp.ID)
+	if err != nil {
+		c.unreadable(bg, au, bp.ID, fmt.Errorf("blueprint: resume: %w", err))
+		c.release(bp.ID, r)
+
+		return
+	}
+
+	if cur.State == string(StateDone) {
+		c.release(bp.ID, r)
+
+		return
+	}
+
+	decision, err := c.decision(bg, bp.ID, out.art.Version)
+	if err != nil {
+		c.unreadable(bg, au, bp.ID, err)
+		c.release(bp.ID, r)
+
+		return
+	}
+
+	switch decision {
+	case "":
+		shown, err := c.shownSignoff(bg, bp.ID, out.art.Version)
+		if err != nil {
+			c.unreadable(bg, au, bp.ID, err)
+			c.release(bp.ID, r)
+
+			return
+		}
+
+		if shown != nil {
+			c.setState(bg, bp.ID, StateWaiting)
+			au.event(bg, Event{Kind: EventSignOff, BlueprintID: bp.ID, Payload: shown})
+			c.release(bp.ID, r)
+
+			return
+		}
+	case store.GateApprove:
+		cards, complete, err := c.emitted(bg, bp)
+
+		// Still emitting means a restart cut emission short, maybe after its
+		// last record: emit finishes the rest, the announcement and the state
+		// included, creating and starting nothing twice.
+		switch {
+		case err != nil:
+			// Resumed: emit reports the draft or store error.
+		case complete && cur.State != string(StateEmitting):
+			c.release(bp.ID, r)
+			c.startWatch(sess, bp.ID)
+
+			return
+		case cur.State != string(StateEmitting):
+			prompt := "Emission is stopped; reply approve to resume it."
+			if cards {
+				prompt = "The run did not start; reply approve to retry the run start."
+			}
+
+			au.event(bg, Event{Kind: EventAwaitInput, BlueprintID: bp.ID, Payload: map[string]any{"stage": signoffStage, "prompt": prompt}})
+			c.release(bp.ID, r)
+
+			return
+		}
+	}
+
+	c.launchEnd(ctx, r, sess, bp, out)
+}
+
+// shownSignoff returns the sign-off payload last published for version, or
+// nil when none was: a crash or Shutdown fell between the ready end and it.
+func (c *Controller) shownSignoff(ctx context.Context, id string, version int) (map[string]any, error) {
+	ev, err := c.opts.Store.LatestEvent(ctx, id, EventSignOff)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("blueprint: read the sign-off: %w", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+		return nil, fmt.Errorf("blueprint: decode the sign-off: %w", err)
+	}
+
+	if v, _ := payload["version"].(float64); int(v) != version {
+		return nil, nil
+	}
+
+	return payload, nil
 }

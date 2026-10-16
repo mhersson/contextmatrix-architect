@@ -516,7 +516,11 @@ Replies the server understands, besides answers to questions:
   but which never started runs, and a human-sourced stage that waits shows
   its prompt again. Completed artifacts are never lost. A record the pack
   cannot place, such as a stage the pack no longer has, is reported in the
-  session and nothing runs.
+  session and nothing runs. An open sign-off is shown again as it was, an
+  emission a restart cut short resumes, a stopped one waits for approve, an
+  emitted blueprint's watch restarts, and nothing is created or started
+  twice. CM sends the start again after the architect restarts, when a
+  message finds the session unknown or the log stream ends.
 - After a later stage fails or is aborted, the next message is logged as a
   note and re-runs that stage; after intake fails or is aborted, the next
   message is the need again and intake re-runs on it. A pipeline stopped by the card contract or by
@@ -615,6 +619,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Chat sessions carry a kind and a blueprint binding instead of only a project; a one-way ops.db schema bump | slice 0 |
 | Panel: a new-session dialog for blueprints with a multi-project picker, mode and cost cap | slice 0 |
 | The git-credentials endpoint treats an attached architect session as live | slice 1 |
+| CM re-sends the start to an architect session after the architect restarts: on a 404 `not_found` for a message (then re-sends the message once), and when the log stream ends | slice 2 |
 | Panel: typed question, gate, gate-plan and lesson entries rendered with buttons instead of as plain messages | slice 3 |
 | Panel: a gate inbox and a blueprint view (stages, assumptions, cards with readiness, cost), read from the architect through a signed endpoint | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |

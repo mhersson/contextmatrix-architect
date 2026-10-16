@@ -35,8 +35,12 @@ const (
 	StateWaiting State = "waiting"
 	StateIdle    State = "idle"
 	StateFailed  State = "failed"
-	StateEmitted State = "emitted"
-	StateDone    State = "done"
+	// StateEmitting runs from an approve until the cards exist and, in yolo
+	// mode, the run start was attempted. A restart resumes an emission it
+	// finds emitting; one a stop left idle or emitted waits for approve.
+	StateEmitting State = "emitting"
+	StateEmitted  State = "emitted"
+	StateDone     State = "done"
 )
 
 // needStage is the pseudo-stage the user's first message is stored under.
@@ -214,8 +218,11 @@ func effectivePrice(p *protocol.ModelPrice) *protocol.ModelPrice {
 // Start attaches a session to the blueprint with in.ID, creating it on first
 // sight. A stage left running by a crash is marked interrupted and re-run, a
 // stage whose inputs were stored but which never started runs, and a
-// human-sourced stage that waits shows its prompt again. Start on a session
-// already attached does nothing.
+// human-sourced stage that waits shows its prompt again. At a ready end an
+// open sign-off is shown again or, never shown, runs; an emission a restart
+// cut short resumes, a stopped one is reminded of approve, and an emitted
+// blueprint's watch restarts. Start on a session already attached does
+// nothing.
 func (c *Controller) Start(ctx context.Context, in StartInput) error {
 	in.Price = effectivePrice(in.Price)
 
@@ -276,6 +283,12 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 		c.detach(in.ID, sess)
 
 		return err
+	}
+
+	if next.end {
+		c.resumeEnd(runCtx, r, sess, bp, next)
+
+		return nil
 	}
 
 	// The prompt is shown again: the panel lost it with the ended session,
@@ -699,6 +712,16 @@ func (c *Controller) shuttingDown(r *run) bool {
 	defer c.mu.Unlock()
 
 	return r.shutdown
+}
+
+// closingDown reports whether Shutdown has begun. A sign-off, emission or
+// run start it cuts short is interrupted, not stopped: it reports nothing
+// and keeps the state, so the restart resumes it.
+func (c *Controller) closingDown() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.closing
 }
 
 // Wait blocks until no run is in flight for id, including a run whose

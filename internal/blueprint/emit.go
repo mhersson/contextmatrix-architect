@@ -79,25 +79,26 @@ func (c *Controller) draft(ctx context.Context, id string) (contract.Draft, erro
 	return contract.ParseDraft(data)
 }
 
-// emitted reports whether everything emission does is recorded: every draft
-// card, for two or more cards the playbook, and in yolo mode the run start.
-func (c *Controller) emitted(ctx context.Context, bp store.Blueprint) (bool, error) {
+// emitted reports what emission has recorded: cards when every draft card
+// and, for two or more cards, the playbook exist, and complete when in yolo
+// mode the run start is recorded too.
+func (c *Controller) emitted(ctx context.Context, bp store.Blueprint) (cards, complete bool, err error) {
 	draft, err := c.draft(ctx, bp.ID)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 
 	recs, err := c.opts.Store.ListEmissions(ctx, bp.ID)
 	if err != nil {
-		return false, fmt.Errorf("blueprint: list emissions: %w", err)
+		return false, false, fmt.Errorf("blueprint: list emissions: %w", err)
 	}
 
-	cards, playbook, run := 0, false, false
+	n, playbook, run := 0, false, false
 
 	for _, e := range recs {
 		switch e.Kind {
 		case store.EmitCard:
-			cards++
+			n++
 		case store.EmitPlaybook:
 			playbook = true
 		case store.EmitRun:
@@ -105,28 +106,33 @@ func (c *Controller) emitted(ctx context.Context, bp store.Blueprint) (bool, err
 		}
 	}
 
-	return cards == len(draft.Cards) && (len(draft.Cards) < 2 || playbook) &&
-		(bp.Mode != protocol.ArchitectModeYolo || run), nil
+	cards = n == len(draft.Cards) && (len(draft.Cards) < 2 || playbook)
+
+	return cards, cards && (bp.Mode != protocol.ArchitectModeYolo || run), nil
 }
 
 // emit creates an approved blueprint's cards and playbook in ContextMatrix.
 // It runs on the blueprint's run slot, so a message meanwhile is a note and
 // abort stops it between two calls. Every created id is recorded at once,
-// and the next approve resumes from what is recorded.
+// and the next approve resumes from what is recorded. The state is emitting
+// until the cards exist and are announced and, in yolo mode, the run start
+// was attempted.
 func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint) {
 	bg := context.WithoutCancel(ctx)
 	au := sess.audit
 
+	c.setState(bg, bp.ID, StateEmitting)
+
 	draft, err := c.draft(bg, bp.ID)
 	if err != nil {
-		c.emitError(bg, au, bp.ID, err)
+		c.emitError(ctx, au, bp.ID, err)
 
 		return
 	}
 
 	client, err := c.connectCM(ctx, sess)
 	if err != nil {
-		c.emitError(bg, au, bp.ID, err)
+		c.emitError(ctx, au, bp.ID, err)
 
 		return
 	}
@@ -138,12 +144,16 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 	// overrode them.
 	pf, err := c.preflight(ctx, sess, bp, draft, client)
 	if err != nil {
-		c.emitError(bg, au, bp.ID, fmt.Errorf("preflight: %w", err))
+		c.emitError(ctx, au, bp.ID, fmt.Errorf("preflight: %w", err))
 
 		return
 	}
 
 	if len(pf.Blocking) > 0 {
+		if c.closingDown() {
+			return
+		}
+
 		c.setState(bg, bp.ID, StateIdle)
 		au.event(bg, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
 			"stage":   "emission",
@@ -154,22 +164,39 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 	}
 
 	if err := c.emitCards(ctx, au, bp, client, draft); err != nil {
-		c.emitError(bg, au, bp.ID, err)
+		c.emitError(ctx, au, bp.ID, err)
 
 		return
 	}
 
 	if bp.Mode == protocol.ArchitectModeYolo {
-		if err := c.startRun(ctx, au, bp, client, draft); err != nil {
+		err := c.startRun(ctx, au, bp, client, draft)
+		if err != nil && c.closingDown() {
+			c.opts.Logger.Info("blueprint: run start interrupted by shutdown", "blueprint", bp.ID, "error", au.text(err.Error()))
+
+			return
+		}
+
+		if err != nil {
 			c.opts.Logger.Error("blueprint: run start", "blueprint", bp.ID, "error", au.text(err.Error()))
+
+			// A cancel here is an abort or End; the error stays in the log.
+			stopped := "the run did not start: " + err.Error() + "."
+			if ctx.Err() != nil {
+				stopped = "the run start was stopped by abort."
+			}
+
 			au.event(bg, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
 				"stage":   "run",
-				"message": "The cards are emitted, but the run did not start: " + err.Error() + ". Reply approve to retry the start, or start it in ContextMatrix and reply approve.",
+				"message": "The cards are emitted, but " + stopped + " Reply approve to retry the start, or start it in ContextMatrix and reply approve.",
 			}})
 		}
 	}
 
-	complete, err := c.emitted(bg, bp)
+	// Set last, so a restart before it finds emitting and finishes the rest.
+	c.setState(bg, bp.ID, StateEmitted)
+
+	_, complete, err := c.emitted(bg, bp)
 	if err != nil {
 		c.opts.Logger.Warn("blueprint: watch not started", "blueprint", bp.ID, "error", au.text(err.Error()))
 
@@ -298,13 +325,30 @@ func (c *Controller) startRun(ctx context.Context, au audit, bp store.Blueprint,
 	return nil
 }
 
-// emitError reports a stopped emission and leaves the blueprint idle.
+// emitError reports a stopped emission and leaves the blueprint idle. One
+// Shutdown cut short is only logged and stays emitting. ctx is the run's: a
+// cancel there is an abort or End, which the session is told plainly, the
+// error going to the log only.
 func (c *Controller) emitError(ctx context.Context, au audit, id string, err error) {
+	if c.closingDown() {
+		c.opts.Logger.Info("blueprint: emission interrupted by shutdown", "blueprint", id, "error", au.text(err.Error()))
+
+		return
+	}
+
 	c.opts.Logger.Error("blueprint: emission stopped", "blueprint", id, "error", au.text(err.Error()))
-	c.setState(ctx, id, StateIdle)
-	au.event(ctx, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{
+
+	stopped := "Emission stopped: " + err.Error() + "."
+	if ctx.Err() != nil {
+		stopped = "Emission stopped by abort."
+	}
+
+	bg := context.WithoutCancel(ctx)
+
+	c.setState(bg, id, StateIdle)
+	au.event(bg, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{
 		"stage":   "emission",
-		"message": "Emission stopped: " + err.Error() + ". Cards already created are kept; reply approve to resume.",
+		"message": stopped + " Cards already created are kept; reply approve to resume.",
 	}})
 }
 
@@ -460,18 +504,18 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 		}
 	}
 
-	cur, err := c.opts.Store.GetBlueprint(bg, bp.ID)
-	if err != nil {
-		return fmt.Errorf("reload the blueprint: %w", err)
-	}
-
 	// A resumed emission that created nothing (a retried run start) does not
-	// announce the cards again.
-	if !created && cur.State == string(StateEmitted) {
-		return nil
-	}
+	// announce the cards again, unless a crash cut the announcement short.
+	if !created {
+		_, err := c.opts.Store.LatestEvent(bg, bp.ID, EventEmitted)
+		if err == nil {
+			return nil
+		}
 
-	c.setState(bg, bp.ID, StateEmitted)
+		if !errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("read the announcement: %w", err)
+		}
+	}
 
 	cards := make([]any, 0, len(draft.Cards))
 

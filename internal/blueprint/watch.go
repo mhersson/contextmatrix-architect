@@ -2,6 +2,8 @@ package blueprint
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -48,14 +50,15 @@ func (c *Controller) startWatch(sess *session, id string) {
 }
 
 // watchLoop polls until the run ends or ctx does. Read errors are logged and
-// retried on the next tick; a connection is redialled then.
+// retried on the next tick; a connection is redialled then. It starts from
+// the snapshot the blueprint's watch last reported, so after a reopen or a
+// restart it posts only what changed while nobody watched.
 func (c *Controller) watchLoop(ctx context.Context, sess *session, id string) {
 	bg := context.WithoutCancel(ctx)
 
-	var (
-		client CMClient
-		prev   *snapshot
-	)
+	var client CMClient
+
+	prev := c.reportedSnapshot(bg, sess.audit, id)
 
 	defer func() {
 		if client != nil {
@@ -83,8 +86,13 @@ func (c *Controller) watchLoop(ctx context.Context, sess *session, id string) {
 			case err != nil && ctx.Err() == nil:
 				c.opts.Logger.Warn("blueprint: watch read", "blueprint", id, "error", sess.audit.text(err.Error()))
 			case err == nil:
-				for _, line := range snap.changes(prev) {
+				lines := snap.changes(prev)
+				for _, line := range lines {
 					sess.audit.event(bg, Event{Kind: EventWatch, BlueprintID: id, Payload: map[string]any{"line": line}})
+				}
+
+				if len(lines) > 0 {
+					c.reportSnapshot(bg, sess.audit, id, snap)
 				}
 
 				prev = &snap
@@ -108,26 +116,78 @@ func (c *Controller) watchLoop(ctx context.Context, sess *session, id string) {
 
 // cardView is what the watch tracks of one emitted card.
 type cardView struct {
-	Draft, Project, ID, Title string
-	State, Worker, Phase, PR  string
+	Draft   string `json:"draft"`
+	Project string `json:"project"`
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	State   string `json:"state"`
+	Worker  string `json:"worker"`
+	Phase   string `json:"phase"`
+	PR      string `json:"pr"`
 }
 
 // runView is what the watch tracks of the playbook's run.
 type runView struct {
-	Status, Entry, Reason string
+	Status string `json:"status"`
+	Entry  string `json:"entry"`
+	Reason string `json:"reason"`
 }
 
-// snapshot is one poll of everything emitted.
+// snapshot is one poll of everything emitted. The watch_state event stores
+// it, so its JSON names are a stored format.
 type snapshot struct {
-	Cards    []cardView
-	Playbook string
-	Run      *runView
+	Cards    []cardView `json:"cards"`
+	Playbook string     `json:"playbook"`
+	Run      *runView   `json:"run"`
 	// Waiting is the manual entry's text when the run waits for a check-off.
-	Waiting string
-	Repos   []cm.PlaybookRepo
+	Waiting string            `json:"waiting"`
+	Repos   []cm.PlaybookRepo `json:"repos"`
 	// Manual is a single card's manual checks.
-	Manual []string
+	Manual []string `json:"manual"`
 	done   bool
+}
+
+// reportSnapshot stores snap as what the watch has reported. The payload is
+// its exported fields, masked as every event payload is.
+func (c *Controller) reportSnapshot(ctx context.Context, au audit, id string, snap snapshot) {
+	var payload map[string]any
+
+	b, err := json.Marshal(snap)
+	if err == nil {
+		err = json.Unmarshal(b, &payload)
+	}
+
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: encode the watch state", "blueprint", id, "error", err)
+
+		return
+	}
+
+	au.event(ctx, Event{Kind: EventWatchState, BlueprintID: id, Payload: payload})
+}
+
+// reportedSnapshot is the snapshot the blueprint's watch last reported; nil
+// when there is none or it cannot be read, and then everything is reported.
+func (c *Controller) reportedSnapshot(ctx context.Context, au audit, id string) *snapshot {
+	ev, err := c.opts.Store.LatestEvent(ctx, id, EventWatchState)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: read the watch state", "blueprint", id, "error", au.text(err.Error()))
+
+		return nil
+	}
+
+	var snap snapshot
+	if err := json.Unmarshal(ev.Payload, &snap); err != nil {
+		c.opts.Logger.Warn("blueprint: decode the watch state", "blueprint", id, "error", err)
+
+		return nil
+	}
+
+	return &snap
 }
 
 // snapshot reads every emitted card and the playbook.
@@ -202,8 +262,7 @@ func (c *Controller) snapshot(ctx context.Context, client CMClient, id string) (
 	return snap, nil
 }
 
-// changes are the lines that differ from prev; the first poll reports
-// everything.
+// changes are the lines that differ from prev; with no prev, everything.
 func (s snapshot) changes(prev *snapshot) []string {
 	before := map[string]cardView{}
 
