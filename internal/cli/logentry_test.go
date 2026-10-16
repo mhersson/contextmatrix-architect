@@ -49,6 +49,15 @@ func TestLogEntryFor(t *testing.T) {
 		{"card created", blueprint.Event{Kind: blueprint.EventCardCreated, BlueprintID: "S1", Payload: map[string]any{"card": "ALPHA-001", "draft": "D1", "project": "alpha", "title": "Add the parser", "warnings": []string{"w1"}}}, "system", []string{"ALPHA-001", "w1"}, false},
 		{"playbook created", blueprint.Event{Kind: blueprint.EventPlaybookCreated, BlueprintID: "S1", Payload: map[string]any{"playbook": "ship-the-parser", "entries": 3}}, "system", []string{"ship-the-parser"}, false},
 		{"emitted", blueprint.Event{Kind: blueprint.EventEmitted, BlueprintID: "S1", Payload: map[string]any{"cards": []any{map[string]any{"card": "ALPHA-001"}}, "playbook": "", "manual": []any{"Check the dashboard"}}}, "text", []string{"ALPHA-001", "Check the dashboard"}, false},
+		{"signoff", blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
+			"cards":    []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing", "type": "feature", "priority": "medium"}},
+			"order":    []any{"D1"},
+			"manual":   []any{},
+			"title":    "",
+			"blocking": []any{"project alpha declares no verify command"}, "warnings": []any{"moved"}, "auto_stopped": false, "assumptions": "- The parser stays in Go.",
+		}}, "text", []string{"D1", "Add the thing", "declares no verify command", "moved", "approve", "The parser stays in Go."}, false},
+		{"decided reject", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{"decision": "reject", "responder": "human", "feedback": "split it"}}, "system", []string{"Rejected"}, false},
+		{"note with a hint", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "hm", "hint": "Reply approve or reject."}}, "system", []string{"Reply approve or reject."}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -122,4 +131,55 @@ func TestLogEntryFor_ReportIsTheVerdictNotTheBody(t *testing.T) {
 	assert.Contains(t, notReady.Content, "D1: two deliverables")
 	assert.Contains(t, notReady.Content, "D2: not judged")
 	assert.NotEqual(t, ready.Content, report(false).Content, "ready and not ready read differently")
+}
+
+func TestLogEntryFor_SignoffSaysWhatPreflightFound(t *testing.T) {
+	cases := []struct {
+		name      string
+		preflight map[string]any
+		carries   []string
+		lacks     []string
+	}{
+		{
+			name: "clean", preflight: map[string]any{"blocking": []any{}, "warnings": []any{}},
+			carries: []string{"Preflight found nothing for a human."}, lacks: []string{"overrides the warnings"},
+		},
+		{
+			name: "warnings", preflight: map[string]any{"blocking": []any{}, "warnings": []any{"moved"}},
+			carries: []string{"moved", "(this also overrides the warnings)"}, lacks: []string{"found nothing"},
+		},
+		{
+			name: "blocking", preflight: map[string]any{"blocking": []any{"project alpha declares no verify command"}, "warnings": []any{}},
+			carries: []string{"declares no verify command"}, lacks: []string{"found nothing", "overrides the warnings"},
+		},
+		{
+			name: "not run", preflight: map[string]any{"blocking": []any{}, "warnings": []any{}, "preflight_error": "connect: refused"},
+			carries: []string{"connect: refused"}, lacks: []string{"found nothing", "overrides the warnings"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := map[string]any{
+				"cards": []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing", "type": "feature", "priority": "medium"}},
+				"order": []any{"D1"}, "manual": []any{}, "title": "", "auto_stopped": false, "assumptions": "",
+			}
+			for k, v := range tc.preflight {
+				payload[k] = v
+			}
+
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: payload})
+			require.True(t, ok)
+
+			for _, s := range tc.carries {
+				assert.Contains(t, entry.Content, s)
+			}
+
+			for _, s := range tc.lacks {
+				assert.NotContains(t, entry.Content, s)
+			}
+
+			assert.Contains(t, entry.Content, "`reject <feedback>`")
+		})
+	}
 }

@@ -62,10 +62,17 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 
 			ready, findings := verdictOf(art, cardIDs(target))
 
+			base, rejected, err := c.rejection(ctx, bp.ID, art.Version)
+			if err != nil {
+				return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
+			}
+
 			switch {
+			case ready && rejected:
+				return outcome{stage: st.LoopsTo}, nil
 			case ready:
 				return outcome{end: true, ready: true, art: art}, nil
-			case art.Version >= st.MaxRounds:
+			case art.Version-base >= st.MaxRounds:
 				return outcome{end: true, findings: findings, art: art}, nil
 			default:
 				return outcome{stage: st.LoopsTo}, nil
@@ -199,7 +206,8 @@ func (c *Controller) await(ctx context.Context, au audit, id, stageID string) {
 
 // input handles a message that arrives while no run is in flight: the need
 // while the first stage has no artifact, the artifact of a human-sourced
-// stage that waits for it, else a note. The caller holds the run slot.
+// stage that waits for it, the sign-off decision at a ready end, else a
+// note. The caller holds the run slot.
 func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, id, text, msgID string) error {
 	bp, err := c.opts.Store.GetBlueprint(ctx, id)
 	if err != nil {
@@ -231,6 +239,10 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 
 	if out.human {
 		return c.paste(ctx, runCtx, r, sess, bp, out.stage, text, msgID)
+	}
+
+	if out.end && out.ready && c.cardsStage() != "" {
+		return c.atReadyEnd(ctx, runCtx, r, sess, bp, out, text, msgID)
 	}
 
 	// A note. While a model stage is pending (it failed, was aborted or
@@ -295,7 +307,13 @@ func (c *Controller) paste(ctx, runCtx context.Context, r *run, sess *session, b
 		"stage": stageID, "version": version, "body": text, "source": pack.SourceHuman, "message_id": msgID,
 	}})
 
-	next := c.advance(ctx, sess, bp, stageID)
+	next, end := c.advance(ctx, sess, bp, stageID)
+	if end.ready {
+		c.launchEnd(runCtx, r, sess, bp, end)
+
+		return nil
+	}
+
 	if next == "" {
 		c.release(bp.ID, r)
 
@@ -307,38 +325,45 @@ func (c *Controller) paste(ctx, runCtx context.Context, r *run, sess *session, b
 	return nil
 }
 
-// advance acts on what follows completed: it awaits a human-sourced stage
-// or reports the end and returns "", or returns the stage to run next. A
-// failure to decide fails the blueprint.
-func (c *Controller) advance(ctx context.Context, sess *session, bp store.Blueprint, completed string) string {
+// advance acts on what follows completed: it awaits a human-sourced stage,
+// reports an end, and returns the stage to run next, or the ready end the
+// caller hands to the sign-off when the pack has a stage that checks cards.
+// A failure to decide fails the blueprint.
+func (c *Controller) advance(ctx context.Context, sess *session, bp store.Blueprint, completed string) (string, outcome) {
 	out, err := c.after(ctx, bp, completed)
 	if err != nil {
 		c.fail(ctx, sess.audit, bp.ID, 0, err.Error())
 
-		return ""
+		return "", outcome{}
 	}
 
 	switch {
 	case out.end:
 		c.report(ctx, sess, bp, out)
 
-		return ""
+		if out.ready && c.cardsStage() != "" {
+			return "", out
+		}
+
+		return "", outcome{}
 	case out.human:
 		c.await(ctx, sess.audit, bp.ID, out.stage)
 
-		return ""
+		return "", outcome{}
 	default:
-		return out.stage
+		return out.stage, outcome{}
 	}
 }
 
 // report ends the pipeline: the panel gets the artifact it ended on and the
 // verdict, and the blueprint goes idle. rounds is that artifact's version,
-// which for a loop stage is its round.
+// which for a loop stage is its round. signoff tells the panel that the
+// sign-off of ready cards follows on the held run slot.
 func (c *Controller) report(ctx context.Context, sess *session, bp store.Blueprint, out outcome) {
 	c.setState(ctx, bp.ID, StateIdle)
 	sess.audit.event(ctx, Event{Kind: EventReport, BlueprintID: bp.ID, Payload: map[string]any{
 		"stage": out.art.Stage, "body": out.art.Body, "ready": out.ready, "rounds": out.art.Version, "findings": out.findings,
+		"signoff": out.ready && c.cardsStage() != "",
 	}})
 }
 
@@ -392,6 +417,21 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.St
 
 		writeArtifact(&b, fmt.Sprintf("%s version %d, which %s judged", st.ID, judged.Version, other.ID), judged)
 		writeArtifact(&b, fmt.Sprintf("%s findings (round %d)", other.ID, verdict.Version), verdict)
+
+		feedback, err := c.rejectFeedback(ctx, bp.ID)
+		if err != nil {
+			return "", fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
+		}
+
+		if len(feedback) > 0 {
+			b.WriteString("## Sign-off feedback\n\nA human rejected earlier cards with this feedback; address all of it:\n\n")
+
+			for _, f := range feedback {
+				b.WriteString("- " + f + "\n")
+			}
+
+			b.WriteString("\n")
+		}
 	}
 
 	return b.String(), nil

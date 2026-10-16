@@ -54,7 +54,8 @@ func usageOf(p *protocol.ModelPrice, res harness.Result) store.RunUsage {
 
 // launch runs stageID and whatever follows it on the run slot r, which the
 // caller holds. The chain stops at a run that did not complete, a stage that
-// waits for the user, the pipeline's end, or a cancel between stages; the
+// waits for the user, the pipeline's end (after the sign-off of ready cards,
+// shown even when a cancel landed first), or a cancel between stages; the
 // slot is released then.
 func (c *Controller) launch(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string) {
 	go func() {
@@ -67,7 +68,13 @@ func (c *Controller) launch(ctx context.Context, r *run, sess *session, bp store
 
 			// What follows is decided and recorded even when a cancel
 			// landed as the stage completed; the loop then stops.
-			stageID = c.advance(context.WithoutCancel(ctx), sess, bp, stageID)
+			var end outcome
+
+			stageID, end = c.advance(context.WithoutCancel(ctx), sess, bp, stageID)
+
+			if end.ready {
+				c.signoff(ctx, sess, bp, end)
+			}
 		}
 	}()
 }

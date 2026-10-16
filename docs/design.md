@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slice 0 is implemented, and slice 1 runs intake, a pasted design, grounding, decomposition and readiness and reports in the session; emission and the dialog stages are design, and so is the export's commit to a repository; the export writes the bundle under the state directory.
+Status: agreed design, 2026-10-15. Slices 0 and 1 are implemented, and slice 2 signs off ready cards and emits them and a playbook into CM; the dialog stages are design, and so is the export's commit to a repository (slice 4); the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -203,7 +203,7 @@ developer (DEV), reviewer (REV).
 | 8  | Sign-off        | human   | everything        | approval; then emission                                                                               | yes       |
 | -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   |
 
-The embedded pack holds intake, a human-sourced design stage, grounding, decomposition and readiness; slicing, acceptance and sign-off arrive with the dialog stages.
+The embedded pack holds intake, a human-sourced design stage, grounding, decomposition and readiness; slicing and acceptance arrive with the dialog stages. Sign-off is the controller's step after readiness (see Emission).
 The design stage is human-sourced until the dialog stages arrive: the message after intake's artifact is stored as the design. The loader refuses a human-sourced first stage, a human-sourced stage with tools, checks or loops_to, and a loops_to naming a human-sourced stage.
 
 - Intake ends by stating the shape it expects (slices, projects involved) and
@@ -428,7 +428,13 @@ holds.
 
 ## Emission
 
-At sign-off, in order:
+Cards that pass readiness go to sign-off. Default and `auto` modes show the
+sign-off (the entries in playbook order, the playbook title, the assumptions
+and the preflight result) and wait: `approve` emits, and `reject <feedback>`
+stores the feedback and re-runs decomposition and readiness with it, the
+three readiness rounds counted again from the rejection. `auto+emit` and
+`yolo` approve on their own when preflight finds nothing for a human, and
+stop for one otherwise. Every decision is a row in `gates`. Then, in order:
 
 1. **Preflight**, at sign-off and again at the start of every emission
    attempt. Blocking: a card's project is missing in CM or declares no
@@ -488,7 +494,7 @@ Replies the server understands, besides answers to questions:
 
 | Reply                         | Effect                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
-| `approve`, `reject <feedback>` | Decides the open gate, or the proposed lesson the reply answers.        |
+| `approve`, `reject <feedback>` | Decides the sign-off: approve emits, and resumes an emission that stopped; reject re-runs decomposition with the feedback. Only after the pipeline ends ready; before that the text is an answer, the design or a note. |
 | `gate <stage> human\|auto`    | Changes a gate's policy for this blueprint; offered at the gate plan.   |
 | `export`                      | Writes the markdown bundle (blueprint summary, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with emission. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |

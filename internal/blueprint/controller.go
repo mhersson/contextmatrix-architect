@@ -364,7 +364,8 @@ func (c *Controller) leftRunning(ctx context.Context, id string) (*store.Run, er
 
 // Message handles one user message: the answer to an open question, the
 // need while the first stage has no artifact, the artifact of a
-// human-sourced stage that waits for it, or a note. The abort and export
+// human-sourced stage that waits for it, the sign-off decision (approve or
+// reject <feedback>) at a ready end, or a note. The abort and export
 // commands are parsed by the webhook and reach Abort and Export instead.
 func (c *Controller) Message(ctx context.Context, id, text, msgID string) error {
 	trimmed := strings.TrimSpace(text)

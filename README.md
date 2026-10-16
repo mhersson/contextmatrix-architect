@@ -11,9 +11,11 @@ the next message as the design. Grounding, decomposition and readiness then
 run in turn over read-only checkouts of the target projects' repositories.
 Every decomposition submit is checked against the card contract inside the
 run, and readiness sends cards that are not ready back to decomposition for up
-to three rounds. The session ends with a report of whether the cards are
-ready, with the findings when they are not; nothing is emitted into
-ContextMatrix yet.
+to three rounds. The session then reports whether the cards are ready. Ready cards go to
+sign-off: reply approve to create them in ContextMatrix, with a playbook for
+two or more, or reject with feedback to re-run decomposition. The auto+emit
+and yolo modes approve on their own when the preflight finds nothing for a
+human.
 
 ## Run
 

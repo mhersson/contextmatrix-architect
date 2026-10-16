@@ -361,7 +361,7 @@ func TestPipeline_IntakeThenDesignThenCodeStagesThenReport(t *testing.T) {
 
 	bp, err = st.GetBlueprint(ctx, "BP1")
 	require.NoError(t, err)
-	assert.Equal(t, string(StateIdle), bp.State)
+	assert.Equal(t, string(StateWaiting), bp.State)
 
 	sources, err := st.ListSources(ctx, "BP1")
 	require.NoError(t, err)

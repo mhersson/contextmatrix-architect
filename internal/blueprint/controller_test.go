@@ -132,6 +132,22 @@ func (r *recorder) first(kind string) (Event, bool) {
 	return Event{}, false
 }
 
+// all returns every recorded event of kind, oldest first.
+func (r *recorder) all(kind string) []Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var out []Event
+
+	for _, e := range r.events {
+		if e.Kind == kind {
+			out = append(out, e)
+		}
+	}
+
+	return out
+}
+
 // waitFor blocks until an event of kind has reached the sink.
 func (r *recorder) waitFor(t *testing.T, kind string) {
 	t.Helper()

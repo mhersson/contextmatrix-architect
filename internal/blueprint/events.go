@@ -49,6 +49,12 @@ const (
 	EventPlaybookCreated = "playbook_created"
 	// EventEmitted says every card (and the playbook) exists in ContextMatrix.
 	EventEmitted = "emitted"
+	// EventSignOff shows the ready cards, the preflight result and how to
+	// decide; the blueprint waits for approve or reject.
+	EventSignOff = "signoff"
+	// EventDecided records a sign-off decision, by a human or the emitting
+	// mode's automatic approval.
+	EventDecided = "decided"
 	// EventEnded records that CM ended the session; the blueprint persists.
 	EventEnded = "session_ended"
 	// EventHarness wraps one raw harness JSONL line; the payload is the line.

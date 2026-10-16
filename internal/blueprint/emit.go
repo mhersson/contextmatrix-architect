@@ -79,8 +79,6 @@ func (c *Controller) draft(ctx context.Context, id string) (contract.Draft, erro
 
 // emitted reports whether everything emission creates is recorded: every
 // draft card and, for two or more cards, the playbook.
-//
-//nolint:unused // the sign-off reads it before it emits
 func (c *Controller) emitted(ctx context.Context, bp store.Blueprint) (bool, error) {
 	draft, err := c.draft(ctx, bp.ID)
 	if err != nil {
