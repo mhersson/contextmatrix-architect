@@ -49,15 +49,17 @@ func TestLoad_MissingFileIsDefaultsPlusEnv(t *testing.T) {
 
 	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
 	require.NoError(t, err)
-	assert.Equal(t, 9094, cfg.Port)
+	assert.Equal(t, 9095, cfg.Port)
+	assert.InDelta(t, 5, cfg.MaxRunCostUSD, 1e-9)
+	assert.Equal(t, 80, cfg.MaxTurns)
 	require.NoError(t, cfg.Validate())
 }
 
 func TestValidate(t *testing.T) {
 	valid := func() *Config {
 		return &Config{
-			ContextMatrixURL: "http://cm:8080", APIKey: strings.Repeat("k", 32), Port: 9094,
-			LogLevel: "info", StateDir: "/tmp/x", MaxRunCostUSD: 2, MaxTurns: 40, WorkspaceMaxAgeDays: 7,
+			ContextMatrixURL: "http://cm:8080", APIKey: strings.Repeat("k", 32), Port: 9095,
+			LogLevel: "info", StateDir: "/tmp/x", MaxRunCostUSD: 5, MaxTurns: 80, WorkspaceMaxAgeDays: 7,
 		}
 	}
 
@@ -101,7 +103,7 @@ func TestDefaultsYAMLRoundTrips(t *testing.T) {
 
 	cfg, err := Load(p)
 	require.NoError(t, err)
-	assert.Equal(t, 9094, cfg.Port)
+	assert.Equal(t, 9095, cfg.Port)
 	assert.Contains(t, string(out), "contextmatrix_url:")
 	assert.Contains(t, string(out), "max_run_cost_usd:")
 }

@@ -67,12 +67,12 @@ type raw struct {
 
 func defaults() raw {
 	return raw{
-		Port:                   9094,
+		Port:                   9095,
 		LogLevel:               "info",
 		StateDir:               "/var/lib/contextmatrix-architect",
 		Models:                 map[string]string{},
-		MaxRunCostUSD:          2,
-		MaxTurns:               40,
+		MaxRunCostUSD:          5,
+		MaxTurns:               80,
 		ReplaySkewSeconds:      330,
 		ReplayCacheSize:        10000,
 		MessageDedupTTLSeconds: 600,

@@ -41,7 +41,7 @@ a priced model is chosen or a new blueprint is started without a cap.
 
 ```bash
 make docker
-docker run --rm -p 9094:9094 \
+docker run --rm -p 9095:9095 \
   -v architect-state:/var/lib/contextmatrix-architect \
   -v "$PWD/config.yaml:/etc/contextmatrix-architect/config.yaml:ro" \
   contextmatrix-architect:dev

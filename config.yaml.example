@@ -19,17 +19,20 @@ contextmatrix_url: "http://localhost:8080"
 # Env: CONTEXTMATRIX_ARCHITECT_LOG_LEVEL
 log_level: info
 
-# Harness cost cap per stage run, in USD. Default: 2.
+# Cost cap per stage run, in USD. Default: 5. Stages run capable models over
+# real code, so a small cap starves them; raise it per deployment when a stage
+# keeps hitting it.
 # Runs are priced from their tokens at the price CM sends per session, so this
 # binds on every endpoint and a run is stopped within one model call of passing
 # it. A model CM cannot price counts only the cost the endpoint reports, and
 # max_turns still bounds every run.
 # Env: CONTEXTMATRIX_ARCHITECT_MAX_RUN_COST_USD
-max_run_cost_usd: 2
+max_run_cost_usd: 5
 
-# Harness turn cap per stage run. Default: 40.
+# Turn cap per stage run. Default: 80. Grounding and decomposition read many
+# files, one tool call per turn; the cost cap, not this, is the spend bound.
 # Env: CONTEXTMATRIX_ARCHITECT_MAX_TURNS
-max_turns: 40
+max_turns: 80
 
 # Size of the message de-duplication cache. Default: 1000.
 # Env: CONTEXTMATRIX_ARCHITECT_MESSAGE_DEDUP_CACHE_SIZE
@@ -48,8 +51,8 @@ models: {}
 # Default: empty. Env: CONTEXTMATRIX_ARCHITECT_PACK
 pack: ""
 
-# Listen port. Default: 9094. Env: CONTEXTMATRIX_ARCHITECT_PORT
-port: 9094
+# Listen port. Default: 9095. Env: CONTEXTMATRIX_ARCHITECT_PORT
+port: 9095
 
 # Directory holding architect.db. Must be writable. Default as below.
 # Env: CONTEXTMATRIX_ARCHITECT_STATE_DIR
