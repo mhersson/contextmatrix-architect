@@ -24,8 +24,8 @@ ending with the pull requests and compare links.
 
 ```bash
 make build
-./architect config defaults > config.yaml   # edit contextmatrix_url, api_key, state_dir
-./architect serve --config config.yaml
+./contextmatrix-architect config defaults > config.yaml   # edit contextmatrix_url, api_key, state_dir
+./contextmatrix-architect serve --config config.yaml
 ```
 
 Configure it in ContextMatrix as `backends.architect` with the same `api_key`.

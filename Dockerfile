@@ -7,7 +7,7 @@ RUN mkdir -p /state
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -o /architect ./cmd/architect
+RUN CGO_ENABLED=0 go build -trimpath -o /contextmatrix-architect ./cmd/contextmatrix-architect
 # The harness grep and glob tools exec ripgrep; the static musl build runs on
 # distroless. Pinned by version and digest per architecture (14.1.1 ships no
 # aarch64 musl build, so the pin is 15.x).
@@ -25,9 +25,9 @@ RUN set -eu; \
     install -m 0755 "/tmp/ripgrep-${RIPGREP_VERSION}-${arch}-unknown-linux-musl/rg" /usr/local/bin/rg
 
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /architect /architect
+COPY --from=build /contextmatrix-architect /contextmatrix-architect
 COPY --from=build /usr/local/bin/rg /usr/local/bin/rg
 COPY --from=build --chown=65532:65532 /state /var/lib/contextmatrix-architect
 VOLUME ["/var/lib/contextmatrix-architect"]
 EXPOSE 9095
-ENTRYPOINT ["/architect", "serve", "--config", "/etc/contextmatrix-architect/config.yaml"]
+ENTRYPOINT ["/contextmatrix-architect", "serve", "--config", "/etc/contextmatrix-architect/config.yaml"]

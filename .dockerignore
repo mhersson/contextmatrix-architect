@@ -3,7 +3,7 @@
 .superpowers/
 docs/superpowers/
 /config.yaml
-/architect
+/contextmatrix-architect
 /dist/
 **/*.db
 **/*.db-wal
