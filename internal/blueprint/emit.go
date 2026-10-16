@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
+	"github.com/mhersson/contextmatrix-architect/internal/code"
 	"github.com/mhersson/contextmatrix-architect/internal/contract"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
@@ -359,6 +363,7 @@ func (c *Controller) emitError(ctx context.Context, au audit, id string, err err
 // and its warnings reported: readiness mirrors CM's lint, and the outcomes
 // stage learns from what slips through. The steps preflight found at this
 // attempt are announced with the cards. The trees go once everything exists.
+// Each body says what the source tags it cites stand for.
 func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint, client CMClient, draft contract.Draft, steps []string) error {
 	bg := context.WithoutCancel(ctx)
 
@@ -385,6 +390,16 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 	summary, err := c.summary(bg, bp.ID)
 	if err != nil {
 		return err
+	}
+
+	sources, err := c.opts.Store.ListSources(bg, bp.ID)
+	if err != nil {
+		return fmt.Errorf("list sources: %w", err)
+	}
+
+	projects, err := client.ListProjects(ctx)
+	if err != nil {
+		return fmt.Errorf("list projects: %w", err)
 	}
 
 	byID := map[string]contract.Card{}
@@ -423,6 +438,8 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 		if len(draft.Cards) == 1 {
 			body = withContext(body, summary.contextText())
 		}
+
+		body = withSources(body, sources, ownRepos(projects, card.Project))
 
 		wctx, cancel := writeContext(ctx)
 		out, err := client.CreateCard(wctx, cm.CardInput{
@@ -677,4 +694,93 @@ func hasRun(card cm.Card) bool {
 // resumes it; a completed one is not started over.
 func playedRun(pb cm.Playbook) bool {
 	return pb.Run != nil && pb.Run.Status != "stopped"
+}
+
+// citation is one bracketed citation, such as [S1], [S1 internal/x.go] or
+// [S1, S2]; sourceTag is one source tag inside it.
+var (
+	citation  = regexp.MustCompile(`\[[^\[\]]*\]`)
+	sourceTag = regexp.MustCompile(`\bS(\d+)\b`)
+)
+
+// withSources appends a Sources section that says what every source tag
+// the body cites stands for, so the tags still mean something once the card
+// has left the blueprint. A tag the body does not cite, or one that names
+// no source, is left out, and a body citing none is returned as it is.
+func withSources(body string, sources []store.Source, own []string) string {
+	byNumber := map[int]store.Source{}
+	for _, s := range sources {
+		byNumber[s.Number] = s
+	}
+
+	cited := map[int]bool{}
+
+	for _, c := range citation.FindAllString(body, -1) {
+		for _, m := range sourceTag.FindAllStringSubmatch(c, -1) {
+			n, err := strconv.Atoi(m[1])
+			if _, known := byNumber[n]; err == nil && known {
+				cited[n] = true
+			}
+		}
+	}
+
+	if len(cited) == 0 {
+		return body
+	}
+
+	var b strings.Builder
+
+	b.WriteString(strings.TrimRight(body, "\n"))
+	b.WriteString("\n\n## Sources\n\n")
+
+	for _, n := range slices.Sorted(maps.Keys(cited)) {
+		b.WriteString("- " + sourceLine(byNumber[n], own) + "\n")
+	}
+
+	return b.String()
+}
+
+// sourceLine says what one source is. A repository is named with the
+// commit grounding read, unless it is not one of own, the card's project's
+// repositories: the contract keeps other projects' repositories out of a
+// card, and CM's lint warns on them.
+func sourceLine(s store.Source, own []string) string {
+	switch {
+	case s.Kind == "cm":
+		return s.Tag() + ": the ContextMatrix board, as read while the cards were written"
+	case s.Kind == "repo" && !slices.Contains(own, s.Identity):
+		return s.Tag() + ": another project's repository " + atCommit(s.Version)
+	case s.Kind == "repo":
+		return s.Tag() + ": " + s.Identity + " " + atCommit(s.Version)
+	default:
+		return s.Tag() + ": " + s.Identity
+	}
+}
+
+// atCommit names the commit a repository was read at by its first seven
+// characters, or says it had none.
+func atCommit(sha string) string {
+	if sha == "" {
+		return "with no commits"
+	}
+
+	return "at " + sha[:min(7, len(sha))]
+}
+
+// ownRepos is the clean url of every repository of the named project, the
+// form sources are recorded under.
+func ownRepos(projects []cm.Project, name string) []string {
+	var out []string
+
+	for _, p := range projects {
+		if p.Name != name {
+			continue
+		}
+
+		for _, u := range p.RepoURLs() {
+			out = append(out, code.CleanURL(u))
+		}
+	}
+
+	return out
 }

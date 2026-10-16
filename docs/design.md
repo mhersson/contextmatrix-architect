@@ -480,9 +480,13 @@ Then, in order:
 2. **Cards**, in playbook order, which the contract keeps dependency-first,
    so `depends_on` carries real ids within a project. Each created id is
    stored in `emissions` at once, so a retry after a failure skips what
-   exists. A `create_card` warning is reported and emission continues: CM
-   creates the card before it lints it, the readiness checks mirror its lint,
-   and the outcomes stage learns from what slips through.
+   exists. Each body ends with a `## Sources` section saying what every
+   source tag it cites stands for: its project's repository at the commit
+   grounding read, or the ContextMatrix board. Another project's repository
+   is not named, and a body citing no tag gets no section. A `create_card`
+   warning is reported and emission continues: CM creates the card before
+   it lints it, the readiness checks mirror its lint, and the outcomes stage
+   learns from what slips through.
 3. **Playbook**, for two or more cards: card and manual entries in draft
    order, the draft's title, and a description with intake's problem, value
    and assumptions. A single card carries the problem and the assumptions in
