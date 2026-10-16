@@ -354,7 +354,8 @@ release.
 
 The contract lives here: the default pack's `card.md` and `lists.yaml` plus
 `internal/contract`. The agent is the consumer and its prompts are the ground
-truth the lists are copied from.
+truth the lists are copied from. The mechanical checks over a draft card are
+`Check` in `internal/contract/check.go`.
 
 ## Interaction
 

@@ -3,8 +3,9 @@
 // are the ground truth the lists are copied from.
 package contract
 
-// Lists is the data behind the mechanical checks. Every entry is matched
-// case-insensitively.
+// Lists is the data behind the mechanical checks. The word lists are matched
+// case-insensitively; ForbiddenReferences are regular expressions matched as
+// written.
 type Lists struct {
 	// RequiredSections are the "## " headings every card body must carry.
 	RequiredSections []string `yaml:"required_sections"`
