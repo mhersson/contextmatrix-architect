@@ -91,6 +91,10 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventAborted:
 		entry.Type = "system"
 		entry.Content = "Abort requested. Any running stage is canceled; the blueprint is kept and can be reopened."
+	case blueprint.EventExported:
+		files, _ := p["files"].(int)
+		entry.Type = "system"
+		entry.Content = fmt.Sprintf("Export written on the server: %s (%d files).", str(p["path"]), files)
 	case blueprint.EventError:
 		entry.Type = "stderr"
 		entry.Content = str(p["message"])

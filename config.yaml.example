@@ -56,7 +56,8 @@ pack: ""
 # Listen port. Default: 9095. Env: CONTEXTMATRIX_ARCHITECT_PORT
 port: 9095
 
-# Directory holding architect.db. Must be writable. Default as below.
+# Directory holding architect.db. Must be writable. Also holds exports/ and
+# workspaces/. Default as below.
 # Env: CONTEXTMATRIX_ARCHITECT_STATE_DIR
 state_dir: /var/lib/contextmatrix-architect
 

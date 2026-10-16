@@ -39,6 +39,15 @@ secondary repository sits beside it at `trees/<blueprint>/<project>@<repo>`.
 Trees not written for `workspace_max_age_days` are swept at startup and hourly;
 mirrors stay.
 
+## Export
+
+Reply `export` in the chat panel to write the blueprint's record as markdown
+under `<state_dir>/exports/<blueprint>/<time>`: a summary with the runs and
+their cost, every artifact version, the questions and answers, the sources,
+the event log and the run transcripts. It reads the store, which holds
+records with the session's secrets already masked, so a running stage is not
+disturbed. Committing the bundle to a repository is not built yet.
+
 ## Cost caps
 
 CM sends the session model's price with every blueprint start, resolved from

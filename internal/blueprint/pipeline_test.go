@@ -908,7 +908,7 @@ func TestPipeline_MessageAfterAnAbortRetriesTheStage(t *testing.T) {
 	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
 	require.Eventually(t, func() bool { return runner.calls() == 2 }, 5*time.Second, 10*time.Millisecond)
 
-	require.NoError(t, c.Message(ctx, "BP1", "abort", "m3"))
+	require.NoError(t, c.Abort(ctx, "BP1", "m3"))
 	c.Wait("BP1")
 
 	runs, err := st.ListRuns(ctx, "BP1")
@@ -1077,7 +1077,7 @@ func TestPipeline_AbortDuringTheCheckoutCancelsTheRun(t *testing.T) {
 	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
 	require.Eventually(t, func() bool { return ws.checkouts() == 1 }, 5*time.Second, 10*time.Millisecond)
 
-	require.NoError(t, c.Message(ctx, "BP1", "abort", "m3"))
+	require.NoError(t, c.Abort(ctx, "BP1", "m3"))
 	c.Wait("BP1")
 
 	assert.Equal(t, 1, runner.calls())

@@ -33,6 +33,7 @@ const (
 	EventStageEnded   = "stage_ended"
 	EventNote         = "note"
 	EventAborted      = "aborted"
+	EventExported     = "exported"
 	EventError        = "error"
 	// EventAwaitInput says the next stage takes the user's next message as
 	// its artifact; the payload carries the stage and the prompt to show.

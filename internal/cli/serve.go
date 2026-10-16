@@ -107,6 +107,7 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 		Sink:          eventSink(hub),
 		HarnessLine:   harnessForwarder(hub),
 		Workspace:     workspace,
+		ExportDir:     filepath.Join(cfg.StateDir, "exports"),
 		Projects:      cmProjects(cfg.ContextMatrixURL),
 		Credentials: func(gitToken string) code.Credentials {
 			return code.NewCMCredentials(cfg.ContextMatrixURL, gitToken)
@@ -194,6 +195,7 @@ func runServe(ctx context.Context, cfg *config.Config) error {
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           srv.Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	httpServer.RegisterOnShutdown(srv.CloseSSE)
 
@@ -222,6 +224,9 @@ func runServe(ctx context.Context, cfg *config.Config) error {
 	defer cancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		// Lingering connections must not hold the process.
+		_ = httpServer.Close()
+
 		return fmt.Errorf("shutdown: %w", err)
 	}
 

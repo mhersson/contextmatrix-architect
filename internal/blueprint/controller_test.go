@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -495,7 +497,7 @@ func TestMessage_AnswersAPendingQuestion(t *testing.T) {
 	assert.True(t, rec.has(EventAnswer))
 }
 
-func TestMessage_AbortCancelsTheRun(t *testing.T) {
+func TestAbort_CancelsTheRun(t *testing.T) {
 	started := make(chan struct{})
 	c, st, _, rec := newController(t, func(ctx context.Context, _ stage.Input) (stage.Output, error) {
 		close(started)
@@ -508,7 +510,7 @@ func TestMessage_AbortCancelsTheRun(t *testing.T) {
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
 	<-started
 
-	require.NoError(t, c.Message(ctx, "BP1", "abort", "m2"))
+	require.NoError(t, c.Abort(ctx, "BP1", "m2"))
 	c.Wait("BP1")
 
 	runs, err := st.ListRuns(ctx, "BP1")
@@ -662,7 +664,7 @@ func TestCancel_WhileParkedInAskHumanUnblocksTheRun(t *testing.T) {
 		name   string
 		cancel func(ctx context.Context, c *Controller) error
 	}{
-		{"abort", func(ctx context.Context, c *Controller) error { return c.Message(ctx, "BP1", "abort", "m2") }},
+		{"abort", func(ctx context.Context, c *Controller) error { return c.Abort(ctx, "BP1", "m2") }},
 		{"end", func(ctx context.Context, c *Controller) error { return c.End(ctx, "BP1") }},
 	}
 
@@ -1482,7 +1484,7 @@ func TestCancel_IsNotShownAsAnError(t *testing.T) {
 		name   string
 		cancel func(ctx context.Context, c *Controller) error
 	}{
-		{"abort", func(ctx context.Context, c *Controller) error { return c.Message(ctx, "BP1", "abort", "m2") }},
+		{"abort", func(ctx context.Context, c *Controller) error { return c.Abort(ctx, "BP1", "m2") }},
 		{"end", func(ctx context.Context, c *Controller) error { return c.End(ctx, "BP1") }},
 	}
 
@@ -1685,4 +1687,115 @@ func TestStart_ReopenWithoutAPriceKeepsTheCreationPrice(t *testing.T) {
 			assert.Equal(t, tt.wantPriced, ended.Payload["priced"])
 		})
 	}
+}
+
+func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
+	c, _, _, rec := newController(t, artifactRun("# Need with "+testKey+" "+testMCPKey+" "+testGitToken))
+	c.opts.ExportDir = t.TempDir()
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	require.NoError(t, c.Export(ctx, "BP1", "m2"))
+
+	ev, ok := rec.first(EventExported)
+	require.True(t, ok)
+
+	dir, _ := ev.Payload["path"].(string)
+	require.DirExists(t, dir)
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.NotEmpty(t, entries)
+
+	var all []byte
+
+	require.NoError(t, filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+
+		b, err := os.ReadFile(path) //nolint:gosec // a walk of the test's own temp dir
+		all = append(all, b...)
+
+		return err
+	}))
+
+	assert.NotContains(t, string(all), testKey, "the bundle is rendered from the masked record")
+	assert.NotContains(t, string(all), testMCPKey)
+	assert.NotContains(t, string(all), testGitToken)
+	assert.Contains(t, string(all), "# Need with")
+}
+
+func TestExport_UnknownBlueprint(t *testing.T) {
+	c, _, _, _ := newController(t, artifactRun("# Need"))
+	c.opts.ExportDir = t.TempDir()
+
+	assert.ErrorIs(t, c.Export(context.Background(), "nope", "m1"), ErrNotFound)
+}
+
+func TestExport_RefusesWithoutADirectoryAndUnsafeIDs(t *testing.T) {
+	c, st, _, _ := newController(t, artifactRun("# Need"))
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	require.Error(t, c.Export(ctx, "BP1", "m1"), "no export directory")
+
+	c.opts.ExportDir = t.TempDir()
+	now := time.Now().UTC()
+	require.NoError(t, st.CreateBlueprint(ctx, store.Blueprint{ID: "../escape", State: "new", CreatedAt: now, UpdatedAt: now}))
+	require.ErrorIs(t, c.Export(ctx, "../escape", "m2"), ErrNotFound)
+	assert.NoDirExists(t, filepath.Join(c.opts.ExportDir, "..", "escape"))
+}
+
+func TestExport_DoesNotDisturbARunningStage(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	c, st, _, _ := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+		close(started)
+		<-release
+
+		return artifactOutput("# Need", in), nil
+	})
+	c.opts.ExportDir = t.TempDir()
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	<-started
+
+	require.NoError(t, c.Export(ctx, "BP1", "m2"))
+	close(release)
+	c.Wait("BP1")
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, store.RunDone, runs[0].Status)
+}
+
+func TestHarnessErrorLineIsForwardedWhenTheRunWasNotCancelled(t *testing.T) {
+	c, _, _, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+		_, _ = in.Events.Write([]byte(`{"seq":1,"kind":"error","data":{"message":"boom"}}` + "\n"))
+
+		return stage.Output{Result: harness.Result{Reason: "error"}}, errors.New("stage intake: boom")
+	})
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+
+	var forwarded bool
+
+	for _, line := range rec.lines {
+		if bytes.Contains(line, []byte(`"kind":"error"`)) {
+			forwarded = true
+		}
+	}
+
+	assert.True(t, forwarded, "an error line on a run that was not cancelled reaches the panel")
 }

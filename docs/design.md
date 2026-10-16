@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slice 0 is implemented, and slice 1 runs intake, a pasted design, grounding, decomposition and readiness and reports in the session; export, emission and the dialog stages are design.
+Status: agreed design, 2026-10-15. Slice 0 is implemented, and slice 1 runs intake, a pasted design, grounding, decomposition and readiness and reports in the session; emission and the dialog stages are design, and so is the export's commit to a repository; the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -481,7 +481,7 @@ Replies the server understands, besides answers to questions:
 | ----------------------------- | ---------------------------------------------------------------------- |
 | `approve`, `reject <feedback>` | Decides the open gate, or the proposed lesson the reply answers.        |
 | `gate <stage> human\|auto`    | Changes a gate's policy for this blueprint; offered at the gate plan.   |
-| `export`                      | Writes the markdown bundle (artifacts, decisions, questions, events, transcripts) under the server's state directory, and commits it to the repo when the project opted in. |
+| `export`                      | Writes the markdown bundle (blueprint summary, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with emission. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
 | `lessons`                     | Lists lessons and their state.                                          |
 | `abort`                       | Ends the open run; the blueprint stays and can be reopened.             |
@@ -571,7 +571,7 @@ internal/code        workspace checkout and repo_info
 internal/research    web_fetch
 internal/cm          MCP client (list_projects; emission arrives with the emission slice)
 internal/outcomes    outcomes stage and lessons
-internal/export      markdown rendering into the state directory and the opted-in repo
+internal/export      markdown rendering into the state directory
 internal/config
 internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; reply parsing
 ```

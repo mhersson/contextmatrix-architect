@@ -4,10 +4,12 @@ package blueprint
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/code"
+	"github.com/mhersson/contextmatrix-architect/internal/export"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
@@ -95,6 +98,9 @@ type Options struct {
 	// Credentials builds the git credential source for a session's token.
 	// nil means repositories are fetched without auth.
 	Credentials func(gitToken string) code.Credentials
+	// ExportDir is where export bundles are written, one directory per
+	// blueprint and time; empty refuses export.
+	ExportDir string
 }
 
 // session is an attached CM session: the provisioned endpoint, model and
@@ -310,8 +316,7 @@ func (c *Controller) leftRunning(ctx context.Context, id string) (*store.Run, er
 	return nil, nil
 }
 
-// Message handles one user message: the abort command, the answer to an
-// open question, the need while the first stage has no artifact, the
+// Message handles one user message: the answer to an open question, the need while the first stage has no artifact, the
 // artifact of a human-sourced stage that waits for it, or a note.
 func (c *Controller) Message(ctx context.Context, id, text, msgID string) error {
 	trimmed := strings.TrimSpace(text)
@@ -326,21 +331,6 @@ func (c *Controller) Message(ctx context.Context, id, text, msgID string) error 
 	}
 
 	r := c.runs[id]
-
-	// Abort comes first: during an open question it ends the run, it is not
-	// the answer. Cancelling under c.mu means Ask cannot open a new question
-	// on a run that is already aborted.
-	if strings.EqualFold(trimmed, "abort") {
-		if r != nil {
-			r.answer = nil
-			r.cancel()
-		}
-
-		c.mu.Unlock()
-		sess.audit.event(ctx, Event{Kind: EventAborted, BlueprintID: id, Payload: map[string]any{"message_id": msgID}})
-
-		return nil
-	}
 
 	if r != nil {
 		answer := r.answer
@@ -372,6 +362,111 @@ func (c *Controller) Message(ctx context.Context, id, text, msgID string) error 
 	c.mu.Unlock()
 
 	return c.input(ctx, runCtx, r, sess, id, trimmed, msgID)
+}
+
+// Abort ends the run in flight, if any. During an open question it is the
+// abort, not the answer. The blueprint persists; the next message retries
+// the stage that was cut short.
+func (c *Controller) Abort(ctx context.Context, id, msgID string) error {
+	c.mu.Lock()
+
+	sess, ok := c.sessions[id]
+	if !ok {
+		c.mu.Unlock()
+
+		return ErrNotFound
+	}
+
+	// Cancelled under c.mu, so Ask cannot open a new question on a run that
+	// is already aborted.
+	if r := c.runs[id]; r != nil {
+		r.answer = nil
+		r.cancel()
+	}
+
+	c.mu.Unlock()
+	sess.audit.event(ctx, Event{Kind: EventAborted, BlueprintID: id, Payload: map[string]any{"message_id": msgID}})
+
+	return nil
+}
+
+// safeID reports whether id is usable as one path element. Ids come from
+// CM, so the export never trusts one to stay inside ExportDir.
+func safeID(id string) bool {
+	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, `/\`) && filepath.IsLocal(id)
+}
+
+// Export renders the blueprint's record under ExportDir/<id>/<time> and
+// tells the panel where. It reads the store only, whose records were masked
+// when written, so a running stage is not disturbed and no secret is in the
+// bundle.
+func (c *Controller) Export(ctx context.Context, id, msgID string) error {
+	if !safeID(id) {
+		return ErrNotFound
+	}
+
+	bp, err := c.opts.Store.GetBlueprint(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return ErrNotFound
+	}
+
+	if err != nil {
+		return fmt.Errorf("blueprint: export: %w", err)
+	}
+
+	if c.opts.ExportDir == "" {
+		return errors.New("blueprint: export: no export directory configured")
+	}
+
+	bundle := export.Bundle{Blueprint: bp, Transcripts: map[int64]json.RawMessage{}}
+
+	if bundle.Runs, err = c.opts.Store.ListRuns(ctx, id); err != nil {
+		return fmt.Errorf("blueprint: export: %w", err)
+	}
+
+	if bundle.Artifacts, err = c.opts.Store.ListArtifacts(ctx, id); err != nil {
+		return fmt.Errorf("blueprint: export: %w", err)
+	}
+
+	if bundle.Events, err = c.opts.Store.ListEvents(ctx, id); err != nil {
+		return fmt.Errorf("blueprint: export: %w", err)
+	}
+
+	if bundle.Sources, err = c.opts.Store.ListSources(ctx, id); err != nil {
+		return fmt.Errorf("blueprint: export: %w", err)
+	}
+
+	for _, r := range bundle.Runs {
+		t, err := c.opts.Store.GetTranscript(ctx, r.ID)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+
+		if err != nil {
+			return fmt.Errorf("blueprint: export: %w", err)
+		}
+
+		bundle.Transcripts[r.ID] = t
+	}
+
+	dir := filepath.Join(c.opts.ExportDir, id, c.opts.Now().UTC().Format("20060102T150405Z"))
+
+	files, err := export.Write(dir, bundle)
+	if err != nil {
+		return fmt.Errorf("blueprint: export: %w", err)
+	}
+
+	au := c.newAudit()
+
+	c.mu.Lock()
+	if sess := c.sessions[id]; sess != nil {
+		au = sess.audit
+	}
+	c.mu.Unlock()
+
+	au.event(ctx, Event{Kind: EventExported, BlueprintID: id, Payload: map[string]any{"path": dir, "files": len(files), "message_id": msgID}})
+
+	return nil
 }
 
 // runModel is the model a run uses and its price; price is nil when the run
