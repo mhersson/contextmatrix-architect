@@ -1,14 +1,18 @@
 package config
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func writeFile(t *testing.T, body string) string {
@@ -128,4 +132,25 @@ func TestCallerIdentity(t *testing.T) {
 
 	cfg.CallerIdentity = "human:alice"
 	require.NoError(t, cfg.Validate())
+}
+
+// contextmatrix-setup drops a user's value for any key the defaults omit, and
+// keeps a map printed as {} verbatim.
+func TestDefaultsYAMLListsEveryKey(t *testing.T) {
+	out, err := DefaultsYAML()
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, yaml.Unmarshal(out, &got))
+
+	want := map[string]bool{}
+	rt := reflect.TypeFor[raw]()
+
+	for i := range rt.NumField() {
+		want[rt.Field(i).Tag.Get("koanf")] = true
+	}
+
+	assert.ElementsMatch(t, slices.Collect(maps.Keys(want)), slices.Collect(maps.Keys(got)))
+	assert.IsType(t, map[string]any{}, got["models"])
+	assert.Empty(t, got["models"])
 }
