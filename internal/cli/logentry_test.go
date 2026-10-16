@@ -69,6 +69,13 @@ func TestLogEntryFor(t *testing.T) {
 			"repos":    []any{map[string]any{"project": "alpha", "compare_url": "https://x/compare"}},
 			"cards":    []any{map[string]any{"card": "ALPHA-001", "state": "done", "pr": "https://x/pr/1"}},
 		}}, "text", []string{"https://x/compare", "\n\nCards:\n- ALPHA-001 is done: https://x/pr/1"}, false},
+		{"watch ended with the cost", blueprint.Event{Kind: blueprint.EventWatchEnded, BlueprintID: "S1", Payload: map[string]any{
+			"playbook": "", "cards": []any{map[string]any{"card": "ALPHA-001", "state": "done", "pr": "https://x/pr/1"}},
+			"cost_usd": 0.42, "priced": true,
+		}}, "text", []string{"- ALPHA-001 is done: https://x/pr/1", "The architect's runs cost 0.42 USD.", "Reply export for the bundle, or end the session."}, false},
+		{"watch ended with a reported cost", blueprint.Event{Kind: blueprint.EventWatchEnded, BlueprintID: "S1", Payload: map[string]any{
+			"playbook": "", "cards": []any{}, "cost_usd": 0.42, "priced": false,
+		}}, "text", []string{"0.42 USD, as the endpoint reported it", "Reply export for the bundle, or end the session."}, false},
 		{"signoff", blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
 			"cards":    []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing", "type": "feature", "priority": "medium"}},
 			"order":    []any{"D1"},

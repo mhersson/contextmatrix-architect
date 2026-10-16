@@ -244,6 +244,16 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			}
 		}
 
+		if cost, ok := p["cost_usd"]; ok {
+			if priced, _ := p["priced"].(bool); priced {
+				fmt.Fprintf(&b, "\n\nThe architect's runs cost %.2f USD.", num(cost))
+			} else {
+				fmt.Fprintf(&b, "\n\nThe architect's runs cost %.2f USD, as the endpoint reported it.", num(cost))
+			}
+		}
+
+		b.WriteString("\n\nReply export for the bundle, or end the session.")
+
 		entry.Content = b.String()
 	case blueprint.EventEmitted:
 		entry.Type = "text"

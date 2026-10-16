@@ -496,8 +496,12 @@ Then, in order:
    status does. A run waiting on a check-off or on a failed card is reported
    once as waiting for a human. The watch ends when the single card is done
    or not planned, or the playbook run completes or every entry is complete,
-   with the pull requests and one compare link per repository, and the
-   blueprint's state is `done`.
+   with a closing summary: each card's state and pull request, the playbook
+   and one compare link per repository, the architect's total cost, and
+   "Reply export for the bundle, or end the session." Then the blueprint's
+   state is `done`. The summary is posted once: a restart between the two
+   finds it stored and only sets the state, and a reopen of a `done`
+   blueprint posts nothing. Ending the session stays with the user.
 
 The architect does not use CM's Jira import for cards. Its traps hit exactly
 what the contract tunes: imported titles start with the issue key, no labels

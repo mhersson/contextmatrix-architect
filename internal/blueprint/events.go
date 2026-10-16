@@ -57,8 +57,9 @@ const (
 	// EventRunStarted records the yolo run start: run_card for one card,
 	// run_playbook for several.
 	EventRunStarted = "run_started"
-	// EventWatch is one change the watch saw in ContextMatrix; EventWatchEnded
-	// the end of the run with its pull requests and compare links.
+	// EventWatch is one change the watch saw in ContextMatrix. EventWatchEnded
+	// is the closing summary at the end of the run, posted once: the pull
+	// requests, the compare links and the architect's total cost.
 	EventWatch      = "watch"
 	EventWatchEnded = "watch_ended"
 	// EventWatchState stores the snapshot the watch last reported, so a
