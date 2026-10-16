@@ -5,9 +5,9 @@ GOLANGCI_LINT_VERSION ?= v2.14.0
 
 build:
 	go build ./...
-	go build -trimpath -o architect ./cmd/architect
+	go build -trimpath -o contextmatrix-architect ./cmd/contextmatrix-architect
 install:
-	go install ./cmd/architect
+	go install ./cmd/contextmatrix-architect
 test:
 	go test ./...
 test-race:

@@ -22,7 +22,7 @@ specification and must stay true at HEAD.
 
 ## Package map
 
-- `cmd/architect` - entrypoint; `serve` is the only server command.
+- `cmd/contextmatrix-architect` - entrypoint; `serve` is the only server command.
 - `internal/cli` - cobra commands: serve, config defaults, config validate.
 - `internal/config` - koanf config: file, then `CONTEXTMATRIX_ARCHITECT_*` env.
 - `internal/webhook` - CM-facing chat-backend protocol on backendkit webhookcore and logbridge; parses the abort and export commands.
@@ -58,15 +58,16 @@ specification and must stay true at HEAD.
 ## Running and verifying
 
 ```bash
-make build      # binary at ./architect
+make build      # binary at ./contextmatrix-architect
 make test
 make test-race  # CGO_ENABLED=1
 make lint
 make fmt
-architect serve --config config.yaml
+contextmatrix-architect serve --config config.yaml
+./svc.sh verify # check the generated user unit
 ```
 
-Grep and glob in stage runs exec ripgrep; install `rg` locally for manual runs.
+Grep in stage runs execs ripgrep and glob also takes fd; install `rg` locally for manual runs.
 
 Before any commit: `make fmt`, `make test`, `make lint`, `make build` clean.
 

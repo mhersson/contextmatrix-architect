@@ -62,8 +62,8 @@ Settled during design. Each has its reason so it is not re-litigated.
 | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Standalone Go service on `contextmatrix-harness`          | The stage controller, gates and cross-run ledger have to be written either way; the chat backend cannot host them (lossy resume, no terminal tools, no responder policy). CM stays a coordination layer rather than becoming a model runner. |
 | Not built on `contextmatrix-agent`; `backendkit` only for the CM-facing side | The agent is shaped for card work in a container, and nothing under its `internal/` is importable. backendkit's `webhookcore` and `logbridge` are the chat-backend protocol the architect speaks towards CM, so they are used for exactly that and nothing else. |
-| CM's chat panel is the only client                        | The architect implements CM's chat-backend protocol as a third backend kind, so CM's existing panel is where the need is stated, questions and gates are answered, and side operations (export, outcomes, lessons) are requested by reply. Same look and feel, session list, auth and browser for free. No UI, no CLI beyond `architect serve` and the `config defaults|validate` helpers, no client API. |
-| One controller process                                    | `architect serve` alone owns the store, the workspaces and the harness runs, and every session originates in CM. One record, one place code is checked out, no laptop copy of anything. |
+| CM's chat panel is the only client                        | The architect implements CM's chat-backend protocol as a third backend kind, so CM's existing panel is where the need is stated, questions and gates are answered, and side operations (export, outcomes, lessons) are requested by reply. Same look and feel, session list, auth and browser for free. No UI, no CLI beyond `contextmatrix-architect serve` and the `config defaults` and `config validate` helpers contextmatrix-setup drives, no client API. |
+| One controller process                                    | `contextmatrix-architect serve` alone owns the store, the workspaces and the harness runs, and every session originates in CM. One record, one place code is checked out, no laptop copy of anything. |
 | Provisioned by CM, like the agent and chat backends      | Every blueprint is a CM session. The start payload delivers the LLM endpoint, the MCP key, the model and a git-credentials token. The architect's own config holds no secret but the backend HMAC key, and there is no CM-less mode. |
 | Questions block inside the run; no persisted resume       | Nobody walks away from a blueprint for days. A blocking `ask_human` keeps one transcript and a warm prompt cache. A crash re-runs the open stage from stored artifacts. |
 | SQLite is the record; markdown is a rendering             | One store for artifacts, gates, transcripts, audit and cost. Committing per-stage markdown into code repos bloats them fast; an opt-in automatic export serves teams that review in pull requests. |
@@ -496,8 +496,9 @@ The Outcomes stage closes the loop from emitted cards back to the contract.
 The only surface is a blueprint session in CM's chat panel. The new-session
 dialog picks the target projects, the mode and a cost cap. The need is stated
 there, questions and gates are answered there, and the stage's progress, tool
-calls and cost stream into it as log entries. The binary has one command,
-`architect serve`, plus the `config defaults|validate` helpers.
+calls and cost stream into it as log entries. The binary,
+`contextmatrix-architect`, has one server command, `serve`, plus the
+`config defaults` and `config validate` helpers.
 
 Replies the server understands, besides answers to questions:
 
@@ -534,9 +535,10 @@ Replies the server understands, besides answers to questions:
 
 ## Deployment
 
-- **One server.** `architect serve` runs in a container next to the agent and
-  chat backends. It is configured in CM as a backend of kind `architect` with
-  its URL and an HMAC key, exactly like the other two.
+- **One server.** `contextmatrix-architect serve` runs next to the agent and
+  chat backends: in a container, or as a systemd user service through
+  `svc.sh`. It is configured in CM as a backend of kind `architect` with its
+  URL and an HMAC key, exactly like the other two.
 - **Provisioned per session by CM.** The start payload carries the LLM
   endpoint, the MCP key, the model and the git-credentials token. The
   architect holds none of these in config or env, and refuses a start without
@@ -545,10 +547,17 @@ Replies the server understands, besides answers to questions:
   reports, into its own workspace cache, with credentials fetched per repo from
   CM. Nothing is checked out on a client.
 - **Container needs.** A Go binary image with ripgrep on the path (the
-  harness grep and glob tools exec it), no Docker socket, a volume for the state directory, and outbound access to CM, the
-  LLM endpoint and the git host. Env: the CM base URL and the backend HMAC key.
-- **Client.** The panel, through CM. Local use is `architect serve` on the
-  laptop pointed at a CM instance. There is no CM-less mode.
+  harness grep and glob tools exec it), no Docker socket, a volume for the
+  state directory (the image sets `XDG_STATE_HOME=/var/lib`, so the default
+  state directory is that volume), and outbound access to CM, the LLM endpoint
+  and the git host. Env: the CM base URL and the backend HMAC key.
+- **Host needs.** As a user service the same binary needs ripgrep on the
+  service's PATH. `state_dir` defaults to the XDG state directory, which
+  `svc.sh` whitelists and creates. `serve` logs a
+  warning at startup when rg is missing and starts anyway.
+- **Client.** The panel, through CM. Local use is
+  `contextmatrix-architect serve` on the laptop pointed at a CM instance.
+  There is no CM-less mode.
 
 ## Runtime
 
@@ -595,7 +604,7 @@ Replies the server understands, besides answers to questions:
 ## Package layout
 
 ```
-cmd/architect
+cmd/contextmatrix-architect
 internal/blueprint   state machine, gates, responder policy, cost cap; the command and event interface
 internal/pack        pack loading, overlays, lists
 internal/stage       stage runner: prompt assembly, tool sets, output schema, critique loop

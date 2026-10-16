@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -30,7 +32,11 @@ type Config struct {
 	CallerIdentity string
 	Port           int
 	LogLevel       string
-	StateDir       string
+	// StateDir is never empty after a successful Load unless no home
+	// directory could be found; an empty value resolves to
+	// $XDG_STATE_HOME/contextmatrix-architect, else
+	// ~/.local/state/contextmatrix-architect, on every OS.
+	StateDir string
 	// Pack is a pipeline pack directory; empty means the embedded default.
 	Pack string
 	// Models overrides the model per persona; the session's model is the
@@ -79,7 +85,6 @@ func defaults() raw {
 		CallerIdentity:         "human:architect",
 		Port:                   9095,
 		LogLevel:               "info",
-		StateDir:               "/var/lib/contextmatrix-architect",
 		Models:                 map[string]string{},
 		MaxRunCostUSD:          5,
 		MaxTurns:               80,
@@ -114,7 +119,10 @@ func (r raw) toConfig() *Config {
 }
 
 // Load reads defaults, then path (a missing file is allowed; any other read or
-// parse error is not; unknown keys are an error), then the environment.
+// parse error is not; unknown keys are an error), then the environment. A
+// state_dir still empty after that resolves to the XDG state directory (see
+// defaultStateDir); if XDG_STATE_HOME is empty and no home directory is known
+// it stays empty and Validate rejects it.
 // CONTEXTMATRIX_ARCHITECT_FOO_BAR maps to foo_bar and "__" nests:
 // CONTEXTMATRIX_ARCHITECT_MODELS__REVIEWER maps to models.reviewer.
 func Load(path string) (*Config, error) {
@@ -155,7 +163,29 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 
+	if r.StateDir == "" {
+		r.StateDir = defaultStateDir()
+	}
+
 	return r.toConfig(), nil
+}
+
+// defaultStateDir is $XDG_STATE_HOME/contextmatrix-architect, else
+// ~/.local/state/contextmatrix-architect, on every OS. Without a home directory
+// it returns "" rather than a relative path, so Validate reports state_dir.
+func defaultStateDir() string {
+	const name = "contextmatrix-architect"
+
+	if x := os.Getenv("XDG_STATE_HOME"); x != "" {
+		return filepath.Join(x, name)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	return filepath.Join(home, ".local", "state", name)
 }
 
 // unknownKeys returns the sorted flattened file keys that are not koanf tags of

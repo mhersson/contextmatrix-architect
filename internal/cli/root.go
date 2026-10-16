@@ -6,7 +6,7 @@ import "github.com/spf13/cobra"
 // NewRootCmd builds the architect command tree.
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "architect",
+		Use:           "contextmatrix-architect",
 		Short:         "ContextMatrix architect backend",
 		SilenceUsage:  true,
 		SilenceErrors: true,

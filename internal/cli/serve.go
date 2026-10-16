@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sync"
@@ -45,15 +46,26 @@ func newServeCmd() *cobra.Command {
 			}
 
 			if err := cfg.Validate(); err != nil {
-				return fmt.Errorf("config: %w", err)
+				return fmt.Errorf("config %s: %w", path, err)
 			}
 
 			return runServe(cmd.Context(), cfg)
 		},
 	}
-	cmd.Flags().StringVar(&path, "config", "config.yaml", "config file path")
+	cmd.Flags().StringVar(&path, "config", defaultConfigPath(), "config file path")
 
 	return cmd
+}
+
+// defaultConfigPath is the user config file svc.sh passes and the sibling
+// backends default to; without a user config dir it is config.yaml.
+func defaultConfigPath() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "config.yaml"
+	}
+
+	return filepath.Join(dir, "contextmatrix-architect", "config.yaml")
 }
 
 func newLogger(level string) *slog.Logger {
@@ -215,6 +227,7 @@ func cmReadTools(baseURL string) func(ctx context.Context, mcpAPIKey, tag string
 func runServe(ctx context.Context, cfg *config.Config) error {
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
+	warnMissingSearchTools(logger, exec.LookPath)
 
 	srv, cleanup, err := buildServer(ctx, cfg, logger, stage.NewRunner())
 	if err != nil {
