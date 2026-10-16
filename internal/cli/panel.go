@@ -20,7 +20,7 @@ func eventSink(hub *logbridge.Hub) func(blueprint.Event) {
 			hub.Publish(entry)
 		}
 
-		if waitsOnUser(e.Kind) {
+		if waitsOnUser(e) {
 			ts := e.Time
 			if ts.IsZero() {
 				ts = time.Now().UTC()
@@ -31,11 +31,15 @@ func eventSink(hub *logbridge.Hub) func(blueprint.Event) {
 	}
 }
 
-func waitsOnUser(kind string) bool {
-	switch kind {
-	case blueprint.EventQuestion, blueprint.EventStageEnded, blueprint.EventError,
-		blueprint.EventNote, blueprint.EventAborted:
+func waitsOnUser(e blueprint.Event) bool {
+	switch e.Kind {
+	case blueprint.EventQuestion, blueprint.EventStageEnded, blueprint.EventError, blueprint.EventAborted:
 		return true
+	case blueprint.EventNote:
+		// A note taken while a stage runs leaves the run working.
+		duringRun, _ := e.Payload["during_run"].(bool)
+
+		return !duringRun
 	default:
 		return false
 	}

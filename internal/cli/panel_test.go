@@ -39,26 +39,34 @@ func newTestHub(t *testing.T) (*logbridge.Hub, <-chan protocol.LogEntry) {
 
 func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 	cases := []struct {
+		name     string
 		kind     string
+		payload  map[string]any
 		wantIdle bool
 	}{
-		{blueprint.EventQuestion, true},
-		{blueprint.EventStageEnded, true},
-		{blueprint.EventError, true},
-		{blueprint.EventNote, true},
-		{blueprint.EventAborted, true},
-		{blueprint.EventCreated, false},
-		{blueprint.EventStageStarted, false},
-		{blueprint.EventArtifact, false},
-		{blueprint.EventAnswer, false},
-		{blueprint.EventEnded, false},
+		{"question", blueprint.EventQuestion, nil, true},
+		{"stage ended", blueprint.EventStageEnded, nil, true},
+		{"error", blueprint.EventError, nil, true},
+		{"note on an idle blueprint", blueprint.EventNote, map[string]any{"during_run": false}, true},
+		{"note while a stage runs", blueprint.EventNote, map[string]any{"during_run": true}, false},
+		{"aborted", blueprint.EventAborted, nil, true},
+		{"created", blueprint.EventCreated, nil, false},
+		{"stage started", blueprint.EventStageStarted, nil, false},
+		{"artifact", blueprint.EventArtifact, nil, false},
+		{"answer", blueprint.EventAnswer, nil, false},
+		{"ended", blueprint.EventEnded, nil, false},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.kind, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			hub, ch := newTestHub(t)
 
-			eventSink(hub)(blueprint.Event{Kind: tc.kind, BlueprintID: "S1", Payload: map[string]any{"text": "q", "body": "b"}})
+			payload := map[string]any{"text": "q", "body": "b"}
+			for k, v := range tc.payload {
+				payload[k] = v
+			}
+
+			eventSink(hub)(blueprint.Event{Kind: tc.kind, BlueprintID: "S1", Payload: payload})
 
 			entries := published(ch)
 			for _, e := range entries[:max(len(entries)-1, 0)] {
