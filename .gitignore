@@ -1,0 +1,7 @@
+/architect
+/dist/
+/config.yaml
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
