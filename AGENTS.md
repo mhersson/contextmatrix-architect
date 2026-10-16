@@ -25,9 +25,9 @@ specification and must stay true at HEAD.
 - `cmd/architect` - entrypoint; `serve` is the only server command.
 - `internal/cli` - cobra commands: serve, config defaults, config validate.
 - `internal/config` - koanf config: file, then `CONTEXTMATRIX_ARCHITECT_*` env.
-- `internal/webhook` - CM-facing chat-backend protocol on backendkit webhookcore and logbridge; reply parsing.
-- `internal/blueprint` - controller: blueprint state machine, questions, events.
-- `internal/stage` - one harness run: persona + instructions + tools + output schema.
+- `internal/webhook` - CM-facing chat-backend protocol on backendkit webhookcore and logbridge.
+- `internal/blueprint` - controller: blueprint state machine, reply handling (abort, answers, the need, notes), questions, events.
+- `internal/stage` - one harness run: persona + instructions + the ask_human and submit_artifact tools.
 - `internal/pack` - pipeline packs: stages, personas, instructions; the default pack is embedded.
 - `internal/store` - SQLite: blueprints, stage runs, artifacts, transcripts, events.
 
