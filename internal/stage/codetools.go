@@ -44,11 +44,9 @@ func CodeTools(root string, repos []RepoFacts) []tools.Tool {
 			}
 		}
 
-		// Only a leading "./" is noise; a TrimLeft cutset would also eat the
-		// dot of a directory such as .github.
-		for strings.HasPrefix(path, "./") {
-			path = path[2:]
-		}
+		// Clean resolves "./" and ".." the way the jail does, so the tag names
+		// the tree the path really lands in.
+		path = filepath.ToSlash(filepath.Clean(path))
 
 		if dir, _, _ := strings.Cut(path, "/"); dir != "" {
 			if tag, ok := tags[dir]; ok {

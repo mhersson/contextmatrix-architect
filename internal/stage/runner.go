@@ -65,6 +65,14 @@ func NewRunner() *Runner {
 
 // Run executes one stage and returns its artifact.
 func (r *Runner) Run(ctx context.Context, in Input) (Output, error) {
+	// The registry keeps the last tool under a name, so a clash would silently
+	// replace a built-in.
+	for _, t := range in.Tools {
+		if name := t.Name(); name == "ask_human" || name == "submit_artifact" {
+			return Output{}, fmt.Errorf("stage %s: tool %q clashes with a built-in tool", in.Stage, name)
+		}
+	}
+
 	all := append([]tools.Tool{askHumanTool{asker: in.Asker}, submitArtifactTool{validate: in.Validate}}, in.Tools...)
 	reg := tools.NewRegistry(all...)
 

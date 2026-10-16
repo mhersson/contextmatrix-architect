@@ -288,3 +288,28 @@ func TestRun_ValidateRejectsASubmitUntilItPasses(t *testing.T) {
 
 	assert.True(t, sawRejection)
 }
+
+type namedTool struct {
+	echoTool
+	name string
+}
+
+func (n namedTool) Name() string { return n.name }
+
+func TestRun_ToolNamedLikeABuiltInIsRefused(t *testing.T) {
+	for _, name := range []string{"ask_human", "submit_artifact"} {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeLLM{}
+
+			var events bytes.Buffer
+
+			in := baseInput(&events)
+			in.Tools = []tools.Tool{namedTool{name: name}}
+
+			_, err := runnerWith(f).Run(context.Background(), in)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), name)
+			assert.Empty(t, f.requests)
+		})
+	}
+}

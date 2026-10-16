@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mhersson/contextmatrix-harness/tools"
@@ -51,12 +52,12 @@ func TestCodeTools_ReadIsTaggedWithTheProjectSource(t *testing.T) {
 
 	res, err := toolByName(t, ts, "read").Execute(context.Background(), map[string]any{"path": "alpha/cmd/main.go"})
 	require.NoError(t, err)
-	assert.True(t, len(res.Text) > 0 && res.Text[:4] == "[S1]", res.Text)
+	assert.True(t, strings.HasPrefix(res.Text, "[S1]"), res.Text)
 	assert.Contains(t, res.Text, "func main()")
 
 	res, err = toolByName(t, ts, "read").Execute(context.Background(), map[string]any{"path": "beta/README.md"})
 	require.NoError(t, err)
-	assert.Equal(t, "[S2]", res.Text[:4], res.Text)
+	assert.True(t, strings.HasPrefix(res.Text, "[S2]"), res.Text)
 
 	ro, ok := toolByName(t, ts, "read").(tools.ReadOnly)
 	require.True(t, ok)
@@ -84,6 +85,7 @@ func TestCodeTools_TagFollowsThePathArgument(t *testing.T) {
 		want string
 	}{
 		{"read dot-slash prefix", "read", map[string]any{"path": "./alpha/cmd/main.go"}, "[S1] "},
+		{"read dot-dot into another project", "read", map[string]any{"path": "alpha/../beta/README.md"}, "[S2] "},
 		{"read absolute path inside the root", "read", map[string]any{"path": filepath.Join(root, "beta", "README.md")}, "[S2] "},
 		{"read under a dot-directory", "read", map[string]any{"path": ".github/workflows/ci.yml"}, "[S3] "},
 		{"grep scoped to a project", "grep", map[string]any{"pattern": "main", "path": "alpha"}, "[S1] "},
@@ -96,7 +98,7 @@ func TestCodeTools_TagFollowsThePathArgument(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			res, err := toolByName(t, ts, tc.tool).Execute(context.Background(), tc.args)
 			require.NoError(t, err)
-			assert.True(t, len(res.Text) >= len(tc.want) && res.Text[:len(tc.want)] == tc.want, res.Text)
+			assert.True(t, strings.HasPrefix(res.Text, tc.want), res.Text)
 		})
 	}
 }
