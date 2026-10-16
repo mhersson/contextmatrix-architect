@@ -20,6 +20,11 @@ import (
 // ErrNoArtifact is returned when the run ended without submit_artifact.
 var ErrNoArtifact = errors.New("stage: run ended without an artifact")
 
+// ToolOutputMaxBytes caps one tool result as the model sees it, head and
+// tail kept: a CM card read can carry a long activity log, and the cap
+// matches the chat backend's.
+const ToolOutputMaxBytes = 128 << 10
+
 // Input is everything one run needs.
 type Input struct {
 	Stage        string
@@ -84,12 +89,13 @@ func (r *Runner) Run(ctx context.Context, in Input) (Output, error) {
 	emit := events.NewEmitter(nil, sink)
 
 	cfg := harness.Config{
-		Model:            in.Model,
-		SystemPrompt:     in.Persona + "\n\n" + in.Instructions,
-		MaxTurns:         in.MaxTurns,
-		MaxCostUSD:       in.MaxCostUSD,
-		RedactToolOutput: redact.New(in.Secrets).Apply,
-		History:          in.History,
+		Model:              in.Model,
+		SystemPrompt:       in.Persona + "\n\n" + in.Instructions,
+		MaxTurns:           in.MaxTurns,
+		MaxCostUSD:         in.MaxCostUSD,
+		RedactToolOutput:   redact.New(in.Secrets).Apply,
+		History:            in.History,
+		ToolOutputMaxBytes: ToolOutputMaxBytes,
 	}
 
 	res, err := harness.Run(ctx, r.NewLLM(in.Endpoint), reg, emit, in.Task, cfg)

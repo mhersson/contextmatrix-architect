@@ -313,3 +313,46 @@ func TestRun_ToolNamedLikeABuiltInIsRefused(t *testing.T) {
 		})
 	}
 }
+
+// bigTool returns n bytes: a head marker, filler and a tail marker.
+type bigTool struct{ n int }
+
+func (bigTool) Name() string { return "big" }
+
+func (bigTool) Schema() llm.Tool {
+	return llm.Tool{Type: "function", Function: llm.ToolFunction{
+		Name: "big", Description: "returns a large result", Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
+	}}
+}
+
+func (b bigTool) Execute(context.Context, map[string]any) (tools.Result, error) {
+	return tools.Result{Text: "HEAD" + strings.Repeat("x", b.n-8) + "TAIL"}, nil
+}
+
+func TestRun_CapsToolOutput(t *testing.T) {
+	f := &fakeLLM{responses: []llm.Response{
+		{ToolCalls: []llm.ToolCall{toolCall("c1", "big", `{}`)}, FinishReason: "tool_calls"},
+		{ToolCalls: []llm.ToolCall{toolCall("c2", "submit_artifact", `{"body":"done"}`)}, FinishReason: "tool_calls"},
+	}}
+
+	in := baseInput(&bytes.Buffer{})
+	in.Tools = []tools.Tool{bigTool{n: 3 * ToolOutputMaxBytes}}
+
+	_, err := runnerWith(f).Run(context.Background(), in)
+	require.NoError(t, err)
+
+	require.GreaterOrEqual(t, len(f.requests), 2)
+
+	var result string
+
+	for _, m := range f.requests[1].Messages {
+		if m.ToolCallID == "c1" {
+			result = m.Content
+		}
+	}
+
+	require.NotEmpty(t, result, "the tool result reached the model")
+	assert.Less(t, len(result), ToolOutputMaxBytes+200, "the result is capped")
+	assert.True(t, strings.HasPrefix(result, "HEAD"), "the head is kept")
+	assert.True(t, strings.HasSuffix(result, "TAIL"), "the tail is kept")
+}

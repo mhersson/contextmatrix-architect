@@ -538,6 +538,8 @@ Replies the server understands, besides answers to questions:
 - Models: the start payload's model is the default for every persona; config
   may override per persona. Priors-based selection through
   `contextmatrix-protocol`'s `selection` package comes later.
+- Tool results are capped at 128 KiB per call before the model sees them,
+  head and tail kept, as in the chat backend.
 - Cost: every run's token buckets are priced at the model price CM sends in
   the start payload; the ledger sums runs per blueprint. The per-run cap
   (off at zero) stops a run within one model call of passing it, and a
