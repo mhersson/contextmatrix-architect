@@ -32,7 +32,7 @@ specification and must stay true at HEAD.
 - `internal/code` - read-only mirrors and per-blueprint trees for grounding; repo facts.
 - `internal/cm` - MCP client to ContextMatrix: list_projects now, cards and playbooks with emission.
 - `internal/contract` - the card contract: lists data and the mechanical checks.
-- `internal/store` - SQLite: blueprints, stage runs, artifacts, transcripts, events.
+- `internal/store` - SQLite: blueprints, stage runs, artifacts, transcripts, events, sources.
 
 ## Coding conventions
 

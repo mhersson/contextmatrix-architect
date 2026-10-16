@@ -1,6 +1,7 @@
 // Package code keeps the read-only code the stages ground cards in: one bare
-// mirror per repository, one plain tree per blueprint at a recorded commit,
-// and the facts repo_info reports. Nothing here writes to a repository.
+// mirror per repository, one plain tree per blueprint and repository at a
+// recorded commit, and the facts repo_info reports. Nothing here writes to a
+// repository.
 package code
 
 import (
