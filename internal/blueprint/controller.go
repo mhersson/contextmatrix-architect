@@ -48,8 +48,8 @@ type StartInput struct {
 	CostCapUSD float64
 	Model      string
 	Endpoint   protocol.LLMEndpoint
-	// Price is the session model's resolved price from CM; nil when CM has
-	// none, and then a capped blueprint cannot run.
+	// Price is the session model's resolved price from CM; nil, or all four
+	// rates zero, means CM has none, and then a capped blueprint cannot run.
 	Price *protocol.ModelPrice
 }
 
@@ -121,10 +121,23 @@ func New(opts Options) *Controller {
 	return &Controller{opts: opts, sessions: map[string]*session{}, runs: map[string]*run{}}
 }
 
+// effectivePrice maps an all-zero price to nil. CM sends zero rates for a
+// model it cannot price; treating that as priced would make a cost cap that
+// can never bind.
+func effectivePrice(p *protocol.ModelPrice) *protocol.ModelPrice {
+	if p == nil || *p == (protocol.ModelPrice{}) {
+		return nil
+	}
+
+	return p
+}
+
 // Start attaches a session to the blueprint with in.ID, creating it on first
 // sight. A stage left running by a crash is marked interrupted and re-run.
 // Start on an attached session only logs the reopen.
 func (c *Controller) Start(ctx context.Context, in StartInput) error {
+	in.Price = effectivePrice(in.Price)
+
 	sess := &session{endpoint: in.Endpoint, model: in.Model, price: in.Price, audit: c.newAudit(in.Endpoint.APIKey)}
 
 	bp, err := c.openBlueprint(ctx, in, sess.audit)

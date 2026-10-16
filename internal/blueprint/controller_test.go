@@ -1548,3 +1548,67 @@ func TestShutdown_StoresTheHarnessLinesOfARunThatCompleted(t *testing.T) {
 
 	assert.True(t, trailing, "the completed run's trailing harness line is audited")
 }
+
+func TestStart_AllZeroPriceIsNoPrice(t *testing.T) {
+	zero := func() *protocol.ModelPrice { return &protocol.ModelPrice{} }
+
+	t.Run("capped is refused and stores no price", func(t *testing.T) {
+		c, st, runner, rec := newController(t, artifactRun("# Need"))
+		ctx := context.Background()
+		in := startInput("BP1")
+		in.CostCapUSD = 1
+		in.Price = zero()
+		require.NoError(t, c.Start(ctx, in))
+		require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+		c.Wait("BP1")
+
+		assert.Equal(t, 0, runner.calls())
+		assert.True(t, rec.has(EventError))
+
+		bp, err := st.GetBlueprint(ctx, "BP1")
+		require.NoError(t, err)
+		assert.Equal(t, string(StateIdle), bp.State)
+		assert.Nil(t, bp.Price)
+	})
+
+	t.Run("uncapped runs unpriced", func(t *testing.T) {
+		c, st, runner, rec := newController(t, artifactRun("# Need"))
+		ctx := context.Background()
+		in := startInput("BP1")
+		in.Price = zero()
+		require.NoError(t, c.Start(ctx, in))
+
+		created, ok := rec.first(EventCreated)
+		require.True(t, ok)
+		assert.Equal(t, false, created.Payload["priced"])
+
+		require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+		c.Wait("BP1")
+
+		require.Equal(t, 1, runner.calls())
+
+		ended, ok := rec.first(EventStageEnded)
+		require.True(t, ok)
+		assert.Equal(t, false, ended.Payload["priced"])
+
+		bp, err := st.GetBlueprint(ctx, "BP1")
+		require.NoError(t, err)
+		assert.Nil(t, bp.Price)
+	})
+
+	t.Run("one non-zero rate is still priced", func(t *testing.T) {
+		c, st, _, rec := newController(t, artifactRun("# Need"))
+		ctx := context.Background()
+		in := startInput("BP1")
+		in.Price = &protocol.ModelPrice{CompletionUSDPerMTok: 10}
+		require.NoError(t, c.Start(ctx, in))
+
+		created, ok := rec.first(EventCreated)
+		require.True(t, ok)
+		assert.Equal(t, true, created.Payload["priced"])
+
+		bp, err := st.GetBlueprint(ctx, "BP1")
+		require.NoError(t, err)
+		assert.NotNil(t, bp.Price)
+	})
+}
