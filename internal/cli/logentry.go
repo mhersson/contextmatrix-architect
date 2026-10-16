@@ -118,18 +118,21 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 
 		entry.Content = b.String() + "."
 	case blueprint.EventReport:
+		// The verdict only: the artifact entry before it showed the body.
 		entry.Type = "text"
+
+		if ready, _ := p["ready"].(bool); ready {
+			entry.Content = fmt.Sprintf("**Ready** (round %.0f).", num(p["rounds"]))
+
+			break
+		}
 
 		var b strings.Builder
 
-		b.WriteString(str(p["body"]))
+		fmt.Fprintf(&b, "**Not ready** after round %.0f.", num(p["rounds"]))
 
-		if ready, _ := p["ready"].(bool); !ready {
-			b.WriteString("\n\n**Not ready.**")
-
-			for _, f := range stringsOf(p["findings"]) {
-				b.WriteString("\n- " + f)
-			}
+		for _, f := range stringsOf(p["findings"]) {
+			b.WriteString("\n- " + f)
 		}
 
 		entry.Content = b.String()

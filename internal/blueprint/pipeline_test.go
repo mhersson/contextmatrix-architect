@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -369,6 +370,102 @@ func TestPipeline_ReadinessLoopsBackThenReports(t *testing.T) {
 	assert.Equal(t, 8, runner.calls())
 }
 
+func TestPipeline_StagesSeeTheCardsInTheData(t *testing.T) {
+	var readinessRuns int
+
+	script := happyScript()
+	script["readiness"] = func(context.Context, stage.Input) (stage.Output, error) {
+		readinessRuns++
+
+		return done("# Readiness", readiness(readinessRuns == 2)), nil
+	}
+
+	c, _, runner, _, _ := newPipeline(t, script)
+	drive(t, c, "BP1")
+
+	require.Equal(t, 6, runner.calls())
+
+	// Readiness judges the cards, which live in decomposition's data.
+	judged := runner.input(3)
+	require.Equal(t, "readiness", judged.Stage)
+	assert.Contains(t, judged.Task, `"id": "D1"`)
+	assert.Contains(t, judged.Task, "TestThing.")
+
+	// The decomposition the loop re-runs sees the cards it wrote and the
+	// per-card findings, which live in readiness's data.
+	rerun := runner.input(4)
+	require.Equal(t, "decomposition", rerun.Stage)
+	assert.Contains(t, rerun.Task, "Add the thing")
+	assert.Contains(t, rerun.Task, "two deliverables")
+}
+
+func TestPipeline_ReadinessMustJudgeEveryCard(t *testing.T) {
+	twoCards := func() map[string]any {
+		d := goodCards()
+		second := maps.Clone(d["cards"].([]any)[0].(map[string]any))
+		second["id"] = "D2"
+		second["title"] = "Add the other thing"
+		d["cards"] = append(d["cards"].([]any), second)
+		d["order"] = []any{"D1", "D2"}
+
+		return d
+	}
+
+	script := happyScript()
+	script["decomposition"] = returns("# Cards", twoCards())
+	// Readiness only ever judges D1, and judges it ready.
+	script["readiness"] = returns("# Ready", readiness(true))
+
+	c, _, runner, rec, _ := newPipeline(t, script)
+	drive(t, c, "BP1")
+
+	assert.Equal(t, 8, runner.calls(), "a verdict that skips a card is not ready, so the loop runs its rounds")
+
+	report, ok := rec.first(EventReport)
+	require.True(t, ok)
+	assert.Equal(t, false, report.Payload["ready"])
+	assert.Contains(t, report.Payload["findings"], "D2: not judged")
+}
+
+func TestVerdictOf(t *testing.T) {
+	verdict := func(cards ...map[string]any) store.Artifact {
+		list := make([]any, 0, len(cards))
+		for _, c := range cards {
+			list = append(list, c)
+		}
+
+		b, err := json.Marshal(map[string]any{"cards": list})
+		require.NoError(t, err)
+
+		return store.Artifact{Data: b}
+	}
+
+	ready := func(id string) map[string]any { return map[string]any{"id": id, "ready": true} }
+
+	tests := []struct {
+		name      string
+		art       store.Artifact
+		draft     []string
+		wantReady bool
+		want      []string
+	}{
+		{name: "every card judged ready", art: verdict(ready("D1"), ready("D2")), draft: []string{"D1", "D2"}, wantReady: true},
+		{name: "a card left out", art: verdict(ready("D1")), draft: []string{"D1", "D2"}, want: []string{"D2: not judged"}},
+		{name: "a card not ready", art: verdict(ready("D1"), map[string]any{"id": "D2", "ready": false, "findings": []any{"vague"}}), draft: []string{"D1", "D2"}, want: []string{"D2: vague"}},
+		{name: "not ready without findings", art: verdict(map[string]any{"id": "D1", "ready": false}), draft: []string{"D1"}, want: []string{"D1: not ready"}},
+		{name: "no cards judged", art: verdict(), draft: []string{"D1"}, want: []string{"the stage reported no cards"}},
+		{name: "no data", art: store.Artifact{}, draft: []string{"D1"}, want: []string{"the stage reported no cards"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ready, findings := verdictOf(tt.art, tt.draft)
+			assert.Equal(t, tt.wantReady, ready)
+			assert.Equal(t, tt.want, findings)
+		})
+	}
+}
+
 func TestPipeline_ReadinessPassesOnTheSecondRound(t *testing.T) {
 	var readinessRuns int
 
@@ -563,6 +660,18 @@ func TestPipeline_RestartResumesAtTheNextStage(t *testing.T) {
 	assert.True(t, rec2.has(EventReport))
 	assert.Equal(t, 1, ws.checkouts(), "the tree from before the restart is reused")
 	assert.False(t, rec2.has(EventGrounded))
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+
+	var got []string
+	for _, r := range runs {
+		got = append(got, r.Stage+":"+r.Status)
+	}
+
+	assert.Equal(t, []string{
+		"intake:done", "grounding:done", "decomposition:interrupted", "decomposition:done", "readiness:done",
+	}, got, "the cut-off decomposition is marked interrupted and re-run once")
 }
 
 func TestPipeline_ReopenRunsAStageWhoseInputsWereStored(t *testing.T) {
@@ -669,7 +778,7 @@ func TestPipeline_FreshBlueprintDoesNotRunOnReopen(t *testing.T) {
 }
 
 func TestPipeline_ReopenWhileWaitingForTheDesignRunsNothing(t *testing.T) {
-	c, st, runner, _, _ := newPipeline(t, happyScript())
+	c, st, runner, rec, _ := newPipeline(t, happyScript())
 	ctx := context.Background()
 
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
@@ -681,13 +790,100 @@ func TestPipeline_ReopenWhileWaitingForTheDesignRunsNothing(t *testing.T) {
 
 	assert.Equal(t, 1, runner.calls())
 
+	// The reopen asks for the design again, after the reopened line.
+	kinds := rec.kinds()
+	require.GreaterOrEqual(t, len(kinds), 2)
+	assert.Equal(t, []string{EventReopened, EventAwaitInput}, kinds[len(kinds)-2:])
+	assert.Equal(t, 2, rec.count(EventAwaitInput))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, string(StateWaiting), bp.State)
+
 	// The next message is still the design.
 	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
 	c.Wait("BP1")
 
-	_, err := st.LatestArtifact(ctx, "BP1", "design")
+	_, err = st.LatestArtifact(ctx, "BP1", "design")
 	require.NoError(t, err)
 	assert.Equal(t, 4, runner.calls())
+}
+
+func TestPipeline_ReopenAfterAnIdleIntakeAsksForTheDesign(t *testing.T) {
+	// A blueprint whose intake completed before the design stage existed
+	// sits idle, never prompted.
+	c, st, runner, rec, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.End(ctx, "BP1"))
+
+	now := time.Now().UTC()
+
+	for _, a := range []store.Artifact{{Stage: needStage, Body: "the need"}, {Stage: "intake", Body: "# Need"}} {
+		a.BlueprintID = "BP1"
+		_, err := st.PutArtifact(ctx, a)
+		require.NoError(t, err)
+	}
+
+	id, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+	require.NoError(t, st.EndRun(ctx, id, store.RunDone, "done", store.RunUsage{}, now))
+	require.NoError(t, st.SetBlueprintState(ctx, "BP1", string(StateIdle)))
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	assert.Equal(t, 0, runner.calls())
+
+	await, ok := rec.first(EventAwaitInput)
+	require.True(t, ok)
+	assert.Equal(t, "design", await.Payload["stage"])
+	assert.Equal(t, c.opts.Pack.Instructions("design"), await.Payload["prompt"])
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, string(StateWaiting), bp.State)
+}
+
+func TestPipeline_AnUnreadablePositionIsReportedNotFatal(t *testing.T) {
+	// The record names a stage the current pack does not have: the pack
+	// changed under the blueprint.
+	c, st, runner, rec, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.End(ctx, "BP1"))
+
+	now := time.Now().UTC()
+
+	for _, a := range []store.Artifact{{Stage: needStage, Body: "the need"}, {Stage: "intake", Body: "# Need"}, {Stage: "slicing", Body: "# Slices"}} {
+		a.BlueprintID = "BP1"
+		_, err := st.PutArtifact(ctx, a)
+		require.NoError(t, err)
+	}
+
+	for _, stage := range []string{"intake", "slicing"} {
+		id, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: stage, Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+		require.NoError(t, err)
+		require.NoError(t, st.EndRun(ctx, id, store.RunDone, "done", store.RunUsage{}, now))
+	}
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")), "the reopen attaches the session")
+
+	ev, ok := rec.first(EventError)
+	require.True(t, ok, "the user is told why nothing runs")
+	assert.Contains(t, ev.Payload["message"], "slicing")
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, string(StateIdle), bp.State)
+
+	// A message is recorded and answered with the same error, not refused.
+	require.NoError(t, c.Message(ctx, "BP1", "hello", "m1"))
+	c.Wait("BP1")
+
+	assert.Equal(t, 1, rec.count(EventNote))
+	assert.Equal(t, 2, rec.count(EventError))
+	assert.Equal(t, 0, runner.calls())
 }
 
 func TestPipeline_MessageAfterAnAbortRetriesTheStage(t *testing.T) {
@@ -851,6 +1047,23 @@ func TestPipeline_ProjectLookupFailureFailsTheRunAndIsRetried(t *testing.T) {
 	assert.Equal(t, store.RunFailed, runs[1].Status)
 	assert.Equal(t, "grounding", runs[2].Stage)
 	assert.Equal(t, store.RunDone, runs[2].Status)
+}
+
+func TestPipeline_SecretInAPrepareErrorIsMasked(t *testing.T) {
+	c, st, _, rec, _ := newPipeline(t, happyScript())
+	c.opts.Projects = func(_ context.Context, key string) ([]cm.Project, error) {
+		return nil, fmt.Errorf("cm: 401 for key %s", key)
+	}
+
+	drive(t, c, "BP1")
+
+	ev, ok := rec.first(EventError)
+	require.True(t, ok)
+	assert.Contains(t, ev.Payload["message"], "[REDACTED]")
+
+	for _, p := range eventsOf(t, st, rec, "BP1", EventError) {
+		assert.NotContains(t, p, testMCPKey)
+	}
 }
 
 func TestPipeline_AbortDuringTheCheckoutCancelsTheRun(t *testing.T) {
@@ -1073,4 +1286,62 @@ func TestPrepareCode_AnnouncesRecordedSourcesWhenALaterCheckoutFails(t *testing.
 	grounded, ok := rec.first(EventGrounded)
 	require.True(t, ok, "the source recorded before the failure is announced")
 	assert.Len(t, grounded.Payload["sources"], 1)
+}
+
+func TestPrepareCode_RefusesUnsafeOrCollidingProjects(t *testing.T) {
+	const (
+		core = "https://example.com/core.git"
+		web  = "https://example.com/web.git"
+	)
+
+	tests := []struct {
+		name     string
+		targets  []string
+		projects []cm.Project
+		wantErr  []string
+	}{
+		{
+			name:     "an unsafe project name",
+			targets:  []string{"../alpha"},
+			projects: []cm.Project{{Name: "../alpha", Repo: core}},
+			wantErr:  []string{`"../alpha"`},
+		},
+		{
+			name:    "a project named like another project's secondary tree",
+			targets: []string{"alpha", "alpha@web"},
+			projects: []cm.Project{
+				{Name: "alpha", Repos: []cm.Repo{{Name: "core", URL: core, Primary: true}, {Name: "web", URL: web}}},
+				{Name: "alpha@web", Repo: web},
+			},
+			wantErr: []string{`"alpha"`, `"alpha@web"`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, _, _, ws := newPipeline(t, happyScript())
+			c.opts.Projects = func(context.Context, string) ([]cm.Project, error) { return tt.projects, nil }
+
+			ctx := context.Background()
+			in := startInput("BP1")
+			in.Projects = tt.targets
+			require.NoError(t, c.Start(ctx, in))
+
+			bp, err := st.GetBlueprint(ctx, "BP1")
+			require.NoError(t, err)
+
+			c.mu.Lock()
+			sess := c.sessions["BP1"]
+			c.mu.Unlock()
+
+			_, err = c.prepareCode(ctx, sess, bp, "grounding")
+			require.Error(t, err)
+
+			for _, want := range tt.wantErr {
+				assert.Contains(t, err.Error(), want)
+			}
+
+			assert.Equal(t, 0, ws.checkouts(), "nothing is fetched")
+		})
+	}
 }

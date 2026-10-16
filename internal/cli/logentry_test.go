@@ -3,6 +3,8 @@ package cli
 import (
 	"testing"
 
+	protocol "github.com/mhersson/contextmatrix-protocol"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -39,10 +41,10 @@ func TestLogEntryFor(t *testing.T) {
 			map[string]any{"tag": "S1", "project": "alpha", "identity": "https://example.com/alpha.git", "sha": "0123456789abcdef0123"},
 			map[string]any{"tag": "S2", "project": "alpha", "identity": "https://example.com/docs.git", "sha": "fedcba9876543210fedc"},
 		}}}, "system", []string{"alpha at 0123456789ab [S1]", "fedcba987654 [S2]"}, false},
-		{"report ready", blueprint.Event{Kind: blueprint.EventReport, BlueprintID: "S1", Payload: map[string]any{"body": "# Ready", "ready": true, "rounds": 1}}, "text", []string{"# Ready"}, false},
+		{"report ready", blueprint.Event{Kind: blueprint.EventReport, BlueprintID: "S1", Payload: map[string]any{"body": "# Ready", "ready": true, "rounds": 1}}, "text", nil, false},
 		{"report not ready", blueprint.Event{Kind: blueprint.EventReport, BlueprintID: "S1", Payload: map[string]any{
 			"body": "# Cards", "ready": false, "rounds": 3, "findings": []string{"D1: two deliverables"},
-		}}, "text", []string{"# Cards", "Not ready", "D1: two deliverables"}, false},
+		}}, "text", []string{"D1: two deliverables"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -90,4 +92,30 @@ func TestLogEntryFor_GroundedShowsNoRepositoryURL(t *testing.T) {
 	}})
 	require.True(t, ok)
 	assert.Equal(t, "Checked out alpha at abc [S1].", entry.Content)
+}
+
+func TestLogEntryFor_ReportIsTheVerdictNotTheBody(t *testing.T) {
+	report := func(ready bool, findings ...string) protocol.LogEntry {
+		t.Helper()
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventReport, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "readiness", "body": "the final artifact body", "ready": ready, "rounds": 2, "findings": findings,
+		}})
+		require.True(t, ok)
+
+		return entry
+	}
+
+	ready := report(true)
+	notReady := report(false, "D1: two deliverables", "D2: not judged")
+
+	for _, entry := range []protocol.LogEntry{ready, notReady} {
+		assert.Equal(t, "text", entry.Type)
+		assert.NotEmpty(t, entry.Content)
+		assert.NotContains(t, entry.Content, "the final artifact body", "the artifact entry already showed the body")
+	}
+
+	assert.Contains(t, notReady.Content, "D1: two deliverables")
+	assert.Contains(t, notReady.Content, "D2: not judged")
+	assert.NotEqual(t, ready.Content, report(false).Content, "ready and not ready read differently")
 }

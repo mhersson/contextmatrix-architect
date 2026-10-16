@@ -274,6 +274,12 @@ func validateStage(s Stage, seen map[string]bool) error {
 		}
 	}
 
+	// The card contract reads the target projects and their checkouts, which
+	// only a stage with the code tools has.
+	if slices.Contains(s.Checks, CheckCards) && !slices.Contains(s.Tools, ToolCode) {
+		return fmt.Errorf("pack: stage %q checks cards, so it needs tools: [code]", s.ID)
+	}
+
 	if s.LoopsTo != "" {
 		if !seen[s.LoopsTo] {
 			return fmt.Errorf("pack: stage %q loops to %q, which is not an earlier stage", s.ID, s.LoopsTo)

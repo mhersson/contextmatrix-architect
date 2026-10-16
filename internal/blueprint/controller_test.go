@@ -1644,6 +1644,10 @@ func TestStart_ReopenWithoutAPriceKeepsTheCreationPrice(t *testing.T) {
 		{name: "same model keeps the price it was created with", reopenModel: "session/model", wantPriced: true, wantCost: 0.20},
 		{name: "an all-zero price is no price", reopenModel: "session/model", reopenPrice: &protocol.ModelPrice{}, wantPriced: true, wantCost: 0.20},
 		{name: "another model runs unpriced", reopenModel: "other/model", wantCost: 0},
+		{
+			name: "a new price on the same model wins", reopenModel: "session/model", wantPriced: true, wantCost: 0.40,
+			reopenPrice: &protocol.ModelPrice{PromptUSDPerMTok: 2, CompletionUSDPerMTok: 20},
+		},
 	}
 
 	for _, tt := range tests {

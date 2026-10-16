@@ -11,8 +11,9 @@ the next message as the design. Grounding, decomposition and readiness then
 run in turn over read-only checkouts of the target projects' repositories.
 Every decomposition submit is checked against the card contract inside the
 run, and readiness sends cards that are not ready back to decomposition for up
-to three rounds. The session ends with a report of the last stage's artifact
-and whether the cards are ready; nothing is emitted into ContextMatrix yet.
+to three rounds. The session ends with a report of whether the cards are
+ready, with the findings when they are not; nothing is emitted into
+ContextMatrix yet.
 
 ## Run
 

@@ -162,9 +162,10 @@ func effectivePrice(p *protocol.ModelPrice) *protocol.ModelPrice {
 }
 
 // Start attaches a session to the blueprint with in.ID, creating it on first
-// sight. A stage left running by a crash is marked interrupted and re-run,
-// and a stage whose inputs were stored but which never started runs. Start
-// on an attached session only logs the reopen.
+// sight. A stage left running by a crash is marked interrupted and re-run, a
+// stage whose inputs were stored but which never started runs, and a
+// human-sourced stage that waits shows its prompt again. Start on an
+// attached session only logs the reopen.
 func (c *Controller) Start(ctx context.Context, in StartInput) error {
 	in.Price = effectivePrice(in.Price)
 
@@ -209,7 +210,7 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 		return nil
 	}
 
-	next, err := c.resumePoint(ctx, bp)
+	next, err := c.resumePoint(ctx, sess.audit, bp)
 	if err != nil {
 		c.release(in.ID, r)
 		c.detach(in.ID, sess)
@@ -217,13 +218,19 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 		return err
 	}
 
-	if next == "" {
+	// The prompt is shown again: the panel lost it with the ended session,
+	// and the next message becomes the stage's artifact.
+	if next.human {
+		c.await(ctx, sess.audit, bp.ID, next.stage)
+	}
+
+	if next.stage == "" || next.human {
 		c.release(in.ID, r)
 
 		return nil
 	}
 
-	c.launch(runCtx, r, sess, bp, next)
+	c.launch(runCtx, r, sess, bp, next.stage)
 
 	return nil
 }

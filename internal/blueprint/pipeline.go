@@ -1,6 +1,7 @@
 package blueprint
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -43,7 +44,7 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 	if completed != "" {
 		st, ok := c.opts.Pack.Stage(completed)
 		if !ok {
-			return outcome{}, fmt.Errorf("blueprint: unknown stage %q", completed)
+			return outcome{}, fmt.Errorf("blueprint: stage %q in the record is not in pack %s %s", completed, c.opts.Pack.Name, c.opts.Pack.Version)
 		}
 
 		art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, completed)
@@ -52,8 +53,14 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 		}
 
 		if st.LoopsTo != "" {
-			// The loop stage's artifact version is its round.
-			ready, findings := verdictOf(art)
+			// The loop stage judges its target's cards; its artifact version
+			// is its round.
+			target, err := c.opts.Store.LatestArtifact(ctx, bp.ID, st.LoopsTo)
+			if err != nil {
+				return outcome{}, fmt.Errorf("blueprint: after %s: the judged %s: %w", completed, st.LoopsTo, err)
+			}
+
+			ready, findings := verdictOf(art, cardIDs(target))
 
 			switch {
 			case ready:
@@ -130,35 +137,64 @@ func (c *Controller) position(ctx context.Context, bp store.Blueprint) (outcome,
 	return out, status, nil
 }
 
-// resumePoint decides what a reopened blueprint runs: a stage a crash left
-// running, or a model stage whose inputs exist but which never started (a
-// crash between storing one artifact and starting the next run). A failed
-// or aborted stage waits for the user's next message, a human-sourced stage
-// for its artifact, and an ended pipeline for a new blueprint. The caller
-// holds the run slot.
-func (c *Controller) resumePoint(ctx context.Context, bp store.Blueprint) (string, error) {
+// resumePoint decides what a reopened blueprint does: re-run a stage a
+// crash left running, run a model stage whose inputs exist but which never
+// started (a crash between storing one artifact and starting the next run),
+// or await a human-sourced stage, returned with human set. A failed or
+// aborted stage waits for the user's next message and an ended pipeline for
+// a new blueprint. A position the record does not yield is reported, not
+// returned: the session still attaches. The caller holds the run slot.
+func (c *Controller) resumePoint(ctx context.Context, au audit, bp store.Blueprint) (outcome, error) {
 	interrupted, err := c.interruptedStage(ctx, bp)
 	if err != nil || interrupted != "" {
-		return interrupted, err
+		return outcome{stage: interrupted}, err
 	}
 
 	out, status, err := c.position(ctx, bp)
-	if err != nil || out.stage == "" || out.human || status != "" {
-		return "", err
+
+	switch {
+	case err != nil:
+		c.unreadable(ctx, au, bp.ID, err)
+
+		return outcome{}, nil
+	case out.human:
+		return out, nil
+	case out.stage == "" || status != "":
+		return outcome{}, nil
 	}
 
 	// The first stage runs on the need; without one the next message is it.
 	if out.stage == c.opts.Pack.Stages[0].ID {
 		if _, err := c.opts.Store.LatestArtifact(ctx, bp.ID, needStage); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				return "", nil
+				return outcome{}, nil
 			}
 
-			return "", fmt.Errorf("blueprint: resume: %w", err)
+			return outcome{}, fmt.Errorf("blueprint: resume: %w", err)
 		}
 	}
 
-	return out.stage, nil
+	return outcome{stage: out.stage}, nil
+}
+
+// unreadable reports a pipeline position the record does not yield, such
+// as a stage the current pack lacks, and leaves the blueprint idle: the
+// session stays usable and the user sees why nothing runs.
+func (c *Controller) unreadable(ctx context.Context, au audit, id string, err error) {
+	c.opts.Logger.Error("blueprint: read the pipeline position", "blueprint", id, "error", au.text(err.Error()))
+	c.setState(ctx, id, StateIdle)
+	au.event(ctx, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{
+		"message": "The pipeline's position cannot be read from the record, so nothing runs: " + err.Error(),
+	}})
+}
+
+// await marks the blueprint waiting for a human-sourced stage and shows the
+// stage's prompt.
+func (c *Controller) await(ctx context.Context, au audit, id, stageID string) {
+	c.setState(ctx, id, StateWaiting)
+	au.event(ctx, Event{Kind: EventAwaitInput, BlueprintID: id, Payload: map[string]any{
+		"stage": stageID, "prompt": c.opts.Pack.Instructions(stageID),
+	}})
 }
 
 // input handles a message that arrives while no run is in flight: the need
@@ -185,9 +221,12 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 
 	out, _, err := c.position(ctx, bp)
 	if err != nil {
+		// The message is kept and the user told why it starts nothing.
+		sess.audit.event(ctx, noteEvent(id, text, msgID, false))
+		c.unreadable(ctx, sess.audit, id, err)
 		c.release(id, r)
 
-		return err
+		return nil
 	}
 
 	if out.human {
@@ -285,10 +324,7 @@ func (c *Controller) advance(ctx context.Context, sess *session, bp store.Bluepr
 
 		return ""
 	case out.human:
-		c.setState(ctx, bp.ID, StateWaiting)
-		sess.audit.event(ctx, Event{Kind: EventAwaitInput, BlueprintID: bp.ID, Payload: map[string]any{
-			"stage": out.stage, "prompt": c.opts.Pack.Instructions(out.stage),
-		}})
+		c.await(ctx, sess.audit, bp.ID, out.stage)
 
 		return ""
 	default:
@@ -330,10 +366,11 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.St
 			return "", fmt.Errorf("blueprint: task for %s: input %s: %w", st.ID, id, err)
 		}
 
-		fmt.Fprintf(&b, "## %s\n\n%s\n\n", id, art.Body)
+		writeArtifact(&b, id, art)
 	}
 
-	// A stage re-run by a loop sees the loop stage's findings.
+	// A stage re-run by a loop sees what it submitted last and the loop
+	// stage's verdict on it.
 	for _, other := range c.opts.Pack.Stages {
 		if other.LoopsTo != st.ID {
 			continue
@@ -342,14 +379,41 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.St
 		verdict, err := c.opts.Store.LatestArtifact(ctx, bp.ID, other.ID)
 
 		switch {
-		case err == nil:
-			fmt.Fprintf(&b, "## %s findings (round %d)\n\n%s\n\n", other.ID, verdict.Version, verdict.Body)
-		case !errors.Is(err, store.ErrNotFound):
+		case errors.Is(err, store.ErrNotFound):
+			continue
+		case err != nil:
 			return "", fmt.Errorf("blueprint: task for %s: findings of %s: %w", st.ID, other.ID, err)
 		}
+
+		judged, err := c.opts.Store.LatestArtifact(ctx, bp.ID, st.ID)
+		if err != nil {
+			return "", fmt.Errorf("blueprint: task for %s: the judged %s: %w", st.ID, st.ID, err)
+		}
+
+		writeArtifact(&b, fmt.Sprintf("%s version %d, which %s judged", st.ID, judged.Version, other.ID), judged)
+		writeArtifact(&b, fmt.Sprintf("%s findings (round %d)", other.ID, verdict.Version), verdict)
 	}
 
 	return b.String(), nil
+}
+
+// writeArtifact renders an artifact for a task: its body, then its data,
+// where structured output such as the cards lives, as indented JSON.
+func writeArtifact(b *strings.Builder, heading string, art store.Artifact) {
+	fmt.Fprintf(b, "## %s\n\n%s\n\n", heading, art.Body)
+
+	if len(art.Data) == 0 {
+		return
+	}
+
+	var data bytes.Buffer
+	if err := json.Indent(&data, art.Data, "", "  "); err != nil {
+		// Stored data is JSON; show it as stored rather than drop it.
+		data.Reset()
+		data.Write(art.Data)
+	}
+
+	fmt.Fprintf(b, "Data:\n\n```json\n%s\n```\n\n", data.String())
 }
 
 // validatorState is what decomposition's validator saw on the latest
@@ -466,9 +530,31 @@ func findingsOf(a store.Artifact) []string {
 	return data.Findings
 }
 
-// verdictOf reads a loop stage's per-card verdicts: ready only when it
-// judged at least one card and every card it judged is ready.
-func verdictOf(a store.Artifact) (bool, []string) {
+// cardIDs reads the card ids of a draft's data, in draft order; nil when
+// the artifact holds no cards.
+func cardIDs(a store.Artifact) []string {
+	var data struct {
+		Cards []struct {
+			ID string `json:"id"`
+		} `json:"cards"`
+	}
+
+	if len(a.Data) == 0 || json.Unmarshal(a.Data, &data) != nil {
+		return nil
+	}
+
+	ids := make([]string, 0, len(data.Cards))
+	for _, card := range data.Cards {
+		ids = append(ids, card.ID)
+	}
+
+	return ids
+}
+
+// verdictOf reads a loop stage's per-card verdicts against the draft it
+// judged: ready only when it judged at least one card, every draft card is
+// among them, and every card it judged is ready.
+func verdictOf(a store.Artifact, draft []string) (bool, []string) {
 	var data struct {
 		Cards []struct {
 			ID       string   `json:"id"`
@@ -483,7 +569,11 @@ func verdictOf(a store.Artifact) (bool, []string) {
 
 	var findings []string
 
+	judged := map[string]bool{}
+
 	for _, card := range data.Cards {
+		judged[card.ID] = true
+
 		if card.Ready {
 			continue
 		}
@@ -494,6 +584,12 @@ func verdictOf(a store.Artifact) (bool, []string) {
 
 		if len(card.Findings) == 0 {
 			findings = append(findings, card.ID+": not ready")
+		}
+	}
+
+	for _, id := range draft {
+		if !judged[id] {
+			findings = append(findings, id+": not judged")
 		}
 	}
 

@@ -243,9 +243,9 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
 - The default pack is embedded in the binary. The `pack` config key
   (`CONTEXTMATRIX_ARCHITECT_PACK`) names a pack directory that overrides it.
   The pack name and version are logged with every run.
-- A pack with a stage that checks cards must carry `lists.yaml` and
-  `card.md`; the loader refuses it otherwise, so an override pack cannot
-  silently disable the card contract.
+- A stage that checks cards must have the code tools, and its pack must
+  carry `lists.yaml` and `card.md`; the loader refuses it otherwise, so an
+  override pack cannot silently disable the card contract.
 - No include mechanism. Each file stands alone; shared text is duplicated. If
   that hurts, build-time expansion comes later.
 - Gate and question policies come from the pack, overridable per blueprint.
@@ -488,8 +488,11 @@ Replies the server understands, besides answers to questions:
 
 - A run does not start if it would breach the blueprint's cost cap.
 - Reopening a session makes CM send a start for it; a stage interrupted by a
-  server restart is re-run from its inputs, and a stage whose inputs were
-  stored but which never started runs. Completed artifacts are never lost.
+  server restart is re-run from its inputs, a stage whose inputs were stored
+  but which never started runs, and a human-sourced stage that waits shows
+  its prompt again. Completed artifacts are never lost. A record the pack
+  cannot place, such as a stage the pack no longer has, is reported in the
+  session and nothing runs.
 - After a stage fails or is aborted, the next message is logged as a note
   and re-runs that stage. A pipeline stopped by the card contract or by
   readiness's rounds is not re-run; the user starts a new blueprint with a
