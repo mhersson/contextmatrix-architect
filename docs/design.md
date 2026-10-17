@@ -186,7 +186,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status, model, started, ended, cost, token buckets |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, findings, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag, the answering message, answered at; written once, at the answer |
-| gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold), feedback, responder (human, auto), decided at |
+| gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted                                                                     |
 | events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning |
 | sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage |
@@ -264,10 +264,12 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   and its reviewer, judge both; the reviewer gets the gate feedback each
   folded stage's attempt addresses too. Approve approves both, `reject
   <feedback>` runs solution design again, and `reject slicing <feedback>`
-  runs slicing and everything after it again. The folded gate shows
-  slicing's artifact and refers to the design posted above it, as every gate
-  does, and it waits for a human while either stage's policy is human; it
-  approves both on its own only when both are auto.
+  runs slicing and everything after it again and records the design
+  version it replaces as `superseded`, an audit row that decides nothing.
+  The folded gate shows slicing's artifact and refers to the design posted
+  above it, as every gate does, and it waits for a human while either
+  stage's policy is human; it approves both on its own only when both are
+  auto.
 - Reviewer runs are declared on every gated stage in the pack and skipped
   when its gate folds. The default pack declares them for slicing, solution
   design and acceptance; readiness is decomposition's reviewer and gets
@@ -474,7 +476,7 @@ recorded as an assumption; only these reach the sign-off and the cards.
 
 | Policy  | Questions                                                                                   | Gates                                                                 |
 | ------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `human` | Shown in the CM session as `Q<n>` with options, the recommended one marked; the run waits for the reply, which is recorded in `questions`. A stage asks at most its pack's `max_questions` per attempt, its builder rounds included; past it, and for an option the server would take as a command, `ask_human` returns an error and the stage decides. | Artifact shown with Approve and Reject; the reviewer's score and findings are shown with it; the reply, clicked or typed, is `approve` or `reject <feedback>`. |
+| `human` | Shown in the CM session as `Q<n>` with options, the recommended one marked; the run waits for the reply, which is recorded in `questions`. A stage asks at most its pack's `max_questions` per attempt, its builder rounds included; past it, and for an option the server would take as a command, `ask_human` returns an error and the stage decides. | Artifact shown with Approve and Reject; the reviewer's score is shown with it, and its findings in the review line just above; the reply, clicked or typed, is `approve` or `reject <feedback>`. |
 | `auto`  | A responder run answers. The answer is recorded as an `[assumption]` with responder `auto`. The same `max_questions` applies; past it, `ask_human` returns an error and the stage decides. | The reviewer's score decides: approved at or above the threshold; below it the builder takes another round with the findings, three reviewer rounds per attempt, then a human decides. |
 
 **The responder run** is a separate harness run with the persona of the
@@ -680,7 +682,10 @@ Replies the server understands, besides answers to questions:
   the log stream ends.
 - A stage the session's end cut short, an open question included, runs
   again on reopen, given the answers its earlier runs got; a reopen that
-  comes while that run still winds down waits for it first. An aborted
+  comes while that run still winds down waits for it first. A human's
+  question the end or a restart left open is shown again as the same
+  `Q<n>` before the model runs, and the re-run, or the builder round, is
+  given its answer; an abort ends the open question instead. An aborted
   stage waits for the next message, as below.
 - After a later stage fails or is aborted, the next message is logged as a
   note and re-runs that stage; after a review or a builder round fails or is

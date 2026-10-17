@@ -2202,21 +2202,24 @@ func TestQuestions_ARerunOfTheStageIsGivenItsAnswers(t *testing.T) {
 	assert.Contains(t, runner.input(1).Task, "helm", "the answer reaches the re-run")
 }
 
-func TestEnd_DuringAQuestionReRunsTheStageOnReopen(t *testing.T) {
+// endAtFirstQuestion scripts a stage whose first run asks one question and
+// is cut short there, and whose later runs submit.
+func endAtFirstQuestion() func(context.Context, stage.Input) (stage.Output, error) {
 	var calls atomic.Int32
 
-	c, st, runner, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+	return func(ctx context.Context, in stage.Input) (stage.Output, error) {
 		if calls.Add(1) > 1 {
 			return artifactOutput("# Need", in), nil
 		}
 
-		answer, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"})
-		if err != nil {
-			return stage.Output{}, err
-		}
+		_, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?", Options: []string{"helm", "kustomize"}})
 
-		return artifactOutput("# Need\n\n"+answer, in), nil
-	})
+		return stage.Output{}, err
+	}
+}
+
+func TestEnd_AQuestionLeftOpenComesBackBeforeTheStageRunsAgain(t *testing.T) {
+	c, st, runner, rec := newController(t, endAtFirstQuestion())
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
@@ -2232,12 +2235,74 @@ func TestEnd_DuringAQuestionReRunsTheStageOnReopen(t *testing.T) {
 	assert.Equal(t, reasonSessionEnded, runs[0].Reason)
 
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	rec.waitFor(t, EventReshow)
+
+	again, ok := rec.first(EventReshow)
+	require.True(t, ok)
+	assert.Equal(t, EventQuestion, again.Payload["kind"])
+	assert.EqualValues(t, 1, again.Payload["payload"].(map[string]any)["number"], "the same question, under its number")
+	require.Never(t, func() bool { return runner.calls() > 1 }, 100*time.Millisecond, 10*time.Millisecond,
+		"the stage waits for the answer before it runs again")
+
+	require.NoError(t, c.Message(ctx, "BP1", "helm", "m2"))
 	c.Wait("BP1")
 
-	assert.Equal(t, 2, runner.calls(), "the reopen runs the stage again")
+	require.Equal(t, 2, runner.calls(), "the stage runs once more")
+	assert.Contains(t, runner.input(1).Task, "Helm or kustomize?")
+	assert.Contains(t, runner.input(1).Task, "helm", "the answer reaches the re-run")
+	assert.Equal(t, 1, rec.count(EventQuestion), "no question number is spent")
+
+	questions, err := st.ListQuestions(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, questions, 1)
+	assert.Equal(t, 1, questions[0].Number)
+	assert.Equal(t, runs[0].ID, questions[0].RunID, "recorded under the run that asked it")
+	assert.Equal(t, "m2", questions[0].MessageID)
+	assert.Equal(t, store.ResponderHuman, questions[0].Responder)
 
 	_, err = st.LatestArtifact(ctx, "BP1", "intake")
 	require.NoError(t, err)
+}
+
+func TestEnd_AQuestionLeftOpenComesBackAfterEveryEnd(t *testing.T) {
+	c, _, runner, rec := newController(t, endAtFirstQuestion())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	rec.waitFor(t, EventQuestion)
+
+	for i := 1; i <= 2; i++ {
+		require.NoError(t, c.End(ctx, "BP1"))
+		c.Wait("BP1")
+		require.NoError(t, c.Start(ctx, startInput("BP1")))
+		rec.waitForCount(t, EventReshow, i)
+	}
+
+	require.NoError(t, c.Message(ctx, "BP1", "helm", "m2"))
+	c.Wait("BP1")
+
+	assert.Equal(t, 2, runner.calls(), "the model runs only once the question is answered")
+	assert.Contains(t, runner.input(1).Task, "helm")
+}
+
+func TestRestart_AQuestionLeftOpenComesBack(t *testing.T) {
+	c, st, _, rec := newController(t, endAtFirstQuestion())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	rec.waitFor(t, EventQuestion)
+	require.NoError(t, c.Shutdown(ctx))
+
+	c2, _, runner2, rec2 := newControllerOn(t, st, func(_ context.Context, in stage.Input) (stage.Output, error) {
+		return artifactOutput("# Need", in), nil
+	})
+	require.NoError(t, c2.Start(ctx, startInput("BP1")))
+	rec2.waitFor(t, EventReshow)
+	require.NoError(t, c2.Message(ctx, "BP1", "helm", "m2"))
+	c2.Wait("BP1")
+
+	require.Equal(t, 1, runner2.calls())
+	assert.Contains(t, runner2.input(0).Task, "helm", "the answer reaches the re-run")
 }
 
 func TestEnd_AReopenWhileTheEndedRunWindsDownRunsTheStageAgain(t *testing.T) {
@@ -2291,6 +2356,9 @@ func TestEnd_AReopenWhileTheEndedRunWindsDownRunsTheStageAgain(t *testing.T) {
 		require.FailNow(t, "the reopen never returned")
 	}
 
+	// The question the ended run left open comes back first.
+	rec.waitFor(t, EventReshow)
+	require.NoError(t, c.Message(ctx, "BP1", "helm", "m2"))
 	c.Wait("BP1")
 
 	assert.Equal(t, 2, runner.calls(), "the reopen runs the stage again")

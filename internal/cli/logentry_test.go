@@ -153,18 +153,21 @@ func TestLogEntryFor(t *testing.T) {
 		{"a gate with a verdict", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "shape", "version": 7, "actions": []any{},
 			"review": map[string]any{"score": 2, "threshold": 4, "findings": []any{"split it"}, "round": 3, "passed": false},
-		}}, "text", []string{"2", "- split it\n\n"}, false},
+		}}, "text", []string{"2", "4"}, false},
 		{"a gate whose checks accepted problems", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "solution_design", "version": 1, "actions": []any{},
 			"review":   map[string]any{"score": 4, "threshold": 4, "findings": []any{"name the owner"}, "round": 1, "passed": true},
 			"problems": []any{"Q1: unused_answer: the question was answered, but no decision rests on it"},
-		}}, "text", []string{"- name the owner\n\n", "- Q1: unused_answer: the question was answered, but no decision rests on it\n\n"}, false},
+		}}, "text", []string{"- Q1: unused_answer: the question was answered, but no decision rests on it\n\n"}, false},
 		{"a note that runs a review again", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{
 			"text": "go on", "retries": "shape", "critique": true,
 		}}, "system", []string{"shape"}, false},
 		{"a fold", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "slicing", "decision": "fold", "feedback": "solution_design", "responder": "auto",
 		}}, "system", []string{"slicing", "solution_design"}, false},
+		{"a design superseded by a rejected slicing", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "solution_design", "decision": "superseded", "feedback": "slicing", "responder": "human",
+		}}, "system", []string{"solution_design", "slicing"}, false},
 		{"a folded gate", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "solution_design", "version": 1, "folded": []any{map[string]any{"stage": "slicing", "version": 1}},
 			"actions": []any{map[string]any{"label": "Reject slicing", "reply": "reject slicing", "feedback": true}},
@@ -438,6 +441,24 @@ func TestLogEntryFor_ANoteThatRunsAReviewIsNotCalledAStageRun(t *testing.T) {
 	require.True(t, ok)
 
 	assert.NotEqual(t, stage.Content, review.Content)
+}
+
+func TestLogEntryFor_AGateShowsItsReviewFindingsOnce(t *testing.T) {
+	const finding = "name the response fields"
+
+	review, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventReview, BlueprintID: "S1", Payload: map[string]any{
+		"stage": "solution_design", "version": 1, "score": 3, "threshold": 4, "findings": []any{finding}, "round": 3,
+	}})
+	require.True(t, ok)
+
+	gate, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
+		"stage": "solution_design", "version": 1, "actions": []any{},
+		"review": map[string]any{"score": 3, "threshold": 4, "findings": []any{finding}, "round": 3, "passed": false},
+	}})
+	require.True(t, ok)
+
+	assert.Equal(t, 1, strings.Count(review.Content+"\n"+gate.Content, finding), "the findings are shown once, in the review above the gate")
+	assert.Contains(t, review.Content, finding)
 }
 
 func TestLogEntryFor_AFoldedGateShowsTheDesignOnce(t *testing.T) {

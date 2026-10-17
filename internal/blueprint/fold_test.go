@@ -153,8 +153,18 @@ func TestFold_RejectSlicingRunsSlicingAgain(t *testing.T) {
 	assert.Contains(t, slicings[1].Task, "# Slices", "with its rejected artifact")
 	assert.Len(t, inputsOf(runner, "solution_design"), 2, "solution design runs again after it")
 
-	assert.Equal(t, []string{"slicing@1:fold", "slicing@1:reject", "slicing@2:fold"}, gateRows(t, st))
+	assert.Equal(t, []string{"slicing@1:fold", "slicing@1:reject", "solution_design@1:superseded", "slicing@2:fold"}, gateRows(t, st))
 	assert.Equal(t, 2, rec.count(EventGate))
+
+	designs, err := st.ListGates(ctx, "BP1", "solution_design")
+	require.NoError(t, err)
+	require.Len(t, designs, 1)
+	assert.Equal(t, "slicing", designs[0].Feedback, "the row names the stage whose rejection replaced the design")
+	assert.Equal(t, store.ResponderHuman, designs[0].Responder)
+
+	decision, err := c.gateDecision(ctx, "BP1", "solution_design", 1)
+	require.NoError(t, err)
+	assert.Empty(t, decision, "a superseded row decides nothing")
 }
 
 func TestFold_TheDesignReviewerGetsTheFoldedStagesFeedback(t *testing.T) {
@@ -340,7 +350,7 @@ func TestFold_AReopenAtTheFoldedGateStillTakesRejectSlicing(t *testing.T) {
 	slicings := inputsOf(runner2, "slicing")
 	require.Len(t, slicings, 1, "slicing runs again")
 	assert.Contains(t, slicings[0].Task, "merge them", "with the feedback")
-	assert.Equal(t, []string{"slicing@1:fold", "slicing@1:reject", "slicing@2:fold"}, gateRows(t, st))
+	assert.Equal(t, []string{"slicing@1:fold", "slicing@1:reject", "solution_design@1:superseded", "slicing@2:fold"}, gateRows(t, st))
 }
 
 func TestFold_AReopenThatPassesSlicingRecordsTheFold(t *testing.T) {
@@ -412,7 +422,7 @@ func TestFold_ARejectedSlicingThatFailsRunsAgainOnTheNextMessage(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "slicing", note.Payload["retries"], "the rejected slicing runs again, not the design's gate")
 	assert.Len(t, inputsOf(runner, "slicing"), 3)
-	assert.Equal(t, []string{"slicing@1:fold", "slicing@1:reject", "slicing@2:fold"}, gateRows(t, st))
+	assert.Equal(t, []string{"slicing@1:fold", "slicing@1:reject", "solution_design@1:superseded", "slicing@2:fold"}, gateRows(t, st))
 }
 
 func TestFold_ABareRejectSlicingRejectsTheDesign(t *testing.T) {

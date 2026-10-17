@@ -740,6 +740,42 @@ func TestReview_ARoundRunAgainGetsTheAnswersOfTheRoundCutShort(t *testing.T) {
 	assert.True(t, rec.has(EventGate))
 }
 
+func TestReview_ARoundsQuestionLeftOpenComesBackBeforeTheRoundRunsAgain(t *testing.T) {
+	var shapes atomic.Int32
+
+	script := gatedScript()
+	script["shape.review"] = reviews(2, 5)
+	script["shape"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if shapes.Add(1) == 2 {
+			_, err := in.Asker.Ask(ctx, stage.Question{Text: "Which store?"})
+
+			return stage.Output{}, err
+		}
+
+		return done("# Shape", nil), nil
+	}
+
+	c, _, runner, rec := newGated(t, script)
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	rec.waitFor(t, EventQuestion)
+	require.NoError(t, c.End(ctx, "BP1"))
+	c.Wait("BP1")
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	rec.waitFor(t, EventReshow)
+	require.NoError(t, c.Message(ctx, "BP1", "keep it in Postgres", "m2"))
+	c.Wait("BP1")
+
+	rounds := inputsOf(runner, "shape")
+	require.Len(t, rounds, 3)
+	assert.NotEmpty(t, rounds[2].History, "the round resumes the conversation that built the artifact")
+	assert.Contains(t, rounds[2].Task, "Which store?")
+	assert.Contains(t, rounds[2].Task, "keep it in Postgres", "with the answer to the question it left open")
+	assert.True(t, rec.has(EventGate))
+}
+
 func TestReview_TheQuestionCapCountsTheAttempt(t *testing.T) {
 	var shapes atomic.Int32
 
