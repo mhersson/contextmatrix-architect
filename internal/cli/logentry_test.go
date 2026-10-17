@@ -165,6 +165,9 @@ func TestLogEntryFor(t *testing.T) {
 		{"a fold", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "slicing", "decision": "fold", "feedback": "solution_design", "responder": "auto",
 		}}, "system", []string{"slicing", "solution_design"}, false},
+		{"a design superseded by a rejected slicing", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "solution_design", "decision": "superseded", "feedback": "slicing", "responder": "human",
+		}}, "system", []string{"solution_design", "slicing"}, false},
 		{"a folded gate", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "solution_design", "version": 1, "folded": []any{map[string]any{"stage": "slicing", "version": 1}},
 			"actions": []any{map[string]any{"label": "Reject slicing", "reply": "reject slicing", "feedback": true}},

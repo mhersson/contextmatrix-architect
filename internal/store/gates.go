@@ -12,7 +12,11 @@ const (
 	GateReject  = "reject"
 	// GateFold records that a stage's artifact folded into a later gate,
 	// which judges it; its feedback names that gate.
-	GateFold       = "fold"
+	GateFold = "fold"
+	// GateSuperseded records the version a gate judged when the human
+	// rejected a stage folded into it, which runs again with everything
+	// after it; its feedback names that stage. It decides nothing.
+	GateSuperseded = "superseded"
 	ResponderHuman = "human"
 	ResponderAuto  = "auto"
 )

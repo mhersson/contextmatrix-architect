@@ -186,7 +186,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status, model, started, ended, cost, token buckets |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, findings, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag, the answering message, answered at; written once, at the answer |
-| gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold), feedback, responder (human, auto), decided at |
+| gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted                                                                     |
 | events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning |
 | sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage |
@@ -264,10 +264,12 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   and its reviewer, judge both; the reviewer gets the gate feedback each
   folded stage's attempt addresses too. Approve approves both, `reject
   <feedback>` runs solution design again, and `reject slicing <feedback>`
-  runs slicing and everything after it again. The folded gate shows
-  slicing's artifact and refers to the design posted above it, as every gate
-  does, and it waits for a human while either stage's policy is human; it
-  approves both on its own only when both are auto.
+  runs slicing and everything after it again and records the design
+  version it replaces as `superseded`, an audit row that decides nothing.
+  The folded gate shows slicing's artifact and refers to the design posted
+  above it, as every gate does, and it waits for a human while either
+  stage's policy is human; it approves both on its own only when both are
+  auto.
 - Reviewer runs are declared on every gated stage in the pack and skipped
   when its gate folds. The default pack declares them for slicing, solution
   design and acceptance; readiness is decomposition's reviewer and gets

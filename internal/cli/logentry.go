@@ -678,6 +678,8 @@ func decidedText(p map[string]any) string {
 		switch {
 		case str(p["decision"]) == "fold":
 			return fmt.Sprintf("%s folds into %s's gate, which judges both.", stage, str(p["feedback"]))
+		case str(p["decision"]) == "superseded":
+			return fmt.Sprintf("%s runs again after %s.", stage, str(p["feedback"]))
 		case reject:
 			return fmt.Sprintf("Rejected %s; it runs again with your feedback.", stage)
 		case auto:

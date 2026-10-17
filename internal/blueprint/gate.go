@@ -109,7 +109,8 @@ func actionsPayload(actions []gateAction) []any {
 }
 
 // gateDecision is the latest decision on stageID's artifact version:
-// approve, reject, fold, or "" when none was made.
+// approve, reject, fold, or "" when none was made. A superseded row is
+// audit only and never read as one.
 func (c *Controller) gateDecision(ctx context.Context, id, stageID string, version int) (string, error) {
 	gates, err := c.opts.Store.ListGates(ctx, id, stageID)
 	if err != nil {
@@ -119,7 +120,7 @@ func (c *Controller) gateDecision(ctx context.Context, id, stageID string, versi
 	d := ""
 
 	for _, g := range gates {
-		if g.Version == version {
+		if g.Version == version && g.Decision != store.GateSuperseded {
 			d = g.Decision
 		}
 	}
@@ -412,6 +413,15 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 		}
 
 		if !c.decide(ctx, sess.audit, bp.ID, action.Target, version, store.GateReject, feedback, store.ResponderHuman, msgID) {
+			c.release(bp.ID, r)
+
+			return nil
+		}
+
+		// Recorded after the reject, which alone drives the re-run, so a
+		// crash between the two loses only this audit row.
+		if action.Target != out.stage &&
+			!c.decide(ctx, sess.audit, bp.ID, out.stage, out.art.Version, store.GateSuperseded, action.Target, store.ResponderHuman, msgID) {
 			c.release(bp.ID, r)
 
 			return nil
