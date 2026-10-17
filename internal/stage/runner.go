@@ -48,15 +48,21 @@ type Input struct {
 	Endpoint   protocol.LLMEndpoint
 	MaxCostUSD float64
 	MaxTurns   int
-	// Asker answers ask_human; nil makes ask_human fail as a tool error.
+	// Asker answers ask_human; nil offers no ask_human.
 	Asker Asker
+	// Interviewer posts the run's rounds (ask_questions); nil offers no round
+	// tool.
+	Interviewer Interviewer
+	// Chat makes the run answer the chat about the open round: answer_chat,
+	// which needs the Interviewer, is its only built-in tool and ends it.
+	Chat bool
 	// Events receives the harness JSONL event stream; nil discards it.
 	Events io.Writer
 	// Secrets are masked in every tool result.
 	Secrets []string
 	// History seeds the conversation for a critique round; nil starts fresh.
 	History []llm.Message
-	// Tools are offered to the model next to ask_human and submit_artifact;
+	// Tools are offered to the model next to the built-in tools;
 	// the code stages pass CodeTools.
 	Tools []tools.Tool
 	// Validate runs on every submit_artifact call with the call's context.
@@ -75,6 +81,9 @@ type Input struct {
 type Output struct {
 	Artifact Artifact
 	Result   harness.Result
+	// Asked is set when the run ended by posting a round or answering its
+	// chat; Artifact is then empty.
+	Asked bool
 }
 
 // Transient marks a tool whose results the model reads in its run but the
@@ -171,7 +180,7 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 	// The registry keeps the last tool under a name, so a clash would silently
 	// replace a built-in.
 	for _, t := range in.Tools {
-		if name := t.Name(); name == "ask_human" || name == "submit_artifact" {
+		if name := t.Name(); name == "ask_human" || name == askQuestionsName || name == answerChatName || name == submitArtifactName {
 			return Output{}, fmt.Errorf("stage %s: tool %q clashes with a built-in tool", in.Stage, name)
 		}
 	}
@@ -191,8 +200,28 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 		drafts = newDraftExtractor(in.Secrets, in.Draft, now, every)
 	}
 
-	submit := submitArtifactTool{validate: in.Validate, drafts: drafts}
-	builtins := []tools.Tool{askHumanTool{asker: in.Asker}, submit}
+	if in.Chat && in.Interviewer == nil {
+		return Output{}, fmt.Errorf("stage %s: a chat run needs an interviewer", in.Stage)
+	}
+
+	mark := &terminalMark{}
+
+	var builtins []tools.Tool
+
+	if in.Chat {
+		builtins = append(builtins, answerChatTool{iv: in.Interviewer, mark: mark})
+	} else {
+		if in.Asker != nil {
+			builtins = append(builtins, askHumanTool{asker: in.Asker})
+		}
+
+		if in.Interviewer != nil {
+			builtins = append(builtins, askQuestionsTool{iv: in.Interviewer, mark: mark})
+		}
+
+		builtins = append(builtins, submitArtifactTool{validate: in.Validate, drafts: drafts})
+	}
+
 	reg := tools.NewRegistry(append(builtins, in.Tools...)...)
 
 	sink := in.Events
@@ -231,6 +260,10 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 
 	if err != nil {
 		return Output{Result: res}, fmt.Errorf("stage %s: %w", in.Stage, err)
+	}
+
+	if mark.asked {
+		return Output{Asked: true, Result: res}, nil
 	}
 
 	if !res.Completed || res.CompletionArgs == nil {

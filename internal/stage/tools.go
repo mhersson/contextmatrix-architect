@@ -33,8 +33,6 @@ type Artifact struct {
 	Data map[string]any `json:"data,omitempty"`
 }
 
-var errNoAsker = errors.New("ask_human: no responder is attached to this run")
-
 // recommendedMarker is what a model sometimes writes at the end of an option
 // instead of giving its position as recommended. The panel marks the
 // recommended option itself, so a marker left in the text shows twice and
@@ -50,6 +48,33 @@ func cutRecommended(s string) (string, bool) {
 	}
 
 	return strings.TrimSpace(t[:len(t)-len(recommendedMarker)]), true
+}
+
+// recommendedPosition resolves a question's recommended option. kept[i] is
+// the position, from 1, of the i-th given option among the kept ones, 0 for a
+// blank one; marked holds the kept positions whose text carried the marker.
+// v is the model's "recommended" argument, nil when it gave none.
+func recommendedPosition(v any, given int, kept, marked []int) (int, error) {
+	if v != nil {
+		if given == 0 {
+			return 0, errors.New("recommended needs options")
+		}
+
+		n, isNumber := v.(float64)
+		if !isNumber || n != float64(int(n)) || int(n) < 1 || int(n) > given || kept[int(n)-1] == 0 {
+			return 0, fmt.Errorf("recommended is the position of one of the options, from 1 to %d", given)
+		}
+
+		return kept[int(n)-1], nil
+	}
+
+	// The position wins over a marker, and markers on several options name
+	// none.
+	if len(marked) == 1 {
+		return marked[0], nil
+	}
+
+	return 0, nil
 }
 
 type askHumanTool struct {
@@ -109,26 +134,12 @@ func (t askHumanTool) Execute(ctx context.Context, args map[string]any) (tools.R
 		}
 	}
 
-	if v, ok := args["recommended"]; ok && v != nil {
-		if len(given) == 0 {
-			return tools.Result{}, errors.New("ask_human: recommended needs options")
-		}
-
-		n, isNumber := v.(float64)
-		if !isNumber || n != float64(int(n)) || int(n) < 1 || int(n) > len(given) || kept[int(n)-1] == 0 {
-			return tools.Result{}, fmt.Errorf("ask_human: recommended is the position of one of the options, from 1 to %d", len(given))
-		}
-
-		q.Recommended = kept[int(n)-1]
-	} else if len(marked) == 1 {
-		// The position wins over a marker, and markers on several options
-		// name none.
-		q.Recommended = marked[0]
+	rec, err := recommendedPosition(args["recommended"], len(given), kept, marked)
+	if err != nil {
+		return tools.Result{}, fmt.Errorf("ask_human: %w", err)
 	}
 
-	if t.asker == nil {
-		return tools.Result{}, errNoAsker
-	}
+	q.Recommended = rec
 
 	answer, err := t.asker.Ask(ctx, q)
 	if err != nil {

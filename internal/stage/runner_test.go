@@ -96,7 +96,7 @@ func TestRun_SubmitArtifactEndsTheRunWithTheArtifact(t *testing.T) {
 		names = append(names, tool.Function.Name)
 	}
 
-	assert.ElementsMatch(t, []string{"ask_human", "submit_artifact"}, names)
+	assert.ElementsMatch(t, []string{"submit_artifact"}, names)
 }
 
 func TestRun_AskHumanBlocksUntilAnswered(t *testing.T) {
@@ -149,7 +149,7 @@ func TestRun_EndsWithoutArtifactIsAnError(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoArtifact)
 }
 
-func TestRun_NoAskerRejectsAskHuman(t *testing.T) {
+func TestRun_NoAskerOffersNoAskHuman(t *testing.T) {
 	f := &fakeLLM{responses: []llm.Response{
 		{ToolCalls: []llm.ToolCall{toolCall("c1", "ask_human", `{"question":"q"}`)}, FinishReason: "tool_calls"},
 		{ToolCalls: []llm.ToolCall{toolCall("c2", "submit_artifact", `{"body":"x"}`)}, FinishReason: "tool_calls"},
@@ -158,7 +158,7 @@ func TestRun_NoAskerRejectsAskHuman(t *testing.T) {
 	out, err := runnerWith(f).Run(context.Background(), baseInput(&bytes.Buffer{}))
 	require.NoError(t, err)
 	assert.Equal(t, "x", out.Artifact.Body)
-	assert.GreaterOrEqual(t, out.Result.ToolCallFailures, 1, "ask_human without an asker fails as a tool error, not a crash")
+	assert.Equal(t, 1, out.Result.ToolCallFailures, "ask_human is not offered, so the call fails as an unknown tool")
 }
 
 func TestClientFor_BaseURLAndAPIKeyReachTheWire(t *testing.T) {
@@ -298,7 +298,7 @@ type namedTool struct {
 func (n namedTool) Name() string { return n.name }
 
 func TestRun_ToolNamedLikeABuiltInIsRefused(t *testing.T) {
-	for _, name := range []string{"ask_human", "submit_artifact"} {
+	for _, name := range []string{"ask_human", "ask_questions", "answer_chat", "submit_artifact"} {
 		t.Run(name, func(t *testing.T) {
 			f := &fakeLLM{}
 
