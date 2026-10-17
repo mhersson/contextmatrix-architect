@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -13,22 +14,35 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-// Assumption statuses: what a later stage found in the code, verified or
-// contradicted; unverified until then.
+// Assumption statuses. A later stage's verdict on the code is verified or
+// contradicted. Before one, the answer an assumption rests on decides:
+// confirmed by a human's, assumed by the responder's, verified when the
+// responder's own tool calls back it; unverified without a basis.
 const (
 	assumptionVerified     = "verified"
 	assumptionContradicted = "contradicted"
 	assumptionUnverified   = "unverified"
+	assumptionAssumed      = "assumed"
+	assumptionConfirmed    = "confirmed"
 )
 
 // assumption is one decision a stage made that nobody grounded in the
-// user's words, with the latest verdict on it.
+// user's words, with the answered question it rests on, if any, and the
+// latest verdict on it. Answer is that question's answer on a stated
+// assumption; an auto answer's own Q<n> entry holds it in its text.
 type assumption struct {
 	ID       string
 	Stage    string
 	Text     string
+	Basis    string
+	Answer   string
 	Status   string
 	Evidence string
+}
+
+// stated is one assumption as a stage submitted it.
+type stated struct {
+	Text, Basis string
 }
 
 // verdict is a later stage's finding on one assumption.
@@ -38,21 +52,36 @@ type verdict struct {
 	Evidence string `json:"evidence"`
 }
 
-// assumptions lists the blueprint's assumptions with the latest verdict on
+// assumptions lists the blueprint's assumptions with the latest status of
 // each. The stated ones come from the latest artifact of every stage that
 // checks assumptions, numbered A1, A2, ... in pack order and then submit
-// order, so a number stays put while those artifacts do. Verdicts come from
-// every stage's latest artifact, a later stage's winning; one naming no
-// assumption is ignored. A verdict applies only when its artifact was
-// stored after the latest artifact of every stating stage up to the
-// assumption's own: ids are positional, so an older verdict would judge
-// whatever sentence holds the id now. Every auto answer follows as Q<n>,
-// verified when the responder grounded it and its answer event
-// carries evidence a tool call of its run returned.
+// order, so a number stays put while those artifacts do. Every auto answer
+// follows as Q<n>, resting on itself, unless a stated one rests on it and so
+// carries its status and the answer. Each starts with its basis's status
+// (basisStatus). Verdicts come from every stage's latest artifact, a later
+// stage's winning; one naming no listed assumption is ignored. A verdict
+// applies only when its artifact was stored after the latest artifact of
+// every stating stage up to the assumption's own: ids are positional, so an
+// older verdict would judge whatever sentence holds the id now.
 func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, error) {
 	all, err := c.opts.Store.ListArtifacts(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("blueprint: assumptions: %w", err)
+	}
+
+	questions, err := c.opts.Store.ListQuestions(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("blueprint: assumptions: %w", err)
+	}
+
+	evidence, err := answerEvidence(ctx, c.opts.Store, id)
+	if err != nil {
+		return nil, err
+	}
+
+	answered := map[string]store.Question{}
+	for _, q := range questions {
+		answered[q.Tag()] = q
 	}
 
 	// latest maps a stage to the position of its newest artifact in all,
@@ -66,6 +95,7 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 		out    []assumption
 		source []int
 		newest = -1
+		named  = map[string]bool{}
 	)
 
 	for _, st := range c.opts.Pack.Stages {
@@ -79,34 +109,32 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 		// artifact among the stating stages up to this one.
 		newest = max(newest, i)
 
-		for _, text := range statedAssumptions(all[i]) {
-			out = append(out, assumption{ID: fmt.Sprintf("A%d", len(out)+1), Stage: st.ID, Text: text, Status: assumptionUnverified})
+		for _, s := range statedAssumptions(all[i]) {
+			// The submit check keeps a basis naming no answered question
+			// on its last round; it reads as none.
+			if _, ok := answered[s.Basis]; ok {
+				named[s.Basis] = true
+			} else {
+				s.Basis = ""
+			}
+
+			status, proof := basisStatus(answered, evidence, s.Basis)
+			out = append(out, assumption{
+				ID: fmt.Sprintf("A%d", len(out)+1), Stage: st.ID, Text: s.Text, Basis: s.Basis, Answer: answered[s.Basis].Answer,
+				Status: status, Evidence: proof,
+			})
 			source = append(source, newest)
 		}
 	}
 
-	questions, err := c.opts.Store.ListQuestions(ctx, id)
-	if err != nil {
-		return nil, fmt.Errorf("blueprint: assumptions: %w", err)
-	}
-
-	evidence, err := answerEvidence(ctx, c.opts.Store, id)
-	if err != nil {
-		return nil, err
-	}
-
 	for _, q := range questions {
-		if !q.Assumption {
+		if !q.Assumption || named[q.Tag()] {
 			continue
 		}
 
-		status, proof := assumptionUnverified, ""
-		if ev := evidence[q.Number]; q.Grounded && ev != "" {
-			status, proof = assumptionVerified, ev
-		}
-
+		status, proof := basisStatus(answered, evidence, q.Tag())
 		out = append(out, assumption{
-			ID: q.Tag(), Stage: q.Stage, Status: status, Evidence: proof,
+			ID: q.Tag(), Stage: q.Stage, Basis: q.Tag(), Status: status, Evidence: proof,
 			Text: fmt.Sprintf("%s The responder answered: %s", q.Text, q.Answer),
 		})
 		// A Q<n> id is stable, so any verdict applies to it.
@@ -126,7 +154,15 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 
 		for _, v := range verdicts {
 			for j := range out {
-				if out[j].ID == v.ID && i > source[j] {
+				if out[j].ID != v.ID || i <= source[j] {
+					continue
+				}
+
+				// Not finding it in the code never hides what an answer
+				// settled, such as a human's confirmation.
+				if v.Status == assumptionUnverified {
+					out[j].Status, out[j].Evidence = basisStatus(answered, evidence, out[j].Basis)
+				} else {
 					out[j].Status, out[j].Evidence = v.Status, v.Evidence
 				}
 			}
@@ -136,11 +172,36 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 	return out, nil
 }
 
+// basisStatus is the status and evidence an assumption resting on basis, an
+// answered question's tag or "", starts with and returns to on an
+// unverified verdict. evidence is answerEvidence's.
+func basisStatus(answered map[string]store.Question, evidence map[int]string, basis string) (string, string) {
+	q, ok := answered[basis]
+
+	switch {
+	case !ok:
+		return assumptionUnverified, ""
+	case !q.Assumption:
+		return assumptionConfirmed, ""
+	case q.Grounded && evidence[q.Number] != "":
+		return assumptionVerified, evidence[q.Number]
+	default:
+		return assumptionAssumed, ""
+	}
+}
+
+// normalTag reads a tag a model wrote, such as "[q1]", as the controller
+// prints it, "Q1": tags are printed to the model bracketed.
+func normalTag(s string) string {
+	return strings.ToUpper(strings.TrimSpace(strings.Trim(strings.TrimSpace(s), "[]")))
+}
+
 // statedAssumptions reads an artifact's assumptions, its data's list of
-// sentences, blanks dropped. The data is a model's submission, which the
-// submit check lets through after its last round, so a malformed list reads
-// as none rather than failing the pipeline.
-func statedAssumptions(art store.Artifact) []string {
+// sentences or {text, basis} entries, blanks dropped and bases normalised.
+// The data is a model's submission, which the submit check lets through
+// after its last round, so a malformed list reads as none and a malformed
+// entry as nothing, rather than failing the pipeline.
+func statedAssumptions(art store.Artifact) []stated {
 	var data struct {
 		Assumptions []any `json:"assumptions"`
 	}
@@ -149,11 +210,22 @@ func statedAssumptions(art store.Artifact) []string {
 		return nil
 	}
 
-	var out []string
+	var out []stated
 
 	for _, a := range data.Assumptions {
-		if s, ok := a.(string); ok && strings.TrimSpace(s) != "" {
-			out = append(out, strings.TrimSpace(s))
+		var s stated
+
+		switch a := a.(type) {
+		case string:
+			s.Text = a
+		case map[string]any:
+			s.Text, _ = a["text"].(string)
+			basis, _ := a["basis"].(string)
+			s.Basis = normalTag(basis)
+		}
+
+		if s.Text = strings.TrimSpace(s.Text); s.Text != "" {
+			out = append(out, s)
 		}
 	}
 
@@ -207,9 +279,11 @@ func verdictsOf(art store.Artifact) ([]verdict, int) {
 }
 
 // signoffOrder puts first what a human should look at first: unverified,
-// then contradicted, then verified, each in id order.
+// then contradicted, assumed, confirmed and verified, each in id order.
 func signoffOrder(list []assumption) []assumption {
-	rank := map[string]int{assumptionUnverified: 0, assumptionContradicted: 1, assumptionVerified: 2}
+	rank := map[string]int{
+		assumptionUnverified: 0, assumptionContradicted: 1, assumptionAssumed: 2, assumptionConfirmed: 3, assumptionVerified: 4,
+	}
 
 	out := slices.Clone(list)
 	slices.SortStableFunc(out, func(a, b assumption) int { return rank[a.Status] - rank[b.Status] })
@@ -217,16 +291,36 @@ func signoffOrder(list []assumption) []assumption {
 	return out
 }
 
-// assumptionLines renders assumptions one per line: the id, the status with
-// any evidence, then the sentence. The sign-off's text entry formats the
-// same line from the event payload.
+// assumptionLines renders assumptions one per line for models and cards: the
+// id, the status with who answered the question it rests on or any
+// evidence, and the answer it rests on, then the sentence. The sign-off's
+// text entry formats its line from the event payload.
 func assumptionLines(list []assumption) string {
 	lines := make([]string, 0, len(list))
 
+	// "the user", not "you": a card's reader is the agent.
+	backer := map[string]string{assumptionConfirmed: "the user", assumptionAssumed: "the responder"}
+
 	for _, a := range list {
 		status := a.Status
-		if a.Evidence != "" {
-			status += ": " + a.Evidence
+
+		if who, ok := backer[a.Status]; ok {
+			status += " by " + who
+			if a.Basis != a.ID {
+				status += ", " + a.Basis
+			}
+
+			if a.Answer != "" {
+				status += ": " + a.Answer
+			}
+		} else {
+			if a.Evidence != "" {
+				status += ": " + a.Evidence
+			}
+
+			if a.Answer != "" {
+				status += "; rests on " + a.Basis + ": " + a.Answer
+			}
 		}
 
 		lines = append(lines, fmt.Sprintf("- %s (%s) %s", a.ID, status, a.Text))
@@ -240,25 +334,43 @@ func assumptionsPayload(list []assumption) []any {
 	out := make([]any, 0, len(list))
 
 	for _, a := range list {
-		out = append(out, map[string]any{"id": a.ID, "stage": a.Stage, "text": a.Text, "status": a.Status, "evidence": a.Evidence})
+		out = append(out, map[string]any{
+			"id": a.ID, "stage": a.Stage, "text": a.Text, "basis": a.Basis, "answer": a.Answer, "status": a.Status, "evidence": a.Evidence,
+		})
 	}
 
 	return out
 }
 
 // assumptionsValidator refuses a submit whose assumptions are not
-// standalone sentences, as boundedValidator bounds it.
-func (c *Controller) assumptionsValidator() (func(context.Context, stage.Artifact) error, *validatorState) {
+// standalone sentences resting on the blueprint's answered questions, as
+// boundedValidator bounds it.
+func (c *Controller) assumptionsValidator(bp store.Blueprint) (func(context.Context, stage.Artifact) error, *validatorState) {
 	lists := c.opts.Pack.Lists()
 
-	return boundedValidator("assumptions", func(_ context.Context, a stage.Artifact) ([]string, error) {
-		return assumptionProblems(a.Data, lists), nil
+	return boundedValidator("assumptions", func(ctx context.Context, a stage.Artifact) ([]string, error) {
+		questions, err := c.opts.Store.ListQuestions(ctx, bp.ID)
+		if err != nil {
+			return nil, fmt.Errorf("read the questions: %w", err)
+		}
+
+		answered := map[string]bool{}
+		for _, q := range questions {
+			answered[q.Tag()] = true
+		}
+
+		return assumptionProblems(a.Data, lists, answered), nil
 	})
 }
 
-// assumptionProblems checks a submit's assumptions: a list of sentences,
-// each non-empty and pointing at no text a card will not carry.
-func assumptionProblems(data map[string]any, lists contract.Lists) []string {
+var questionTags = regexp.MustCompile(`\bQ\d+\b`)
+
+// assumptionProblems checks a submit's assumptions: a list of entries, each
+// a sentence or {text, basis}; every sentence non-empty, pointing at no text
+// a card will not carry and naming no answered question, which belongs in
+// the basis so that no prose says who answered; every basis an answered
+// question.
+func assumptionProblems(data map[string]any, lists contract.Lists, answered map[string]bool) []string {
 	raw, ok := data["assumptions"]
 	if !ok || raw == nil {
 		return nil
@@ -266,20 +378,45 @@ func assumptionProblems(data map[string]any, lists contract.Lists) []string {
 
 	items, ok := raw.([]any)
 	if !ok {
-		return []string{"assumptions must be a list of sentences"}
+		return []string{`assumptions must be a list of sentences or {"text": "<sentence>", "basis": "Q<n>"} entries`}
 	}
 
 	var out []string
 
 	for i, item := range items {
-		s, ok := item.(string)
+		text, isText := item.(string)
 
-		switch {
-		case !ok || strings.TrimSpace(s) == "":
+		if entry, ok := item.(map[string]any); ok {
+			text, isText = entry["text"].(string)
+
+			if basis, ok := entry["basis"]; ok && basis != nil {
+				tag, ok := basis.(string)
+
+				switch {
+				case !ok:
+					out = append(out, fmt.Sprintf("assumption %d's basis must be an answered question's tag (Q<n>)", i+1))
+				case normalTag(tag) != "" && !answered[normalTag(tag)]:
+					out = append(out, fmt.Sprintf("assumption %d's basis %q is no answered question (Q<n>); give one or no basis", i+1, tag))
+				}
+			}
+		}
+
+		if !isText || strings.TrimSpace(text) == "" {
 			out = append(out, fmt.Sprintf("assumption %d must be a sentence", i+1))
-		case contract.DanglingReference(s, lists) != "":
-			out = append(out, fmt.Sprintf("assumption %d says %q, which points at text a card will not carry; state the fact itself",
-				i+1, contract.DanglingReference(s, lists)))
+
+			continue
+		}
+
+		if ref := contract.DanglingReference(text, lists); ref != "" {
+			out = append(out, fmt.Sprintf("assumption %d says %q, which points at text a card will not carry; state the fact itself", i+1, ref))
+		}
+
+		for _, tag := range questionTags.FindAllString(text, -1) {
+			if answered[tag] {
+				out = append(out, fmt.Sprintf(`assumption %d names %s; give it as the basis ({"text": "<sentence>", "basis": %q}) and state the fact itself`, i+1, tag, tag))
+
+				break
+			}
 		}
 	}
 

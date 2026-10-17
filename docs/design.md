@@ -502,30 +502,50 @@ The answer reads verified only when it is grounded and its evidence cites a
 source tag that a tool call of that same run returned (tags in the task, the
 inputs or its own prose do not count); the checked result is what is
 recorded. When it cannot ground the answer it still decides, and the answer
-is recorded as an `unverified` assumption keyed by its question number
+is recorded as an `assumed` assumption keyed by its question number
 (`Q<n>`; a verified answer reads `verified`, with the evidence kept in the
-`answer` event, so a row stored without it reads `unverified`). The sign-off lists every
-assumption, unverified first; the export and the playbook description list every assumption, so
-whoever reviews the result sees which decisions the AI made. A responder
-that fails, and a pack without `stages/responder.md`, leave the question to
-the stage, which decides and records an assumption where it can. On a priced
-model a responder spends from the asking run's cost cap.
+`answer` event, so a row stored without it reads `assumed`). That entry is
+listed only while no stated assumption rests on the answer (see below). The
+sign-off lists every assumption, riskiest first; the export and the playbook
+description list every assumption, so whoever reviews the result sees which
+decisions the AI made. A responder that fails, and a pack without
+`stages/responder.md`, leave the question to the stage, which decides and
+records an assumption where it can. On a priced model a responder spends
+from the asking run's cost cap.
 
 **Assumptions are data.** A stage that declares the `assumptions` check
 (intake and solution design) submits each assumption as a standalone
-sentence; one that points at other text (the `dangling_references` list) is
-refused, and the third failing submit is accepted with its problems kept in
-its data. The controller numbers them A1, A2, ... across those stages in
-pack order and gives every later stage that consumes a stating stage the
-list with the ids. A later stage (grounding) submits verdicts, verified or
-contradicted with evidence, as new artifact data, never an update. A verdict
+sentence, or as `{"text": "<sentence>", "basis": "Q<n>"}` when it rests on
+an answered question. The check refuses a sentence that points at other text
+(the `dangling_references` list) or names an answered question (the basis
+carries the question and the sentence states the fact, so no model prose
+says who answered), and a basis that is no answered question; the third
+failing submit is accepted with its problems kept in its data, and a basis
+naming no answered question then reads as none. The controller numbers them
+A1, A2, ... across those stages in pack order and gives every later stage
+that consumes a stating stage the list with the ids. An assumption starts
+with its basis's status: `confirmed` when a human answered the question,
+`assumed` when the responder did, `verified` with the responder's evidence
+when that answer was verified, and `unverified` without a basis. An auto
+answer's own `Q<n>` entry is listed only while no stated assumption in the
+latest stating artifacts rests on it; otherwise those that do carry its
+status, so an answer and its restatement are one entry. Every stated
+assumption with a basis carries that question's answer too, a human's
+included, so a merged entry still shows the answer the responder gave. A later
+stage (grounding) submits verdicts, verified or contradicted with evidence, as
+new artifact data, never an update; a verdict sets the status and evidence. An
+unverified verdict, which the controller also accepts, returns the entry to
+its basis's status, so it never hides that a human confirmed it. A verdict
 counts only when it is newer than the assumptions it judges (the latest
 artifacts of the stating stages up to the assumption's own), so a re-run's
-assumptions read unverified until grounding judges them again. The sign-off
-(unverified first), the playbook description and a single card's Context
-list every assumption with its latest status. When no stage stated any as
-data, as with an intake stored before assumptions were data, they show the
-text of intake's Assumptions section instead, without ids or statuses.
+assumptions read their basis's status until grounding judges them again. The
+sign-off (unverified, contradicted, assumed, confirmed, then verified), the
+playbook description and a single card's Context list every assumption with
+its latest status; the description and the card add, for an assumed or
+confirmed one, who answered the question it rests on and its tag, and the
+answer, for every entry that carries one. When no stage stated any as data, as
+with an intake stored before assumptions were data, they show the text of
+intake's Assumptions section instead, without ids or statuses.
 
 Later policy: `jira` (question posted as a comment; after two reminders
 without a reply it falls through to `auto`, logged as such).

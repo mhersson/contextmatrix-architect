@@ -112,8 +112,7 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 				out = append(out, problem(where, "rejected", "the decision names no option it rejected"))
 			}
 
-			// The bracketed form is how tags are printed to the model.
-			switch basis := strings.ToUpper(strings.TrimSpace(strings.Trim(strings.TrimSpace(dec.Basis), "[]"))); {
+			switch basis := normalTag(dec.Basis); {
 			case basis == "ASSUMPTION":
 			case known[basis]:
 				used[basis] = true

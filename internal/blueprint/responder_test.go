@@ -422,7 +422,7 @@ func TestResponder_EvidenceVerifiesOnlyWithItsOwnToolResults(t *testing.T) {
 				assert.Equal(t, assumptionVerified, list[0].Status)
 				assert.Equal(t, "[S1] the chart is in charts/", list[0].Evidence)
 			} else {
-				assert.Equal(t, assumptionUnverified, list[0].Status)
+				assert.Equal(t, assumptionAssumed, list[0].Status)
 				assert.Empty(t, list[0].Evidence)
 			}
 		})
@@ -446,7 +446,7 @@ func TestAssumptions_AGroundedRowWithoutEvidenceIsNotVerified(t *testing.T) {
 	list, err := c.assumptions(ctx, "BP1")
 	require.NoError(t, err)
 	require.Len(t, list, 1)
-	assert.Equal(t, assumptionUnverified, list[0].Status)
+	assert.Equal(t, assumptionAssumed, list[0].Status)
 }
 
 func TestCitesToolResult(t *testing.T) {
