@@ -53,21 +53,31 @@ func (s *Store) PutArtifact(ctx context.Context, a Artifact) (int, error) {
 
 // LatestArtifact returns the newest version of a stage's artifact, or ErrNotFound.
 func (s *Store) LatestArtifact(ctx context.Context, blueprintID, stage string) (Artifact, error) {
+	return scanArtifact(s.db.QueryRowContext(ctx, `SELECT blueprint_id, stage, version, body, data, created_at FROM artifacts
+		WHERE blueprint_id = ? AND stage = ? ORDER BY version DESC LIMIT 1`, blueprintID, stage), "latest artifact")
+}
+
+// GetArtifact returns one version of a stage's artifact, or ErrNotFound.
+func (s *Store) GetArtifact(ctx context.Context, blueprintID, stage string, version int) (Artifact, error) {
+	return scanArtifact(s.db.QueryRowContext(ctx, `SELECT blueprint_id, stage, version, body, data, created_at FROM artifacts
+		WHERE blueprint_id = ? AND stage = ? AND version = ?`, blueprintID, stage, version), "get artifact")
+}
+
+// scanArtifact reads one artifacts row, ErrNotFound when there is none.
+func scanArtifact(row *sql.Row, what string) (Artifact, error) {
 	var (
 		a         Artifact
 		data      sql.NullString
 		createdAt int64
 	)
 
-	err := s.db.QueryRowContext(ctx, `SELECT blueprint_id, stage, version, body, data, created_at FROM artifacts
-		WHERE blueprint_id = ? AND stage = ? ORDER BY version DESC LIMIT 1`, blueprintID, stage).
-		Scan(&a.BlueprintID, &a.Stage, &a.Version, &a.Body, &data, &createdAt)
+	err := row.Scan(&a.BlueprintID, &a.Stage, &a.Version, &a.Body, &data, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Artifact{}, ErrNotFound
 	}
 
 	if err != nil {
-		return Artifact{}, fmt.Errorf("store: latest artifact: %w", err)
+		return Artifact{}, fmt.Errorf("store: %s: %w", what, err)
 	}
 
 	if data.Valid {

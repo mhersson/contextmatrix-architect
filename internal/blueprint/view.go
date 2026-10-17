@@ -1,6 +1,7 @@
 package blueprint
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -226,14 +227,23 @@ func (c *Controller) latestEvent(ctx context.Context, id, kind string) (*store.E
 	return &e, nil
 }
 
-// signoffEvents are the sign-offs recorded for blueprint id, oldest first.
+// signoffEvents are the sign-offs recorded for blueprint id, shown or
+// approved automatically, oldest first.
 func (c *Controller) signoffEvents(ctx context.Context, id string) ([]store.Event, error) {
-	events, err := c.opts.Store.ListEventsOfKind(ctx, id, EventSignOff)
-	if err != nil {
-		return nil, fmt.Errorf("blueprint: read the sign-offs: %w", err)
+	var out []store.Event
+
+	for _, kind := range []string{EventSignOff, EventSignOffAuto} {
+		events, err := c.opts.Store.ListEventsOfKind(ctx, id, kind)
+		if err != nil {
+			return nil, fmt.Errorf("blueprint: read the sign-offs: %w", err)
+		}
+
+		out = append(out, events...)
 	}
 
-	return events, nil
+	slices.SortFunc(out, func(a, b store.Event) int { return cmp.Compare(a.ID, b.ID) })
+
+	return out, nil
 }
 
 // readResume finds the newest stopped emission or run start, an await or
@@ -424,8 +434,9 @@ func (rec record) stageCost(stageID string) float64 {
 	return sum
 }
 
-// signoffShown reports whether the sign-off of version was shown.
-func (rec record) signoffShown(version int) bool {
+// signoffRecorded reports whether a sign-off of version was shown or
+// recorded as approved automatically.
+func (rec record) signoffRecorded(version int) bool {
 	return slices.ContainsFunc(rec.signoffs, func(e store.Event) bool { return signoffVersion(e) == version })
 }
 
@@ -560,7 +571,7 @@ func (rec record) signoffStep() protocol.PipelineStep {
 		switch {
 		case decided && g.Decision == store.GateApprove:
 			step.Status = stepDone
-		case rec.signoffShown(v):
+		case rec.signoffRecorded(v):
 			step.Status = stepWaiting
 		case rec.bp.State == string(StateFailed):
 			step.Status = stepFailed
@@ -630,7 +641,7 @@ func (rec record) open() *protocol.OpenPrompt {
 		return &protocol.OpenPrompt{PromptID: fmt.Sprintf("Q%d", rec.question), Kind: promptQuestion}
 	case rec.pos.gate && !rec.pos.critique && rec.shown[rec.pos.stage][rec.pos.art.Version]:
 		return &protocol.OpenPrompt{PromptID: fmt.Sprintf("gate:%s:v%d", rec.pos.stage, rec.pos.art.Version), Kind: promptGate}
-	case rec.pos.end && rec.pos.ready && rec.signoffShown(rec.pos.art.Version):
+	case rec.pos.end && rec.pos.ready && rec.signoffRecorded(rec.pos.art.Version):
 		if _, decided := rec.decision(signoffStage, rec.pos.art.Version); !decided {
 			return &protocol.OpenPrompt{PromptID: fmt.Sprintf("gate:signoff:v%d", rec.pos.art.Version), Kind: promptGate}
 		}
@@ -802,7 +813,8 @@ func (rec record) reviewOf(st pack.Stage, version int) *protocol.ArtifactReview 
 	return out
 }
 
-// signoffRefs is one ref per sign-off version shown, dated when first shown.
+// signoffRefs is one ref per sign-off version shown or recorded as approved
+// automatically, dated when first shown or recorded.
 func (rec record) signoffRefs() []protocol.ArtifactRef {
 	var (
 		order []int

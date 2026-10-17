@@ -566,7 +566,8 @@ blueprint.
   this blueprint.
 - **`auto`**: every policy `auto`. Stops before emission. Cards auto-vet in
   CM on the non-Jira path, so this stop is the only human backstop.
-- **`auto+emit`**: as above, then emits the playbook and stops.
+- **`auto+emit`**: as above, then emits the playbook and stops. When it
+  approves a clean sign-off itself, it records what it approved, for the sheet.
 - **`yolo`**: as `auto+emit`, then starts the run, unless a card's repository
   has no commits: the cards are emitted, the session is told to push a first
   commit and reply `approve`, and no run starts until then. A single card is
@@ -776,6 +777,17 @@ frames on the session's chat stream.
   state change writes one. The view reads the store and memory only, so an
   ended session's blueprint has one while the architect is up. A record the
   pack cannot place shows every step pending.
+- **Artifacts.** `Artifact` returns one version's body, data and the
+  problems its checks accepted it with. The sign-off is a pseudo-artifact
+  per version recorded, its data the sign-off's payload. An emitting mode
+  that approves a clean sign-off on its own records what it approved (a
+  `signoff_auto` event after the approval, never shown in the transcript),
+  so its artifact exists, stamped approved automatically. The board
+  (`emission`, version 1) exists once the cards are emitted. Its data is
+  the created cards with their ids and, once the watch has seen them, their
+  state and pull request, plus the playbook, compare links, manual checks
+  and steps, and the total cost. The need as typed and reviewer verdicts
+  are not artifacts here; verdicts travel in the view.
 
 ## Deployment
 

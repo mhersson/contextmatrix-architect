@@ -74,6 +74,11 @@ const (
 	// EventSignOff shows the ready cards, the preflight result and how to
 	// decide; the blueprint waits for approve or reject.
 	EventSignOff = "signoff"
+	// EventSignOffAuto records the sign-off an emitting mode approved on its
+	// own, with the payload a shown sign-off carries less its replies and its
+	// auto_stopped flag, so the sheet shows what was approved. It follows the
+	// approval and is never shown in the transcript.
+	EventSignOffAuto = "signoff_auto"
 	// EventGate shows a stage's gate: the stage, the version of its artifact
 	// that waits, the artifacts folded into it, and the replies that decide
 	// it.

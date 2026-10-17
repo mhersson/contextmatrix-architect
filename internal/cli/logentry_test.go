@@ -23,6 +23,7 @@ func TestLogEntryFor(t *testing.T) {
 		{"question the stage decides itself", blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: map[string]any{
 			"number": 4, "stage": "grounding", "text": "Which port?", "responder": "auto",
 		}}, "system", []string{"grounding", "Q4", "Which port?"}, false},
+		{"an automatic sign-off's record is for the sheet", blueprint.Event{Kind: blueprint.EventSignOffAuto, BlueprintID: "S1", Payload: map[string]any{"version": 1}}, "", nil, true},
 		{"gate reply", blueprint.Event{Kind: blueprint.EventPolicy, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "intake", "policy": "auto", "open": "question",
 		}}, "system", []string{"intake", "auto"}, false},
