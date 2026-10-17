@@ -100,8 +100,15 @@ func TestNextQuestionNumber_FollowsEveryNumberedQuestion(t *testing.T) {
 }
 
 func TestMergeReply(t *testing.T) {
+	// base holds Q1 answered with option 1 and A1 accepted: a reply upserts and
+	// never treats an entry it lacks as a delete.
 	base := twoQuestionRound(1, 1, 7)
 	base.Frame.Assumptions = []protocol.RoundAssumption{{ID: "A1", Text: "One region."}}
+	base.Frame.Answers = []protocol.RoundAnswer{{Number: 1, Option: 1}}
+	base.Frame.Decisions = []protocol.AssumptionDecision{{ID: "A1", Accept: true}}
+
+	kept := []protocol.AssumptionDecision{{ID: "A1", Accept: true}}
+	q1 := protocol.RoundAnswer{Number: 1, Option: 1}
 
 	tests := []struct {
 		name      string
@@ -111,16 +118,20 @@ func TestMergeReply(t *testing.T) {
 		decided   []protocol.AssumptionDecision
 		dropped   int
 	}{
-		{name: "an option", answers: []protocol.RoundAnswer{{Number: 1, Option: 2}}, want: []protocol.RoundAnswer{{Number: 1, Option: 2}}},
-		{name: "own words, trimmed", answers: []protocol.RoundAnswer{{Number: 2, Text: "  ops team "}}, want: []protocol.RoundAnswer{{Number: 2, Text: "ops team"}}},
-		{name: "blank own words", answers: []protocol.RoundAnswer{{Number: 2, Text: "  "}}, dropped: 1},
-		{name: "option out of range", answers: []protocol.RoundAnswer{{Number: 1, Option: 3}}, dropped: 1},
-		{name: "a negative option", answers: []protocol.RoundAnswer{{Number: 1, Option: -1}}, dropped: 1},
-		{name: "a number the round lacks", answers: []protocol.RoundAnswer{{Number: 9, Option: 1}}, dropped: 1},
-		{name: "an option clears own words", answers: []protocol.RoundAnswer{{Number: 1, Option: 1, Text: "x"}}, want: []protocol.RoundAnswer{{Number: 1, Option: 1}}},
-		{name: "the later of two wins", answers: []protocol.RoundAnswer{{Number: 1, Option: 1}, {Number: 1, Option: 2}}, want: []protocol.RoundAnswer{{Number: 1, Option: 2}}},
-		{name: "a decision", decisions: []protocol.AssumptionDecision{{ID: "A1", Accept: true}}, decided: []protocol.AssumptionDecision{{ID: "A1", Accept: true}}},
-		{name: "an unknown assumption", decisions: []protocol.AssumptionDecision{{ID: "A2", Accept: true}}, dropped: 1},
+		{name: "an option replaces the stored pick", answers: []protocol.RoundAnswer{{Number: 1, Option: 2}}, want: []protocol.RoundAnswer{{Number: 1, Option: 2}}, decided: kept},
+		{name: "a reply naming only Q2 keeps Q1", answers: []protocol.RoundAnswer{{Number: 2, Text: "ops"}}, want: []protocol.RoundAnswer{q1, {Number: 2, Text: "ops"}}, decided: kept},
+		{name: "own words, trimmed", answers: []protocol.RoundAnswer{{Number: 2, Text: "  ops team "}}, want: []protocol.RoundAnswer{q1, {Number: 2, Text: "ops team"}}, decided: kept},
+		{name: "own words replace the stored pick", answers: []protocol.RoundAnswer{{Number: 1, Text: "neither"}}, want: []protocol.RoundAnswer{{Number: 1, Text: "neither"}}, decided: kept},
+		{name: "blank own words", answers: []protocol.RoundAnswer{{Number: 2, Text: "  "}}, want: []protocol.RoundAnswer{q1}, decided: kept, dropped: 1},
+		{name: "option out of range", answers: []protocol.RoundAnswer{{Number: 1, Option: 3}}, want: []protocol.RoundAnswer{q1}, decided: kept, dropped: 1},
+		{name: "a negative option", answers: []protocol.RoundAnswer{{Number: 1, Option: -1}}, want: []protocol.RoundAnswer{q1}, decided: kept, dropped: 1},
+		{name: "a number the round lacks", answers: []protocol.RoundAnswer{{Number: 9, Option: 1}}, want: []protocol.RoundAnswer{q1}, decided: kept, dropped: 1},
+		{name: "an option clears own words", answers: []protocol.RoundAnswer{{Number: 1, Option: 2, Text: "x"}}, want: []protocol.RoundAnswer{{Number: 1, Option: 2}}, decided: kept},
+		{name: "the later of two wins", answers: []protocol.RoundAnswer{{Number: 1, Option: 2}, {Number: 1, Option: 1}}, want: []protocol.RoundAnswer{q1}, decided: kept},
+		{name: "answers come out in question order", answers: []protocol.RoundAnswer{{Number: 2, Text: "ops"}, {Number: 1, Option: 2}}, want: []protocol.RoundAnswer{{Number: 1, Option: 2}, {Number: 2, Text: "ops"}}, decided: kept},
+		{name: "a decision replaces the stored one", decisions: []protocol.AssumptionDecision{{ID: "A1", Accept: false}}, want: []protocol.RoundAnswer{q1}, decided: []protocol.AssumptionDecision{{ID: "A1"}}},
+		{name: "a reply without decisions keeps A1", answers: []protocol.RoundAnswer{{Number: 2, Text: "ops"}}, want: []protocol.RoundAnswer{q1, {Number: 2, Text: "ops"}}, decided: kept},
+		{name: "an unknown assumption", decisions: []protocol.AssumptionDecision{{ID: "A2", Accept: true}}, want: []protocol.RoundAnswer{q1}, decided: kept, dropped: 1},
 	}
 
 	for _, tt := range tests {
@@ -129,7 +140,8 @@ func TestMergeReply(t *testing.T) {
 			assert.Equal(t, tt.want, got.Frame.Answers)
 			assert.Equal(t, tt.decided, got.Frame.Decisions)
 			assert.Equal(t, tt.dropped, dropped)
-			assert.Empty(t, base.Frame.Answers, "the merge never writes into the snapshot it read")
+			assert.Equal(t, []protocol.RoundAnswer{q1}, base.Frame.Answers, "the merge never writes into the snapshot it read")
+			assert.Equal(t, kept, base.Frame.Decisions, "the merge never writes into the snapshot it read")
 		})
 	}
 }
@@ -360,4 +372,29 @@ func TestFrameQuestion(t *testing.T) {
 
 func TestRoundPromptID(t *testing.T) {
 	assert.Equal(t, "round:3", roundPromptID(3), "CM parses this prompt id")
+}
+
+func TestCloseRound_ACloseCutShortWritesOnlyWhatIsMissing(t *testing.T) {
+	c, st, au := newRoundController(t)
+	ctx := context.Background()
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	seeded := store.Question{BlueprintID: "BP1", RunID: 7, Stage: "intake", Number: 1, Text: "seeded", Answer: "seeded answer", Responder: store.ResponderHuman, AnsweredAt: time.Now().UTC()}
+	require.NoError(t, st.AddQuestion(ctx, seeded))
+
+	s := twoQuestionRound(1, 1, 7)
+	s.Frame.Answers = []protocol.RoundAnswer{{Number: 1, Option: 2}, {Number: 2, Text: "the ops team"}}
+
+	_, err = c.closeRound(ctx, au, bp, s)
+	require.NoError(t, err)
+
+	qs, err := st.ListQuestions(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, qs, 2)
+	assert.Equal(t, "seeded answer", qs[0].Answer, "Q1's row was not rewritten")
+	assert.Equal(t, "seeded", qs[0].Text)
+	assert.Equal(t, 2, qs[1].Number)
+	assert.Equal(t, "the ops team", qs[1].Answer)
 }
