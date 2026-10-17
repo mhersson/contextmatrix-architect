@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slices 0 and 1 are implemented, and slice 2 signs off ready cards, emits them and a playbook into CM and starts them in yolo mode, then reports their run. Slice 3's foundations are implemented: a responder policy per stage, gates after any gated stage, numbered and recorded questions, CM prompts, notes that reach later stages and assumptions with grounding's verdicts, reviewer runs with the critique loop, the auto responder, and the slicing, solution design and acceptance stages with slicing's gate folding; the export's commit to a repository is design (slice 4); the export writes the bundle under the state directory.
+Status: agreed design, 2026-10-15. Slices 0 to 3 are implemented: slice 2 signs off ready cards, emits them and a playbook into CM, starts them in yolo mode and reports their run, and slice 3 adds the dialog stages (intake's questions, slicing, solution design, acceptance) with a responder policy per stage, the human and auto responders, reviewer runs with the critique loop, gates with slicing's folding into solution design, CM prompts, notes that reach later stages and assumptions with grounding's verdicts. Outcomes, lessons and the export's commit to a repository are slice 4; the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -66,7 +66,7 @@ Settled during design. Each has its reason so it is not re-litigated.
 | CM's chat panel is the only client                        | The architect implements CM's chat-backend protocol as a third backend kind, so CM's existing panel is where the need is stated, questions and gates are answered, and side operations (export, outcomes, lessons) are requested by reply. Same look and feel, session list, auth and browser for free. No UI, no CLI beyond `contextmatrix-architect serve` and the `config defaults` and `config validate` helpers contextmatrix-setup drives, no client API. |
 | One controller process                                    | `contextmatrix-architect serve` alone owns the store, the workspaces and the harness runs, and every session originates in CM. One record, one place code is checked out, no laptop copy of anything. |
 | Provisioned by CM, like the agent and chat backends      | Every blueprint is a CM session. The start payload delivers the LLM endpoint, the MCP key, the model and a git-credentials token. The architect's own config holds no secret but the backend HMAC key, and there is no CM-less mode. |
-| Questions block inside the run; no persisted resume       | Nobody walks away from a blueprint for days. A blocking `ask_human` keeps one transcript and a warm prompt cache. A crash re-runs the open stage from stored artifacts, a builder round from the transcript it resumed. |
+| Questions block inside the run; no persisted resume       | Nobody walks away from a blueprint for days. A blocking `ask_human` keeps one transcript, and the prompt cache warm when the reply comes within the provider's cache lifetime. A crash re-runs the open stage from stored artifacts, a builder round from the transcript it resumed. |
 | SQLite is the record; markdown is a rendering             | One store for artifacts, gates, transcripts, audit and cost. Committing per-stage markdown into code repos bloats them fast; an opt-in automatic export serves teams that review in pull requests. |
 | Everything is logged                                      | Every run's full transcript and an append-only event log. The append-only tables are never updated or deleted. The export is a complete audit record.           |
 | A playbook for several cards, a bare card for one         | Manual entries are the only way to express human and live checks across cards. A one-card playbook would end in a merged PR on a playbook branch plus a second PR to main; a bare card ends in one PR to the default branch. The `emissions` table is the blueprint's handle in CM either way. |
@@ -274,9 +274,12 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   none. A one-slice need costs nine runs: intake, slicing, solution design
   and its review, grounding, acceptance and its review, decomposition and
   readiness.
-- A small need therefore touches the human twice, at solution design and
-  sign-off, plus at most a question or two. A need that slices into three gets
-  every gate without anyone classifying it.
+- In default mode a one-slice need touches the human at the questions of
+  intake (three at most per attempt), slicing (no cap) and solution design
+  (five at most per attempt, its builder rounds included), the solution
+  design gate with slicing folded into it, and the sign-off. A need that
+  slices into several gets slicing's own gate as well, without anyone
+  classifying it.
 - A cross-project contract is copied into the cards on both sides of the
   boundary.
 - Human-only and live-environment checks become manual playbook entries, never
