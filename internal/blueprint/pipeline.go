@@ -265,7 +265,7 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 	out, _, err := c.position(ctx, bp)
 	if err != nil {
 		// The message is kept and the user told why it starts nothing.
-		sess.audit.event(ctx, noteEvent(id, text, msgID, false))
+		sess.audit.event(ctx, noteEvent(id, text, msgID, "", false))
 		c.unreadable(ctx, sess.audit, id, err)
 		c.release(id, r)
 
@@ -286,10 +286,13 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 
 	// A note. While a model stage is pending (it failed, was aborted or
 	// refused, or a cancel fell between stages) the note also re-runs it,
-	// so an abort is not a dead end; an ended pipeline is not re-run.
-	note := noteEvent(id, text, msgID, false)
+	// so an abort is not a dead end; an ended pipeline is not re-run, and
+	// the panel is told no stage starts.
+	note := noteEvent(id, text, msgID, out.stage, false)
 	if out.stage != "" {
 		note.Payload["retries"] = out.stage
+	} else {
+		note.Payload["ended"] = true
 	}
 
 	sess.audit.event(ctx, note)
@@ -438,7 +441,56 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.St
 		return "", err
 	}
 
+	if err := c.writeNotes(ctx, &b, bp.ID); err != nil {
+		return "", err
+	}
+
 	return b.String(), nil
+}
+
+// writeNotes gives a run every note the user left so far, in arrival order,
+// each with the stage that was open when it came. A note never reaches a run
+// already in flight; every run that starts after it gets it. A note that is
+// only approve or reject is a misplaced decision, not guidance, and reaches
+// no run.
+func (c *Controller) writeNotes(ctx context.Context, b *strings.Builder, id string) error {
+	events, err := c.opts.Store.ListEventsOfKind(ctx, id, EventNote)
+	if err != nil {
+		return fmt.Errorf("blueprint: read the notes: %w", err)
+	}
+
+	var lines []string
+
+	for _, e := range events {
+		var p struct {
+			Text  string `json:"text"`
+			Stage string `json:"stage"`
+		}
+
+		// The controller wrote the payload itself, so a decode failure is a fault.
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			return fmt.Errorf("blueprint: read note %d: %w", e.ID, err)
+		}
+
+		if text := strings.TrimSpace(p.Text); text == "" || strings.EqualFold(text, store.GateApprove) || strings.EqualFold(text, store.GateReject) {
+			continue
+		}
+
+		if p.Stage != "" {
+			lines = append(lines, fmt.Sprintf("- (during %s) %s", p.Stage, p.Text))
+		} else {
+			lines = append(lines, "- "+p.Text)
+		}
+	}
+
+	if len(lines) == 0 {
+		return nil
+	}
+
+	b.WriteString("## Notes from the user\n\nLeft while the blueprint ran, oldest first; take them into account:\n\n")
+	b.WriteString(strings.Join(lines, "\n") + "\n\n")
+
+	return nil
 }
 
 // writeAnswered gives a run the questions earlier runs of its stage asked

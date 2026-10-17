@@ -128,6 +128,9 @@ func TestLogEntryFor(t *testing.T) {
 		{"gate reply at an open gate", blueprint.Event{Kind: blueprint.EventPolicy, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "shape", "policy": "auto", "open": "gate",
 		}}, "system", []string{"approve or reject"}, false},
+		{"note while a stage runs", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{
+			"text": "keep the API stable", "stage": "intake", "during_run": true,
+		}}, "system", []string{"Noted"}, false},
 		{"note with a hint", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "hm", "hint": "Reply approve or reject."}}, "system", []string{"Reply approve or reject."}, false},
 	}
 	for _, tc := range cases {
@@ -168,6 +171,21 @@ func TestLogEntryFor_PastedDesignIsNotEchoed(t *testing.T) {
 	}})
 	require.True(t, ok)
 	assert.NotContains(t, entry.Content, "the long design", "CM already shows the message the design came from")
+}
+
+func TestLogEntryFor_ANoteAtAnEndedPipelineIsToldApart(t *testing.T) {
+	note := func(ended bool) string {
+		t.Helper()
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{
+			"text": "go on", "stage": "", "during_run": false, "ended": ended,
+		}})
+		require.True(t, ok)
+
+		return entry.Content
+	}
+
+	assert.NotEqual(t, note(false), note(true), "no stage starts after an ended pipeline, so the note cannot promise one")
 }
 
 func TestLogEntryFor_GroundedShowsNoRepositoryURL(t *testing.T) {

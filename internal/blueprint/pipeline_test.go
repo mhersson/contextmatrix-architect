@@ -684,6 +684,10 @@ func TestPipeline_CardsFailingTheContractAreReturnedThenReported(t *testing.T) {
 			require.NoError(t, c.Message(context.Background(), "BP1", "go on", "m3"))
 			c.Wait("BP1")
 			assert.Equal(t, 3, runner.calls())
+
+			note, ok := rec.first(EventNote)
+			require.True(t, ok)
+			assert.Equal(t, true, note.Payload["ended"], "the note tells the panel no stage starts")
 		})
 	}
 }
@@ -2140,4 +2144,85 @@ func TestPipeline_TheGatePlanFollowsTheFirstStage(t *testing.T) {
 	assert.Less(t, at(EventStageEnded, "intake"), at(EventGatePlan, ""), "posted when intake ends")
 	assert.Less(t, at(EventGatePlan, ""), at(EventStageStarted, "grounding"), "and before grounding starts")
 	assert.Equal(t, 1, rec.count(EventGatePlan))
+}
+
+func TestNotes_ReachEveryLaterRun(t *testing.T) {
+	started := make(chan struct{}, 1)
+	finish := make(chan struct{})
+
+	script := happyScript()
+	script["intake"] = func(context.Context, stage.Input) (stage.Output, error) {
+		signal(started)
+		<-finish
+
+		return done("# Need", map[string]any{"slices": 1}), nil
+	}
+
+	c, _, runner, rec, _ := newPipeline(t, script)
+	release := closer(t, finish)
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	receive(t, started, "intake")
+	require.NoError(t, c.Message(ctx, "BP1", "keep the API stable", "m2"))
+	release()
+	c.Wait("BP1")
+	require.NoError(t, c.Message(ctx, "BP1", "the design", "m3"))
+	c.Wait("BP1")
+
+	note, ok := rec.first(EventNote)
+	require.True(t, ok)
+	assert.Equal(t, "intake", note.Payload["stage"], "the stage that was open")
+
+	got := map[string]bool{}
+
+	for i := range runner.calls() {
+		in := runner.input(i)
+		got[in.Stage] = strings.Contains(in.Task, "keep the API stable")
+	}
+
+	assert.Equal(t, map[string]bool{"intake": false, "grounding": true, "decomposition": true, "readiness": true}, got,
+		"every run that starts after the note gets it; the run in flight does not")
+}
+
+func TestNotes_ABareDecisionWordReachesNoRun(t *testing.T) {
+	started := make(chan struct{}, 1)
+	finish := make(chan struct{})
+
+	script := happyScript()
+	script["intake"] = func(context.Context, stage.Input) (stage.Output, error) {
+		signal(started)
+		<-finish
+
+		return done("# Need", map[string]any{"slices": 1}), nil
+	}
+
+	c, _, runner, rec, _ := newPipeline(t, script)
+	release := closer(t, finish)
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	receive(t, started, "intake")
+
+	for i, text := range []string{"APPROVE", " REJECT ", "keep the API stable", "REJECT the cache"} {
+		require.NoError(t, c.Message(ctx, "BP1", text, fmt.Sprintf("n%d", i)))
+	}
+
+	release()
+	c.Wait("BP1")
+	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
+	c.Wait("BP1")
+
+	assert.Equal(t, 4, rec.count(EventNote), "every message is kept")
+	require.Equal(t, 4, runner.calls())
+
+	for i := 1; i < runner.calls(); i++ {
+		in := runner.input(i)
+		assert.Contains(t, in.Task, "keep the API stable", in.Stage)
+		assert.Contains(t, in.Task, "REJECT the cache", "%s: a decision word with more text is a note", in.Stage)
+		assert.NotContains(t, in.Task, "APPROVE", in.Stage)
+		assert.Equal(t, 1, strings.Count(in.Task, "REJECT"), "%s: only the note with more text", in.Stage)
+	}
 }

@@ -204,7 +204,8 @@ type run struct {
 	// pending is the payload of the question waiting for its answer; it
 	// means something only while answer is set.
 	pending map[string]any
-	// stage is the stage the run in flight runs; set under Controller.mu.
+	// stage is the stage the run in flight runs, or the sign-off while it and
+	// its emission hold the slot; set under Controller.mu.
 	stage string
 }
 
@@ -472,12 +473,12 @@ func (c *Controller) Message(ctx context.Context, id, text, msgID string) error 
 	r := c.runs[id]
 
 	if r != nil {
-		answer, number := r.answer, r.question
+		answer, number, open := r.answer, r.question, r.stage
 		r.answer = nil
 		c.mu.Unlock()
 
 		if answer == nil {
-			sess.audit.event(ctx, noteEvent(id, trimmed, msgID, true))
+			sess.audit.event(ctx, noteEvent(id, trimmed, msgID, open, true))
 
 			return nil
 		}
@@ -706,10 +707,11 @@ func (c *Controller) capAllows(ctx context.Context, au audit, bp store.Blueprint
 }
 
 // noteEvent records a message that is neither the need nor an answer.
-// duringRun tells the panel the run goes on working after it.
-func noteEvent(id, text, msgID string, duringRun bool) Event {
+// stage is the stage open when it came, "" when none; duringRun tells the
+// panel a run goes on working after it.
+func noteEvent(id, text, msgID, stage string, duringRun bool) Event {
 	return Event{Kind: EventNote, BlueprintID: id, Payload: map[string]any{
-		"text": text, "message_id": msgID, "during_run": duringRun,
+		"text": text, "message_id": msgID, "stage": stage, "during_run": duringRun,
 	}}
 }
 

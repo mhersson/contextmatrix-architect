@@ -128,9 +128,11 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   (fail-closed, no local fallback), MCP key, model and git-credentials token,
   and ignores `resume` and the worker image. It reopens the blueprint by id and
   runs no container. An end-session call detaches the client; the blueprint
-  persists. A message that arrives while no question is pending is logged as a
-  note, never dropped; delivering notes to the next stage arrives with the
-  dialog stages. Entries published before
+  persists. A message that arrives after the need, while no question or
+  waiting human-sourced stage is open, and that decides no open gate is
+  logged as a note, never dropped. Every model run that starts later gets
+  every note so far in its task, with the stage that was open when it came,
+  except a bare `approve` or `reject`. Entries published before
   CM's consumer connects, or while it is reconnecting, are retained on the
   server and replayed to it once, ahead of live entries.
 - **A question blocks the run.** `ask_human` is an ordinary tool: under the
@@ -619,8 +621,12 @@ Replies the server understands, besides answers to questions:
 - From slice 4, a project may opt into automatic export in config: a target
   repo, branch and directory; the bundle is committed there at each gate or at
   sign-off. Off by default.
-- A message that arrives while no question or gate is open is logged as a
-  note; delivering notes to the next stage arrives with the dialog stages.
+- A message that arrives after the need, while no question or waiting
+  human-sourced stage is open, and that decides no open gate is a note: it
+  is logged and given to every stage run that starts later, in arrival
+  order. A note never reaches a run already in flight, and a note at an open
+  gate leaves the gate open. A note that is only `approve` or `reject` is a
+  misplaced decision, not guidance: it is logged and reaches no run.
 
 ## Deployment
 

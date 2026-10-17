@@ -80,6 +80,7 @@ func (c *Controller) launch(ctx context.Context, r *run, sess *session, bp store
 			stageID, end = c.advance(context.WithoutCancel(ctx), sess, bp, stageID)
 
 			if end.ready {
+				c.holdForSignoff(r)
 				c.signoff(ctx, sess, bp, end)
 			}
 		}

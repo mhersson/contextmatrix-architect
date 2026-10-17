@@ -128,6 +128,49 @@ func TestSignoff_OtherTextIsANoteWithTheHint(t *testing.T) {
 	note, ok := rec.first(EventNote)
 	require.True(t, ok)
 	assert.Contains(t, note.Payload["hint"], "approve")
+	assert.Equal(t, signoffStage, note.Payload["stage"])
+}
+
+func TestSignoff_ANoteWhileTheSignoffHoldsTheSlotRecordsTheSignoff(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    string
+		approve bool
+	}{
+		{name: "the emission an approve starts", mode: protocol.ArchitectModeDefault, approve: true},
+		{name: "the sign-off that follows readiness", mode: protocol.ArchitectModeAutoEmit},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _, _, rec, _ := newPipeline(t, happyScript())
+			hold := newHoldCM(t, newFakeCM())
+			hold.title = "Add the thing"
+			c.opts.ConnectCM = hold.connect
+			ctx := context.Background()
+
+			in := startInput("BP1")
+			in.Mode = tt.mode
+			require.NoError(t, c.Start(ctx, in))
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			c.Wait("BP1")
+			require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
+
+			if tt.approve {
+				c.Wait("BP1")
+				require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+			}
+
+			receive(t, hold.entered, "the held card")
+			require.NoError(t, c.Message(ctx, "BP1", "keep the API stable", "m4"))
+			hold.free()
+			c.Wait("BP1")
+
+			note, ok := rec.first(EventNote)
+			require.True(t, ok)
+			assert.Equal(t, signoffStage, note.Payload["stage"])
+		})
+	}
 }
 
 func TestSignoff_ApproveIsTheDesignWhileTheDesignStageWaits(t *testing.T) {

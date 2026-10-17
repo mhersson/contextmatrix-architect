@@ -205,6 +205,7 @@ func TestGate_OtherTextIsANoteAndTheGateStaysOpen(t *testing.T) {
 
 	for _, n := range notes {
 		assert.NotEmpty(t, n.Payload["hint"])
+		assert.Equal(t, "shape", n.Payload["stage"], "the gated stage")
 	}
 
 	gates, err := st.ListGates(ctx, "BP1", "shape")

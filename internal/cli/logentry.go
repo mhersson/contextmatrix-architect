@@ -100,10 +100,18 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventNote:
 		entry.Type = "system"
 
-		if stage := str(p["retries"]); stage != "" {
-			entry.Content = fmt.Sprintf("Message recorded in the audit log. It is not delivered to a stage; stage %s runs again.", stage)
-		} else {
-			entry.Content = "Message recorded in the audit log. It is not delivered to a stage and starts none."
+		duringRun, _ := p["during_run"].(bool)
+		ended, _ := p["ended"].(bool)
+
+		switch stage := str(p["retries"]); {
+		case stage != "":
+			entry.Content = fmt.Sprintf("Noted. Stage %s runs again, and it and every stage after it get the note.", stage)
+		case ended:
+			entry.Content = "Noted. The pipeline has ended, so no stage starts to get it."
+		case duringRun:
+			entry.Content = "Noted. Every stage that starts after the running one gets it; the running stage does not."
+		default:
+			entry.Content = "Noted. Every stage that starts from now on gets it."
 		}
 
 		if hint := str(p["hint"]); hint != "" {

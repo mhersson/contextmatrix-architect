@@ -265,7 +265,7 @@ func (c *Controller) resumeGate(ctx context.Context, r *run, sess *session, bp s
 func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, out outcome, text, msgID string) error {
 	action, feedback, ok := matchAction(text, stageGateActions(out.stage))
 	if !ok {
-		note := noteEvent(bp.ID, text, msgID, false)
+		note := noteEvent(bp.ID, text, msgID, out.stage, false)
 		note.Payload["hint"] = fmt.Sprintf("Reply approve to go on, or reject <feedback> to run %s again with your feedback.", out.stage)
 
 		if rejectWithoutFeedback(text) {

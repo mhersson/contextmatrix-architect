@@ -53,11 +53,22 @@ func (c *Controller) rejection(ctx context.Context, id string, version int) (int
 // launchEnd runs the sign-off of a ready end on the run slot r, which the
 // caller holds, and releases it.
 func (c *Controller) launchEnd(ctx context.Context, r *run, sess *session, bp store.Blueprint, out outcome) {
+	c.holdForSignoff(r)
+
 	go func() {
 		defer c.release(bp.ID, r)
 
 		c.signoff(ctx, sess, bp, out)
 	}()
+}
+
+// holdForSignoff marks the run slot r as held by the sign-off and the
+// emission that follows it, so a note that comes meanwhile records the
+// sign-off rather than the stage before it.
+func (c *Controller) holdForSignoff(r *run) {
+	c.mu.Lock()
+	r.stage = signoffStage
+	c.mu.Unlock()
 }
 
 // signoff acts on cards the pipeline ended ready with. Approved: emission,
@@ -184,7 +195,7 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 	action, feedback, matched := matchAction(text, signoffActions(false))
 	approve := matched && action.Decision == store.GateApprove
 	reject := matched && action.Decision == store.GateReject
-	note := noteEvent(bp.ID, text, msgID, false)
+	note := noteEvent(bp.ID, text, msgID, signoffStage, false)
 
 	switch decision {
 	case "":
