@@ -134,13 +134,80 @@ func signed(t *testing.T, method, path string, body any, ts string) *http.Reques
 	return r
 }
 
-var tsCounter int64
+// tsWindow is how far behind now a test timestamp may fall, in seconds,
+// inside the server's skew window (protocol.DefaultMaxClockSkew).
+const tsWindow = 4 * 60
+
+// tsSource hands out request timestamps. The replay cache rejects a second
+// request with the same signature, so two signings of one body need distinct
+// timestamps. Counting down from the last value, not from now, keeps them
+// distinct when the clock crosses a second boundary between calls, and
+// starting again at now before leaving tsWindow keeps them inside the skew
+// window however many calls a process makes. Any tsWindow consecutive values
+// are distinct, and no test signs that many requests against one server.
+type tsSource struct {
+	now  func() time.Time
+	last int64
+}
+
+func (s *tsSource) next() string {
+	now := s.now().Unix()
+
+	v := s.last - 1
+	if v < now-tsWindow || v > now {
+		v = now
+	}
+
+	s.last = v
+
+	return strconv.FormatInt(v, 10)
+}
+
+var testTS = &tsSource{now: time.Now}
 
 func nextTS() string {
-	tsCounter++
+	return testTS.next()
+}
 
-	// Distinct per call and never ahead of now, so it stays inside the skew window.
-	return strconv.FormatInt(time.Now().Unix()-tsCounter, 10)
+func TestNextTS_StaysDistinctAndInsideTheSkewWindow(t *testing.T) {
+	tests := []struct {
+		name string
+		tick time.Duration
+	}{
+		{"the clock crosses a second boundary between calls", time.Second},
+		{"the clock stands still", 0},
+		{"the clock moves faster than the calls", 3 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// A nanosecond before a second boundary, so the first tick crosses it.
+			clock, called := time.Unix(1_700_000_000, 999_999_999), time.Time{}
+			src := &tsSource{now: func() time.Time {
+				called = clock
+				clock = clock.Add(tt.tick)
+
+				return called
+			}}
+
+			seen := map[string]int{}
+
+			for i := range 1000 {
+				ts := src.next()
+
+				v, err := strconv.ParseInt(ts, 10, 64)
+				require.NoError(t, err)
+				require.LessOrEqual(t, v, called.Unix(), "call %d is never ahead of now", i)
+				require.Greater(t, v, called.Unix()-int64(protocol.DefaultMaxClockSkew/time.Second), "call %d is inside the skew window", i)
+
+				if prev, ok := seen[ts]; ok {
+					require.GreaterOrEqual(t, i-prev, tsWindow, "calls %d and %d share a timestamp", prev, i)
+				}
+
+				seen[ts] = i
+			}
+		})
+	}
 }
 
 func validStart() protocol.ChatStartPayload {
