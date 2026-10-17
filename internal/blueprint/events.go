@@ -159,6 +159,8 @@ func (a audit) event(ctx context.Context, e Event) {
 	if a.c.opts.Sink != nil {
 		a.c.opts.Sink(e)
 	}
+
+	a.c.observe(e)
 }
 
 // harness stores one raw harness JSONL line as an event, then forwards it
@@ -181,6 +183,8 @@ func (a audit) harness(ctx context.Context, id string, runID int64, line []byte,
 	if forward && a.c.opts.HarnessLine != nil {
 		a.c.opts.HarnessLine(id, masked)
 	}
+
+	a.c.live.touch(id)
 }
 
 // artifact stores the next version of a stage's artifact and returns it.

@@ -113,6 +113,13 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	id := bp.ID
 	au := sess.audit
 
+	// Whatever way this run ends, its draft ends with it; a failure records
+	// no stage_ended for observe to clear it on.
+	defer func() {
+		c.live.clearDraft(id)
+		c.live.touch(id)
+	}()
+
 	st, ok := c.opts.Pack.Stage(stageID)
 	if !ok {
 		c.fail(bg, au, id, 0, fmt.Sprintf("unknown stage %q", stageID))
@@ -563,6 +570,8 @@ func (c *Controller) setState(ctx context.Context, id string, s State) {
 	}); err != nil {
 		c.opts.Logger.Error("blueprint: store the state row", "blueprint", id, "state", s, "error", err)
 	}
+
+	c.live.touch(id)
 }
 
 func (c *Controller) endRun(ctx context.Context, runID int64, status, reason string, usage store.RunUsage) {

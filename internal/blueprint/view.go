@@ -315,8 +315,6 @@ func signoffVersion(e store.Event) int {
 }
 
 // payloadInt reads a payload number, typed or JSON-decoded.
-//
-//nolint:unused // the live stream reads event payload numbers with it
 func payloadInt(v any) int {
 	switch n := v.(type) {
 	case int:

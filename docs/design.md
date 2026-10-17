@@ -788,6 +788,19 @@ frames on the session's chat stream.
   state and pull request, plus the playbook, compare links, manual checks
   and steps, and the total cost. The need as typed and reviewer verdicts
   are not artifacts here; verdicts travel in the view.
+- **Live stream.** `Subscribe` sends a snapshot of the view first. After
+  every controller event, state change and harness line it sends a fresh
+  snapshot, at most four a second. It sends an `artifact_stored` hint when
+  a stage's artifact, a sign-off or the board is stored or changes, and
+  each frame of the draft being written. Draft offsets count code points:
+  offset 0 replaces, an offset equal to what the client holds appends, and
+  any other is a gap the client drops until the next snapshot, which
+  carries the whole draft. A snapshot without a draft means none is in
+  progress: a stage run's start or end, a stored artifact and a restart end
+  it, and within a run a refused draft stays until the next attempt
+  replaces it. Each subscriber's queue is bounded. One that falls behind
+  loses its queued drafts and gets a snapshot next. Publishing never waits
+  for a subscriber.
 
 ## Deployment
 
