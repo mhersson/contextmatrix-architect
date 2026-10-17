@@ -26,6 +26,7 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/code"
 	"github.com/mhersson/contextmatrix-architect/internal/config"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
+	"github.com/mhersson/contextmatrix-architect/internal/research"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 	"github.com/mhersson/contextmatrix-architect/internal/webhook"
@@ -126,6 +127,8 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 		ConnectCM:      cmConnect(cfg.ContextMatrixURL),
 		CallerIdentity: cfg.CallerIdentity,
 		WatchInterval:  cfg.WatchInterval,
+		Search:         research.NewSearcher,
+		Fetch:          research.NewFetcher(),
 		Credentials: func(gitToken string) code.Credentials {
 			return code.NewCMCredentials(cfg.ContextMatrixURL, gitToken)
 		},

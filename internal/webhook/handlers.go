@@ -56,7 +56,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 
 	// Controller calls are several store steps (Start adds crash recovery);
 	// a client that hangs up must not cut one off midway.
-	err := s.ctl.Start(context.WithoutCancel(r.Context()), blueprint.StartInput{
+	in := blueprint.StartInput{
 		ID:                  p.SessionID,
 		Projects:            p.Architect.Projects,
 		Mode:                p.Architect.Mode,
@@ -66,7 +66,14 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		Price:               p.Architect.Price,
 		MCPAPIKey:           p.MCPAPIKey,
 		GitCredentialsToken: p.GitCredentialsToken,
-	})
+	}
+
+	// No research block is research off.
+	if rs := p.Architect.Research; rs != nil {
+		in.SearchProvider, in.SearchAPIKey = rs.Provider, rs.APIKey
+	}
+
+	err := s.ctl.Start(context.WithoutCancel(r.Context()), in)
 
 	switch {
 	case errors.Is(err, blueprint.ErrShuttingDown):

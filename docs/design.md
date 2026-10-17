@@ -65,7 +65,7 @@ Settled during design. Each has its reason so it is not re-litigated.
 | Not built on `contextmatrix-agent`; `backendkit` only for the CM-facing side | The agent is shaped for card work in a container, and nothing under its `internal/` is importable. backendkit's `webhookcore` and `logbridge` are the chat-backend protocol the architect speaks towards CM, so they are used for exactly that and nothing else. |
 | CM's chat panel is the only client                        | The architect implements CM's chat-backend protocol as a third backend kind, so CM's existing panel is where the need is stated, questions and gates are answered, and side operations (export, outcomes, lessons) are requested by reply. Same look and feel, session list, auth and browser for free. No UI, no CLI beyond `contextmatrix-architect serve` and the `config defaults` and `config validate` helpers contextmatrix-setup drives, no client API. |
 | One controller process                                    | `contextmatrix-architect serve` alone owns the store, the workspaces and the harness runs, and every session originates in CM. One record, one place code is checked out, no laptop copy of anything. |
-| Provisioned by CM, like the agent and chat backends      | Every blueprint is a CM session. The start payload delivers the LLM endpoint, the MCP key, the model and a git-credentials token. The architect's own config holds no secret but the backend HMAC key, and there is no CM-less mode. |
+| Provisioned by CM, like the agent and chat backends      | Every blueprint is a CM session. The start payload delivers the LLM endpoint, the MCP key, the model, a git-credentials token and, when research is on, the search provider and its key. The architect's own config holds no secret but the backend HMAC key, and there is no CM-less mode. |
 | Questions block inside the run; no persisted resume       | Nobody walks away from a blueprint for days. A blocking `ask_human` keeps one transcript, and the prompt cache warm when the reply comes within the provider's cache lifetime. A crash re-runs the open stage from stored artifacts, a builder round from the transcript it resumed. |
 | SQLite is the record; markdown is a rendering             | One store for artifacts, gates, transcripts, audit and cost. Committing per-stage markdown into code repos bloats them fast; an opt-in automatic export serves teams that review in pull requests. |
 | Everything is logged                                      | Every run's full transcript (less web search result lists) and an append-only event log. The append-only tables are never updated or deleted. The export is a complete audit record, less the web search result lists the next row keeps out. |
@@ -854,17 +854,21 @@ frames on the session's chat stream.
   `svc.sh`. It is configured in CM as a backend of kind `architect` with its
   URL and an HMAC key, exactly like the other two.
 - **Provisioned per session by CM.** The start payload carries the LLM
-  endpoint, the MCP key, the model and the git-credentials token. The
-  architect holds none of these in config or env, and refuses a start without
-  the endpoint, as the chat backend does.
+  endpoint, the MCP key, the model, the git-credentials token and, with
+  research on, the search provider and key (`ArchitectStart.Research`; none
+  means research is off). The architect holds none of these in config or
+  env, and refuses a start without the endpoint, as the chat backend does.
 - **Code.** The server checks out each target project's repo from the URL CM
   reports, into its own workspace cache, with credentials fetched per repo from
   CM. Nothing is checked out on a client.
 - **Container needs.** A Go binary image with ripgrep on the path (the
   harness grep and glob tools exec it), no Docker socket, a volume for the
   state directory (the image sets `XDG_STATE_HOME=/var/lib`, so the default
-  state directory is that volume), and outbound access to CM, the LLM endpoint
-  and the git host. Env: the CM base URL and the backend HMAC key.
+  state directory is that volume), and outbound access to CM, the LLM endpoint,
+  the git host and, with research on, the search provider and the public web;
+  `web_fetch` dials pages directly and never uses an egress proxy, since its
+  address check must see the page's own address. Env: the CM base URL and the
+  backend HMAC key.
 - **Host needs.** As a user service the same binary needs ripgrep on the
   service's PATH. `state_dir` defaults to the XDG state directory, which
   `svc.sh` whitelists and creates. `serve` logs a
@@ -948,6 +952,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | CM re-sends the start to an architect session after the architect restarts: on a 404 `not_found` for a message (then re-sends the message once), and when the log stream ends | slice 2 |
 | Panel: question and gate prompts (`LogEntry.Prompt`, protocol v0.24.0, with their own text, kind and recommended option from v0.25.0) rendered as buttons; the gate plan stays text, and lesson prompts reuse the same shape | slice 3 (lessons slice 4) |
 | Panel: the blueprint pane (scale bar, sheet, transcript markers), read through CM proxies of the architect's signed view and artifact endpoints, with its live stream relayed on the session's chat stream (protocol v0.26.0) | blueprint UI |
+| A research setting (`off` or `search`, off by default) with the search provider and its key in CM's configuration, sent as `ArchitectStart.Research` (protocol v0.27.0) | research |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

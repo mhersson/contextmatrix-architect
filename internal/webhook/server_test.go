@@ -306,6 +306,33 @@ func TestStart_HappyPath(t *testing.T) {
 	assert.InDelta(t, 3.0, in.Price.PromptUSDPerMTok, 1e-9)
 }
 
+func TestStart_CarriesTheResearchSettings(t *testing.T) {
+	ctl := &stubController{}
+	srv, _ := newTestServer(t, ctl)
+
+	payload := validStart()
+	payload.Architect.Research = &protocol.ResearchStart{Provider: "brave", APIKey: "brave-key"}
+
+	w := do(srv, signed(t, http.MethodPost, "/chat/start", payload, nextTS()))
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+
+	require.Len(t, ctl.starts, 1)
+	assert.Equal(t, "brave", ctl.starts[0].SearchProvider)
+	assert.Equal(t, "brave-key", ctl.starts[0].SearchAPIKey)
+
+	w = do(srv, signed(t, http.MethodPost, "/chat/start", func() protocol.ChatStartPayload {
+		p := validStart()
+		p.SessionID = "01HZZZZZZZZZZZZZZZZZZZZZZY"
+
+		return p
+	}(), nextTS()))
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+
+	require.Len(t, ctl.starts, 2)
+	assert.Empty(t, ctl.starts[1].SearchProvider, "no research block is research off")
+	assert.Empty(t, ctl.starts[1].SearchAPIKey)
+}
+
 func TestStart_Refusals(t *testing.T) {
 	cases := []struct {
 		name   string

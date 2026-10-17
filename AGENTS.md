@@ -13,9 +13,9 @@ specification and must stay true at HEAD.
 
 - Never runs cards, never writes code. Reads code through disposable
   read-only checkouts.
-- Holds no secret but the backend HMAC key. The LLM endpoint, MCP key and
-  git-credentials token arrive in every session start from CM and live in
-  memory only. There is no CM-less mode.
+- Holds no secret but the backend HMAC key. The LLM endpoint, MCP key,
+  git-credentials token and search key arrive in every session start from CM
+  and live in memory only. There is no CM-less mode.
 - Every action is logged: full transcripts (less web search result lists) and an append-only event log.
   The append-only tables (events, transcripts, artifacts, gates, emissions, questions) are never updated
   or deleted.
