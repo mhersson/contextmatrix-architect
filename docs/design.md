@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slices 0 and 1 are implemented, and slice 2 signs off ready cards, emits them and a playbook into CM and starts them in yolo mode, then reports their run; the dialog stages are design, and so is the export's commit to a repository (slice 4); the export writes the bundle under the state directory.
+Status: agreed design, 2026-10-15. Slices 0 and 1 are implemented, and slice 2 signs off ready cards, emits them and a playbook into CM and starts them in yolo mode, then reports their run. Slice 3's foundations are implemented: a responder policy per stage, gates after any gated stage, numbered and recorded questions, CM prompts, notes that reach later stages and assumptions with grounding's verdicts; its reviewer and responder runs and the slicing, solution design and acceptance stages are design, and so is the export's commit to a repository (slice 4); the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -706,8 +706,10 @@ Replies the server understands, besides answers to questions:
   is unpriced: a capped blueprint refuses it, an uncapped one counts the
   reported cost. A critique round re-bills the conversation so far; the
   ledger counts it.
-- Long intake dialogs rely on the harness's in-run compaction. Whether that is
-  enough is checked in slice 3.
+- Every stage run compacts in its window: once a prompt reaches 85% of a
+  128000-token window, the harness summarizes the older turns, keeps the
+  last six messages and goes on. A model with a smaller window fails on the
+  provider's error first.
 - State dir: `architect.db`, `exports/<blueprint>/<time>/`,
   `workspaces/mirrors/<repo>/` and
   `workspaces/trees/<blueprint>/<project>/`, with a project's secondary
