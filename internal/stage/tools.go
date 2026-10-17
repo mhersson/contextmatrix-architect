@@ -142,12 +142,12 @@ type submitArtifactTool struct {
 	validate func(context.Context, Artifact) error
 }
 
-func (submitArtifactTool) Name() string   { return "submit_artifact" }
+func (submitArtifactTool) Name() string   { return submitArtifactName }
 func (submitArtifactTool) Terminal() bool { return true }
 
 func (submitArtifactTool) Schema() llm.Tool {
 	return llm.Tool{Type: "function", Function: llm.ToolFunction{
-		Name:        "submit_artifact",
+		Name:        submitArtifactName,
 		Description: "Submit the stage's finished artifact. Ends the stage.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
