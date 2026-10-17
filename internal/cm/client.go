@@ -178,7 +178,9 @@ type Verify struct {
 
 // Project is the subset of a CM project the architect reads.
 type Project struct {
-	Name   string  `json:"name"`
+	Name string `json:"name"`
+	// Prefix starts the project's card ids, as in PREFIX-012.
+	Prefix string  `json:"prefix"`
 	Repo   string  `json:"repo"`
 	Repos  []Repo  `json:"repos"`
 	Verify *Verify `json:"verify"`

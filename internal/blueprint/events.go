@@ -40,6 +40,11 @@ const (
 	EventAwaitInput = "await_input"
 	// EventGrounded lists the sources a code stage checked out.
 	EventGrounded = "grounded"
+	// EventResearch is one web_search or web_fetch call: the query and the
+	// result count, or the URL with the page's final URL, title and source
+	// tag, or the guard rule that refused it, or the error. A search's
+	// result list is never in it.
+	EventResearch = "research"
 	// EventSetupGaps lists, when the first stage with the code tools ends,
 	// what each target project lacks for an agent run: a verify command, an
 	// instruction file, any commit. None of it blocks; decomposition plans
