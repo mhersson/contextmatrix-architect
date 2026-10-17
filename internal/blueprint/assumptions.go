@@ -47,7 +47,8 @@ type verdict struct {
 // stored after the latest artifact of every stating stage up to the
 // assumption's own: ids are positional, so an older verdict would judge
 // whatever sentence holds the id now. Every auto answer follows as Q<n>,
-// verified when the responder grounded it.
+// verified when the responder grounded it and its answer event
+// carries evidence a tool call of its run returned.
 func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, error) {
 	all, err := c.opts.Store.ListArtifacts(ctx, id)
 	if err != nil {
@@ -89,18 +90,23 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 		return nil, fmt.Errorf("blueprint: assumptions: %w", err)
 	}
 
+	evidence, err := answerEvidence(ctx, c.opts.Store, id)
+	if err != nil {
+		return nil, err
+	}
+
 	for _, q := range questions {
 		if !q.Assumption {
 			continue
 		}
 
-		status := assumptionUnverified
-		if q.Grounded {
-			status = assumptionVerified
+		status, proof := assumptionUnverified, ""
+		if ev := evidence[q.Number]; q.Grounded && ev != "" {
+			status, proof = assumptionVerified, ev
 		}
 
 		out = append(out, assumption{
-			ID: q.Tag(), Stage: q.Stage, Status: status,
+			ID: q.Tag(), Stage: q.Stage, Status: status, Evidence: proof,
 			Text: fmt.Sprintf("%s The responder answered: %s", q.Text, q.Answer),
 		})
 		// A Q<n> id is stable, so any verdict applies to it.

@@ -193,7 +193,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price as CM sent it                                        |
 | stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status, model, started, ended, cost, token buckets |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, findings, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
-| questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag, the answering message, answered at; written once, at the answer |
+| questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once, at the answer |
 | gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted                                                                     |
 | events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning |
@@ -496,11 +496,15 @@ for design questions) and `stages/responder.md`. It gets the need, the
 asking stage's inputs, the gate feedback the asking attempt addresses, the
 user's notes, every answer so far and that stage's read tools, never the
 asker's transcript, so the asker cannot answer itself conveniently. It
-returns the answer, its reasoning and whether it is grounded. When it cannot
-ground the answer it still decides, and the answer is recorded as an
-`unverified` assumption keyed by its question number (`Q<n>`; a grounded
-answer reads `verified`). The sign-off lists every assumption, unverified
-first; the export and the playbook description list every assumption, so
+returns the answer, its reasoning, whether it is grounded and its evidence.
+The answer reads verified only when it is grounded and its evidence cites a
+source tag that a tool call of that same run returned (tags in the task, the
+inputs or its own prose do not count); the checked result is what is
+recorded. When it cannot ground the answer it still decides, and the answer
+is recorded as an `unverified` assumption keyed by its question number
+(`Q<n>`; a verified answer reads `verified`, with the evidence kept in the
+`answer` event, so a row stored without it reads `unverified`). The sign-off lists every
+assumption, unverified first; the export and the playbook description list every assumption, so
 whoever reviews the result sees which decisions the AI made. A responder
 that fails, and a pack without `stages/responder.md`, leave the question to
 the stage, which decides and records an assumption where it can. On a priced
