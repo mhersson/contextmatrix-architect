@@ -115,7 +115,7 @@ func (a *asker) respond(ctx context.Context, q stage.Question, number int) (stri
 		c.opts.Logger.Error("blueprint: record the auto answer", "blueprint", a.bp.ID, "question", number, "error", err)
 	}
 
-	return ans.Answer, nil
+	return fmt.Sprintf("Q%d: %s", number, ans.Answer), nil
 }
 
 // responderTask is what a responder is given: the target projects, the

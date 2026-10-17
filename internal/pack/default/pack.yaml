@@ -1,31 +1,37 @@
 name: default
-version: "0.6"
+version: "0.7"
 stages:
   - id: intake
     persona: product_owner
     produces: need
+    checks: [assumptions]
     policy: human
     max_questions: 3
-    checks: [assumptions]
-  - id: design
-    source: human
+  - id: solution_design
+    persona: system_designer
     produces: design
     consumes: [intake]
+    tools: [code]
+    checks: [assumptions, decisions]
+    policy: human
+    gate: true
+    max_questions: 5
+    reviewer: {persona: senior_developer, threshold: 4}
   - id: grounding
     persona: senior_developer
     produces: grounding
-    consumes: [intake, design]
+    consumes: [intake, solution_design]
     tools: [code, cm]
   - id: decomposition
     persona: senior_developer
     produces: cards
-    consumes: [intake, design, grounding]
+    consumes: [intake, solution_design, grounding]
     tools: [code]
     checks: [cards]
   - id: readiness
     persona: reviewer
     produces: readiness
-    consumes: [intake, design, grounding, decomposition]
+    consumes: [intake, solution_design, grounding, decomposition]
     tools: [code, cm]
     loops_to: decomposition
     max_rounds: 3

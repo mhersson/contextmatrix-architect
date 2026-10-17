@@ -6,10 +6,10 @@ chat panel is its client. See `docs/design.md`.
 
 ## What it does today
 
-A blueprint session runs intake on the first message, the need, and stores
-the next message as the design. Grounding, decomposition and readiness then
-run in turn over read-only checkouts of the target projects' repositories.
-Every decomposition submit is checked against the card contract inside the
+A blueprint session runs intake on the first message, the need. Solution
+design then asks its questions and waits at its gate, and grounding,
+decomposition and readiness run in turn over read-only checkouts of the
+target projects' repositories. Every decomposition submit is checked against the card contract inside the
 run, and readiness sends cards that are not ready back to decomposition for up
 to three rounds. The session then reports whether the cards are ready. Ready
 cards go to sign-off: reply approve to create them in ContextMatrix, with a

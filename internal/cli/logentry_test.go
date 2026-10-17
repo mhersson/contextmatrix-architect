@@ -65,9 +65,8 @@ func TestLogEntryFor(t *testing.T) {
 		{"CM ended the session itself", blueprint.Event{Kind: blueprint.EventEnded, BlueprintID: "S1"}, "", nil, true},
 		{"the watch's state is internal", blueprint.Event{Kind: blueprint.EventWatchState, BlueprintID: "S1", Payload: map[string]any{"cards": []any{}}}, "", nil, true},
 		{"reopened", blueprint.Event{Kind: blueprint.EventReopened, BlueprintID: "S1", Payload: map[string]any{"state": "idle"}}, "system", []string{"idle"}, false},
-		{"design awaited", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "design", "prompt": "Paste the design."}}, "text", []string{"Paste the design."}, false},
-		{"awaited without a prompt", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "design", "prompt": ""}}, "text", []string{"design"}, false},
-		{"pasted design", blueprint.Event{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{"stage": "design", "body": "the long design", "source": "human", "version": 1}}, "system", []string{"design"}, false},
+		{"a stopped emission awaited", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "signoff", "prompt": "Emission is stopped; reply approve to resume it."}}, "text", []string{"reply approve to resume it"}, false},
+		{"awaited without a prompt", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "signoff", "prompt": ""}}, "text", []string{"signoff"}, false},
 		{"note that re-runs a stage", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "go on", "retries": "grounding"}}, "system", []string{"grounding"}, false},
 		{"grounded", blueprint.Event{Kind: blueprint.EventGrounded, BlueprintID: "S1", Payload: map[string]any{"stage": "grounding", "sources": []any{
 			map[string]any{"tag": "S1", "project": "alpha", "identity": "https://example.com/alpha.git", "sha": "0123456789abcdef0123"},
@@ -155,6 +154,11 @@ func TestLogEntryFor(t *testing.T) {
 			"stage": "shape", "version": 7, "actions": []any{},
 			"review": map[string]any{"score": 2, "threshold": 4, "findings": []any{"split it"}, "round": 3, "passed": false},
 		}}, "text", []string{"2", "- split it\n\n"}, false},
+		{"a gate whose checks accepted problems", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "solution_design", "version": 1, "actions": []any{},
+			"review":   map[string]any{"score": 4, "threshold": 4, "findings": []any{"name the owner"}, "round": 1, "passed": true},
+			"problems": []any{"Q1: unused_answer: the question was answered, but no decision rests on it"},
+		}}, "text", []string{"- name the owner\n\n", "- Q1: unused_answer: the question was answered, but no decision rests on it\n\n"}, false},
 		{"a note that runs a review again", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{
 			"text": "go on", "retries": "shape", "critique": true,
 		}}, "system", []string{"shape"}, false},
@@ -189,14 +193,6 @@ func TestLogEntryFor_RefusedNeedShowsOnlyTheMessage(t *testing.T) {
 	}})
 	require.True(t, ok)
 	assert.Equal(t, "cost cap 1.00 USD would be breached (spent 1.00)", entry.Content, "the need stays in the audit log, not the panel")
-}
-
-func TestLogEntryFor_PastedDesignIsNotEchoed(t *testing.T) {
-	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{
-		"stage": "design", "body": "the long design", "source": "human", "version": 1,
-	}})
-	require.True(t, ok)
-	assert.NotContains(t, entry.Content, "the long design", "CM already shows the message the design came from")
 }
 
 func TestLogEntryFor_ANoteAtAnEndedPipelineIsToldApart(t *testing.T) {

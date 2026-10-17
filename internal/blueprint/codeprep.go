@@ -183,10 +183,11 @@ func contractView(ctx context.Context, projects []cm.Project, targets []string, 
 // prepareCode makes sure every target project's repositories are checked
 // out for the blueprint and recorded as sources. A tree checked out by an
 // earlier stage is reused at its recorded sha, so later stages and a
-// restarted process read what grounding read; a missing one is checked out
-// again and recorded as a new source version when its sha moved. Sources
-// added here are announced to the panel. Sources are keyed on the clean url,
-// so a credential in a project's url never reaches the record.
+// restarted process read the commit the checkout recorded; a missing one is
+// checked out again and recorded as a new source version when its sha
+// moved. Sources added here are announced to the panel. Sources are keyed
+// on the clean url, so a credential in a project's url never reaches the
+// record.
 func (c *Controller) prepareCode(ctx context.Context, sess *session, bp store.Blueprint, stageID string) (*codeFacts, error) {
 	if c.opts.Workspace == nil || c.opts.Projects == nil {
 		return nil, errNoCodeSupport

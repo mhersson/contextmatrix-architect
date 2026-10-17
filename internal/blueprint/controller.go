@@ -99,7 +99,7 @@ type Workspace interface {
 	Checkout(ctx context.Context, blueprintID, name, repoURL string, creds code.Credentials) (code.Checkout, error)
 	TreeRoot(blueprintID string) string
 	// RemoteHead reads a repository's default branch and its sha without
-	// fetching; preflight compares it with what grounding recorded.
+	// fetching; preflight compares it with the sha the checkout recorded.
 	RemoteHead(ctx context.Context, repoURL string, creds code.Credentials) (string, string, error)
 	// Remove deletes a blueprint's trees; emission calls it once the cards exist.
 	Remove(ctx context.Context, blueprintID string) error
@@ -248,17 +248,16 @@ func effectivePrice(p *protocol.ModelPrice) *protocol.ModelPrice {
 	return p
 }
 
-// Start attaches a session to the blueprint with in.ID, creating it on first
-// sight. A stage left running by a crash is marked interrupted and re-run, a
-// stage whose inputs were stored but which never started runs, and a
-// human-sourced stage that waits shows its prompt again. An open gate is
-// shown again, or, never shown, opened under the policy now in effect once
-// its pending review or builder round has run. At a ready end an open
-// sign-off is shown again or, never shown, runs; an emission a restart cut
-// short resumes, a stopped one is reminded of approve, and an emitted
-// blueprint's watch restarts. A reopen that finds the ended session's run
-// still finishing waits for it to leave the slot first. Start on a session
-// already attached does nothing.
+// Start attaches a session to the blueprint with in.ID, creating it on
+// first sight. A stage left running by a crash is marked interrupted and
+// re-run, and a stage whose inputs were stored but which never started
+// runs. An open gate is shown again, or, never shown, opened under the
+// policy now in effect once its pending review or builder round has run. At
+// a ready end an open sign-off is shown again or, never shown, runs; an
+// emission a restart cut short resumes, a stopped one is reminded of
+// approve, and an emitted blueprint's watch restarts. A reopen that finds
+// the ended session's run still finishing waits for it to leave the slot
+// first. Start on a session already attached does nothing.
 func (c *Controller) Start(ctx context.Context, in StartInput) error {
 	in.Price = effectivePrice(in.Price)
 
@@ -342,13 +341,7 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 		return nil
 	}
 
-	// The prompt is shown again: the panel lost it with the ended session,
-	// and the next message becomes the stage's artifact.
-	if next.human {
-		c.await(ctx, sess.audit, bp.ID, next.stage)
-	}
-
-	if next.stage == "" || next.human {
+	if next.stage == "" {
 		c.release(in.ID, r)
 
 		return nil
@@ -461,8 +454,7 @@ func (c *Controller) leftRunning(ctx context.Context, id string) ([]store.Run, e
 }
 
 // Message handles one user message: the answer to an open question, the
-// need while the first stage has no artifact, the artifact of a
-// human-sourced stage that waits for it, the sign-off decision (approve or
+// need while the first stage has no artifact, the sign-off decision (approve or
 // reject <feedback>) at a ready end, or a note. The abort and export
 // commands are parsed by the webhook and reach Abort and Export instead.
 func (c *Controller) Message(ctx context.Context, id, text, msgID string) error {

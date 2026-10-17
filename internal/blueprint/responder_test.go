@@ -53,7 +53,7 @@ func TestResponder_AnswersAnAutoQuestionAsAnAssumption(t *testing.T) {
 
 	need, err := st.LatestArtifact(ctx, "BP1", "intake")
 	require.NoError(t, err)
-	assert.Equal(t, "# Need\n\nhelm", need.Body, "the stage goes on with the answer")
+	assert.Equal(t, "# Need\n\nQ1: helm", need.Body, "the stage goes on with the answer")
 
 	responders := inputsOf(runner, "intake.responder")
 	require.Len(t, responders, 1)

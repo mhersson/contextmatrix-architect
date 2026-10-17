@@ -390,7 +390,8 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 
 // reviewTask is what a reviewer judges: the stage's inputs, the questions
 // it got answered, the assumptions, the gate feedback the attempt addresses,
-// the artifact, the user's notes and the score that passes.
+// the artifact, whose data holds any problems it was accepted with, the
+// user's notes and the score that passes.
 func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pack.Stage, art store.Artifact, attempt int) (string, error) {
 	var b strings.Builder
 

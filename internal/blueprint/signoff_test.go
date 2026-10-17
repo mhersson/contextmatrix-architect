@@ -153,8 +153,6 @@ func TestSignoff_ANoteWhileTheSignoffHoldsTheSlotRecordsTheSignoff(t *testing.T)
 			in.Mode = tt.mode
 			require.NoError(t, c.Start(ctx, in))
 			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-			c.Wait("BP1")
-			require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
 
 			if tt.approve {
 				c.Wait("BP1")
@@ -171,25 +169,6 @@ func TestSignoff_ANoteWhileTheSignoffHoldsTheSlotRecordsTheSignoff(t *testing.T)
 			assert.Equal(t, signoffStage, note.Payload["stage"])
 		})
 	}
-}
-
-func TestSignoff_ApproveIsTheDesignWhileTheDesignStageWaits(t *testing.T) {
-	c, st, _, _, _ := newPipeline(t, happyScript())
-	ctx := context.Background()
-
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	c.Wait("BP1")
-	require.NoError(t, c.Message(ctx, "BP1", "approve", "m2"))
-	c.Wait("BP1")
-
-	design, err := st.LatestArtifact(ctx, "BP1", "design")
-	require.NoError(t, err)
-	assert.Equal(t, "approve", design.Body)
-
-	gates, err := st.ListGates(ctx, "BP1", signoffStage)
-	require.NoError(t, err)
-	assert.Empty(t, gates)
 }
 
 func TestSignoff_AutoEmitApprovesWhenPreflightIsClean(t *testing.T) {
@@ -319,7 +298,7 @@ func TestSignoff_ApproveAnswersAPendingQuestion(t *testing.T) {
 
 	art, err := st.LatestArtifact(ctx, "BP1", "intake")
 	require.NoError(t, err)
-	assert.Equal(t, "# Need\n\napprove", art.Body)
+	assert.Equal(t, "# Need\n\nQ1: approve", art.Body)
 
 	gates, err := st.ListGates(ctx, "BP1", signoffStage)
 	require.NoError(t, err)
@@ -409,8 +388,6 @@ func TestSignoff_AnAbortBeforeThePreflightStillShowsTheSignOff(t *testing.T) {
 
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	c.Wait("BP1")
-	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
 	receive(t, entered, "the preflight")
 
 	require.NoError(t, c.Abort(ctx, "BP1", "m-abort"))
@@ -466,8 +443,6 @@ func TestSignoff_AnAbortDuringACleanPreflightDoesNotApprove(t *testing.T) {
 
 	require.NoError(t, c.Start(ctx, in))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	c.Wait("BP1")
-	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
 	receive(t, slow.entered, "the preflight")
 
 	require.NoError(t, c.Abort(ctx, "BP1", "m-abort"))
@@ -918,8 +893,6 @@ func TestReopen_AYoloRunStartARestartPreventedHappensOnce(t *testing.T) {
 
 	require.NoError(t, c.Start(ctx, in))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	c.Wait("BP1")
-	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
 	receive(t, hold.entered, "the held card")
 	// Shutdown waits for the card, then stops before the run start.
 	shutdownHeld(t, c, hold)
@@ -979,8 +952,6 @@ func TestReopen_ARunStartShutdownWaitedForIsRecordedOnce(t *testing.T) {
 
 			require.NoError(t, c.Start(ctx, in))
 			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-			c.Wait("BP1")
-			require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
 			receive(t, hold.entered, "the held run start")
 			shutdownHeld(t, c, hold)
 

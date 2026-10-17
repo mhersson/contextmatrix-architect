@@ -69,7 +69,7 @@ func TestReshow_ExportDuringAQuestionShowsItAgain(t *testing.T) {
 	assert.Equal(t, string(StateWaiting), stateOf(t, st, "BP1"), "the question still waits")
 
 	require.NoError(t, c.Message(ctx, "BP1", "helm", "m3"))
-	assert.Equal(t, "helm", answerOf(t, answered), "the next message is still the answer")
+	assert.Equal(t, "Q1: helm", answerOf(t, answered), "the next message is still the answer")
 	c.Wait("BP1")
 }
 
@@ -93,7 +93,7 @@ func TestReshow_AGateReplyDuringAQuestionShowsItAgain(t *testing.T) {
 	assert.Equal(t, string(StateWaiting), stateOf(t, st, "BP1"), "the question still waits")
 
 	require.NoError(t, c.Message(ctx, "BP1", "helm", "m3"))
-	assert.Equal(t, "helm", answerOf(t, answered), "the next message is still the answer")
+	assert.Equal(t, "Q1: helm", answerOf(t, answered), "the next message is still the answer")
 	c.Wait("BP1")
 }
 

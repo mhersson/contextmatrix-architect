@@ -45,7 +45,7 @@ func (askHumanTool) Schema() llm.Tool {
 	return llm.Tool{Type: "function", Function: llm.ToolFunction{
 		Name: "ask_human",
 		Description: "Ask the person driving this blueprint one question you cannot decide yourself. " +
-			"Blocks until they answer. Offer options when there are natural ones.",
+			"Blocks until they answer; the result starts with the question's number (Q<n>), which is how to cite the answer. Offer options when there are natural ones.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {

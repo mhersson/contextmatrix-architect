@@ -85,7 +85,7 @@ func (c *Controller) launchStep(ctx context.Context, r *run, sess *session, bp s
 					c.postGatePlan(context.WithoutCancel(ctx), sess, bp)
 				}
 
-				if stageID == c.groundingStage() {
+				if stageID == c.checkoutStage() {
 					c.reportSetup(ctx, sess, bp)
 				}
 			}
@@ -168,7 +168,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	// The input is built inside the run: a failed checkout is a failed run
 	// the next message retries, and abort, End and Shutdown cancel a fetch.
-	in, checked, closeTools, err := c.stageInput(ctx, sess, bp, st)
+	in, checks, closeTools, err := c.stageInput(ctx, sess, bp, st)
 	if err != nil {
 		switch {
 		case c.shuttingDown(r):
@@ -247,8 +247,8 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		// both keys are the controller's, whatever the model put there.
 		var findings []string
 
-		if checked != nil {
-			findings = checked.last()
+		if checks.cards != nil {
+			findings = checks.cards.last()
 
 			data := maps.Clone(out.Artifact.Data)
 			if data == nil {
@@ -259,6 +259,10 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			data["findings"] = findings
 			out.Artifact.Data = data
 		}
+
+		// The problems an accepted third failing submit still has stay with
+		// it, for its gate and its reviewer.
+		out.Artifact.Data = keepProblems(out.Artifact.Data, checks.unresolved())
 
 		// A submitted artifact is kept even when a cancel raced it.
 		version, err := au.artifact(bg, id, stageID, out.Artifact.Body, out.Artifact.Data)
@@ -326,15 +330,15 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 // stageInput builds what a run of st is given besides its model and limits:
 // the persona, the instructions, the task from the artifacts it consumes,
 // the code tools over the blueprint's checkouts, the CM read tools, and the
-// card contract on submit with the card template. The validator state is
-// nil unless the stage checks cards. The closer ends the run's CM session;
-// it is a no-op without cm tools and never nil when err is nil.
-func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blueprint, st pack.Stage) (stage.Input, *validatorState, func(), error) {
+// card contract on submit with the card template, and the states of its
+// checks. The closer ends the run's CM session; it is a no-op without cm
+// tools and never nil when err is nil.
+func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blueprint, st pack.Stage) (stage.Input, stageChecks, func(), error) {
 	noop := func() {}
 
 	task, err := c.taskFor(context.WithoutCancel(ctx), bp, st)
 	if err != nil {
-		return stage.Input{}, nil, nil, err
+		return stage.Input{}, stageChecks{}, nil, err
 	}
 
 	in := stage.Input{
@@ -346,13 +350,13 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	// the stage without a fetch.
 	useCM := slices.Contains(st.Tools, pack.ToolCM)
 	if useCM && c.opts.CMTools == nil {
-		return stage.Input{}, nil, nil, errNoCMSupport
+		return stage.Input{}, stageChecks{}, nil, errNoCMSupport
 	}
 
 	if slices.Contains(st.Tools, pack.ToolCode) {
 		facts, err := c.prepareCode(ctx, sess, bp, st.ID)
 		if err != nil {
-			return stage.Input{}, nil, nil, err
+			return stage.Input{}, stageChecks{}, nil, err
 		}
 
 		in.Tools = stage.CodeTools(facts.root, facts.repos)
@@ -364,12 +368,12 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	if useCM {
 		src, err := c.cmSource(context.WithoutCancel(ctx), bp, st.ID)
 		if err != nil {
-			return stage.Input{}, nil, nil, err
+			return stage.Input{}, stageChecks{}, nil, err
 		}
 
 		cmTools, closer, err := c.opts.CMTools(ctx, sess.mcpKey, src.Tag())
 		if err != nil {
-			return stage.Input{}, nil, nil, fmt.Errorf("blueprint: open the ContextMatrix tools: %w", err)
+			return stage.Input{}, stageChecks{}, nil, fmt.Errorf("blueprint: open the ContextMatrix tools: %w", err)
 		}
 
 		if closer != nil {
@@ -381,25 +385,34 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	}
 
 	var (
-		checked    *validatorState
+		checks     stageChecks
 		validators []func(context.Context, stage.Artifact) error
 	)
 
+	bounded := func(v func(context.Context, stage.Artifact) error, s *validatorState) {
+		validators = append(validators, v)
+		checks.bounded = append(checks.bounded, s)
+	}
+
 	if slices.Contains(st.Checks, pack.CheckAssumptions) {
-		validators = append(validators, c.assumptionsValidator())
+		bounded(c.assumptionsValidator())
+	}
+
+	if slices.Contains(st.Checks, pack.CheckDecisions) {
+		bounded(c.decisionsValidator(bp, st.ID))
 	}
 
 	if slices.Contains(st.Checks, pack.CheckCards) {
 		var cards func(context.Context, stage.Artifact) error
 
-		cards, checked = c.cardsValidator(sess, bp)
+		cards, checks.cards = c.cardsValidator(sess, bp)
 		validators = append(validators, cards)
 		in.Instructions += "\n\n# Card template\n\n" + c.opts.Pack.CardTemplate()
 	}
 
 	in.Validate = allOf(validators)
 
-	return in, checked, closeCM, nil
+	return in, checks, closeCM, nil
 }
 
 // allOf runs every validator on every submit and joins their refusals, nil
@@ -615,7 +628,7 @@ func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
 		a.c.setState(bg, a.bp.ID, StateRunning)
 		a.record(bg, q, number, ans)
 
-		return ans.text, nil
+		return fmt.Sprintf("Q%d: %s", number, ans.text), nil
 	case <-ctx.Done():
 		a.c.mu.Lock()
 

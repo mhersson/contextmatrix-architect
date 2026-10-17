@@ -20,14 +20,13 @@ import (
 // run gets: the last is accepted with its findings and stops the pipeline.
 const maxContractRounds = 3
 
-// outcome is what follows a stage: a model stage to run, a human-sourced
-// stage to await, the open gate of the stage that completed (gate, with
-// stage and art the artifact that waits), or the pipeline's end with the
-// artifact it ended on. critique marks a gate whose artifact still needs its
-// reviewer, or a builder round after a low verdict.
+// outcome is what follows a stage: a model stage to run, the open gate of
+// the stage that completed (gate, with stage and art the artifact that
+// waits), or the pipeline's end with the artifact it ended on. critique
+// marks a gate whose artifact still needs its reviewer, or a builder round
+// after a low verdict.
 type outcome struct {
 	stage    string
-	human    bool
 	gate     bool
 	critique bool
 	end      bool
@@ -39,8 +38,7 @@ type outcome struct {
 // after decides what follows completed from the stored artifacts; an empty
 // completed means no stage has completed yet. A loop stage's verdict ends
 // the pipeline or re-runs its target, cards accepted with findings end it,
-// and otherwise the next stage in pack order follows. A human-sourced stage
-// is written once, so one that already holds its artifact is passed.
+// and otherwise the next stage in pack order follows.
 func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed string) (outcome, error) {
 	from := 0
 
@@ -114,23 +112,8 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 		last = art
 	}
 
-	for _, st := range c.opts.Pack.Stages[from:] {
-		if st.Source != pack.SourceHuman {
-			return outcome{stage: st.ID}, nil
-		}
-
-		_, err := c.opts.Store.LatestArtifact(ctx, bp.ID, st.ID)
-
-		switch {
-		case errors.Is(err, store.ErrNotFound):
-			return outcome{stage: st.ID, human: true}, nil
-		case err != nil:
-			return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
-		}
-	}
-
-	if completed == "" {
-		return outcome{}, nil
+	if from < len(c.opts.Pack.Stages) {
+		return outcome{stage: c.opts.Pack.Stages[from].ID}, nil
 	}
 
 	return outcome{end: true, ready: true, art: last}, nil
@@ -156,7 +139,7 @@ func (c *Controller) position(ctx context.Context, bp store.Blueprint) (outcome,
 	}
 
 	out, err := c.after(ctx, bp, completed)
-	if err != nil || out.stage == "" || out.human || (out.gate && !out.critique) {
+	if err != nil || out.stage == "" || (out.gate && !out.critique) {
 		return out, store.Run{}, err
 	}
 
@@ -185,15 +168,15 @@ func rerunsOnReopen(r store.Run) bool {
 
 // resumePoint decides what a reopened blueprint does: re-run a stage a
 // crash left running, run a model stage whose inputs exist but which never
-// started (a crash between storing one artifact and starting the next run),
-// or await a human-sourced stage, returned with human set. A failed or
-// aborted stage waits for the user's next message and an ended pipeline for
-// a new blueprint. A stage the session's end cut short runs again. An open
-// gate is returned for the gate to resume, and so is one whose artifact
-// still needs its critique, unless its latest review or builder round failed
-// or was aborted. A ready end is returned for the sign-off, emission or
-// watch to resume. A position the record does not yield is reported, not
-// returned: the session still attaches. The caller holds the run slot.
+// started (a crash between storing one artifact and starting the next run).
+// A failed or aborted stage waits for the user's next message and an ended
+// pipeline for a new blueprint. A stage the session's end cut short runs
+// again. An open gate is returned for the gate to resume, and so is one
+// whose artifact still needs its critique, unless its latest review or
+// builder round failed or was aborted. A ready end is returned for the
+// sign-off, emission or watch to resume. A position the record does not
+// yield is reported, not returned: the session still attaches. The caller
+// holds the run slot.
 func (c *Controller) resumePoint(ctx context.Context, au audit, bp store.Blueprint) (outcome, error) {
 	interrupted, err := c.interruptedStage(ctx, bp)
 	if err != nil || interrupted != "" {
@@ -213,8 +196,6 @@ func (c *Controller) resumePoint(ctx context.Context, au audit, bp store.Bluepri
 		c.unreadable(ctx, au, bp.ID, err)
 
 		return outcome{}, nil
-	case out.human:
-		return out, nil
 	case out.gate && !out.critique:
 		return out, nil
 	case out.end && out.ready && c.cardsStage() != "":
@@ -255,19 +236,9 @@ func (c *Controller) unreadable(ctx context.Context, au audit, id string, err er
 	}})
 }
 
-// await marks the blueprint waiting for a human-sourced stage and shows the
-// stage's prompt.
-func (c *Controller) await(ctx context.Context, au audit, id, stageID string) {
-	c.setState(ctx, id, StateWaiting)
-	au.event(ctx, Event{Kind: EventAwaitInput, BlueprintID: id, Payload: map[string]any{
-		"stage": stageID, "prompt": c.opts.Pack.Instructions(stageID),
-	}})
-}
-
 // input handles a message that arrives while no run is in flight: the need
-// while the first stage has no artifact, the artifact of a human-sourced
-// stage that waits for it, the sign-off decision at a ready end, else a
-// note. The caller holds the run slot.
+// while the first stage has no artifact, a decision at an open gate or the
+// sign-off, else a note. The caller holds the run slot.
 func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, id, text, msgID string) error {
 	bp, err := c.opts.Store.GetBlueprint(ctx, id)
 	if err != nil {
@@ -295,10 +266,6 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 		c.release(id, r)
 
 		return nil
-	}
-
-	if out.human {
-		return c.paste(ctx, runCtx, r, sess, bp, out.stage, text, msgID)
 	}
 
 	if out.gate && out.critique {
@@ -372,31 +339,12 @@ func (c *Controller) need(ctx, runCtx context.Context, r *run, sess *session, bp
 	return nil
 }
 
-// paste stores the message as the artifact of the waiting human-sourced
-// stage, then runs or awaits what follows it.
-func (c *Controller) paste(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, stageID, text, msgID string) error {
-	version, err := sess.audit.artifact(ctx, bp.ID, stageID, text, nil)
-	if err != nil {
-		c.release(bp.ID, r)
-
-		return err
-	}
-
-	sess.audit.event(ctx, Event{Kind: EventArtifact, BlueprintID: bp.ID, Payload: map[string]any{
-		"stage": stageID, "version": version, "body": text, "source": pack.SourceHuman, "message_id": msgID,
-	}})
-
-	c.proceed(ctx, runCtx, r, sess, bp, stageID)
-
-	return nil
-}
-
-// advance acts on what follows completed: it awaits a human-sourced stage,
-// reports an end, and returns the stage to run next, or the ready end the
-// caller hands to the sign-off when the pack has a stage that checks cards.
-// A gate whose artifact still needs its critique is returned with critique
-// set; any other gate is opened: shown, or decided under the auto policy and
-// passed. A failure to decide fails the blueprint.
+// advance acts on what follows completed: it reports an end, and returns
+// the stage to run next, or the ready end the caller hands to the sign-off
+// when the pack has a stage that checks cards. A gate whose artifact still
+// needs its critique is returned with critique set; any other gate is
+// opened: shown, or decided under the auto policy and passed. A failure to
+// decide fails the blueprint.
 func (c *Controller) advance(ctx context.Context, sess *session, bp store.Blueprint, completed string) (string, outcome) {
 	out, err := c.after(ctx, bp, completed)
 	if err != nil {
@@ -412,10 +360,6 @@ func (c *Controller) advance(ctx context.Context, sess *session, bp store.Bluepr
 		if out.ready && c.cardsStage() != "" {
 			return "", out
 		}
-
-		return "", outcome{}
-	case out.human:
-		c.await(ctx, sess.audit, bp.ID, out.stage)
 
 		return "", outcome{}
 	case out.gate && out.critique:
@@ -781,8 +725,8 @@ func writeArtifact(b *strings.Builder, heading string, art store.Artifact) {
 	fmt.Fprintf(b, "Data:\n\n```json\n%s\n```\n\n", data.String())
 }
 
-// validatorState is what decomposition's validator saw on the latest
-// submit: the round and the problems of the cards it accepted or refused.
+// validatorState is what a submit check saw on the latest submit: the round
+// and the problems of what it accepted or refused.
 type validatorState struct {
 	mu       sync.Mutex
 	rounds   int

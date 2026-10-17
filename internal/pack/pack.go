@@ -23,16 +23,17 @@ import (
 //go:embed default
 var defaultFS embed.FS
 
-// Stage sources, tools and checks a pack.yaml may name.
+// Tool groups and checks a pack.yaml may name.
 const (
-	SourceModel = "model"
-	SourceHuman = "human"
-	ToolCode    = "code"
+	ToolCode = "code"
 	// ToolCM is the read-only ContextMatrix tool group.
 	ToolCM     = "cm"
 	CheckCards = "cards"
 	// CheckAssumptions checks a submit's assumptions: standalone sentences.
 	CheckAssumptions = "assumptions"
+	// CheckDecisions checks a design's decisions: each made, with a
+	// rejected option and a basis, and every answer used.
+	CheckDecisions = "decisions"
 )
 
 // Responder policies: who answers a stage's questions and decides its gate.
@@ -64,8 +65,8 @@ type Reviewer struct {
 	Threshold int    `yaml:"threshold"`
 }
 
-// Stage is one unit of work in the pipeline: a model run, or an artifact a
-// human pastes.
+// Stage is one unit of work in the pipeline: one model run, and the gate
+// after it when it has one.
 type Stage struct {
 	ID       string `yaml:"id"`
 	Persona  string `yaml:"persona"`
@@ -82,9 +83,6 @@ type Stage struct {
 	// MaxQuestions caps the questions one attempt of the stage may ask, its
 	// builder rounds included; 0 is no cap.
 	MaxQuestions int `yaml:"max_questions"`
-	// Source is "model" (default) or "human": a human-sourced stage waits
-	// for the user's next message and stores it as the artifact.
-	Source string `yaml:"source"`
 	// Consumes lists earlier stages whose latest artifacts are this stage's
 	// input, in the order they are presented.
 	Consumes []string `yaml:"consumes"`
@@ -164,39 +162,15 @@ func load(fsys fs.FS) (*Pack, error) {
 	for i := range m.Stages {
 		s := &m.Stages[i]
 
-		if s.Source == "" {
-			s.Source = SourceModel
-		}
-
 		if err := validateStage(*s, seen); err != nil {
 			return nil, err
 		}
 
-		// The controller launches the first stage on the need and runs every
-		// other stage through the model unless its source is human, so a
-		// human-sourced first stage would be run as a model stage.
-		if i == 0 && s.Source == SourceHuman {
-			return nil, fmt.Errorf("pack: stage %q: the first stage cannot be human-sourced", s.ID)
-		}
-
-		if s.Source == SourceModel && s.Policy == "" {
+		if s.Policy == "" {
 			s.Policy = PolicyAuto
 		}
 
 		seen[s.ID] = *s
-
-		if s.Source == SourceHuman {
-			// A human-sourced stage has no persona; its instructions file,
-			// when present, is the prompt the panel shows while waiting.
-			text, err := fs.ReadFile(fsys, path.Join("stages", s.ID+".md"))
-			if err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return nil, fmt.Errorf("pack: stage %q: instructions: %w", s.ID, err)
-			}
-
-			p.instructions[s.ID] = string(text)
-
-			continue
-		}
 
 		if err := p.loadPersona(fsys, s.ID, s.Persona); err != nil {
 			return nil, err
@@ -357,32 +331,8 @@ func validateStage(s Stage, seen map[string]Stage) error {
 		return fmt.Errorf("pack: duplicate stage %q", s.ID)
 	}
 
-	switch s.Source {
-	case SourceModel:
-		if s.Persona == "" {
-			return fmt.Errorf("pack: stage %q needs a persona", s.ID)
-		}
-	case SourceHuman:
-		// The panel waits for the user at a human-sourced stage, so nothing
-		// a model run would use applies; refuse rather than ignore it.
-		var set []string
-
-		for key, present := range map[string]bool{
-			"tools": len(s.Tools) > 0, "checks": len(s.Checks) > 0, "loops_to": s.LoopsTo != "",
-			"policy": s.Policy != "", "gate": s.Gate, "max_questions": s.MaxQuestions != 0,
-		} {
-			if present {
-				set = append(set, key)
-			}
-		}
-
-		if len(set) > 0 {
-			slices.Sort(set)
-
-			return fmt.Errorf("pack: stage %q is human-sourced, so it takes no %s", s.ID, strings.Join(set, ", "))
-		}
-	default:
-		return fmt.Errorf("pack: stage %q: unknown source %q", s.ID, s.Source)
+	if s.Persona == "" {
+		return fmt.Errorf("pack: stage %q needs a persona", s.ID)
 	}
 
 	if err := validateDialog(s); err != nil {
@@ -402,7 +352,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	}
 
 	for _, check := range s.Checks {
-		if check != CheckCards && check != CheckAssumptions {
+		if check != CheckCards && check != CheckAssumptions && check != CheckDecisions {
 			return fmt.Errorf("pack: stage %q: unknown check %q", s.ID, check)
 		}
 	}
@@ -414,13 +364,9 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	}
 
 	if s.LoopsTo != "" {
-		target, ok := seen[s.LoopsTo]
+		_, ok := seen[s.LoopsTo]
 		if !ok {
 			return fmt.Errorf("pack: stage %q loops to %q, which is not an earlier stage", s.ID, s.LoopsTo)
-		}
-
-		if target.Source == SourceHuman {
-			return fmt.Errorf("pack: stage %q loops to %q, which is human-sourced and would run through the model", s.ID, s.LoopsTo)
 		}
 
 		if s.MaxRounds <= 0 {

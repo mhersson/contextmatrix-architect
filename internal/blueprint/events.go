@@ -35,15 +35,15 @@ const (
 	EventAborted      = "aborted"
 	EventExported     = "exported"
 	EventError        = "error"
-	// EventAwaitInput says the next stage takes the user's next message as
-	// its artifact, or, with stage signoff, that a stopped emission waits for
-	// approve; the payload carries the stage and the prompt to show.
+	// EventAwaitInput says a stopped emission or run start waits for
+	// approve; the payload carries stage signoff and the prompt to show.
 	EventAwaitInput = "await_input"
 	// EventGrounded lists the sources a code stage checked out.
 	EventGrounded = "grounded"
-	// EventSetupGaps lists, when grounding ends, what each target project
-	// lacks for an agent run: a verify command, an instruction file, any
-	// commit. None of it blocks; decomposition plans it as setup.
+	// EventSetupGaps lists, when the first stage with the code tools ends,
+	// what each target project lacks for an agent run: a verify command, an
+	// instruction file, any commit. None of it blocks; decomposition plans
+	// it as setup.
 	EventSetupGaps = "setup_gaps"
 	// EventPolicy records a gate <stage> human|auto reply: the stage's new
 	// policy, or why the reply changed nothing.

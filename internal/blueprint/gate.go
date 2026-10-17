@@ -214,6 +214,10 @@ func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint,
 		"stage": out.stage, "version": out.art.Version, "actions": actionsPayload(stageGateActions(out.stage)),
 	}
 
+	if problems := problemsOf(out.art); len(problems) > 0 {
+		payload["problems"] = problems
+	}
+
 	st, _ := c.opts.Pack.Stage(out.stage)
 
 	v, found, err := c.latestReview(ctx, bp.ID, out.stage, out.art.Version)

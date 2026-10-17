@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/mhersson/contextmatrix-architect/internal/contract"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
@@ -242,31 +241,13 @@ func assumptionsPayload(list []assumption) []any {
 }
 
 // assumptionsValidator refuses a submit whose assumptions are not
-// standalone sentences. The third failing submit is accepted as it is, so a
-// stage never loops until its turns are spent.
-func (c *Controller) assumptionsValidator() func(context.Context, stage.Artifact) error {
+// standalone sentences, as boundedValidator bounds it.
+func (c *Controller) assumptionsValidator() (func(context.Context, stage.Artifact) error, *validatorState) {
 	lists := c.opts.Pack.Lists()
 
-	var (
-		mu     sync.Mutex
-		rounds int
-	)
-
-	return func(_ context.Context, a stage.Artifact) error {
-		problems := assumptionProblems(a.Data, lists)
-
-		mu.Lock()
-		defer mu.Unlock()
-
-		rounds++
-
-		if len(problems) == 0 || rounds >= maxContractRounds {
-			return nil
-		}
-
-		return fmt.Errorf("%d problem(s) with the assumptions; fix them and submit again (submit %d of %d):\n%s",
-			len(problems), rounds, maxContractRounds, strings.Join(problems, "\n"))
-	}
+	return boundedValidator("assumptions", func(_ context.Context, a stage.Artifact) ([]string, error) {
+		return assumptionProblems(a.Data, lists), nil
+	})
 }
 
 // assumptionProblems checks a submit's assumptions: a list of sentences,

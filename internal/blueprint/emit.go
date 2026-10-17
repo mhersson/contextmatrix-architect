@@ -648,7 +648,7 @@ func (s blueprintSummary) description(id string) string {
 
 	switch {
 	case len(s.assumptions) > 0:
-		fmt.Fprintf(&b, "Assumptions, each with what grounding found:\n%s\n\n", assumptionLines(s.assumptions))
+		fmt.Fprintf(&b, "Assumptions, each with its latest status:\n%s\n\n", assumptionLines(s.assumptions))
 	case s.prose != "":
 		fmt.Fprintf(&b, "Assumptions:\n%s\n\n", s.prose)
 	default:
@@ -670,7 +670,7 @@ func (s blueprintSummary) contextText() string {
 
 	switch {
 	case len(s.assumptions) > 0:
-		fmt.Fprintf(&b, "Blueprint assumptions, each with what grounding found:\n%s", assumptionLines(s.assumptions))
+		fmt.Fprintf(&b, "Blueprint assumptions, each with its latest status:\n%s", assumptionLines(s.assumptions))
 	case s.prose != "":
 		fmt.Fprintf(&b, "Blueprint assumptions:\n%s", s.prose)
 	default:
@@ -802,9 +802,9 @@ func withSources(body string, sources []store.Source, own []string) string {
 }
 
 // sourceLine says what one source is. A repository is named with the
-// commit grounding read, unless it is not one of own, the card's project's
-// repositories: the contract keeps other projects' repositories out of a
-// card, and CM's lint warns on them.
+// commit the checkout recorded, unless it is not one of own, the card's
+// project's repositories: the contract keeps other projects' repositories
+// out of a card, and CM's lint warns on them.
 func sourceLine(s store.Source, own []string) string {
 	switch {
 	case s.Kind == "cm":

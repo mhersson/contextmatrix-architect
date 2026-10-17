@@ -8,7 +8,6 @@ import (
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/blueprint"
-	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -79,14 +78,6 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = b.String()
 		entry.Prompt = questionPrompt(p)
 	case blueprint.EventArtifact:
-		// CM already shows the message a human-sourced artifact came from.
-		if str(p["source"]) == pack.SourceHuman {
-			entry.Type = "system"
-			entry.Content = fmt.Sprintf("Your message is stored as the %s (version %.0f).", str(p["stage"]), num(p["version"]))
-
-			break
-		}
-
 		entry.Type = "text"
 		entry.Content = str(p["body"])
 	case blueprint.EventStageEnded:
@@ -586,8 +577,8 @@ func gatePlanText(p map[string]any) string {
 	return b.String()
 }
 
-// gateText renders a stage's gate: which artifact waits and the replies
-// that decide it.
+// gateText renders a stage's gate: which artifact waits, the problems its
+// checks accepted it with, and the replies that decide it.
 func gateText(p map[string]any) string {
 	var replies []string
 
@@ -620,6 +611,21 @@ func gateText(p map[string]any) string {
 
 			sep = "\n\n"
 		}
+	}
+
+	if problems := stringsOf(p["problems"]); len(problems) > 0 {
+		lead := " "
+		if sep != " " {
+			lead = sep
+		}
+
+		text += lead + "Its checks still found these problems when they accepted its third failing submit:"
+
+		for _, pr := range problems {
+			text += "\n- " + pr
+		}
+
+		sep = "\n\n"
 	}
 
 	return text + sep + fmt.Sprintf("Reply %s.", strings.Join(replies, " or "))
@@ -750,12 +756,12 @@ func capLabel(s string) string {
 	return string(r[:labelMax-1]) + "…"
 }
 
-// setupGapsText renders what grounding found the target projects lack for
+// setupGapsText renders what the checkout found the target projects lack for
 // an agent run, and what happens to each gap.
 func setupGapsText(p map[string]any) string {
 	var b strings.Builder
 
-	b.WriteString("**Setup.** Grounding found what the target projects lack for an agent run. None of it blocks; the cards plan it as work:")
+	b.WriteString("**Setup.** The code checkout found what the target projects lack for an agent run. None of it blocks; the cards plan it as work:")
 
 	for _, g := range anyMaps(p["projects"]) {
 		name := str(g["project"])

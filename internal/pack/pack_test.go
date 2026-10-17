@@ -24,10 +24,8 @@ func TestLoadEmbedded_ReferencesResolve(t *testing.T) {
 	for _, s := range p.Stages {
 		ids[s.ID] = true
 
-		if s.Source == SourceModel {
-			assert.NotEmpty(t, p.Persona(s.Persona), "persona %q of stage %q", s.Persona, s.ID)
-			assert.NotEmpty(t, p.Instructions(s.ID), "instructions of stage %q", s.ID)
-		}
+		assert.NotEmpty(t, p.Persona(s.Persona), "persona %q of stage %q", s.Persona, s.ID)
+		assert.NotEmpty(t, p.Instructions(s.ID), "instructions of stage %q", s.ID)
 
 		if s.Reviewer != nil {
 			assert.NotEmpty(t, p.Persona(s.Reviewer.Persona), "reviewer persona %q of stage %q", s.Reviewer.Persona, s.ID)
@@ -70,10 +68,16 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 		ids = append(ids, s.ID)
 	}
 
-	assert.Equal(t, []string{"intake", "design", "grounding", "decomposition", "readiness"}, ids)
+	assert.Equal(t, []string{"intake", "solution_design", "grounding", "decomposition", "readiness"}, ids)
 
-	design, _ := p.Stage("design")
-	assert.Equal(t, SourceHuman, design.Source)
+	design, _ := p.Stage("solution_design")
+	assert.True(t, design.Gate)
+	assert.Equal(t, PolicyHuman, design.Policy)
+	assert.Equal(t, 5, design.MaxQuestions)
+	assert.Contains(t, design.Tools, ToolCode)
+	assert.Equal(t, []string{CheckAssumptions, CheckDecisions}, design.Checks)
+	require.NotNil(t, design.Reviewer)
+	assert.Equal(t, "senior_developer", design.Reviewer.Persona)
 
 	intake, _ := p.Stage("intake")
 	assert.Equal(t, PolicyHuman, intake.Policy)
@@ -206,7 +210,7 @@ func TestLoad_Invalid(t *testing.T) {
 		files map[string]string
 		want  string
 	}{
-		{name: "unknown source", stage: "    source: robot\n", want: "unknown source"},
+		{name: "a source key", stage: "    source: human\n", want: "source"},
 		{name: "an old gate value", stage: "    gate: questions\n", want: "cannot unmarshal"},
 		{name: "unknown policy", stage: "    policy: sometimes\n", want: "unknown policy"},
 		{name: "negative max_questions", stage: "    max_questions: -1\n", want: "max_questions"},
@@ -219,17 +223,9 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "fold without a field", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4}\n    fold: {max: 1}\n", want: "field"},
 		{name: "fold with no later gate", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4}\n    fold: {field: slices, max: 1}\n", want: "no later stage"},
 		{name: "gate on a loop stage", stage: "  - id: s2\n    persona: po\n    loops_to: s1\n    max_rounds: 2\n    gate: true\n    reviewer: {persona: po, threshold: 4}\n", files: map[string]string{"stages/s2.md": "x"}, want: "takes no gate"},
-		{name: "human stage with a gate", stage: "  - id: s2\n    source: human\n    gate: true\n", want: "takes no gate"},
-		{name: "human stage with max_questions", stage: "  - id: s2\n    source: human\n    max_questions: 2\n", want: "takes no max_questions"},
-		{name: "human stage with a policy", stage: "  - id: s2\n    source: human\n    policy: human\n", want: "takes no policy"},
 		{name: "unknown tool", stage: "    tools: [shell]\n", want: "unknown tool group"},
 		{name: "unknown check", stage: "    checks: [style]\n", want: "unknown check"},
 		{name: "loops_to without max_rounds", stage: "  - id: s2\n    persona: po\n    loops_to: s1\n", files: map[string]string{"stages/s2.md": "x"}, want: "max_rounds"},
-		{name: "human first stage", stage: "    source: human\n", want: "first stage"},
-		{name: "human stage with tools", stage: "  - id: s2\n    source: human\n    tools: [code]\n", want: "takes no tools"},
-		{name: "human stage with checks", stage: "  - id: s2\n    source: human\n    checks: [cards]\n", want: "takes no checks"},
-		{name: "human stage with loops_to", stage: "  - id: s2\n    source: human\n    loops_to: s1\n    max_rounds: 2\n", want: "takes no loops_to"},
-		{name: "loops_to a human stage", stage: "  - id: s2\n    source: human\n  - id: s3\n    persona: po\n    loops_to: s2\n    max_rounds: 2\n", files: map[string]string{"stages/s3.md": "x"}, want: "which is human-sourced"},
 		{name: "bad regex", files: map[string]string{"lists.yaml": "forbidden_references:\n  - name: broken\n    pattern: '(['\n"}, want: "forbidden reference"},
 		{name: "blank dangling reference", files: map[string]string{"lists.yaml": "dangling_references: [\" \"]\n"}, want: "dangling_references"},
 		{name: "unknown lists.yaml key", files: map[string]string{"lists.yaml": "required_section: [Context]\n"}, want: "lists.yaml"},

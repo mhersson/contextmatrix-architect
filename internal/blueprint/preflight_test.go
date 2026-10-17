@@ -88,7 +88,7 @@ func TestPreflight(t *testing.T) {
 			arrange: func(_ *testing.T, _ *fakeCM, ws *fakeWorkspace, _ string) {
 				ws.heads = map[string]string{"https://example.com/alpha.git": "sha-new"}
 			},
-			warning: "moved since grounding",
+			warning: "moved since the checkout",
 		},
 		{
 			name:    "default branch unreadable",
@@ -96,7 +96,7 @@ func TestPreflight(t *testing.T) {
 			warning: "could not read the default branch",
 		},
 		{
-			name: "the repository lost every commit since grounding",
+			name: "the repository lost every commit since the checkout",
 			arrange: func(_ *testing.T, _ *fakeCM, ws *fakeWorkspace, _ string) {
 				ws.heads = map[string]string{"https://example.com/alpha.git": ""}
 			},
@@ -150,7 +150,7 @@ func TestPreflight(t *testing.T) {
 	}
 }
 
-// A first commit to a repository that was empty at grounding is the push
+// A first commit to a repository that was empty at the checkout is the push
 // step done: no warning, no step.
 func TestPreflight_AFirstCommitIsNotAMove(t *testing.T) {
 	c, st, _, _, ws := newPipeline(t, happyScript())
@@ -195,7 +195,7 @@ func TestMovedRepos_EmptyRepositories(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		recorded string // the sha grounding recorded; "" for no commits
+		recorded string // the sha the checkout recorded; "" for no commits
 		head     string // the sha the default branch has now; "" for no commits
 		targets  map[string]bool
 		warnings []string
@@ -203,8 +203,8 @@ func TestMovedRepos_EmptyRepositories(t *testing.T) {
 	}{
 		{name: "still empty", targets: map[string]bool{url: true}, empty: []string{url}},
 		{name: "a repository no card runs in", targets: map[string]bool{}},
-		{name: "a first commit since grounding", head: "0123456789abcdef", targets: map[string]bool{url: true}},
-		{name: "emptied since grounding", recorded: "0123456789abcdef", targets: map[string]bool{url: true}, warnings: []string{"from 0123456789ab to an empty repository"}, empty: []string{url}},
+		{name: "a first commit since the checkout", head: "0123456789abcdef", targets: map[string]bool{url: true}},
+		{name: "emptied since the checkout", recorded: "0123456789abcdef", targets: map[string]bool{url: true}, warnings: []string{"from 0123456789ab to an empty repository"}, empty: []string{url}},
 	}
 
 	for _, tt := range tests {
