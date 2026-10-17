@@ -109,10 +109,20 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   adapter: `internal/webhook`, CM's chat-backend protocol. CM starts a session
   with a payload, the user's messages arrive on `/message`, events stream back
   as log entries over SSE and the panel renders them as messages and tool
-  calls. Questions, gates, the gate plan and proposed lessons are emitted as
-  typed entries with a structured payload; the panel renders them as plain
-  messages until it has buttons, and the reply is a message either way, so
-  buttons later change nothing on the architect's side.
+  calls. A question or gate a human answers is a text entry carrying a
+  prompt (`LogEntry.Prompt`): actions, each a label and the exact reply
+  text, which the panel shows as buttons, the markdown staying the readable
+  fallback. A click sends the reply as an ordinary message, so the
+  architect's reply parsing is the same for a click and a typed answer.
+  Questions are `Q<n>`, gates `gate:<stage>:v<n>`, the sign-off
+  `gate:signoff:v<n>`, and a stopped emission or run start `emission:v<n>`.
+  An auto answer or an auto gate never leaves a prompt open, and the gate
+  plan is plain text. The panel takes any later message as a free-text
+  prompt's answer, so after a reply the architect takes as a command while a
+  question is open (`export` or a gate reply), the question is published
+  again with the same id and actions. A gate or the sign-off stays open
+  across a reply that matches none of its actions, so it is never published
+  again.
 - **Every blueprint is a CM session, started by CM.** The start payload is the
   `ChatStartPayload` with its `architect` block: the architect takes its LLM endpoint
   (fail-closed, no local fallback), MCP key, model and git-credentials token,
@@ -419,7 +429,7 @@ an `auto` gate approves on its own.
 
 | Policy  | Questions                                                                                   | Gates                                                                 |
 | ------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `human` | Shown in the CM session as `Q<n>` with options, the recommended one marked; the run waits for the reply, which is recorded in `questions`. A stage asks at most its pack's `max_questions` per run; past it, and for an option the server would take as a command, `ask_human` returns an error and the stage decides. | Artifact shown; a reply beginning with approve or reject, feedback after it, until CM grows gate buttons. |
+| `human` | Shown in the CM session as `Q<n>` with options, the recommended one marked; the run waits for the reply, which is recorded in `questions`. A stage asks at most its pack's `max_questions` per run; past it, and for an option the server would take as a command, `ask_human` returns an error and the stage decides. | Artifact shown with Approve and Reject; the reply, clicked or typed, is `approve` or `reject <feedback>`. |
 | `auto`  | A responder run answers. The answer is recorded as an `[assumption]` with responder `auto`. | A reviewer run scores; approved above the threshold, else rejected with feedback, three rounds, then waits for a human. |
 
 **The responder run** is a separate harness run with the persona that would
@@ -642,7 +652,7 @@ Replies the server understands, besides answers to questions:
 
 - Go 1.27, `contextmatrix-harness` v0.25.0 (loop, llm client, jailed read
   tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.8.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.23.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.24.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
@@ -708,7 +718,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Panel: a new-session dialog for blueprints with a multi-project picker, mode and cost cap | slice 0 |
 | The git-credentials endpoint treats an attached architect session as live | slice 1 |
 | CM re-sends the start to an architect session after the architect restarts: on a 404 `not_found` for a message (then re-sends the message once), and when the log stream ends | slice 2 |
-| Panel: typed question, gate, gate-plan and lesson entries rendered with buttons instead of as plain messages | slice 3 |
+| Panel: question and gate prompts (`LogEntry.Prompt`, protocol v0.24.0) rendered as buttons; the gate plan stays text, and lesson prompts reuse the same shape | slice 3 (lessons slice 4) |
 | Panel: a gate inbox and a blueprint view (stages, assumptions, cards with readiness, cost), read from the architect through a signed endpoint | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

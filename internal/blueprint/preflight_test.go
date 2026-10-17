@@ -187,6 +187,7 @@ func TestEmit_RefusesWhilePreflightBlocks(t *testing.T) {
 	ev, ok := rec.first(EventError)
 	require.True(t, ok)
 	assert.Contains(t, ev.Payload["message"], "declares no repository")
+	assert.Equal(t, "emission", ev.Payload["resume"], "the stop offers approve to resume")
 }
 
 func TestMovedRepos_EmptyRepositories(t *testing.T) {

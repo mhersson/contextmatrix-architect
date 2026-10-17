@@ -46,7 +46,7 @@ func eventSink(hub *logbridge.Hub) func(blueprint.Event) {
 func waitsOnUser(e blueprint.Event) bool {
 	switch e.Kind {
 	case blueprint.EventError, blueprint.EventAborted,
-		blueprint.EventAwaitInput, blueprint.EventGate, blueprint.EventSignOff, blueprint.EventRunStarted, blueprint.EventWatchEnded:
+		blueprint.EventAwaitInput, blueprint.EventGate, blueprint.EventReshow, blueprint.EventSignOff, blueprint.EventRunStarted, blueprint.EventWatchEnded:
 		return true
 	case blueprint.EventQuestion:
 		// A question the stage decides itself leaves the run working.

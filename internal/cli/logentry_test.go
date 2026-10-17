@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
@@ -301,6 +302,80 @@ func TestLogEntryFor_ARunAlreadyThereIsRecordedNotStarted(t *testing.T) {
 			}
 
 			assert.Contains(t, entry.Content, tc.wantSays)
+		})
+	}
+}
+
+func TestLogEntryFor_Prompts(t *testing.T) {
+	long := strings.Repeat("ø", 70)
+
+	tests := []struct {
+		name     string
+		event    blueprint.Event
+		wantType string
+		want     *protocol.LogPrompt
+	}{
+		{"a question for a human", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
+			"number": 3, "text": "Helm or kustomize?", "options": []any{"helm", "kustomize"}, "recommended": 2, "responder": "human",
+		}}, "text", &protocol.LogPrompt{ID: "Q3", FreeText: true, Actions: []protocol.LogAction{
+			{Label: "helm", Reply: "helm"}, {Label: "kustomize (recommended)", Reply: "kustomize"},
+		}}},
+		{"a question without options", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
+			"number": 1, "text": "Which cluster?", "responder": "human",
+		}}, "text", &protocol.LogPrompt{ID: "Q1", FreeText: true}},
+		{"a long option", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
+			"number": 2, "text": "Which?", "options": []any{long}, "responder": "human",
+		}}, "text", &protocol.LogPrompt{ID: "Q2", FreeText: true, Actions: []protocol.LogAction{
+			{Label: strings.Repeat("ø", 59) + "…", Reply: long},
+		}}},
+		{"a question the stage decides itself", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
+			"number": 4, "text": "Which port?", "responder": "auto",
+		}}, "system", nil},
+		{"a stage's gate", blueprint.Event{Kind: blueprint.EventGate, Payload: map[string]any{
+			"stage": "shape", "version": 2, "actions": []any{
+				map[string]any{"label": "Approve", "reply": "approve", "feedback": false},
+				map[string]any{"label": "Reject", "reply": "reject", "feedback": true},
+			},
+		}}, "text", &protocol.LogPrompt{ID: "gate:shape:v2", Actions: []protocol.LogAction{
+			{Label: "Approve", Reply: "approve"}, {Label: "Reject", Reply: "reject", Feedback: true},
+		}}},
+		{"the sign-off", blueprint.Event{Kind: blueprint.EventSignOff, Payload: map[string]any{
+			"version": 4, "cards": []any{}, "order": []any{}, "actions": []any{
+				map[string]any{"label": "Approve and override warnings", "reply": "approve", "feedback": false},
+				map[string]any{"label": "Reject", "reply": "reject", "feedback": true},
+			},
+		}}, "text", &protocol.LogPrompt{ID: "gate:signoff:v4", Actions: []protocol.LogAction{
+			{Label: "Approve and override warnings", Reply: "approve"}, {Label: "Reject", Reply: "reject", Feedback: true},
+		}}},
+		{"a sign-off stored before replies travelled with it", blueprint.Event{Kind: blueprint.EventSignOff, Payload: map[string]any{
+			"version": 4, "cards": []any{}, "order": []any{},
+		}}, "text", nil},
+		{"a stopped emission", blueprint.Event{Kind: blueprint.EventError, Payload: map[string]any{
+			"stage": "emission", "message": "Emission stopped.", "resume": "emission", "version": 3,
+		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Actions: []protocol.LogAction{{Label: "Resume emission", Reply: "approve"}}}},
+		{"a refused run start", blueprint.Event{Kind: blueprint.EventError, Payload: map[string]any{
+			"stage": "run", "message": "The run did not start.", "resume": "run", "version": 3,
+		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Actions: []protocol.LogAction{{Label: "Retry the run start", Reply: "approve"}}}},
+		{"a run held for a first commit", blueprint.Event{Kind: blueprint.EventAwaitInput, Payload: map[string]any{
+			"stage": "signoff", "prompt": "https://example.com/alpha.git has no commits, so the run was not started.", "resume": "held", "version": 3,
+		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Actions: []protocol.LogAction{{Label: "Start the run", Reply: "approve"}}}},
+		{"a stopped emission shown on reopen", blueprint.Event{Kind: blueprint.EventAwaitInput, Payload: map[string]any{
+			"stage": "signoff", "prompt": "Emission is stopped; reply approve to resume it.", "resume": "emission", "version": 3,
+		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Actions: []protocol.LogAction{{Label: "Resume emission", Reply: "approve"}}}},
+		{"a question shown again", blueprint.Event{Kind: blueprint.EventReshow, Payload: map[string]any{
+			"kind": "question", "payload": map[string]any{"number": 3, "text": "Helm or kustomize?", "options": []any{"helm"}, "responder": "human"},
+		}}, "text", &protocol.LogPrompt{ID: "Q3", FreeText: true, Actions: []protocol.LogAction{{Label: "helm", Reply: "helm"}}}},
+		{"any other error", blueprint.Event{Kind: blueprint.EventError, Payload: map[string]any{"message": "cost cap"}}, "stderr", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.event.BlueprintID = "S1"
+
+			entry, ok := logEntryFor(tt.event)
+			require.True(t, ok)
+			assert.Equal(t, tt.wantType, entry.Type)
+			assert.Equal(t, tt.want, entry.Prompt)
 		})
 	}
 }

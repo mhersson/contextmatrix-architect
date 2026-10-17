@@ -12,9 +12,10 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-// logEntryFor renders a controller event as a panel entry. Until CM renders
-// typed entries, questions and artifacts are plain text and stage boundaries
-// are system lines. Answers are echoed by CM itself and harness events reach
+// logEntryFor renders a controller event as a panel entry. A question or gate
+// a human answers carries a prompt, whose actions the panel shows as buttons
+// and whose replies come back as ordinary messages; the markdown stays the
+// readable fallback. Answers are echoed by CM itself and harness events reach
 // the hub through the bridge, so both are skipped here.
 func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	entry := protocol.LogEntry{Timestamp: e.Time, SessionID: e.BlueprintID}
@@ -75,6 +76,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 
 		b.WriteString("\nReply with your answer.")
 		entry.Content = b.String()
+		entry.Prompt = questionPrompt(p)
 	case blueprint.EventArtifact:
 		// CM already shows the message a human-sourced artifact came from.
 		if str(p["source"]) == pack.SourceHuman {
@@ -110,9 +112,16 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventSignOff:
 		entry.Type = "text"
 		entry.Content = signoffText(p)
+		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:signoff:v%.0f", num(p["version"])), p["actions"])
 	case blueprint.EventGate:
 		entry.Type = "text"
 		entry.Content = gateText(p)
+		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:%s:v%.0f", str(p["stage"]), num(p["version"])), p["actions"])
+	case blueprint.EventReshow:
+		// The open question again, rendered as it was first shown.
+		inner, _ := p["payload"].(map[string]any)
+
+		return logEntryFor(blueprint.Event{Kind: str(p["kind"]), BlueprintID: e.BlueprintID, Time: e.Time, Payload: inner})
 	case blueprint.EventDecided:
 		entry.Type = "system"
 		entry.Content = decidedText(p)
@@ -126,6 +135,12 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventError:
 		entry.Type = "stderr"
 		entry.Content = str(p["message"])
+
+		// A prompt rides a text frame, so a stop that offers approve is one.
+		if prompt := resumePrompt(p); prompt != nil {
+			entry.Type = "text"
+			entry.Prompt = prompt
+		}
 	case blueprint.EventAwaitInput:
 		entry.Type = "text"
 		entry.Content = str(p["prompt"])
@@ -133,6 +148,8 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		if strings.TrimSpace(entry.Content) == "" {
 			entry.Content = fmt.Sprintf("Stage %s takes your next message.", str(p["stage"]))
 		}
+
+		entry.Prompt = resumePrompt(p)
 	case blueprint.EventSetupGaps:
 		entry.Type = "text"
 		entry.Content = setupGapsText(p)
@@ -569,6 +586,80 @@ func decidedText(p map[string]any) string {
 	default:
 		return "Approved. Emission starts."
 	}
+}
+
+// labelMax caps the option text of a button's label in runes; the reply keeps
+// the full text and " (recommended)" follows the cap.
+const labelMax = 60
+
+// questionPrompt makes a human's question answerable by a click: one action
+// per option, its reply the full option, which reaches the stage verbatim.
+// Any typed reply answers it too.
+func questionPrompt(p map[string]any) *protocol.LogPrompt {
+	recommended := int(num(p["recommended"]))
+
+	var actions []protocol.LogAction
+
+	for i, o := range stringsOf(p["options"]) {
+		label := capLabel(o)
+		if i+1 == recommended {
+			label += " (recommended)"
+		}
+
+		actions = append(actions, protocol.LogAction{Label: label, Reply: o})
+	}
+
+	return &protocol.LogPrompt{ID: fmt.Sprintf("Q%.0f", num(p["number"])), FreeText: true, Actions: actions}
+}
+
+// actionsPrompt makes a gate decidable by a click from the replies its
+// event carries; nil when it carries none, as an event stored before the
+// replies travelled with it.
+func actionsPrompt(id string, v any) *protocol.LogPrompt {
+	var actions []protocol.LogAction
+
+	for _, a := range anyMaps(v) {
+		feedback, _ := a["feedback"].(bool)
+		actions = append(actions, protocol.LogAction{Label: str(a["label"]), Reply: str(a["reply"]), Feedback: feedback})
+	}
+
+	if len(actions) == 0 {
+		return nil
+	}
+
+	return &protocol.LogPrompt{ID: id, Actions: actions}
+}
+
+// resumePrompt offers approve on a stopped emission or run start; nil on
+// any other error or wait.
+func resumePrompt(p map[string]any) *protocol.LogPrompt {
+	var label string
+
+	switch str(p["resume"]) {
+	case "emission":
+		label = "Resume emission"
+	case "run":
+		label = "Retry the run start"
+	case "held":
+		label = "Start the run"
+	default:
+		return nil
+	}
+
+	return &protocol.LogPrompt{
+		ID:      fmt.Sprintf("emission:v%.0f", num(p["version"])),
+		Actions: []protocol.LogAction{{Label: label, Reply: "approve"}},
+	}
+}
+
+// capLabel cuts a label to labelMax runes, ending in an ellipsis when cut.
+func capLabel(s string) string {
+	r := []rune(s)
+	if len(r) <= labelMax {
+		return s
+	}
+
+	return string(r[:labelMax-1]) + "…"
 }
 
 // setupGapsText renders what grounding found the target projects lack for

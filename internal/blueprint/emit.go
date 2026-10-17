@@ -163,6 +163,7 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 		au.event(bg, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
 			"stage":   "emission",
 			"message": "Emission is blocked until this is fixed in ContextMatrix; then reply approve:\n- " + strings.Join(pf.Blocking, "\n- "),
+			"resume":  "emission", "version": c.signedOff(bg, bp.ID),
 		}})
 
 		return
@@ -180,6 +181,7 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 		au.event(bg, Event{Kind: EventAwaitInput, BlueprintID: bp.ID, Payload: map[string]any{
 			"stage":  signoffStage,
 			"prompt": emptyReposPrompt(pf.EmptyRepos),
+			"resume": "held", "version": c.signedOff(bg, bp.ID),
 		}})
 	} else if bp.Mode == protocol.ArchitectModeYolo {
 		err := c.startRun(ctx, au, bp, client, draft)
@@ -201,6 +203,7 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 			au.event(bg, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
 				"stage":   "run",
 				"message": "The cards are emitted, but " + stopped + " Reply approve to retry the start, or start it in ContextMatrix and reply approve.",
+				"resume":  "run", "version": c.signedOff(bg, bp.ID),
 			}})
 		}
 	}
@@ -337,6 +340,28 @@ func (c *Controller) startRun(ctx context.Context, au audit, bp store.Blueprint,
 	return nil
 }
 
+// signedOff is the version of the cards the latest sign-off approval
+// judged, which names the emission in the panel's prompt; 0 when none is
+// recorded or the record cannot be read, which is logged.
+func (c *Controller) signedOff(ctx context.Context, id string) int {
+	gates, err := c.opts.Store.ListGates(ctx, id, signoffStage)
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: read the sign-off approvals", "blueprint", id, "error", err)
+
+		return 0
+	}
+
+	v := 0
+
+	for _, g := range gates {
+		if g.Decision == store.GateApprove {
+			v = g.Version
+		}
+	}
+
+	return v
+}
+
 // emitError reports a stopped emission and leaves the blueprint idle. One
 // Shutdown cut short is only logged and stays emitting. ctx is the run's: a
 // cancel there is an abort or End, which the session is told plainly, the
@@ -361,6 +386,7 @@ func (c *Controller) emitError(ctx context.Context, au audit, id string, err err
 	au.event(bg, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{
 		"stage":   "emission",
 		"message": stopped + " Cards already created are kept; reply approve to resume.",
+		"resume":  "emission", "version": c.signedOff(bg, id),
 	}})
 }
 

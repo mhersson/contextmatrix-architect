@@ -201,6 +201,9 @@ type run struct {
 	answer chan reply
 	// question is the open question's number.
 	question int
+	// pending is the payload of the question waiting for its answer; it
+	// means something only while answer is set.
+	pending map[string]any
 	// stage is the stage the run in flight runs; set under Controller.mu.
 	stage string
 }
@@ -618,7 +621,8 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 	}
 
 	c.mu.Lock()
-	_, running := c.runs[id]
+	r, running := c.runs[id]
+	asked := openQuestion(r)
 	c.mu.Unlock()
 
 	// during_run tells the panel whether a stage keeps working after the
@@ -626,6 +630,7 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 	sess.audit.event(ctx, Event{Kind: EventExported, BlueprintID: id, Payload: map[string]any{
 		"path": dir, "files": len(files), "message_id": msgID, "during_run": running,
 	}})
+	c.reshowQuestion(ctx, sess.audit, id, asked)
 
 	return nil
 }

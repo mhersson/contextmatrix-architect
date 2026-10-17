@@ -77,6 +77,10 @@ const (
 	// EventGate shows a stage's gate: the stage, the version of its artifact
 	// that waits, and the replies that decide it.
 	EventGate = "gate"
+	// EventReshow publishes an open question again after a reply CM's panel
+	// took as its answer but the architect took as a command. The payload
+	// carries the original event's kind and payload.
+	EventReshow = "reshow"
 	// EventDecided records a decision at a stage's gate or the sign-off, by a
 	// human or the auto policy.
 	EventDecided = "decided"

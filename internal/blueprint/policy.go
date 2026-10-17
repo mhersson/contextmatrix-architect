@@ -66,6 +66,7 @@ func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID s
 	sess, ok := c.sessions[id]
 	r := c.runs[id]
 	running := r != nil
+	asked := openQuestion(r)
 	openStage := ""
 
 	if r != nil && r.answer != nil {
@@ -101,6 +102,7 @@ func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID s
 	}
 
 	sess.audit.event(ctx, Event{Kind: EventPolicy, BlueprintID: id, Payload: payload})
+	c.reshowQuestion(ctx, sess.audit, id, asked)
 
 	return nil
 }

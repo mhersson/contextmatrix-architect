@@ -467,7 +467,7 @@ func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
 
 	// Registered before the question is published, so an answer to it is
 	// never a lost wakeup.
-	a.run.answer, a.run.question = ch, number
+	a.run.answer, a.run.question, a.run.pending = ch, number, payload
 	a.c.mu.Unlock()
 
 	a.c.setState(bg, a.bp.ID, StateWaiting)

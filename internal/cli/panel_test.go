@@ -57,6 +57,7 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		{"report the sign-off follows", blueprint.EventReport, map[string]any{"ready": true, "signoff": true}, false},
 		{"signoff", blueprint.EventSignOff, map[string]any{"cards": []any{}}, true},
 		{"gate", blueprint.EventGate, map[string]any{"stage": "shape"}, true},
+		{"a question shown again", blueprint.EventReshow, map[string]any{"kind": "question"}, true},
 		{"decided", blueprint.EventDecided, map[string]any{"decision": "approve"}, false},
 		{"emitted", blueprint.EventEmitted, map[string]any{"cards": []any{}}, true},
 		{"emitted, the run start follows", blueprint.EventEmitted, map[string]any{"cards": []any{}, "run_follows": true}, false},
