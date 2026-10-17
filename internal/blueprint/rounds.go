@@ -73,24 +73,29 @@ func (s roundState) clone() roundState {
 
 // complete reports whether every question has an answer and every
 // assumption a decision.
-func (s roundState) complete() bool {
+func (s roundState) complete() bool { return RoundAnswered(s.Frame) }
+
+// RoundAnswered reports whether every question of round f has an answer and
+// every assumption a decision: an open round like that closes and its stage
+// goes on.
+func RoundAnswered(f protocol.LogRound) bool {
 	answered := map[int]bool{}
-	for _, a := range s.Frame.Answers {
+	for _, a := range f.Answers {
 		answered[a.Number] = true
 	}
 
 	decided := map[string]bool{}
-	for _, d := range s.Frame.Decisions {
+	for _, d := range f.Decisions {
 		decided[d.ID] = true
 	}
 
-	for _, q := range s.Frame.Questions {
+	for _, q := range f.Questions {
 		if !answered[q.Number] {
 			return false
 		}
 	}
 
-	for _, a := range s.Frame.Assumptions {
+	for _, a := range f.Assumptions {
 		if !decided[a.ID] {
 			return false
 		}

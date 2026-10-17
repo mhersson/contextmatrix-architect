@@ -31,67 +31,87 @@ func (c *Controller) Reply(ctx context.Context, id string, rr protocol.RoundRepl
 		return ErrNotFound
 	}
 
-	stored, err := c.storeReply(ctx, sess, id, rr, msgID)
-	if err != nil || !stored {
-		return err
-	}
-
-	c.poke(id)
-
-	return nil
-}
-
-func (c *Controller) storeReply(ctx context.Context, sess *session, id string, rr protocol.RoundReply, msgID string) (bool, error) {
 	lock := c.roundLock(id)
 	lock.Lock()
-	defer lock.Unlock()
 
+	r, runCtx, err := c.storeReply(ctx, sess, id, rr, msgID)
+
+	lock.Unlock()
+
+	if r != nil {
+		c.settleOn(runCtx, r, id)
+	}
+
+	return err
+}
+
+// storeReply stores rr in the open round and pokes, or reports a stale
+// reply. The caller holds id's round lock and settles the slot poke claimed,
+// if any, once it has released the lock.
+func (c *Controller) storeReply(ctx context.Context, sess *session, id string, rr protocol.RoundReply, msgID string) (*run, context.Context, error) {
 	place, found, err := c.roundAt(ctx, id)
 	if err != nil {
-		return false, err
+		return nil, nil, err
 	}
 
 	s := place.state
 	if !found || s.Frame.Closed || s.Frame.Responder || rr.PromptID != roundPromptID(s.Number) {
+		c.mu.Lock()
+		running := c.runs[id] != nil
+		c.mu.Unlock()
+
+		// during_run tells the panel whether a run goes on working after it.
 		sess.audit.event(ctx, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{
-			"reason": "stale_reply", "prompt_id": rr.PromptID, "message_id": msgID,
+			"reason": "stale_reply", "prompt_id": rr.PromptID, "message_id": msgID, "during_run": running,
 			"message": fmt.Sprintf("That reply answers %s, which takes no answers now; nothing was stored.", rr.PromptID),
 		}})
 
-		return false, nil
+		return nil, nil, nil
 	}
 
 	next, dropped := mergeReply(s, rr.Answers, rr.Decisions)
 	next.Change, next.MessageID, next.Dropped = changeAnswers, msgID, dropped
 	c.putRound(ctx, sess.audit, id, 0, next)
 
-	return true, nil
+	r, runCtx := c.poke(id)
+
+	return r, runCtx, nil
 }
 
-// poke acts on a changed round: on a free slot it claims it and runs what
-// follows the round; on a held one it marks the holder, whose release acts
-// on the round again, so a change that lands while a run winds down is
-// never lost.
-func (c *Controller) poke(id string) {
+// poke acts on a round change the caller stored and still holds id's round
+// lock over. A held slot's holder is marked: its release acts on the round
+// again, unless its own read of the round, which takes the same lock, came
+// after the change and spent the mark. A free slot is claimed and returned
+// for the caller to settle once it has released the round lock. Marking
+// under that lock means a mark never outlives a read that saw its change.
+func (c *Controller) poke(id string) (*run, context.Context) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	if c.closing || c.sessions[id] == nil {
-		c.mu.Unlock()
-
-		return
+		return nil, nil
 	}
 
 	if r := c.runs[id]; r != nil {
 		r.recheck = true
-		c.mu.Unlock()
 
-		return
+		return nil, nil
 	}
 
 	r, ctx, _ := c.claimLocked(id)
-	c.mu.Unlock()
 
-	c.settleOn(ctx, r, id)
+	return r, ctx
+}
+
+// spendRecheck clears the mark on id's slot holder, which is reading the
+// round under the round lock and so sees every change stored before.
+func (c *Controller) spendRecheck(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if r := c.runs[id]; r != nil {
+		r.recheck = false
+	}
 }
 
 // settleOn runs what follows the blueprint's round on slot r, which the
@@ -147,13 +167,21 @@ func (c *Controller) follow(ctx, runCtx context.Context, r *run, sess *session, 
 // question has an answer (the round is closed first), or nothing while the
 // round waits for answers, which leaves the blueprint waiting. A stalled
 // round, whose run after it failed or was aborted, runs again only when
-// wake is set: a message arrived.
+// wake is set: a message arrived. The caller holds the run slot.
 func (c *Controller) nextSegment(ctx context.Context, sess *session, bp store.Blueprint, wake bool) (segmentStep, error) {
 	lock := c.roundLock(bp.ID)
 	lock.Lock()
 	defer lock.Unlock()
 
 	place, found, err := c.roundAt(ctx, bp.ID)
+
+	// This read sees every change stored so far, so it spends the holder's
+	// mark; a stalled round it leaves asleep keeps the mark, for the release
+	// to act on a change that may wake it.
+	if !place.stalled || wake {
+		c.spendRecheck(bp.ID)
+	}
+
 	if err != nil || !found || (place.stalled && !wake) {
 		return segmentStep{}, err
 	}

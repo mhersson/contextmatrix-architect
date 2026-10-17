@@ -49,8 +49,11 @@ func waitsOnUser(e blueprint.Event) bool {
 		blueprint.EventAwaitInput, blueprint.EventGate, blueprint.EventReshow, blueprint.EventSignOff, blueprint.EventRunStarted, blueprint.EventWatchEnded:
 		return true
 	case blueprint.EventError:
-		// A refused responder leaves the asking stage running.
-		return e.Payload["reason"] != "responder_refused"
+		// A refused responder leaves the asking stage running, and a stale
+		// reply that lands while a run works leaves it working.
+		duringRun, _ := e.Payload["during_run"].(bool)
+
+		return e.Payload["reason"] != "responder_refused" && !duringRun
 	case blueprint.EventQuestion:
 		// An auto question, answered by the responder or by the stage itself,
 		// leaves the run working.
@@ -58,13 +61,12 @@ func waitsOnUser(e blueprint.Event) bool {
 
 		return responder != store.ResponderAuto
 	case blueprint.EventRound:
-		// An open round a human answers waits on the user; a closed one, or
-		// one the responder answers, leaves the stage working.
-		frame, _ := e.Payload["frame"].(map[string]any)
-		closed, _ := frame["closed"].(bool)
-		responder, _ := frame["responder"].(bool)
+		// An open round a human answers waits on the user. A closed one, one
+		// the responder answers, or one whose every question has an answer,
+		// which closes and goes on at once, leaves the stage working.
+		_, frame, ok := roundFrame(e.Payload)
 
-		return !closed && !responder
+		return ok && !frame.Closed && !frame.Responder && !blueprint.RoundAnswered(frame)
 	case blueprint.EventPolicy:
 		// CM arms its working indicator on every message; a gate reply that
 		// leaves nothing running must clear it.

@@ -225,9 +225,10 @@ type run struct {
 	// stage is the stage the run in flight runs, or the sign-off while it and
 	// its emission hold the slot; set under Controller.mu.
 	stage string
-	// recheck is set under Controller.mu when a reply or a chat message
-	// changed a round while the slot was held; the release acts on the round
-	// again.
+	// recheck is set under Controller.mu, and under the round lock, when a
+	// reply or a chat message changed a round while the slot was held. The
+	// holder's read of the round spends it, so one left at release is a
+	// change the holder never saw, and the release acts on the round again.
 	recheck bool
 }
 
@@ -921,7 +922,9 @@ func (c *Controller) claimAfterEnd(ctx context.Context, id string, sess *session
 }
 
 // release frees id's run slot and wakes Wait. When a round changed while r
-// held the slot, the slot is taken again at once to act on it.
+// held the slot and r never read the change, the slot is taken again at once
+// to act on it, unless r was aborted, which leaves the round to the next
+// message, or ended, which leaves it to the reopen.
 func (c *Controller) release(id string, r *run) {
 	c.mu.Lock()
 
@@ -938,7 +941,7 @@ func (c *Controller) release(id string, r *run) {
 
 	// Claimed before r's done closes, so Wait never sees the slot free while
 	// a round still has to be acted on.
-	if r.recheck && !c.closing && c.sessions[id] != nil {
+	if r.recheck && !r.aborted && !r.ended && !c.closing && c.sessions[id] != nil {
 		next, nextCtx, _ = c.claimLocked(id)
 	}
 

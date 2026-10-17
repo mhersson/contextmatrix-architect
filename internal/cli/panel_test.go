@@ -83,7 +83,15 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		{"ended", blueprint.EventEnded, nil, false},
 		{"verdict", blueprint.EventReview, nil, false},
 		{"responder failed, the stage runs on", blueprint.EventStageEnded, map[string]any{"status": "failed", "kind": "responder"}, false},
-		{"an open round a human answers", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{"questions": []any{}}}, true},
+		{"an open round a human answers", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{"questions": []any{
+			map[string]any{"number": 1.0, "title": "Deploy", "text": "Helm?", "options": []any{}},
+		}}}, true},
+		{"an answered round, its close and continuation follow", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{
+			"questions": []any{map[string]any{"number": 1.0, "title": "Deploy", "text": "Helm?", "options": []any{}}},
+			"answers":   []any{map[string]any{"number": 1.0, "text": "yes"}},
+		}}, false},
+		{"a stale reply while a run works", blueprint.EventError, map[string]any{"reason": "stale_reply", "during_run": true}, false},
+		{"a stale reply on an idle blueprint", blueprint.EventError, map[string]any{"reason": "stale_reply", "during_run": false}, true},
 		{"a closed round, its stage goes on", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{"closed": true}}, false},
 		{"a round the responder answers", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{"responder": true}}, false},
 		{"a run that asked, its round decides", blueprint.EventStageEnded, map[string]any{"status": "asked", "kind": "stage"}, false},
