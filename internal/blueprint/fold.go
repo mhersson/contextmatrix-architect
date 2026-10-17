@@ -53,9 +53,10 @@ func (c *Controller) foldersOf(stageID string) []pack.Stage {
 
 // foldsInto returns the gate st's artifact folds into, or "": its fold
 // field holds at most the pack's max entries, its version has no verdict
-// yet, and the gate it folds into has the same policy, so neither a human
-// nor the auto policy loses a decision. A policy changed after the fold is
-// openGate's: the folded gate stays a human's while any stage it judges is.
+// yet and is no revision, and the gate it folds into has the same policy, so
+// neither a human nor the auto policy loses a decision. A policy changed
+// after the fold is openGate's: the folded gate stays a human's while any
+// stage it judges is.
 func (c *Controller) foldsInto(ctx context.Context, bp store.Blueprint, st pack.Stage, art store.Artifact) (string, error) {
 	if st.Fold == nil {
 		return "", nil
@@ -67,8 +68,9 @@ func (c *Controller) foldsInto(ctx context.Context, bp store.Blueprint, st pack.
 	}
 
 	// A verdict exists only once the fold was declined and st's own reviewer
-	// ran: its gate stays its own, whatever the policies say now.
-	_, judged, err := c.latestReview(ctx, bp.ID, st.ID, art.Version)
+	// ran: its gate stays its own, whatever the policies say now, and so does
+	// the gate of the revision it owed.
+	_, judged, _, err := c.gateReview(ctx, bp.ID, st, art)
 	if err != nil || judged {
 		return "", err
 	}

@@ -151,7 +151,7 @@ func TestLogEntryFor(t *testing.T) {
 			"stage": "shape", "version": 2, "score": 3, "threshold": 4, "findings": []any{"name the owner"}, "round": 1,
 		}}, "system", []string{"shape", "3", "4", "name the owner"}, false},
 		{"a gate with a verdict", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
-			"stage": "shape", "version": 7, "actions": []any{},
+			"stage": "shape", "version": 7, "actions": []any{map[string]any{"label": "Approve", "reply": "approve", "feedback": false}},
 			"review": map[string]any{"score": 2, "threshold": 4, "findings": []any{"split it"}, "round": 3, "passed": false},
 		}}, "text", []string{"2", "4"}, false},
 		{"a gate whose checks accepted problems", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
@@ -651,4 +651,114 @@ func TestLogEntryFor_AFoldedGateShowsTheDesignOnce(t *testing.T) {
 	assert.Contains(t, gate.Content, "- "+designProblem)
 	assert.Less(t, strings.Index(gate.Content, sliced), strings.Index(gate.Content, "- "+slicingProblem), "each folded artifact with its problems")
 	assert.Equal(t, "gate:solution_design:v2", gate.Prompt.ID, "the prompt is the design gate's")
+}
+
+func TestLogEntryFor_ARevisedGateNamesTheVersionTheReviewerScored(t *testing.T) {
+	gate := func(review map[string]any) protocol.LogEntry {
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "shape", "version": 7, "actions": []any{map[string]any{"label": "Approve", "reply": "approve", "feedback": false}},
+			"review": review,
+		}})
+		require.True(t, ok)
+		require.NotNil(t, entry.Prompt)
+
+		return entry
+	}
+
+	base := func() map[string]any {
+		return map[string]any{"passed": true, "round": 1, "score": 4, "threshold": 4, "findings": []any{"thin"}}
+	}
+
+	plain := gate(base())
+
+	notRevised := base()
+	notRevised["revised"], notRevised["judged"] = false, 7
+	assert.Equal(t, plain.Content, gate(notRevised).Content, "an unrevised gate reads as one stored before revisions were recorded")
+
+	revised := base()
+	revised["revised"], revised["judged"] = true, 6
+	got := gate(revised)
+
+	assert.NotEqual(t, plain.Content, got.Content)
+	assert.Contains(t, got.Content, "version 6")
+	assert.Contains(t, got.Prompt.Text, "version 6", "the prompt's text carries the revision too")
+	assert.NotContains(t, got.Content, "thin", "findings stay in the review above")
+}
+
+func TestLogEntryFor_SignoffShowsEachAssumptionsSourceInPayloadOrder(t *testing.T) {
+	payload := map[string]any{
+		"version": 1, "cards": []any{}, "order": []any{}, "actions": []any{map[string]any{"label": "Approve", "reply": "approve", "feedback": false}},
+		"assumptions": []any{
+			map[string]any{"id": "A1", "stage": "intake", "text": "first text", "status": "unverified"},
+			map[string]any{"id": "A2", "stage": "intake", "text": "second text", "status": "contradicted", "evidence": "the log says otherwise"},
+			map[string]any{"id": "A3", "stage": "intake", "text": "third text", "status": "assumed", "basis": "Q41", "answer": "use helm"},
+			map[string]any{"id": "A4", "stage": "intake", "text": "fourth text", "status": "confirmed", "basis": "Q52", "answer": "keep the routes"},
+			map[string]any{"id": "Q63", "stage": "intake", "text": "fifth text", "status": "assumed", "basis": "Q63"},
+			map[string]any{"id": "A6", "stage": "intake", "text": "sixth text", "status": "verified", "evidence": "[S7] says so"},
+			map[string]any{"id": "A7", "stage": "intake", "text": "seventh text", "status": "verified", "evidence": "[S8] found", "basis": "Q74", "answer": "ship weekly"},
+			map[string]any{"id": "A8", "stage": "intake", "text": "eighth text", "status": "assumed", "basis": "Q85"},
+		},
+	}
+
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: payload})
+	require.True(t, ok)
+	require.NotNil(t, entry.Prompt)
+
+	for _, text := range []string{entry.Content, entry.Prompt.Text} {
+		line := func(needle string) string {
+			for _, l := range strings.Split(text, "\n") {
+				if strings.Contains(l, needle) {
+					return l
+				}
+			}
+
+			t.Fatalf("no line carries %q", needle)
+
+			return ""
+		}
+
+		assert.Equal(t, 1, strings.Count(line("third text"), "Q41"))
+		assert.Equal(t, 1, strings.Count(line("fourth text"), "Q52"))
+		assert.Equal(t, 1, strings.Count(line("fifth text"), "Q63"), "a basis equal to the id is not repeated")
+		assert.Equal(t, 1, strings.Count(line("eighth text"), "Q85"), "a payload without the answer")
+		assert.Equal(t, 1, strings.Count(line("third text"), "use helm"), "the auto answer it rests on")
+		assert.Equal(t, 1, strings.Count(line("fourth text"), "keep the routes"), "the human answer it rests on")
+		assert.Contains(t, line("seventh text"), "[S8] found")
+		assert.Equal(t, 1, strings.Count(line("seventh text"), "Q74"), "a verified entry names the question it rests on")
+		assert.Equal(t, 1, strings.Count(line("seventh text"), "ship weekly"), "and its answer")
+		assumed, _, _ := strings.Cut(line("third text"), "third")
+		confirmed, _, _ := strings.Cut(line("fourth text"), "fourth")
+
+		assert.NotEqual(t, assumed, confirmed, "assumed and confirmed read differently")
+		assert.Contains(t, line("second text"), "the log says otherwise")
+		assert.Contains(t, line("sixth text"), "[S7] says so")
+
+		last := -1
+
+		for _, w := range []string{"first text", "second text", "third text", "fourth text", "fifth text", "sixth text", "seventh text", "eighth text"} {
+			at := strings.Index(text, w)
+			assert.Greater(t, at, last, "entries keep the payload's order")
+
+			last = at
+		}
+	}
+}
+
+func TestLogEntryFor_AnAutoAnswerShowsItsEvidenceOnlyWhenGrounded(t *testing.T) {
+	answer := func(grounded bool, evidence string) string {
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventAnswer, BlueprintID: "S1", Payload: map[string]any{
+			"number": 3, "responder": "auto", "text": "Use Postgres", "reasoning": "because", "grounded": grounded, "evidence": evidence,
+		}})
+		require.True(t, ok)
+
+		return entry.Content
+	}
+
+	const evidence = "[S2] names the existing database"
+
+	grounded, ungrounded := answer(true, evidence), answer(false, "")
+
+	assert.Contains(t, grounded, evidence)
+	assert.NotContains(t, ungrounded, evidence)
+	assert.NotEqual(t, grounded, ungrounded)
 }

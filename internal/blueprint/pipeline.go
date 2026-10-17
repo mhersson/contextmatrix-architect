@@ -24,8 +24,8 @@ const maxContractRounds = 3
 // the stage that completed (gate, with stage and art the artifact that
 // waits), or the pipeline's end with the artifact it ended on. critique
 // marks a gate whose artifact still needs its reviewer, or a builder round
-// after a low verdict. fold, on an outcome that passes a stage, is the fold
-// the caller records.
+// after a low verdict or the revision after a passing one with findings.
+// fold, on an outcome that passes a stage, is the fold the caller records.
 type outcome struct {
 	stage    string
 	gate     bool
@@ -199,8 +199,8 @@ func rerunsOnReopen(r store.Run) bool {
 // A failed or aborted stage waits for the user's next message and an ended
 // pipeline for a new blueprint. A stage the session's end cut short runs
 // again. An open gate is returned for the gate to resume, and so is one
-// whose artifact still needs its critique, unless its latest review or
-// builder round failed or was aborted. A ready end is returned for the
+// whose artifact still needs its critique, unless its latest review, builder
+// round or revision failed or was aborted. A ready end is returned for the
 // sign-off, emission or watch to resume. A position the record does not
 // yield is reported, not returned: the session still attaches. The caller
 // holds the run slot.
@@ -305,8 +305,8 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 	}
 
 	if out.gate && out.critique {
-		// A review or builder round that failed or was aborted: the
-		// message is a note and runs it again.
+		// A review, builder round or revision that failed or was aborted:
+		// the message is a note and runs it again.
 		note := noteEvent(id, text, msgID, out.stage, false)
 		note.Payload["retries"] = out.stage
 		note.Payload["critique"] = true
@@ -576,10 +576,26 @@ func (c *Controller) writeAnsweredAfter(ctx context.Context, b *strings.Builder,
 	return nil
 }
 
-// writeQuestions lists answered questions, one tagged line and its answer each.
+// Who answered a question, as every model that reads one is told.
+const (
+	answeredByUser      = "answered by the user"
+	answeredByResponder = "answered by the responder for the user under the auto policy; an assumption, not the user's choice"
+)
+
+// answeredBy is the label for a question's recorded responder.
+func answeredBy(q store.Question) string {
+	if q.Responder == store.ResponderAuto {
+		return answeredByResponder
+	}
+
+	return answeredByUser
+}
+
+// writeQuestions lists answered questions, one tagged line and its answer
+// each, saying who gave the answer.
 func writeQuestions(b *strings.Builder, questions []store.Question) {
 	for _, q := range questions {
-		fmt.Fprintf(b, "- [%s] %s\n  Answer: %s\n", q.Tag(), q.Text, q.Answer)
+		fmt.Fprintf(b, "- [%s] %s\n  Answer (%s): %s\n", q.Tag(), q.Text, answeredBy(q), q.Answer)
 	}
 
 	b.WriteString("\n")

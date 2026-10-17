@@ -56,6 +56,56 @@ func reviews(scores ...int) func(context.Context, stage.Input) (stage.Output, er
 	}
 }
 
+// scored is a reviewer's submit: a score and its findings.
+func scored(score int, findings ...string) map[string]any {
+	list := make([]any, 0, len(findings))
+	for _, f := range findings {
+		list = append(list, f)
+	}
+
+	return map[string]any{"score": float64(score), "findings": list}
+}
+
+// verdicts scripts a reviewer that submits vs in turn, the last one again
+// once they run out.
+func verdicts(vs ...map[string]any) func(context.Context, stage.Input) (stage.Output, error) {
+	var n atomic.Int32
+
+	return func(context.Context, stage.Input) (stage.Output, error) {
+		i := int(n.Add(1)) - 1
+
+		return done("# Review", vs[min(i, len(vs)-1)]), nil
+	}
+}
+
+// shapeRounds lists shape's stage runs as "attempt A round R status".
+func shapeRounds(t *testing.T, st *store.Store) []string {
+	t.Helper()
+
+	runs, err := st.ListRuns(context.Background(), "BP1")
+	require.NoError(t, err)
+
+	var out []string
+
+	for _, r := range runs {
+		if r.Stage == "shape" && r.Kind == store.RunKindStage {
+			out = append(out, fmt.Sprintf("attempt %d round %d %s", r.Attempt, r.Round, r.Status))
+		}
+	}
+
+	return out
+}
+
+// reviewOf is the review map a gate event carries.
+func reviewOf(t *testing.T, gate Event) map[string]any {
+	t.Helper()
+
+	v, ok := gate.Payload["review"].(map[string]any)
+	require.True(t, ok, "the gate carries its verdict")
+
+	return v
+}
+
 func TestParseReview(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -100,9 +150,13 @@ func TestReview_AHumanGateShowsTheVerdict(t *testing.T) {
 	gate, ok := rec.first(EventGate)
 	require.True(t, ok)
 
-	verdict, _ := gate.Payload["review"].(map[string]any)
+	assert.Equal(t, 1, gate.Payload["version"])
+
+	verdict := reviewOf(t, gate)
 	assert.Equal(t, 4, verdict["score"])
 	assert.Equal(t, true, verdict["passed"])
+	assert.Equal(t, false, verdict["revised"], "a pass without findings is not revised")
+	assert.Equal(t, 1, verdict["judged"])
 
 	judged := inputsOf(runner, "shape.review")
 	require.Len(t, judged, 1)
@@ -203,6 +257,205 @@ func TestReview_AnAutoGateApprovesAtTheThreshold(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gates, 1)
 	assert.Equal(t, store.ResponderAuto, gates[0].Responder)
+}
+
+func TestReview_APassWithFindingsRevisesOnceBeforeTheHumanGate(t *testing.T) {
+	script := gatedScript()
+	script["shape.review"] = verdicts(scored(4, "name the owner"))
+
+	c, st, runner, rec := newGated(t, script)
+	ctx := context.Background()
+
+	startGated(t, c, protocol.ArchitectModeDefault)
+
+	assert.Len(t, inputsOf(runner, "shape.review"), 1, "the revision is not reviewed")
+	assert.Equal(t, 1, rec.count(EventReview))
+
+	shapes := inputsOf(runner, "shape")
+	require.Len(t, shapes, 2)
+	assert.Equal(t, []llm.Message{{Role: "user", Content: "x"}}, shapes[1].History, "the builder's conversation resumes")
+	assert.Contains(t, shapes[1].Task, "name the owner", "with the findings")
+	assert.Equal(t, []string{"attempt 1 round 1 done", "attempt 1 round 2 done"}, shapeRounds(t, st))
+
+	gate, ok := rec.first(EventGate)
+	require.True(t, ok)
+	assert.Equal(t, 1, rec.count(EventGate))
+	assert.Equal(t, 2, gate.Payload["version"], "the gate shows the revised version")
+
+	verdict := reviewOf(t, gate)
+	assert.Equal(t, true, verdict["revised"])
+	assert.Equal(t, 1, verdict["judged"], "the version the reviewer scored")
+	assert.Equal(t, 4, verdict["score"])
+	assert.Equal(t, true, verdict["passed"])
+
+	gates, err := st.ListGates(ctx, "BP1", "shape")
+	require.NoError(t, err)
+	assert.Empty(t, gates, "the gate waits for its human")
+}
+
+func TestReview_AnAutoGateApprovesTheRevision(t *testing.T) {
+	script := gatedScript()
+	script["shape.review"] = verdicts(scored(4, "name the owner"))
+
+	c, st, runner, rec := newGated(t, script)
+	ctx := context.Background()
+
+	startGated(t, c, protocol.ArchitectModeAuto)
+
+	assert.False(t, rec.has(EventGate))
+	assert.Equal(t, []string{"intake", "shape", "shape", "plan"}, stagesRun(runner))
+	assert.Len(t, inputsOf(runner, "shape.review"), 1)
+
+	gates, err := st.ListGates(ctx, "BP1", "shape")
+	require.NoError(t, err)
+	require.Len(t, gates, 1)
+	assert.Equal(t, store.GateApprove, gates[0].Decision)
+	assert.Equal(t, 2, gates[0].Version, "the revised version is approved")
+	assert.Equal(t, store.ResponderAuto, gates[0].Responder)
+}
+
+func TestReview_ALowScoreThenAPassWithFindingsRevisesOnce(t *testing.T) {
+	script := gatedScript()
+	script["shape.review"] = verdicts(scored(2, "split it"), scored(4, "name the owner"))
+
+	c, st, runner, rec := newGated(t, script)
+
+	startGated(t, c, protocol.ArchitectModeDefault)
+
+	assert.Len(t, inputsOf(runner, "shape.review"), 2)
+
+	shapes := inputsOf(runner, "shape")
+	require.Len(t, shapes, 3)
+	assert.Contains(t, shapes[1].Task, "split it", "the builder round")
+	assert.Contains(t, shapes[2].Task, "name the owner", "the revision round")
+	assert.Equal(t, []string{"attempt 1 round 1 done", "attempt 1 round 2 done", "attempt 1 round 3 done"}, shapeRounds(t, st))
+
+	gate, ok := rec.first(EventGate)
+	require.True(t, ok)
+	assert.Equal(t, 3, gate.Payload["version"])
+
+	verdict := reviewOf(t, gate)
+	assert.Equal(t, true, verdict["revised"])
+	assert.Equal(t, 2, verdict["judged"])
+	assert.Equal(t, 2, verdict["round"])
+}
+
+func TestReview_ARestartDuringTheRevisionRunsItAgain(t *testing.T) {
+	var shapes atomic.Int32
+
+	script := gatedScript()
+	script["shape.review"] = verdicts(scored(4, "name the owner"))
+	script["shape"] = func(ctx context.Context, _ stage.Input) (stage.Output, error) {
+		if shapes.Add(1) == 2 {
+			<-ctx.Done()
+
+			return stage.Output{}, ctx.Err()
+		}
+
+		return done("# Shape", nil), nil
+	}
+
+	c, st, runner, _ := newGated(t, script)
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	require.Eventually(t, func() bool { return shapes.Load() == 2 }, 5*time.Second, 5*time.Millisecond)
+	require.NoError(t, c.Shutdown(ctx))
+	require.Len(t, inputsOf(runner, "shape.review"), 1)
+
+	c2, _, runner2, rec2 := newGatedOn(t, st, script)
+	require.NoError(t, c2.Start(ctx, startInput("BP1")))
+	c2.Wait("BP1")
+
+	again := inputsOf(runner2, "shape")
+	require.Len(t, again, 1)
+	assert.Contains(t, again[0].Task, "name the owner", "the revision runs again with its findings")
+	assert.NotEmpty(t, again[0].History, "on the builder's conversation")
+	assert.Empty(t, inputsOf(runner2, "shape.review"), "no new review")
+	assert.Equal(t, []string{"attempt 1 round 1 done", "attempt 1 round 2 interrupted", "attempt 1 round 2 done"}, shapeRounds(t, st))
+
+	gate, ok := rec2.first(EventGate)
+	require.True(t, ok)
+	assert.Equal(t, 2, gate.Payload["version"])
+	assert.Equal(t, true, reviewOf(t, gate)["revised"])
+}
+
+func TestReview_AFailedRevisionWaitsAndANoteRunsItAgain(t *testing.T) {
+	var shapes atomic.Int32
+
+	script := gatedScript()
+	script["shape.review"] = verdicts(scored(4, "name the owner"))
+	script["shape"] = func(context.Context, stage.Input) (stage.Output, error) {
+		if shapes.Add(1) == 2 {
+			return stage.Output{}, errors.New("provider down")
+		}
+
+		return done("# Shape", nil), nil
+	}
+
+	c, st, runner, rec := newGated(t, script)
+	ctx := context.Background()
+
+	startGated(t, c, protocol.ArchitectModeDefault)
+	require.False(t, rec.has(EventGate), "the failed revision stops the pipeline")
+
+	require.NoError(t, c.Message(ctx, "BP1", "go on", "m2"))
+	c.Wait("BP1")
+
+	note, ok := rec.first(EventNote)
+	require.True(t, ok)
+	assert.Equal(t, "shape", note.Payload["retries"])
+	assert.Equal(t, true, note.Payload["critique"])
+
+	shapesRun := inputsOf(runner, "shape")
+	require.Len(t, shapesRun, 3, "the revision runs again")
+	assert.Contains(t, shapesRun[2].Task, "name the owner")
+	assert.Len(t, inputsOf(runner, "shape.review"), 1, "its verdict is not asked for again")
+	assert.Equal(t, []string{"attempt 1 round 1 done", "attempt 1 round 2 failed", "attempt 1 round 2 done"}, shapeRounds(t, st))
+
+	gate, ok := rec.first(EventGate)
+	require.True(t, ok)
+	assert.Equal(t, 2, gate.Payload["version"])
+	assert.Equal(t, true, reviewOf(t, gate)["revised"])
+}
+
+func TestReview_AGateShownOnAPassWithFindingsStaysWithItsHuman(t *testing.T) {
+	c, st, runner, rec := newGated(t, gatedScript())
+	ctx := context.Background()
+
+	// A gate shown on a verdict that passed with findings, before such a
+	// verdict owed a revision.
+	seedGated(t, st, protocol.ArchitectModeDefault)
+
+	_, err := st.PutArtifact(ctx, store.Artifact{
+		BlueprintID: "BP1", Stage: reviewStage("shape"), Body: "# Review",
+		Data: []byte(`{"score":4,"findings":["name the owner"],"version":1,"attempt":1,"round":1}`),
+	})
+	require.NoError(t, err)
+	require.NoError(t, st.AppendEvent(ctx, store.Event{
+		Time: time.Now().UTC(), BlueprintID: "BP1", Kind: EventGate, Payload: []byte(`{"stage":"shape","version":1}`),
+	}))
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	gate, ok := rec.first(EventGate)
+	require.True(t, ok, "the gate is shown again")
+	assert.Equal(t, 1, gate.Payload["version"])
+	assert.Equal(t, false, reviewOf(t, gate)["revised"])
+	assert.Empty(t, stagesRun(runner), "no revision runs")
+
+	// The rejection starts a new attempt, whose version is no revision.
+	require.NoError(t, c.Message(ctx, "BP1", "reject make it smaller", "m2"))
+	c.Wait("BP1")
+
+	assert.Len(t, inputsOf(runner, "shape.review"), 1, "the new attempt's version is reviewed")
+
+	gates := rec.all(EventGate)
+	require.Len(t, gates, 2)
+	assert.Equal(t, 2, gates[1].Payload["version"])
+	assert.Equal(t, false, reviewOf(t, gates[1])["revised"])
+	assert.Equal(t, 2, reviewOf(t, gates[1])["judged"])
 }
 
 func TestReview_AFailedRoundWaitsAndANoteRunsItAgain(t *testing.T) {

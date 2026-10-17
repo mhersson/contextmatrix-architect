@@ -29,7 +29,8 @@ const (
 	// ToolCM is the read-only ContextMatrix tool group.
 	ToolCM     = "cm"
 	CheckCards = "cards"
-	// CheckAssumptions checks a submit's assumptions: standalone sentences.
+	// CheckAssumptions checks a submit's assumptions: standalone sentences,
+	// each basis an answered question, and no sentence naming one.
 	CheckAssumptions = "assumptions"
 	// CheckDecisions checks a design's decisions: each made, with a
 	// rejected option and a basis, and every answer used.

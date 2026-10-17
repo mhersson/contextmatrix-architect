@@ -172,16 +172,16 @@ func (c *Controller) decide(ctx context.Context, au audit, id, stageID string, v
 	return true
 }
 
-// openGate acts on a gate whose artifact has its verdict: when the stage
-// and every stage folded into its gate are under the auto policy now, a
-// passing score approves them all and what follows the stage is returned as
-// advance returns it; otherwise, a human policy on any of them or a score
-// still below the threshold after the attempt's rounds, the gate is shown
-// and the chain stops.
+// openGate acts on a gate whose artifact has its verdict, or is the
+// revision its verdict owed: when the stage and every stage folded into its
+// gate are under the auto policy now, a passing score approves them all and
+// what follows the stage is returned as advance returns it; otherwise, a
+// human policy on any of them or a score still below the threshold after the
+// attempt's rounds, the gate is shown and the chain stops.
 func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Blueprint, out outcome) (string, outcome) {
 	st, _ := c.opts.Pack.Stage(out.stage)
 
-	v, found, err := c.latestReview(ctx, bp.ID, out.stage, out.art.Version)
+	v, found, _, err := c.gateReview(ctx, bp.ID, st, out.art)
 	if err != nil {
 		c.fail(ctx, sess.audit, bp.ID, 0, err.Error())
 
@@ -244,8 +244,9 @@ func (c *Controller) allAuto(ctx context.Context, bp store.Blueprint, stageID st
 	return true, nil
 }
 
-// showGate shows a stage's gate with its reviewer's verdict and leaves the
-// blueprint waiting for the decision; a folded gate carries the folded
+// showGate shows a stage's gate with its reviewer's verdict, the version
+// that verdict judged and whether the artifact is its revision, and leaves
+// the blueprint waiting for the decision; a folded gate carries the folded
 // artifacts, which the panel has not shown near it. The replies it takes
 // travel with it, for the panel's prompt; when they cannot be read, the gate
 // is not shown and the blueprint goes idle with the error reported.
@@ -282,7 +283,7 @@ func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint,
 
 	st, _ := c.opts.Pack.Stage(out.stage)
 
-	v, found, err := c.latestReview(ctx, bp.ID, out.stage, out.art.Version)
+	v, found, revised, err := c.gateReview(ctx, bp.ID, st, out.art)
 
 	switch {
 	case err != nil:
@@ -295,7 +296,7 @@ func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint,
 
 		payload["review"] = map[string]any{
 			"score": v.Score, "threshold": st.Reviewer.Threshold, "findings": findings, "round": v.Round,
-			"passed": v.Score >= st.Reviewer.Threshold,
+			"passed": v.Score >= st.Reviewer.Threshold, "revised": revised, "judged": v.Version,
 		}
 	}
 

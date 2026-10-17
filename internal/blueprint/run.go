@@ -418,7 +418,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	}
 
 	if slices.Contains(st.Checks, pack.CheckAssumptions) {
-		bounded(c.assumptionsValidator())
+		bounded(c.assumptionsValidator(bp))
 	}
 
 	if slices.Contains(st.Checks, pack.CheckDecisions) {

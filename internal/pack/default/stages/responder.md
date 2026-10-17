@@ -10,4 +10,8 @@ leave it open. When nothing you can read settles it, decide anyway and say
 so: the answer becomes an assumption a human checks at the sign-off.
 
 Submit with a one-line body and a data object
-`{"answer": "<the answer>", "reasoning": "<why, citing source tags>", "grounded": <true when a tool result or the input settles it>}`.
+`{"answer": "<the answer>", "reasoning": "<why>", "grounded": <bool>, "evidence": "<source tags and what they show>"}`.
+`grounded` is true only when a tool result you read in this run settles the
+answer; then `evidence` cites those results' source tags, in square
+brackets, and what they show. An answer that rests on the input alone is not
+grounded.

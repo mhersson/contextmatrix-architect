@@ -344,9 +344,12 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			return protocol.LogEntry{}, false
 		}
 
-		grounded := "unverified, an assumption for the sign-off"
+		grounded := "assumed by the responder, for the sign-off"
 		if g, _ := p["grounded"].(bool); g {
-			grounded = "grounded"
+			grounded = "verified"
+			if evidence := str(p["evidence"]); evidence != "" {
+				grounded += ": " + evidence
+			}
 		}
 
 		entry.Type = "text"
@@ -477,15 +480,10 @@ func signoffText(p map[string]any) (body, reply string) {
 
 	switch list := anyMaps(p["assumptions"]); {
 	case len(list) > 0:
-		b.WriteString("\nAssumptions, unverified first:\n")
+		b.WriteString("\nAssumptions, riskiest first:\n")
 
 		for _, a := range list {
-			status := str(a["status"])
-			if evidence := str(a["evidence"]); evidence != "" {
-				status += ": " + evidence
-			}
-
-			fmt.Fprintf(&b, "- %s (%s) %s\n", str(a["id"]), status, str(a["text"]))
+			fmt.Fprintf(&b, "- %s (%s) %s\n", str(a["id"]), assumptionStatus(a), str(a["text"]))
 		}
 	case str(p["assumptions"]) != "":
 		// Intake's section text: a sign-off stored before assumptions were
@@ -539,6 +537,42 @@ func signoffText(p map[string]any) (body, reply string) {
 	reply += ", or `reject <feedback>` to re-run decomposition with your feedback."
 
 	return body, reply
+}
+
+// assumptionStatus names an assumption's status with the source it rests on:
+// who answered the question, which one unless it is the entry's own id, and
+// the answer; any other status with its evidence and the answer it rests on.
+func assumptionStatus(a map[string]any) string {
+	status, basis, answer := str(a["status"]), str(a["basis"]), str(a["answer"])
+
+	var who string
+
+	switch status {
+	case "assumed":
+		who = "assumed by the responder"
+	case "confirmed":
+		who = "confirmed by you"
+	default:
+		if evidence := str(a["evidence"]); evidence != "" {
+			status += ": " + evidence
+		}
+
+		if answer != "" {
+			status += "; rests on " + basis + ": " + answer
+		}
+
+		return status
+	}
+
+	if basis != "" && basis != str(a["id"]) {
+		who += ", " + basis
+	}
+
+	if answer != "" {
+		who += ": " + answer
+	}
+
+	return who
 }
 
 // policyText renders a gate reply: the change it made and what it leaves
@@ -625,17 +659,23 @@ func gateText(p map[string]any) (body, reply string) {
 	// The findings are in the review entry posted just above the gate, so the
 	// gate refers to them rather than listing them a second time.
 	if v, ok := p["review"].(map[string]any); ok {
-		if passed, _ := v["passed"].(bool); passed {
-			text += fmt.Sprintf(" The reviewer scored it %.0f of 5 (passes at %.0f)", num(v["score"]), num(v["threshold"]))
-		} else {
-			text += fmt.Sprintf(" The reviewer did not pass it after %.0f round(s): %.0f of 5 (passes at %.0f)", num(v["round"]), num(v["score"]), num(v["threshold"]))
-		}
-
+		findings := ""
 		if len(stringsOf(v["findings"])) > 0 {
-			text += "; its findings are in the review above"
+			findings = "; its findings are in the review above"
 		}
 
-		text += "."
+		revised, _ := v["revised"].(bool)
+		passed, _ := v["passed"].(bool)
+
+		switch {
+		case revised:
+			text += fmt.Sprintf(" The reviewer scored %s version %.0f at %.0f of 5 (passes at %.0f); its findings, in the review above, went back for one revision, and the artifact above is the revised version, not reviewed again.",
+				stage, num(v["judged"]), num(v["score"]), num(v["threshold"]))
+		case passed:
+			text += fmt.Sprintf(" The reviewer scored it %.0f of 5 (passes at %.0f)%s.", num(v["score"]), num(v["threshold"]), findings)
+		default:
+			text += fmt.Sprintf(" The reviewer did not pass it after %.0f round(s): %.0f of 5 (passes at %.0f)%s.", num(v["round"]), num(v["score"]), num(v["threshold"]), findings)
+		}
 	}
 
 	if list := problemsList(p["problems"]); list != "" {

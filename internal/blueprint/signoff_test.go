@@ -355,7 +355,7 @@ func TestSignoff_ShowsIntakesAssumptions(t *testing.T) {
 	so, ok := rec.first(EventSignOff)
 	require.True(t, ok)
 	assert.Equal(t, []any{
-		map[string]any{"id": "A1", "stage": "intake", "text": "The parser stays in Go.", "status": "unverified", "evidence": ""},
+		map[string]any{"id": "A1", "stage": "intake", "text": "The parser stays in Go.", "status": "unverified", "basis": "", "answer": "", "evidence": ""},
 	}, so.Payload["assumptions"])
 }
 
