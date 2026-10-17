@@ -379,6 +379,10 @@ func TestMessage_FirstMessageIsTheNeedAndRunsIntake(t *testing.T) {
 	assert.Equal(t, []string{EventCreated, EventStageStarted, EventArtifact, EventStageEnded, EventGatePlan, EventReport}, rec.kinds(),
 		"nothing follows intake in a one-stage pack, so the pipeline reports")
 
+	report, ok := rec.first(EventReport)
+	require.True(t, ok)
+	assert.Equal(t, 0, report.Payload["rounds"], "no round applies to an end without a loop stage")
+
 	started, ok := rec.first(EventStageStarted)
 	require.True(t, ok)
 	assert.Equal(t, c.opts.Pack.Name, started.Payload["pack"], "every run logs the pack name")

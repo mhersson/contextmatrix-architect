@@ -416,6 +416,80 @@ func TestView_States(t *testing.T) {
 			},
 		},
 		{
+			name: "superseded by a rejection of the stage folded into its gate",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				through(t, c, st, "intake")
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", map[string]any{"slices": []any{map[string]any{"id": "SL1"}}})
+				gateRow(t, st, "slicing", 1, store.GateFold, store.ResponderAuto, "solution_design")
+				ran(t, st, "solution_design", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "solution_design", nil)
+				appendEvent(t, st, EventGate, map[string]any{"stage": "solution_design", "version": 1})
+				gateRow(t, st, "slicing", 1, store.GateReject, store.ResponderHuman, "merge them")
+				gateRow(t, st, "solution_design", 1, store.GateSuperseded, store.ResponderHuman, "slicing")
+				flying(t, c, st, "slicing", store.RunKindStage, 1)
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				d := refOf(t, v, "solution_design", 1)
+				assert.Equal(t, artSuperseded, d.Status)
+				assert.Empty(t, d.DecidedBy)
+				assert.Nil(t, d.DecidedAt)
+				assert.Equal(t, artRejected, refOf(t, v, "slicing", 1).Status)
+				assert.Equal(t, stepRunning, stepOf(t, v, "slicing").Status)
+				assert.Equal(t, stepPending, stepOf(t, v, "solution_design").Status)
+				assert.Nil(t, v.Open)
+			},
+		},
+		{
+			name: "a failed review leaves the version current",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				through(t, c, st, "intake")
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", stageData("slicing"))
+
+				id, err := st.StartRun(context.Background(), store.Run{BlueprintID: viewID, Stage: "slicing", Kind: store.RunKindReviewer, Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: time.Now().UTC()})
+				require.NoError(t, err)
+				require.NoError(t, st.EndRun(context.Background(), id, store.RunFailed, "error", store.RunUsage{}, time.Now().UTC()))
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				assert.Equal(t, stepFailed, stepOf(t, v, "slicing").Status)
+				assert.Equal(t, artCurrent, refOf(t, v, "slicing", 1).Status)
+				assert.Nil(t, v.Open)
+			},
+		},
+		{
+			name: "a failed revision leaves the reviewed version current",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				through(t, c, st, "intake")
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", stageData("slicing"))
+				ran(t, st, "slicing", store.RunKindReviewer, 1, 1, 0.05)
+				put(t, st, reviewStage("slicing"), map[string]any{"score": 4, "findings": []any{"name the owner"}, "version": 1, "attempt": 1, "round": 1})
+
+				id, err := st.StartRun(context.Background(), store.Run{BlueprintID: viewID, Stage: "slicing", Kind: store.RunKindStage, Attempt: 1, Round: 2, Status: store.RunRunning, StartedAt: time.Now().UTC()})
+				require.NoError(t, err)
+				require.NoError(t, st.EndRun(context.Background(), id, store.RunFailed, "error", store.RunUsage{}, time.Now().UTC()))
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				assert.Equal(t, stepFailed, stepOf(t, v, "slicing").Status)
+				assert.Equal(t, artCurrent, refOf(t, v, "slicing", 1).Status)
+			},
+		},
+		{
+			name: "a review that ended without a verdict leaves the version current",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				through(t, c, st, "intake")
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", stageData("slicing"))
+				ran(t, st, "slicing", store.RunKindReviewer, 1, 1, 0.05)
+				require.NoError(t, st.SetBlueprintState(context.Background(), viewID, string(StateFailed)))
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				assert.Equal(t, stepFailed, stepOf(t, v, "slicing").Status)
+				assert.Equal(t, artCurrent, refOf(t, v, "slicing", 1).Status)
+			},
+		},
+		{
 			name: "readiness round 2",
 			setup: func(t *testing.T, c *Controller, st *store.Store) {
 				through(t, c, st, "decomposition")
