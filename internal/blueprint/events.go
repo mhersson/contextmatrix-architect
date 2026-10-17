@@ -75,7 +75,8 @@ const (
 	// decide; the blueprint waits for approve or reject.
 	EventSignOff = "signoff"
 	// EventGate shows a stage's gate: the stage, the version of its artifact
-	// that waits, and the replies that decide it.
+	// that waits, the artifacts folded into it, and the replies that decide
+	// it.
 	EventGate = "gate"
 	// EventReview is a reviewer's verdict on a stage's artifact: the score,
 	// the threshold that passes, the findings and the round.
@@ -85,7 +86,7 @@ const (
 	// carries the original event's kind and payload.
 	EventReshow = "reshow"
 	// EventDecided records a decision at a stage's gate or the sign-off, by a
-	// human or the auto policy.
+	// human or the auto policy, or a stage's fold into a later gate.
 	EventDecided = "decided"
 	// EventEnded records that CM ended the session; the blueprint persists.
 	EventEnded = "session_ended"

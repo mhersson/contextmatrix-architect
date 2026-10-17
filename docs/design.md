@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slices 0 and 1 are implemented, and slice 2 signs off ready cards, emits them and a playbook into CM and starts them in yolo mode, then reports their run. Slice 3's foundations are implemented: a responder policy per stage, gates after any gated stage, numbered and recorded questions, CM prompts, notes that reach later stages and assumptions with grounding's verdicts, reviewer runs with the critique loop, the auto responder and the solution design stage; the slicing and acceptance stages are design, and so is the export's commit to a repository (slice 4); the export writes the bundle under the state directory.
+Status: agreed design, 2026-10-15. Slices 0 and 1 are implemented, and slice 2 signs off ready cards, emits them and a playbook into CM and starts them in yolo mode, then reports their run. Slice 3's foundations are implemented: a responder policy per stage, gates after any gated stage, numbered and recorded questions, CM prompts, notes that reach later stages and assumptions with grounding's verdicts, reviewer runs with the critique loop, the auto responder, and the slicing and solution design stages with slicing's gate folding; the acceptance stage is design, and so is the export's commit to a repository (slice 4); the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -186,7 +186,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status, model, started, ended, cost, token buckets |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, findings, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag, the answering message, answered at; written once, at the answer |
-| gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject), feedback, responder (human, auto), decided at |
+| gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted                                                                     |
 | events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning |
 | sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage |
@@ -229,7 +229,7 @@ developer (DEV), reviewer (REV).
 | 8  | Sign-off        | human   | everything        | approval; then emission                                                                               | yes       |
 | -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   |
 
-The embedded pack holds intake, solution design, grounding, decomposition and readiness; slicing and acceptance are design. Sign-off is the controller's step after readiness (see Emission). Every stage is a model run; a design the user already has goes in the need or an answer, and solution design adopts it.
+The embedded pack holds intake, slicing, solution design, grounding, decomposition and readiness; acceptance is design. Sign-off is the controller's step after readiness (see Emission). Every stage is a model run; a design the user already has goes in the need or an answer, and solution design adopts it.
 
 - Intake states the shape it expects (slices, projects involved). When its
   run completes, the controller posts the gate plan: who answers each
@@ -242,12 +242,26 @@ The embedded pack holds intake, solution design, grounding, decomposition and re
   at the root, or any commit. None of it blocks. Decomposition plans it as
   setup, and the user may set the verify command in CM meanwhile; the next
   decomposition submit reads it.
-- Solution design's submit is checked: every decision has a chosen option,
-  a rejected option and a basis (`Q<n>`, `S<n>` or `assumption`), and every
-  question it got answered is the basis of a decision.
-- A gate folds when the pack's condition on its artifact holds: the slicing
-  gate folds into the solution design gate when there is exactly one slice.
-  Folding is decided by the artifact, never by an estimate of size.
+- Slicing's submit is checked: at least one slice, each with an id of its
+  own, a title, and only the blueprint's target projects.
+- Solution design's submit is checked: it has slices, every slice of slicing
+  among them; every decision has a chosen option, a rejected option and a
+  basis (`Q<n>`, `S<n>` or `assumption`); and every question it got answered
+  since the slicing it consumes was built is the basis of a decision; an
+  answer from before a re-slice stays a basis it may cite.
+- A gate folds when the pack's condition on its artifact holds and the gate
+  it folds into has the same policy: the slicing gate folds into the
+  solution design gate when there is exactly one slice. Folding is decided
+  by the artifact, never by an estimate of size, and is recorded as a `fold`
+  decision when the pipeline passes slicing, so a later policy change cannot
+  unfold it. A folded stage's reviewer is skipped; the gate it folds into,
+  and its reviewer, judge both; the reviewer gets the gate feedback each
+  folded stage's attempt addresses too. Approve approves both, `reject
+  <feedback>` runs solution design again, and `reject slicing <feedback>`
+  runs slicing and everything after it again. The folded gate shows
+  slicing's artifact and refers to the design posted above it, as every gate
+  does, and it waits for a human while either stage's policy is human; it
+  approves both on its own only when both are auto.
 - Reviewer runs are declared on every gated stage in the pack and skipped
   when its gate folds. The default pack declares them for slicing, solution
   design and acceptance; readiness is decomposition's reviewer and gets
@@ -492,10 +506,10 @@ The mode is chosen in the panel's new-session dialog and recorded on the
 blueprint.
 
 - **Default**: policies as the pack sets them. The embedded pack makes
-  intake and solution design `human` and every other stage `auto`. The
-  sign-off waits for a human. A `gate <stage> human|auto` reply, listed in
-  the gate plan posted after intake, changes a stage's policy for this
-  blueprint.
+  intake, slicing and solution design `human` and every other stage
+  `auto`. The sign-off waits for a human. A `gate <stage> human|auto` reply,
+  listed in the gate plan posted after intake, changes a stage's policy for
+  this blueprint.
 - **`auto`**: every policy `auto`. Stops before emission. Cards auto-vet in
   CM on the non-Jira path, so this stop is the only human backstop.
 - **`auto+emit`**: as above, then emits the playbook and stops.
@@ -632,7 +646,7 @@ Replies the server understands, besides answers to questions:
 
 | Reply                         | Effect                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
-| `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition with the feedback. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is an answer, the need or a note. |
+| `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition with the feedback. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is an answer, the need or a note. |
 | `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next question or gate on; an open question or gate keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |

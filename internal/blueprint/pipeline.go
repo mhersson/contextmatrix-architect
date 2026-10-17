@@ -24,11 +24,13 @@ const maxContractRounds = 3
 // the stage that completed (gate, with stage and art the artifact that
 // waits), or the pipeline's end with the artifact it ended on. critique
 // marks a gate whose artifact still needs its reviewer, or a builder round
-// after a low verdict.
+// after a low verdict. fold, on an outcome that passes a stage, is the fold
+// the caller records.
 type outcome struct {
 	stage    string
 	gate     bool
 	critique bool
+	fold     *folding
 	end      bool
 	ready    bool
 	findings []string
@@ -42,7 +44,10 @@ type outcome struct {
 func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed string) (outcome, error) {
 	from := 0
 
-	var last store.Artifact
+	var (
+		last store.Artifact
+		fold *folding
+	)
 
 	if completed != "" {
 		st, ok := c.opts.Pack.Stage(completed)
@@ -90,6 +95,17 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 		// A gated stage's artifact waits at its gate: approved, what follows
 		// it runs; rejected, the stage runs again.
 		if st.Gate {
+			// A rejection at this gate of a stage folded into it runs that
+			// stage again, and everything after it.
+			again, err := c.foldedRejected(ctx, bp.ID, st)
+			if err != nil {
+				return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
+			}
+
+			if again != "" {
+				return outcome{stage: again}, nil
+			}
+
 			decision, err := c.gateDecision(ctx, bp.ID, st.ID, art.Version)
 			if err != nil {
 				return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
@@ -97,6 +113,17 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 
 			switch decision {
 			case "":
+				into, err := c.foldsInto(ctx, bp, st, art)
+				if err != nil {
+					return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
+				}
+
+				if into != "" {
+					fold = &folding{stage: st.ID, version: art.Version, into: into}
+
+					break
+				}
+
 				pending, err := c.critiquePending(ctx, bp.ID, st, art)
 				if err != nil {
 					return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
@@ -113,7 +140,7 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 	}
 
 	if from < len(c.opts.Pack.Stages) {
-		return outcome{stage: c.opts.Pack.Stages[from].ID}, nil
+		return outcome{stage: c.opts.Pack.Stages[from].ID, fold: fold}, nil
 	}
 
 	return outcome{end: true, ready: true, art: last}, nil
@@ -184,6 +211,9 @@ func (c *Controller) resumePoint(ctx context.Context, au audit, bp store.Bluepri
 	}
 
 	out, last, err := c.position(ctx, bp)
+	if err == nil && out.fold != nil && !c.recordFold(ctx, au, bp.ID, out.fold) {
+		return outcome{}, nil
+	}
 
 	// A review that completed leaves the critique to go on: a crash came
 	// before its verdict was stored or before the builder round started.
@@ -263,6 +293,12 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 		// The message is kept and the user told why it starts nothing.
 		sess.audit.event(ctx, noteEvent(id, text, msgID, "", false))
 		c.unreadable(ctx, sess.audit, id, err)
+		c.release(id, r)
+
+		return nil
+	}
+
+	if out.fold != nil && !c.recordFold(ctx, sess.audit, id, out.fold) {
 		c.release(id, r)
 
 		return nil
@@ -350,6 +386,10 @@ func (c *Controller) advance(ctx context.Context, sess *session, bp store.Bluepr
 	if err != nil {
 		c.fail(ctx, sess.audit, bp.ID, 0, err.Error())
 
+		return "", outcome{}
+	}
+
+	if out.fold != nil && !c.recordFold(ctx, sess.audit, bp.ID, out.fold) {
 		return "", outcome{}
 	}
 

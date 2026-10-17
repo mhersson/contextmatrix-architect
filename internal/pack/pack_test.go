@@ -68,7 +68,11 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 		ids = append(ids, s.ID)
 	}
 
-	assert.Equal(t, []string{"intake", "solution_design", "grounding", "decomposition", "readiness"}, ids)
+	assert.Equal(t, []string{"intake", "slicing", "solution_design", "grounding", "decomposition", "readiness"}, ids)
+
+	slicing, _ := p.Stage("slicing")
+	assert.Equal(t, &Fold{Field: "slices", Max: 1}, slicing.Fold)
+	assert.True(t, slicing.Gate)
 
 	design, _ := p.Stage("solution_design")
 	assert.True(t, design.Gate)

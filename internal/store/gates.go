@@ -8,8 +8,11 @@ import (
 
 // Gate decisions and responders.
 const (
-	GateApprove    = "approve"
-	GateReject     = "reject"
+	GateApprove = "approve"
+	GateReject  = "reject"
+	// GateFold records that a stage's artifact folded into a later gate,
+	// which judges it; its feedback names that gate.
+	GateFold       = "fold"
 	ResponderHuman = "human"
 	ResponderAuto  = "auto"
 )

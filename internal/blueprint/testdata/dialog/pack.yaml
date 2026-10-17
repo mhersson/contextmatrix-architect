@@ -6,10 +6,19 @@ stages:
     produces: need
     checks: [assumptions]
     policy: human
+  - id: slicing
+    persona: product_owner
+    produces: slices
+    consumes: [intake]
+    checks: [slices]
+    policy: human
+    gate: true
+    fold: {field: slices, max: 1}
+    reviewer: {persona: system_designer, threshold: 4}
   - id: solution_design
     persona: system_designer
     produces: design
-    consumes: [intake]
+    consumes: [intake, slicing]
     tools: [code]
     checks: [assumptions, decisions]
     policy: human
@@ -19,18 +28,18 @@ stages:
   - id: grounding
     persona: senior_developer
     produces: grounding
-    consumes: [intake, solution_design]
+    consumes: [intake, slicing, solution_design]
     tools: [code, cm]
   - id: decomposition
     persona: senior_developer
     produces: cards
-    consumes: [intake, solution_design, grounding]
+    consumes: [intake, slicing, solution_design, grounding]
     tools: [code]
     checks: [cards]
   - id: readiness
     persona: reviewer
     produces: readiness
-    consumes: [intake, solution_design, grounding, decomposition]
+    consumes: [intake, slicing, solution_design, grounding, decomposition]
     tools: [code, cm]
     loops_to: decomposition
     max_rounds: 3

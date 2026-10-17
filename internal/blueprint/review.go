@@ -390,8 +390,9 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 
 // reviewTask is what a reviewer judges: the stage's inputs, the questions
 // it got answered, the assumptions, the gate feedback the attempt addresses,
-// the artifact, whose data holds any problems it was accepted with, the
-// user's notes and the score that passes.
+// the artifacts folded into its gate, each with the gate feedback its own
+// attempt addresses, the artifact, whose data holds any problems it was
+// accepted with, the user's notes and the score that passes.
 func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pack.Stage, art store.Artifact, attempt int) (string, error) {
 	var b strings.Builder
 
@@ -413,6 +414,26 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pack
 		if err := c.writeGateFeedback(ctx, &b, bp, st, attempt); err != nil {
 			return "", err
 		}
+	}
+
+	folded, err := c.folded(ctx, bp.ID, st.ID)
+	if err != nil {
+		return "", err
+	}
+
+	for _, f := range folded {
+		fst, _ := c.opts.Pack.Stage(f.Stage)
+
+		built, err := c.latestStageRun(ctx, bp.ID, f.Stage)
+		if err != nil {
+			return "", err
+		}
+
+		if err := c.writeGateFeedback(ctx, &b, bp, fst, built.Attempt); err != nil {
+			return "", err
+		}
+
+		writeArtifact(&b, fmt.Sprintf("%s version %d, whose gate folded into this one: judge it too", f.Stage, f.Version), f)
 	}
 
 	writeArtifact(&b, fmt.Sprintf("%s version %d, the artifact you judge", st.ID, art.Version), art)

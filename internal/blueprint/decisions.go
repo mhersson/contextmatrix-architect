@@ -3,10 +3,12 @@ package blueprint
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
@@ -44,9 +46,10 @@ func (c *Controller) decisionsValidator(bp store.Blueprint, stageID string) (fun
 
 // decisionProblems checks a design: it has slices; every decision has a
 // chosen option, a rejected option and a basis the blueprint knows (an
-// answered question, a recorded source or "assumption"); and every
-// question the stage got answered, in any attempt, is some decision's
-// basis, so no answer is dropped.
+// answered question, a recorded source or "assumption"); every slice of a
+// consumed slicing is designed; and every question the stage got answered
+// since that slicing was built, in any attempt, is some decision's basis,
+// so no answer is dropped. An answer from before a re-slice stays citable.
 func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, stageID string, data map[string]any) ([]string, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
@@ -68,6 +71,11 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 		return nil, fmt.Errorf("read the sources: %w", err)
 	}
 
+	since, err := c.slicedBy(ctx, bp.ID, stageID)
+	if err != nil {
+		return nil, err
+	}
+
 	known := map[string]bool{}
 
 	var own []string
@@ -75,7 +83,7 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 	for _, q := range questions {
 		known[q.Tag()] = true
 
-		if q.Stage == stageID {
+		if q.Stage == stageID && q.RunID > since {
 			own = append(own, q.Tag())
 		}
 	}
@@ -111,6 +119,35 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 				used[basis] = true
 			default:
 				out = append(out, problem(where, "basis", fmt.Sprintf("%q is no answered question (Q<n>), recorded source (S<n>) or assumption", dec.Basis)))
+			}
+		}
+	}
+
+	designed := map[string]bool{}
+	for _, s := range d.Slices {
+		designed[strings.TrimSpace(s.ID)] = true
+	}
+
+	if st, ok := c.opts.Pack.Stage(stageID); ok {
+		for _, id := range st.Consumes {
+			consumed, _ := c.opts.Pack.Stage(id)
+			if !slices.Contains(consumed.Checks, pack.CheckSlices) {
+				continue
+			}
+
+			art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, id)
+
+			switch {
+			case errors.Is(err, store.ErrNotFound):
+				continue
+			case err != nil:
+				return nil, fmt.Errorf("read %s: %w", id, err)
+			}
+
+			for _, sliceID := range sliceIDs(art) {
+				if !designed[sliceID] {
+					out = append(out, problem(sliceID, "slice_missing", id+"'s slice has no design"))
+				}
 			}
 		}
 	}

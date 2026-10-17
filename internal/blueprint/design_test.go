@@ -2,6 +2,7 @@ package blueprint
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -24,13 +25,29 @@ func newDialog(t *testing.T, script stageScript) (*Controller, *store.Store, *fa
 	t.Helper()
 
 	c, st, runner, rec, ws := newPipeline(t, script)
+	c.opts.Pack = dialogPack(t)
+
+	return c, st, runner, rec, ws
+}
+
+// newDialogOn is newDialog on an existing store and workspace, as a restart
+// finds them.
+func newDialogOn(t *testing.T, st *store.Store, script stageScript, ws *fakeWorkspace) (*Controller, *fakeRunner, *recorder) {
+	t.Helper()
+
+	c, _, runner, rec, _ := newPipelineOn(t, st, script, ws)
+	c.opts.Pack = dialogPack(t)
+
+	return c, runner, rec
+}
+
+func dialogPack(t *testing.T) *pack.Pack {
+	t.Helper()
 
 	pk, err := pack.LoadDir("testdata/dialog")
 	require.NoError(t, err)
 
-	c.opts.Pack = pk
-
-	return c, st, runner, rec, ws
+	return pk
 }
 
 func passing() func(context.Context, stage.Input) (stage.Output, error) {
@@ -39,6 +56,8 @@ func passing() func(context.Context, stage.Input) (stage.Output, error) {
 
 func dialogScript() stageScript {
 	s := happyScript()
+	s["slicing"] = returns("# Slices", oneSlice())
+	s["slicing.review"] = passing()
 	s["solution_design"] = returns("# Design", goodDesign("assumption"))
 	s["solution_design.review"] = passing()
 
@@ -153,7 +172,7 @@ func TestSolutionDesign_AConversationThenItsGate(t *testing.T) {
 	require.NoError(t, c.Message(ctx, "BP1", "approve", "m4"))
 	c.Wait("BP1")
 
-	assert.Equal(t, []string{"intake", "solution_design", "grounding", "decomposition", "readiness"}, stagesRun(runner))
+	assert.Equal(t, []string{"intake", "slicing", "solution_design", "grounding", "decomposition", "readiness"}, stagesRun(runner))
 	assert.Equal(t, 1, ws.checkouts(), "grounding reads the tree solution design checked out")
 	assert.True(t, rec.has(EventSignOff))
 }
@@ -320,4 +339,25 @@ func TestSolutionDesign_AThirdFailingSubmitKeepsItsProblems(t *testing.T) {
 	reviews := inputsOf(runner, "solution_design.review")
 	require.Len(t, reviews, 1)
 	assert.Contains(t, reviews[0].Task, "Q1: unused_answer", "given to its reviewer")
+}
+
+func TestDecisions_EverySliceIsDesigned(t *testing.T) {
+	c, st, _, _, _ := newDialog(t, dialogScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	slicing, err := json.Marshal(twoSlices())
+	require.NoError(t, err)
+
+	_, err = st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: "slicing", Body: "# Slices", Data: slicing})
+	require.NoError(t, err)
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	validate, _ := c.decisionsValidator(bp, "solution_design")
+
+	err = validate(ctx, stage.Artifact{Body: "# Design", Data: goodDesign("assumption")})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "SL2: slice_missing: ")
 }

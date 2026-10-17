@@ -162,6 +162,16 @@ func TestLogEntryFor(t *testing.T) {
 		{"a note that runs a review again", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{
 			"text": "go on", "retries": "shape", "critique": true,
 		}}, "system", []string{"shape"}, false},
+		{"a fold", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "slicing", "decision": "fold", "feedback": "solution_design", "responder": "auto",
+		}}, "system", []string{"slicing", "solution_design"}, false},
+		{"a folded gate", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "solution_design", "version": 1, "folded": []any{map[string]any{"stage": "slicing", "version": 1}},
+			"actions": []any{map[string]any{"label": "Reject slicing", "reply": "reject slicing", "feedback": true}},
+		}}, "text", []string{"slicing", "`reject slicing <feedback>`"}, false},
+		{"a folded gate names what it also judges", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "solution_design", "version": 1, "folded": []any{map[string]any{"stage": "slicing", "version": 3}}, "actions": []any{},
+		}}, "text", []string{"slicing", "3"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -428,4 +438,45 @@ func TestLogEntryFor_ANoteThatRunsAReviewIsNotCalledAStageRun(t *testing.T) {
 	require.True(t, ok)
 
 	assert.NotEqual(t, stage.Content, review.Content)
+}
+
+func TestLogEntryFor_AFoldedGateShowsTheDesignOnce(t *testing.T) {
+	const designed, sliced = "# Design\n\nPostgres, managed.", "# Slices\n\nSL1 ships the endpoint."
+
+	const designProblem, slicingProblem = "Q1: unused_answer: the question was answered, but no decision rests on it", "SL1: slice_title: a slice needs a title"
+
+	events := []blueprint.Event{
+		{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{"stage": "solution_design", "version": 2, "body": designed}},
+		{Kind: blueprint.EventReview, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "solution_design", "version": 2, "score": 5, "threshold": 4, "findings": []any{}, "round": 1,
+		}},
+		{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "solution_design", "version": 2, "problems": []any{designProblem},
+			"folded":  []any{map[string]any{"stage": "slicing", "version": 1, "body": sliced, "problems": []any{slicingProblem}}},
+			"actions": []any{map[string]any{"label": "Approve", "reply": "approve", "feedback": false}},
+		}},
+	}
+
+	var (
+		panel strings.Builder
+		gate  protocol.LogEntry
+	)
+
+	for _, e := range events {
+		entry, ok := logEntryFor(e)
+		require.True(t, ok)
+
+		panel.WriteString(entry.Content + "\n")
+
+		if e.Kind == blueprint.EventGate {
+			gate = entry
+		}
+	}
+
+	assert.Equal(t, 1, strings.Count(panel.String(), designed), "the design is shown once, above its gate")
+	assert.Contains(t, gate.Content, sliced, "the gate shows the folded artifact")
+	assert.NotContains(t, gate.Content, designed)
+	assert.Contains(t, gate.Content, "- "+designProblem)
+	assert.Less(t, strings.Index(gate.Content, sliced), strings.Index(gate.Content, "- "+slicingProblem), "each folded artifact with its problems")
+	assert.Equal(t, "gate:solution_design:v2", gate.Prompt.ID, "the prompt is the design gate's")
 }

@@ -109,7 +109,7 @@ func actionsPayload(actions []gateAction) []any {
 }
 
 // gateDecision is the latest decision on stageID's artifact version:
-// approve, reject, or "" when none was made.
+// approve, reject, fold, or "" when none was made.
 func (c *Controller) gateDecision(ctx context.Context, id, stageID string, version int) (string, error) {
 	gates, err := c.opts.Store.ListGates(ctx, id, stageID)
 	if err != nil {
@@ -171,20 +171,14 @@ func (c *Controller) decide(ctx context.Context, au audit, id, stageID string, v
 	return true
 }
 
-// openGate acts on a gate whose artifact has its verdict: under the auto
-// policy a passing score approves and what follows the stage is returned as
-// advance returns it; otherwise, a human policy or a score still below the
-// threshold after the attempt's rounds, the gate is shown and the chain
-// stops.
+// openGate acts on a gate whose artifact has its verdict: when the stage
+// and every stage folded into its gate are under the auto policy now, a
+// passing score approves them all and what follows the stage is returned as
+// advance returns it; otherwise, a human policy on any of them or a score
+// still below the threshold after the attempt's rounds, the gate is shown
+// and the chain stops.
 func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Blueprint, out outcome) (string, outcome) {
 	st, _ := c.opts.Pack.Stage(out.stage)
-
-	policy, err := c.policy(ctx, bp, out.stage)
-	if err != nil {
-		c.fail(ctx, sess.audit, bp.ID, 0, err.Error())
-
-		return "", outcome{}
-	}
 
 	v, found, err := c.latestReview(ctx, bp.ID, out.stage, out.art.Version)
 	if err != nil {
@@ -193,7 +187,27 @@ func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Bluep
 		return "", outcome{}
 	}
 
-	if policy == pack.PolicyAuto && found && st.Reviewer != nil && v.Score >= st.Reviewer.Threshold {
+	folded, err := c.folded(ctx, bp.ID, out.stage)
+	if err != nil {
+		c.fail(ctx, sess.audit, bp.ID, 0, err.Error())
+
+		return "", outcome{}
+	}
+
+	auto, err := c.allAuto(ctx, bp, out.stage, folded)
+	if err != nil {
+		c.fail(ctx, sess.audit, bp.ID, 0, err.Error())
+
+		return "", outcome{}
+	}
+
+	if auto && found && st.Reviewer != nil && v.Score >= st.Reviewer.Threshold {
+		for _, f := range folded {
+			if !c.decide(ctx, sess.audit, bp.ID, f.Stage, f.Version, store.GateApprove, "", store.ResponderAuto, "") {
+				return "", outcome{}
+			}
+		}
+
 		if !c.decide(ctx, sess.audit, bp.ID, out.stage, out.art.Version, store.GateApprove, "", store.ResponderAuto, "") {
 			return "", outcome{}
 		}
@@ -206,12 +220,59 @@ func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Bluep
 	return "", outcome{}
 }
 
+// allAuto reports whether stageID and every stage folded into its gate are
+// under the auto policy now: a folded gate stays a human's while any stage
+// it judges is.
+func (c *Controller) allAuto(ctx context.Context, bp store.Blueprint, stageID string, folded []store.Artifact) (bool, error) {
+	stages := []string{stageID}
+	for _, f := range folded {
+		stages = append(stages, f.Stage)
+	}
+
+	for _, id := range stages {
+		policy, err := c.policy(ctx, bp, id)
+		if err != nil {
+			return false, err
+		}
+
+		if policy != pack.PolicyAuto {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
 // showGate shows a stage's gate with its reviewer's verdict and leaves the
-// blueprint waiting for the decision. The replies it takes travel with it,
-// for the panel's prompt.
+// blueprint waiting for the decision; a folded gate carries the folded
+// artifacts, which the panel has not shown near it. The replies it takes
+// travel with it, for the panel's prompt; when they cannot be read, the gate
+// is not shown and the blueprint goes idle with the error reported.
 func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint, out outcome) {
+	actions, folded, err := c.gateActions(ctx, bp.ID, out.stage)
+	if err != nil {
+		c.opts.Logger.Error("blueprint: read the gate's replies", "blueprint", bp.ID, "stage", out.stage, "error", au.text(err.Error()))
+		c.setState(ctx, bp.ID, StateIdle)
+		au.event(ctx, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
+			"stage": out.stage, "message": fmt.Sprintf("The replies %s's gate takes cannot be read from the record, so the gate is not shown: %v", out.stage, err),
+		}})
+
+		return
+	}
+
+	foldedPayload := make([]any, 0, len(folded))
+
+	for _, f := range folded {
+		entry := map[string]any{"stage": f.Stage, "version": f.Version, "body": f.Body}
+		if problems := problemsOf(f); len(problems) > 0 {
+			entry["problems"] = problems
+		}
+
+		foldedPayload = append(foldedPayload, entry)
+	}
+
 	payload := map[string]any{
-		"stage": out.stage, "version": out.art.Version, "actions": actionsPayload(stageGateActions(out.stage)),
+		"stage": out.stage, "version": out.art.Version, "actions": actionsPayload(actions), "folded": foldedPayload,
 	}
 
 	if problems := problemsOf(out.art); len(problems) > 0 {
@@ -305,12 +366,29 @@ func (c *Controller) resumeGate(ctx context.Context, r *run, sess *session, bp s
 // atGate handles a message while a stage's gate is open: approve records
 // the approval and the pipeline goes on, reject <feedback> records the
 // rejection and runs the stage again, and any other text is a note with a
-// hint. The caller holds the run slot.
+// hint. Approving a gate approves every stage folded into it; reject <stage>
+// <feedback> rejects a folded stage, which runs again with everything after
+// it. The caller holds the run slot.
 func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, out outcome, text, msgID string) error {
-	action, feedback, ok := matchAction(text, stageGateActions(out.stage))
+	actions, folded, err := c.gateActions(ctx, bp.ID, out.stage)
+	if err != nil {
+		c.release(bp.ID, r)
+
+		return err
+	}
+
+	action, feedback, ok := matchAction(text, actions)
 	if !ok {
+		hint := fmt.Sprintf("Reply approve to go on, or reject <feedback> to run %s again with your feedback.", out.stage)
+
+		for _, a := range actions {
+			if a.Target != "" && a.Target != out.stage {
+				hint += fmt.Sprintf(" Reply %s <feedback> to run %s and everything after it again.", a.Reply, a.Target)
+			}
+		}
+
 		note := noteEvent(bp.ID, text, msgID, out.stage, false)
-		note.Payload["hint"] = fmt.Sprintf("Reply approve to go on, or reject <feedback> to run %s again with your feedback.", out.stage)
+		note.Payload["hint"] = hint
 
 		if rejectWithoutFeedback(text) {
 			note.Payload["hint"] = "Say what to change: reply reject <feedback>."
@@ -322,14 +400,38 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 		return nil
 	}
 
-	if !c.decide(ctx, sess.audit, bp.ID, out.stage, out.art.Version, action.Decision, feedback, store.ResponderHuman, msgID) {
-		c.release(bp.ID, r)
+	if action.Decision == store.GateReject {
+		// The rejection lands on the stage that runs again: the gate's own,
+		// or a stage folded into it.
+		version := out.art.Version
+
+		for _, f := range folded {
+			if f.Stage == action.Target {
+				version = f.Version
+			}
+		}
+
+		if !c.decide(ctx, sess.audit, bp.ID, action.Target, version, store.GateReject, feedback, store.ResponderHuman, msgID) {
+			c.release(bp.ID, r)
+
+			return nil
+		}
+
+		c.launch(runCtx, r, sess, bp, action.Target)
 
 		return nil
 	}
 
-	if action.Decision == store.GateReject {
-		c.launch(runCtx, r, sess, bp, action.Target)
+	for _, f := range folded {
+		if !c.decide(ctx, sess.audit, bp.ID, f.Stage, f.Version, store.GateApprove, "", store.ResponderHuman, msgID) {
+			c.release(bp.ID, r)
+
+			return nil
+		}
+	}
+
+	if !c.decide(ctx, sess.audit, bp.ID, out.stage, out.art.Version, store.GateApprove, "", store.ResponderHuman, msgID) {
+		c.release(bp.ID, r)
 
 		return nil
 	}

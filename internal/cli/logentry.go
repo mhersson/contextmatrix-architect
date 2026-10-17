@@ -577,8 +577,9 @@ func gatePlanText(p map[string]any) string {
 	return b.String()
 }
 
-// gateText renders a stage's gate: which artifact waits, the problems its
-// checks accepted it with, and the replies that decide it.
+// gateText renders a stage's gate: the artifact above waits, with the
+// artifacts folded into it shown below, the problems its checks accepted
+// them with, and the replies that decide it.
 func gateText(p map[string]any) string {
 	var replies []string
 
@@ -591,10 +592,22 @@ func gateText(p map[string]any) string {
 		replies = append(replies, reply+"`")
 	}
 
-	text := fmt.Sprintf("**Gate: %s, version %.0f.** The artifact above waits for your decision.", str(p["stage"]), num(p["version"]))
+	stage, version := str(p["stage"]), num(p["version"])
+	folded := anyMaps(p["folded"])
 
-	// A blank line ends the findings list, so the reply line is not read as
-	// part of its last item.
+	text := fmt.Sprintf("**Gate: %s, version %.0f.** The artifact above waits for your decision.", stage, version)
+
+	if len(folded) > 0 {
+		names := make([]string, 0, len(folded))
+		for _, f := range folded {
+			names = append(names, fmt.Sprintf("%s version %.0f", str(f["stage"]), num(f["version"])))
+		}
+
+		text += fmt.Sprintf(" It also judges %s, whose gate folded into this one, shown below.", strings.Join(names, " and "))
+	}
+
+	// A blank line ends a list or an artifact, so the next line is not read
+	// as part of it.
 	sep := " "
 
 	if v, ok := p["review"].(map[string]any); ok {
@@ -613,16 +626,23 @@ func gateText(p map[string]any) string {
 		}
 	}
 
-	if problems := stringsOf(p["problems"]); len(problems) > 0 {
+	if list := problemsList(p["problems"]); list != "" {
 		lead := " "
 		if sep != " " {
 			lead = sep
 		}
 
-		text += lead + "Its checks still found these problems when they accepted its third failing submit:"
+		text += lead + list
+		sep = "\n\n"
+	}
 
-		for _, pr := range problems {
-			text += "\n- " + pr
+	if len(folded) > 0 {
+		for _, f := range folded {
+			text += fmt.Sprintf("\n\n**%s, version %.0f**\n\n%s", str(f["stage"]), num(f["version"]), str(f["body"]))
+
+			if list := problemsList(f["problems"]); list != "" {
+				text += "\n\n" + list
+			}
 		}
 
 		sep = "\n\n"
@@ -631,13 +651,33 @@ func gateText(p map[string]any) string {
 	return text + sep + fmt.Sprintf("Reply %s.", strings.Join(replies, " or "))
 }
 
-// decidedText renders a decision at a stage's gate or at the sign-off; a
-// decision without a stage is the sign-off's.
+// problemsList renders the problems an artifact's checks accepted it with;
+// "" when there are none.
+func problemsList(v any) string {
+	problems := stringsOf(v)
+	if len(problems) == 0 {
+		return ""
+	}
+
+	text := "Its checks still found these problems when they accepted its third failing submit:"
+
+	for _, p := range problems {
+		text += "\n- " + p
+	}
+
+	return text
+}
+
+// decidedText renders a decision at a stage's gate, a fold into a later
+// gate, or a decision at the sign-off; a decision without a stage is the
+// sign-off's.
 func decidedText(p map[string]any) string {
 	reject, auto := str(p["decision"]) == "reject", str(p["responder"]) == "auto"
 
 	if stage := str(p["stage"]); stage != "" && stage != "signoff" {
 		switch {
+		case str(p["decision"]) == "fold":
+			return fmt.Sprintf("%s folds into %s's gate, which judges both.", stage, str(p["feedback"]))
 		case reject:
 			return fmt.Sprintf("Rejected %s; it runs again with your feedback.", stage)
 		case auto:

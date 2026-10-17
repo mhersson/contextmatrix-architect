@@ -34,6 +34,9 @@ const (
 	// CheckDecisions checks a design's decisions: each made, with a
 	// rejected option and a basis, and every answer used.
 	CheckDecisions = "decisions"
+	// CheckSlices checks a slicing's slices: at least one, unique ids, a
+	// title each, target projects only.
+	CheckSlices = "slices"
 )
 
 // Responder policies: who answers a stage's questions and decides its gate.
@@ -50,8 +53,8 @@ const (
 )
 
 // Fold lets a gate fold into the next gated stage's gate: when the stage's
-// data array Field holds at most Max entries, nothing is decided at it and
-// the next gate judges both artifacts.
+// data array Field holds at most Max entries and both gates have the same
+// policy, the next gate and its reviewer judge both artifacts.
 type Fold struct {
 	Field string `yaml:"field"`
 	Max   int    `yaml:"max"`
@@ -352,7 +355,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	}
 
 	for _, check := range s.Checks {
-		if check != CheckCards && check != CheckAssumptions && check != CheckDecisions {
+		if check != CheckCards && check != CheckAssumptions && check != CheckDecisions && check != CheckSlices {
 			return fmt.Errorf("pack: stage %q: unknown check %q", s.ID, check)
 		}
 	}
