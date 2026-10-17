@@ -168,7 +168,7 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   rounds per attempt, then the gate waits for a human regardless of policy.
   A passing verdict with findings resumes the builder once more the same
   way, a revision round of the same attempt, and the revised version goes to
-  the gate without another review; the gate records that it was revised and
+  the gate without another review; the gate shows that it was revised and
   the version the reviewer scored. Each reviewer round is a harness run with
   its own cap, and so is a revision round; the ledger sums them.
 - **A gate waits between runs.** The controller holds the stage's artifact and
@@ -488,7 +488,7 @@ recorded as an assumption; only these reach the sign-off and the cards.
 
 | Policy  | Questions                                                                                   | Gates                                                                 |
 | ------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `human` | Shown in the CM session as `Q<n>` with options, the recommended one marked; the run waits for the reply, which is recorded in `questions`. A stage asks at most its pack's `max_questions` per attempt, its builder rounds included; past it, and for an option the server would take as a command, `ask_human` returns an error and the stage decides. | Artifact shown with Approve and Reject; the reviewer's score is shown with it, and its findings in the review line just above; after a revision round the gate shows the revised version and records that it was revised. The reply, clicked or typed, is `approve` or `reject <feedback>`. |
+| `human` | Shown in the CM session as `Q<n>` with options, the recommended one marked; the run waits for the reply, which is recorded in `questions`. A stage asks at most its pack's `max_questions` per attempt, its builder rounds included; past it, and for an option the server would take as a command, `ask_human` returns an error and the stage decides. | Artifact shown with Approve and Reject; the reviewer's score is shown with it, and its findings in the review line just above; after a revision round the gate shows the revised version and says it was revised, with the version the reviewer scored. The reply, clicked or typed, is `approve` or `reject <feedback>`. |
 | `auto`  | A responder run answers. The answer is recorded as an `[assumption]` with responder `auto`. The same `max_questions` applies; past it, `ask_human` returns an error and the stage decides. | The reviewer's score decides: approved at or above the threshold, after one revision round when it lists findings; below it the builder takes another round with the findings, three reviewer rounds per attempt, then a human decides. |
 
 **The responder run** is a separate harness run with the persona of the
@@ -541,11 +541,11 @@ artifacts of the stating stages up to the assumption's own), so a re-run's
 assumptions read their basis's status until grounding judges them again. The
 sign-off (unverified, contradicted, assumed, confirmed, then verified), the
 playbook description and a single card's Context list every assumption with
-its latest status; the description and the card add, for an assumed or
-confirmed one, who answered the question it rests on and its tag, and the
-answer, for every entry that carries one. When no stage stated any as data, as
-with an intake stored before assumptions were data, they show the text of
-intake's Assumptions section instead, without ids or statuses.
+its latest status; each adds, for an assumed or confirmed one, who answered
+the question it rests on and its tag, and the answer, for every entry that
+carries one. When no stage stated any as data, as with an intake stored before
+assumptions were data, they show the text of intake's Assumptions section
+instead, without ids or statuses.
 
 Later policy: `jira` (question posted as a comment; after two reminders
 without a reply it falls through to `auto`, logged as such).
