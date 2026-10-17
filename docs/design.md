@@ -682,7 +682,10 @@ Replies the server understands, besides answers to questions:
   the log stream ends.
 - A stage the session's end cut short, an open question included, runs
   again on reopen, given the answers its earlier runs got; a reopen that
-  comes while that run still winds down waits for it first. An aborted
+  comes while that run still winds down waits for it first. A human's
+  question the end or a restart left open is shown again as the same
+  `Q<n>` before the model runs, and the re-run, or the builder round, is
+  given its answer; an abort ends the open question instead. An aborted
   stage waits for the next message, as below.
 - After a later stage fails or is aborted, the next message is logged as a
   note and re-runs that stage; after a review or a builder round fails or is

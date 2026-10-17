@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/mhersson/contextmatrix-harness/harness"
@@ -166,9 +167,22 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		"pack": c.opts.Pack.Name, "pack_version": c.opts.Pack.Version,
 	}})
 
+	// A question a cut-short run left open is answered before the task is
+	// written, so the re-run is given the answer.
+	answered, err := c.askLeftOpen(ctx, r, au, bp, stageID)
+
 	// The input is built inside the run: a failed checkout is a failed run
 	// the next message retries, and abort, End and Shutdown cancel a fetch.
-	in, checks, closeTools, err := c.stageInput(ctx, sess, bp, st)
+	var (
+		in         stage.Input
+		checks     stageChecks
+		closeTools func()
+	)
+
+	if err == nil {
+		in, checks, closeTools, err = c.stageInput(ctx, sess, bp, st)
+	}
+
 	if err != nil {
 		switch {
 		case c.shuttingDown(r):
@@ -194,6 +208,15 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	if rd != nil {
 		if rd.history != nil {
 			in.Task, in.History = rd.task, rd.history
+
+			// The round's task was written before these were answered.
+			if len(answered) > 0 {
+				var b strings.Builder
+
+				b.WriteString("## Questions this round left open\n\nThey are answered now; use the answers and do not ask them again:\n\n")
+				writeQuestions(&b, answered)
+				in.Task += b.String()
+			}
 		} else {
 			in.Task += rd.task
 		}
@@ -611,42 +634,59 @@ func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
 	}
 
 	payload["responder"] = store.ResponderHuman
+
+	ans, err := a.c.awaitAnswer(ctx, a.run, a.bp.ID, number, payload, func() {
+		a.audit.event(bg, Event{Kind: EventQuestion, BlueprintID: a.bp.ID, RunID: a.runID, Payload: payload})
+	})
+	if err != nil {
+		return "", err
+	}
+
+	a.record(bg, q, number, ans)
+
+	return fmt.Sprintf("Q%d: %s", number, ans.text), nil
+}
+
+// awaitAnswer opens question number on the run slot r, has publish show it,
+// and waits for the human's answer; ctx's error when abort, End or Shutdown
+// cancels the run first.
+func (c *Controller) awaitAnswer(ctx context.Context, r *run, id string, number int, payload map[string]any, publish func()) (reply, error) {
+	bg := context.WithoutCancel(ctx)
 	ch := make(chan reply, 1)
 
 	// Checked under c.mu: abort and End cancel under it, so a cancelled run
 	// never opens a question.
-	a.c.mu.Lock()
+	c.mu.Lock()
 
 	if err := ctx.Err(); err != nil {
-		a.c.mu.Unlock()
+		c.mu.Unlock()
 
-		return "", err
+		return reply{}, err
 	}
 
 	// Registered before the question is published, so an answer to it is
 	// never a lost wakeup.
-	a.run.answer, a.run.question, a.run.pending = ch, number, payload
-	a.c.mu.Unlock()
+	r.answer, r.question, r.pending = ch, number, payload
+	c.mu.Unlock()
 
-	a.c.setState(bg, a.bp.ID, StateWaiting)
-	a.audit.event(bg, Event{Kind: EventQuestion, BlueprintID: a.bp.ID, RunID: a.runID, Payload: payload})
+	c.setState(bg, id, StateWaiting)
+	publish()
 
 	select {
 	case ans := <-ch:
-		a.c.setState(bg, a.bp.ID, StateRunning)
-		a.record(bg, q, number, ans)
+		c.setState(bg, id, StateRunning)
 
-		return fmt.Sprintf("Q%d: %s", number, ans.text), nil
+		return ans, nil
 	case <-ctx.Done():
-		a.c.mu.Lock()
+		c.mu.Lock()
 
-		if a.run.answer == ch {
-			a.run.answer = nil
+		if r.answer == ch {
+			r.answer = nil
 		}
 
-		a.c.mu.Unlock()
+		c.mu.Unlock()
 
-		return "", ctx.Err()
+		return reply{}, ctx.Err()
 	}
 }
 
