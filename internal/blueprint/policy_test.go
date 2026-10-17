@@ -108,28 +108,22 @@ func TestSetPolicy_ARefusedReplyNeverBecomesAPolicy(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 
-	require.NoError(t, c.SetPolicy(ctx, "BP1", "design", "human", "m1"))
-	require.NoError(t, c.SetPolicy(ctx, "BP1", "nosuch", "human", "m2"))
+	require.NoError(t, c.SetPolicy(ctx, "BP1", "nosuch", "human", "m1"))
 
 	events := rec.all(EventPolicy)
-	require.Len(t, events, 2)
+	require.Len(t, events, 1)
 
-	humanSourced, _ := events[0].Payload["refused"].(string)
-	unknown, _ := events[1].Payload["refused"].(string)
+	unknown, _ := events[0].Payload["refused"].(string)
+	assert.NotEmpty(t, unknown)
 
-	assert.NotEmpty(t, humanSourced)
-	assert.NotEqual(t, humanSourced, unknown, "a stage that exists is not reported as unknown")
-
-	for _, text := range []string{humanSourced, unknown} {
-		for _, id := range c.modelStages() {
-			assert.Contains(t, text, id, "a refusal names the stages a reply may name")
-		}
+	for _, id := range c.stageIDs() {
+		assert.Contains(t, unknown, id, "a refusal names the stages a reply may name")
 	}
 
 	bp, err := st.GetBlueprint(ctx, "BP1")
 	require.NoError(t, err)
 
-	got, err := c.policy(ctx, bp, "design")
+	got, err := c.policy(ctx, bp, "nosuch")
 	require.NoError(t, err)
 	assert.Equal(t, pack.PolicyAuto, got, "nothing was stored for it")
 }

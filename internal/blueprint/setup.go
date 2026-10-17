@@ -1,7 +1,9 @@
 package blueprint
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -11,9 +13,10 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-// groundingStage is the first stage in pack order with the code tools, the
-// one that checks the trees out; "" when the pack has none.
-func (c *Controller) groundingStage() string {
+// checkoutStage is the first stage in pack order with the code tools, the one
+// that checks the trees out and reports what they lack; "" when the pack has
+// none.
+func (c *Controller) checkoutStage() string {
 	for _, st := range c.opts.Pack.Stages {
 		if slices.Contains(st.Tools, pack.ToolCode) {
 			return st.ID
@@ -23,8 +26,8 @@ func (c *Controller) groundingStage() string {
 	return ""
 }
 
-// reportSetup tells the session, once grounding ends and before the paid
-// stages, what each target project lacks for an agent run. Nothing is
+// reportSetup tells the session, once the checkout stage ends and before
+// the paid stages, what each target project lacks for an agent run. Nothing is
 // published when no project lacks anything. A read that fails is logged and
 // skipped: the report is advice, and decomposition plans the setup either
 // way.
@@ -45,14 +48,39 @@ func (c *Controller) reportSetup(ctx context.Context, sess *session, bp store.Bl
 		return
 	}
 
-	sess.audit.event(context.WithoutCancel(ctx), Event{Kind: EventSetupGaps, BlueprintID: bp.ID, Payload: map[string]any{"projects": gaps}})
+	payload := map[string]any{"projects": gaps}
+
+	// A gate reject runs the stage again; the same gaps are not told twice.
+	if c.sameAsLastReport(ctx, sess, bp.ID, payload) {
+		return
+	}
+
+	sess.audit.event(context.WithoutCancel(ctx), Event{Kind: EventSetupGaps, BlueprintID: bp.ID, Payload: payload})
+}
+
+// sameAsLastReport reports whether the blueprint's latest setup-gap event
+// carries payload as stored. A read that fails reports false: a repeat beats
+// a missing report.
+func (c *Controller) sameAsLastReport(ctx context.Context, sess *session, id string, payload map[string]any) bool {
+	last, err := c.opts.Store.LatestEvent(ctx, id, EventSetupGaps)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			c.opts.Logger.Warn("blueprint: read the last setup report", "blueprint", id, "error", err)
+		}
+
+		return false
+	}
+
+	now, err := marshalPayload(sess.audit.maskFields(payload))
+
+	return err == nil && bytes.Equal(last.Payload, now)
 }
 
 // setupGaps reads, per target project with a repository and in target
 // order, whether ContextMatrix declares a verify command, read again here
-// so a fix made during grounding is not reported, whether its primary tree
+// so a fix made during the stage is not reported, whether its primary tree
 // has an instruction file, and whether that repository has no commits, which
-// grounding recorded as a source with no version. A project lacking none of
+// the checkout recorded as a source with no version. A project lacking none of
 // them is left out.
 func (c *Controller) setupGaps(ctx context.Context, sess *session, bp store.Blueprint) ([]any, error) {
 	projects, err := c.opts.Projects(ctx, sess.mcpKey)

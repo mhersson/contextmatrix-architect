@@ -258,8 +258,7 @@ func newPipelineOn(t *testing.T, st *store.Store, script stageScript, ws *fakeWo
 	return c, st, runner, rec, ws
 }
 
-// drive runs intake and pastes the design, then waits for the pipeline to
-// settle (no run in flight).
+// drive states the need, then waits for the pipeline to settle (no run in flight).
 func drive(t *testing.T, c *Controller, id string) {
 	t.Helper()
 
@@ -273,8 +272,6 @@ func driveIn(t *testing.T, c *Controller, in StartInput) {
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, in))
 	require.NoError(t, c.Message(ctx, in.ID, "the need", "m1"))
-	c.Wait(in.ID)
-	require.NoError(t, c.Message(ctx, in.ID, "the design", "m2"))
 	c.Wait(in.ID)
 }
 
@@ -330,7 +327,7 @@ func eventsOf(t *testing.T, st *store.Store, rec *recorder, id, kind string) []s
 	return out
 }
 
-func TestPipeline_IntakeThenDesignThenCodeStagesThenReport(t *testing.T) {
+func TestPipeline_IntakeThenCodeStagesThenReport(t *testing.T) {
 	c, st, runner, rec, ws := newPipeline(t, happyScript())
 	ctx := context.Background()
 
@@ -338,49 +335,20 @@ func TestPipeline_IntakeThenDesignThenCodeStagesThenReport(t *testing.T) {
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
 	c.Wait("BP1")
 
-	// Intake done: the design is awaited, nothing runs.
-	bp, err := st.GetBlueprint(ctx, "BP1")
-	require.NoError(t, err)
-	assert.Equal(t, string(StateWaiting), bp.State)
-
-	await, ok := rec.first(EventAwaitInput)
-	require.True(t, ok)
-	assert.Equal(t, "design", await.Payload["stage"])
-	assert.Equal(t, 1, runner.calls())
-
-	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
-	c.Wait("BP1")
-
-	design, err := st.LatestArtifact(ctx, "BP1", "design")
-	require.NoError(t, err)
-	assert.Equal(t, "the design", design.Body)
-
-	pasted := false
-
-	for _, p := range eventsOf(t, st, rec, "BP1", EventArtifact) {
-		if strings.Contains(p, `"stage":"design"`) {
-			pasted = true
-
-			assert.Contains(t, p, `"source":"human"`)
-		}
-	}
-
-	assert.True(t, pasted, "the pasted design is an artifact event")
-
-	// grounding, decomposition, readiness ran in order with the right inputs.
+	// intake, grounding, decomposition, readiness ran in order with the
+	// right inputs.
 	require.Equal(t, 4, runner.calls())
+	assert.Empty(t, runner.input(0).Tools, "intake has no code tools")
 	assert.Equal(t, "grounding", runner.input(1).Stage)
-	assert.Contains(t, runner.input(1).Task, "the design")
 	assert.Contains(t, runner.input(1).Task, "# Need")
 	assert.NotEmpty(t, runner.input(1).Tools, "code stages get the code tools")
-	assert.Nil(t, runner.input(1).Validate, "only a stage that checks cards validates")
+	assert.Nil(t, runner.input(1).Validate, "only a stage with checks validates")
 	assert.Equal(t, "decomposition", runner.input(2).Stage)
 	assert.Contains(t, runner.input(2).Task, "# Grounding")
 	assert.NotNil(t, runner.input(2).Validate, "decomposition validates against the contract")
 	assert.Contains(t, runner.input(2).Instructions, c.opts.Pack.CardTemplate(), "the card template is appended to decomposition's instructions")
 	assert.Equal(t, "readiness", runner.input(3).Stage)
 	assert.Contains(t, runner.input(3).Task, "# Cards")
-	assert.Empty(t, runner.input(0).Tools, "intake has no code tools")
 
 	assert.Equal(t, 1, ws.checkouts(), "one checkout per project, reused by later stages")
 
@@ -394,7 +362,7 @@ func TestPipeline_IntakeThenDesignThenCodeStagesThenReport(t *testing.T) {
 	assert.Equal(t, true, report.Payload["ready"])
 	assert.Contains(t, report.Payload["body"], "# Ready")
 
-	bp, err = st.GetBlueprint(ctx, "BP1")
+	bp, err := st.GetBlueprint(ctx, "BP1")
 	require.NoError(t, err)
 	assert.Equal(t, string(StateWaiting), bp.State)
 
@@ -405,32 +373,6 @@ func TestPipeline_IntakeThenDesignThenCodeStagesThenReport(t *testing.T) {
 	assert.Equal(t, "grounding", sources[0].FirstUsedBy)
 	assert.Equal(t, "https://example.com/alpha.git", sources[0].Identity)
 	assert.Equal(t, "cm", sources[1].Kind)
-}
-
-func TestPipeline_MessageDuringIntakeIsANoteNotTheDesign(t *testing.T) {
-	release := make(chan struct{})
-	script := happyScript()
-	script["intake"] = func(context.Context, stage.Input) (stage.Output, error) {
-		<-release
-
-		return done("# Need", nil), nil
-	}
-
-	c, st, _, rec, _ := newPipeline(t, script)
-	ctx := context.Background()
-
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	require.NoError(t, c.Message(ctx, "BP1", "early design", "m2"))
-
-	assert.Equal(t, 1, rec.count(EventNote))
-
-	close(release)
-	c.Wait("BP1")
-
-	_, err := st.LatestArtifact(ctx, "BP1", "design")
-	require.ErrorIs(t, err, store.ErrNotFound, "a note during intake never becomes the design")
-	assert.True(t, rec.has(EventAwaitInput), "the design is still awaited")
 }
 
 func TestPipeline_ReadinessLoopsBackThenReports(t *testing.T) {
@@ -891,8 +833,6 @@ func TestPipeline_RestartResumesAtTheNextStage(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	c.Wait("BP1")
-	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
 
 	// grounding completes, decomposition is in flight: shut down like a crash.
 	require.Eventually(t, func() bool { return runner.calls() == 3 }, 5*time.Second, 10*time.Millisecond)
@@ -960,7 +900,6 @@ func seed(t *testing.T, c *Controller, st *store.Store, ws *fakeWorkspace, extra
 	arts := append([]store.Artifact{
 		{Stage: needStage, Body: "the need"},
 		{Stage: "intake", Body: "# Need"},
-		{Stage: "design", Body: "the design"},
 		{Stage: "grounding", Body: "# Grounding"},
 	}, extra...)
 
@@ -969,7 +908,7 @@ func seed(t *testing.T, c *Controller, st *store.Store, ws *fakeWorkspace, extra
 		_, err := st.PutArtifact(ctx, a)
 		require.NoError(t, err)
 
-		if a.Stage == needStage || a.Stage == "design" {
+		if a.Stage == needStage {
 			continue
 		}
 
@@ -1027,74 +966,6 @@ func TestPipeline_FreshBlueprintDoesNotRunOnReopen(t *testing.T) {
 	c.Wait("BP1")
 
 	assert.Equal(t, 0, runner.calls(), "nothing runs until the need is stated")
-}
-
-func TestPipeline_ReopenWhileWaitingForTheDesignRunsNothing(t *testing.T) {
-	c, st, runner, rec, _ := newPipeline(t, happyScript())
-	ctx := context.Background()
-
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	c.Wait("BP1")
-	require.NoError(t, c.End(ctx, "BP1"))
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	c.Wait("BP1")
-
-	assert.Equal(t, 1, runner.calls())
-
-	// The reopen asks for the design again, after the reopened line.
-	kinds := rec.kinds()
-	require.GreaterOrEqual(t, len(kinds), 2)
-	assert.Equal(t, []string{EventReopened, EventAwaitInput}, kinds[len(kinds)-2:])
-	assert.Equal(t, 2, rec.count(EventAwaitInput))
-
-	bp, err := st.GetBlueprint(ctx, "BP1")
-	require.NoError(t, err)
-	assert.Equal(t, string(StateWaiting), bp.State)
-
-	// The next message is still the design.
-	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
-	c.Wait("BP1")
-
-	_, err = st.LatestArtifact(ctx, "BP1", "design")
-	require.NoError(t, err)
-	assert.Equal(t, 4, runner.calls())
-}
-
-func TestPipeline_ReopenAfterAnIdleIntakeAsksForTheDesign(t *testing.T) {
-	// A blueprint whose intake completed before the design stage existed
-	// sits idle, never prompted.
-	c, st, runner, rec, _ := newPipeline(t, happyScript())
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.End(ctx, "BP1"))
-
-	now := time.Now().UTC()
-
-	for _, a := range []store.Artifact{{Stage: needStage, Body: "the need"}, {Stage: "intake", Body: "# Need"}} {
-		a.BlueprintID = "BP1"
-		_, err := st.PutArtifact(ctx, a)
-		require.NoError(t, err)
-	}
-
-	id, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
-	require.NoError(t, err)
-	require.NoError(t, st.EndRun(ctx, id, store.RunDone, "done", store.RunUsage{}, now))
-	require.NoError(t, st.SetBlueprintState(ctx, "BP1", string(StateIdle)))
-
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	c.Wait("BP1")
-
-	assert.Equal(t, 0, runner.calls())
-
-	await, ok := rec.first(EventAwaitInput)
-	require.True(t, ok)
-	assert.Equal(t, "design", await.Payload["stage"])
-	assert.Equal(t, c.opts.Pack.Instructions("design"), await.Payload["prompt"])
-
-	bp, err := st.GetBlueprint(ctx, "BP1")
-	require.NoError(t, err)
-	assert.Equal(t, string(StateWaiting), bp.State)
 }
 
 func TestPipeline_AnUnreadablePositionIsReportedNotFatal(t *testing.T) {
@@ -1156,8 +1027,6 @@ func TestPipeline_MessageAfterAnAbortRetriesTheStage(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	c.Wait("BP1")
-	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
 	require.Eventually(t, func() bool { return runner.calls() == 2 }, 5*time.Second, 10*time.Millisecond)
 
 	require.NoError(t, c.Abort(ctx, "BP1", "m3"))
@@ -1308,8 +1177,6 @@ func TestPipeline_EndDuringTheCheckoutRerunsTheStageOnReopen(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	c.Wait("BP1")
-	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
 	require.Eventually(t, func() bool { return ws.checkouts() == 1 }, 5*time.Second, 10*time.Millisecond)
 
 	require.NoError(t, c.End(ctx, "BP1"))
@@ -1360,8 +1227,6 @@ func TestPipeline_AbortDuringTheCheckoutCancelsTheRun(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	c.Wait("BP1")
-	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
 	require.Eventually(t, func() bool { return ws.checkouts() == 1 }, 5*time.Second, 10*time.Millisecond)
 
 	require.NoError(t, c.Abort(ctx, "BP1", "m3"))
@@ -2075,10 +1940,10 @@ func TestPosition_ReadsOnlyStageRuns(t *testing.T) {
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
 	c.Wait("BP1")
 
-	// A responder run that ended after intake names a stage with no artifact;
-	// read as a stage, it would make the position unreadable.
+	// A responder run that ended after readiness names a stage the pack
+	// lacks; read as a stage, it would make the position unreadable.
 	now := time.Now().UTC()
-	id, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "decomposition", Kind: store.RunKindResponder, Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+	id, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "nosuch", Kind: store.RunKindResponder, Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
 	require.NoError(t, err)
 	require.NoError(t, st.EndRun(ctx, id, store.RunDone, "done", store.RunUsage{}, now))
 
@@ -2087,8 +1952,7 @@ func TestPosition_ReadsOnlyStageRuns(t *testing.T) {
 
 	out, _, err := c.position(ctx, bp)
 	require.NoError(t, err)
-	assert.Equal(t, "design", out.stage, "the human-sourced design follows intake")
-	assert.True(t, out.human)
+	assert.True(t, out.end && out.ready, "readiness ended the pipeline ready")
 }
 
 func TestPosition_StatusIgnoresNonStageRunsOfTheNextStage(t *testing.T) {
@@ -2168,8 +2032,6 @@ func TestNotes_ReachEveryLaterRun(t *testing.T) {
 	require.NoError(t, c.Message(ctx, "BP1", "keep the API stable", "m2"))
 	release()
 	c.Wait("BP1")
-	require.NoError(t, c.Message(ctx, "BP1", "the design", "m3"))
-	c.Wait("BP1")
 
 	note, ok := rec.first(EventNote)
 	require.True(t, ok)
@@ -2211,8 +2073,6 @@ func TestNotes_ABareDecisionWordReachesNoRun(t *testing.T) {
 	}
 
 	release()
-	c.Wait("BP1")
-	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
 	c.Wait("BP1")
 
 	assert.Equal(t, 4, rec.count(EventNote), "every message is kept")

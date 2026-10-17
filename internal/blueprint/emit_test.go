@@ -463,8 +463,6 @@ func TestYolo_AnAbortDuringTheRunStartRecordsItOnce(t *testing.T) {
 
 			require.NoError(t, c.Start(ctx, yoloInput("BP1")))
 			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-			c.Wait("BP1")
-			require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
 			receive(t, hold.entered, "the held run start")
 
 			require.NoError(t, c.Abort(ctx, "BP1", "m3"))
@@ -731,8 +729,6 @@ func TestYolo_AnAbortBeforeTheRunStartSaysSo(t *testing.T) {
 
 	require.NoError(t, c.Start(ctx, yoloInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	c.Wait("BP1")
-	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
 	receive(t, hold.entered, "the held card")
 	require.NoError(t, c.Abort(ctx, "BP1", "m3"))
 	hold.free()

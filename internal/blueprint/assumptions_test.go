@@ -124,16 +124,19 @@ func TestAssumptionsValidator(t *testing.T) {
 		return v(ctx, stage.Artifact{Body: "# Need", Data: map[string]any{"assumptions": assumptions}})
 	}
 
-	v := c.assumptionsValidator()
+	v, state := c.assumptionsValidator()
 	require.Error(t, submit(v, "The limits stay as noted above."), "a sentence that points above")
 	require.NoError(t, submit(v, "Requests stay under 100 per second."), "fixed")
+	assert.Empty(t, state.last(), "an accepted submit that passes keeps no problems")
 
-	v = c.assumptionsValidator()
+	v, state = c.assumptionsValidator()
 	require.Error(t, submit(v, "", 3), "not sentences")
 	require.Error(t, submit(v, "As noted above, the cache stays."))
 	require.NoError(t, submit(v, "As noted above, the cache stays."), "the third failing submit is accepted, so the stage never loops")
+	assert.Len(t, state.last(), 1, "with the problem it still has")
 
-	require.NoError(t, c.assumptionsValidator()(ctx, stage.Artifact{Body: "# Need", Data: map[string]any{"slices": 1}}), "no assumptions is fine")
+	v, _ = c.assumptionsValidator()
+	require.NoError(t, v(ctx, stage.Artifact{Body: "# Need", Data: map[string]any{"slices": 1}}), "no assumptions is fine")
 }
 
 // putData stores the next version of a stage's artifact, after every

@@ -603,3 +603,63 @@ func TestCheck_DanglingReference(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckCriteria(t *testing.T) {
+	criteria := []Criterion{
+		{ID: "AC1", Slice: "SL1", Project: "alpha"},
+		{ID: "AC2", Slice: "SL1", Project: "beta"},
+	}
+
+	card := func(id, project string, criteria ...string) Card {
+		c := goodCard(id)
+		c.Project, c.Criteria = project, criteria
+
+		return c
+	}
+
+	tests := []struct {
+		name   string
+		cards  []Card
+		manual []Manual
+		checks []string // the manual checks acceptance defines
+		want   []string
+	}{
+		{name: "each carried once", cards: []Card{card("D1", "alpha", "AC1"), card("D2", "beta", "AC2")}},
+		{
+			name: "one carried by no card", cards: []Card{card("D1", "alpha", "AC1")},
+			want: []string{"AC2:criterion_unmapped"},
+		},
+		{name: "a criterion listed twice on one card", cards: []Card{card("D1", "alpha", "AC1", "AC1"), card("D2", "beta", "AC2")}},
+		{
+			name: "one carried twice", cards: []Card{card("D1", "alpha", "AC1"), card("D2", "alpha", "AC1"), card("D3", "beta", "AC2")},
+			want: []string{"AC1:criterion_shared"},
+		},
+		{
+			name: "another project's criterion", cards: []Card{card("D1", "alpha", "AC1", "AC2")},
+			want: []string{"D1:criterion_project", "AC2:criterion_unmapped"},
+		},
+		{
+			name: "an unknown criterion", cards: []Card{card("D1", "alpha", "AC1", "AC9"), card("D2", "beta", "AC2")},
+			want: []string{"D1:criterion_unknown"},
+		},
+		{
+			name: "a manual check carried", cards: []Card{card("D1", "alpha", "AC1"), card("D2", "beta", "AC2")},
+			manual: []Manual{{ID: "M1", Text: "check the dashboard", Criteria: []string{"MC1"}}}, checks: []string{"MC1"},
+		},
+		{
+			name: "a manual check carried by no entry", cards: []Card{card("D1", "alpha", "AC1"), card("D2", "beta", "AC2")},
+			checks: []string{"MC1"}, want: []string{"MC1:manual_unmapped"},
+		},
+		{
+			name: "an entry naming an unknown check", cards: []Card{card("D1", "alpha", "AC1"), card("D2", "beta", "AC2")},
+			manual: []Manual{{ID: "M1", Text: "check it", Criteria: []string{"MC9"}}}, want: []string{"M1:manual_unknown"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := checkNames(CheckCriteria(Draft{Cards: tt.cards, Manual: tt.manual}, criteria, tt.checks))
+			assert.Equal(t, tt.want, nilIfEmpty(got))
+		})
+	}
+}

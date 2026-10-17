@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/mhersson/contextmatrix-harness/harness"
+	"github.com/mhersson/contextmatrix-harness/tools"
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
@@ -52,32 +53,49 @@ func usageOf(p *protocol.ModelPrice, res harness.Result) store.RunUsage {
 }
 
 // launch runs stageID and whatever follows it on the run slot r, which the
-// caller holds. The chain stops at a run that did not complete, a stage that
+// caller holds. The chain stops at a run that did not complete, a gate that
 // waits for the user, the pipeline's end (after the sign-off of ready cards,
-// shown even when a cancel landed first), or a cancel between stages; the
+// shown even when a cancel landed first), or a cancel between steps; the
 // slot is released then.
 func (c *Controller) launch(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string) {
+	c.launchStep(ctx, r, sess, bp, stageID, false)
+}
+
+// launchCritique is launch starting with the critique of stageID's latest
+// artifact, its review or its next builder round, instead of a run of it.
+func (c *Controller) launchCritique(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string) {
+	c.launchStep(ctx, r, sess, bp, stageID, true)
+}
+
+func (c *Controller) launchStep(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string, critique bool) {
 	go func() {
 		defer c.release(bp.ID, r)
 
 		for stageID != "" && ctx.Err() == nil {
-			if !c.runStage(ctx, r, sess, bp, stageID) {
-				return
-			}
+			if critique {
+				if !c.critique(ctx, r, sess, bp, stageID) {
+					return
+				}
+			} else {
+				if !c.runStage(ctx, r, sess, bp, stageID, nil) {
+					return
+				}
 
-			if stageID == c.opts.Pack.Stages[0].ID {
-				c.postGatePlan(context.WithoutCancel(ctx), sess, bp)
-			}
+				if stageID == c.opts.Pack.Stages[0].ID {
+					c.postGatePlan(context.WithoutCancel(ctx), sess, bp)
+				}
 
-			if stageID == c.groundingStage() {
-				c.reportSetup(ctx, sess, bp)
+				if stageID == c.checkoutStage() {
+					c.reportSetup(ctx, sess, bp)
+				}
 			}
 
 			// What follows is decided and recorded even when a cancel
-			// landed as the stage completed; the loop then stops.
+			// landed as the step completed; the loop then stops.
 			var end outcome
 
 			stageID, end = c.advance(context.WithoutCancel(ctx), sess, bp, stageID)
+			critique = end.critique
 
 			if end.ready {
 				c.holdForSignoff(r)
@@ -87,8 +105,9 @@ func (c *Controller) launch(ctx context.Context, r *run, sess *session, bp store
 	}()
 }
 
-// runStage runs one stage and reports whether it completed with an artifact.
-func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string) bool {
+// runStage runs one stage, or one builder round of it, and reports whether
+// it completed with an artifact.
+func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string, rd *round) bool {
 	bg := context.Background()
 	id := bp.ID
 	au := sess.audit
@@ -107,7 +126,19 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		return false
 	}
 
-	attempt, err := c.nextAttempt(bg, id, stageID)
+	attempt, number, asked := 0, 1, 0
+
+	var err error
+
+	if rd != nil {
+		// The question cap is per attempt, so a round counts what the
+		// attempt's earlier rounds asked.
+		attempt, number = rd.attempt, rd.number
+		asked, err = c.askedIn(bg, id, stageID, attempt)
+	} else {
+		attempt, err = c.nextAttempt(bg, id, stageID)
+	}
+
 	if err != nil {
 		c.fail(bg, au, id, 0, err.Error())
 
@@ -115,7 +146,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	}
 
 	runID, err := c.opts.Store.StartRun(bg, store.Run{
-		BlueprintID: id, Stage: stageID, Kind: store.RunKindStage, Attempt: attempt, Round: 1,
+		BlueprintID: id, Stage: stageID, Kind: store.RunKindStage, Attempt: attempt, Round: number,
 		Status: store.RunRunning, Model: m.name, StartedAt: c.opts.Now().UTC(),
 	})
 	if err != nil {
@@ -131,13 +162,13 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	c.mu.Unlock()
 
 	au.event(bg, Event{Kind: EventStageStarted, BlueprintID: id, RunID: runID, Payload: map[string]any{
-		"stage": stageID, "persona": st.Persona, "attempt": attempt, "model": m.name,
+		"stage": stageID, "kind": store.RunKindStage, "persona": st.Persona, "attempt": attempt, "round": number, "model": m.name,
 		"pack": c.opts.Pack.Name, "pack_version": c.opts.Pack.Version,
 	}})
 
 	// The input is built inside the run: a failed checkout is a failed run
 	// the next message retries, and abort, End and Shutdown cancel a fetch.
-	in, checked, closeTools, err := c.stageInput(ctx, sess, bp, st)
+	in, checks, closeTools, err := c.stageInput(ctx, sess, bp, st)
 	if err != nil {
 		switch {
 		case c.shuttingDown(r):
@@ -146,7 +177,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			c.endRun(bg, runID, store.RunCanceled, cancelReason(ctx), store.RunUsage{})
 			c.setState(bg, id, StateIdle)
 			au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
-				"stage": stageID, "status": store.RunCanceled, "cost_usd": 0.0, "priced": m.price != nil,
+				"stage": stageID, "kind": store.RunKindStage, "status": store.RunCanceled, "cost_usd": 0.0, "priced": m.price != nil,
 			}})
 		default:
 			c.opts.Logger.Error("blueprint: prepare stage", "blueprint", id, "run", runID, "stage", stageID, "error", au.text(err.Error()))
@@ -158,6 +189,14 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		}
 
 		return false
+	}
+
+	if rd != nil {
+		if rd.history != nil {
+			in.Task, in.History = rd.task, rd.history
+		} else {
+			in.Task += rd.task
+		}
 	}
 
 	defer closeTools()
@@ -176,7 +215,10 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	in.Endpoint = sess.endpoint
 	in.MaxCostUSD = runCap
 	in.MaxTurns = c.opts.MaxTurns
-	in.Asker = &asker{c: c, bp: bp, stage: stageID, max: st.MaxQuestions, runID: runID, run: r, audit: au}
+	in.Asker = &asker{
+		c: c, bp: bp, stage: stageID, max: st.MaxQuestions, runID: runID, run: r, audit: au,
+		sess: sess, attempt: attempt, tools: in.Tools, sink: sink, asked: asked,
+	}
 	in.Events = sink
 	in.Secrets = sess.secrets()
 
@@ -205,8 +247,8 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		// both keys are the controller's, whatever the model put there.
 		var findings []string
 
-		if checked != nil {
-			findings = checked.last()
+		if checks.cards != nil {
+			findings = checks.cards.last()
 
 			data := maps.Clone(out.Artifact.Data)
 			if data == nil {
@@ -217,6 +259,10 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			data["findings"] = findings
 			out.Artifact.Data = data
 		}
+
+		// The problems an accepted third failing submit still has stay with
+		// it, for its gate and its reviewer.
+		out.Artifact.Data = keepProblems(out.Artifact.Data, checks.unresolved())
 
 		// A submitted artifact is kept even when a cancel raced it.
 		version, err := au.artifact(bg, id, stageID, out.Artifact.Body, out.Artifact.Data)
@@ -233,7 +279,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			"stage": stageID, "version": version, "body": out.Artifact.Body, "data": out.Artifact.Data, "findings": findings,
 		}})
 		au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
-			"stage": stageID, "status": store.RunDone, "cost_usd": usage.CostUSD, "priced": isPriced,
+			"stage": stageID, "kind": store.RunKindStage, "status": store.RunDone, "cost_usd": usage.CostUSD, "priced": isPriced,
 		}})
 
 		return true
@@ -242,10 +288,20 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		// one condition: the run cap was reached.
 		c.endRun(bg, runID, store.RunFailed, "max_cost", usage)
 		c.setState(bg, id, StateIdle)
+
+		spent, charged := sink.tally()
+		spent = max(spent, usage.CostUSD)
+
+		note := ""
+		if charged > 0 {
+			note = fmt.Sprintf(", %.2f USD of it for its responder runs", charged)
+		}
+
 		au.event(bg, Event{Kind: EventError, BlueprintID: id, RunID: runID, Payload: map[string]any{
-			"stage":   stageID,
-			"reason":  "max_cost",
-			"message": fmt.Sprintf("run cost cap %.2f USD reached after %.2f USD; the stage stopped", runCap, usage.CostUSD),
+			"stage":     stageID,
+			"reason":    "max_cost",
+			"spent_usd": spent,
+			"message":   fmt.Sprintf("run cost cap %.2f USD reached after %.2f USD%s; the stage stopped", runCap, spent, note),
 		}})
 	case ctx.Err() != nil:
 		// The harness reports a cancelled run as an error; abort and End
@@ -253,7 +309,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		c.endRun(bg, runID, store.RunCanceled, cancelReason(ctx), usage)
 		c.setState(bg, id, StateIdle)
 		au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
-			"stage": stageID, "status": store.RunCanceled, "cost_usd": usage.CostUSD, "priced": isPriced,
+			"stage": stageID, "kind": store.RunKindStage, "status": store.RunCanceled, "cost_usd": usage.CostUSD, "priced": isPriced,
 		}})
 	default:
 		reason := out.Result.Reason
@@ -274,15 +330,15 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 // stageInput builds what a run of st is given besides its model and limits:
 // the persona, the instructions, the task from the artifacts it consumes,
 // the code tools over the blueprint's checkouts, the CM read tools, and the
-// card contract on submit with the card template. The validator state is
-// nil unless the stage checks cards. The closer ends the run's CM session;
-// it is a no-op without cm tools and never nil when err is nil.
-func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blueprint, st pack.Stage) (stage.Input, *validatorState, func(), error) {
+// card contract on submit with the card template, and the states of its
+// checks. The closer ends the run's CM session; it is a no-op without cm
+// tools and never nil when err is nil.
+func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blueprint, st pack.Stage) (stage.Input, stageChecks, func(), error) {
 	noop := func() {}
 
 	task, err := c.taskFor(context.WithoutCancel(ctx), bp, st)
 	if err != nil {
-		return stage.Input{}, nil, nil, err
+		return stage.Input{}, stageChecks{}, nil, err
 	}
 
 	in := stage.Input{
@@ -294,13 +350,13 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	// the stage without a fetch.
 	useCM := slices.Contains(st.Tools, pack.ToolCM)
 	if useCM && c.opts.CMTools == nil {
-		return stage.Input{}, nil, nil, errNoCMSupport
+		return stage.Input{}, stageChecks{}, nil, errNoCMSupport
 	}
 
 	if slices.Contains(st.Tools, pack.ToolCode) {
 		facts, err := c.prepareCode(ctx, sess, bp, st.ID)
 		if err != nil {
-			return stage.Input{}, nil, nil, err
+			return stage.Input{}, stageChecks{}, nil, err
 		}
 
 		in.Tools = stage.CodeTools(facts.root, facts.repos)
@@ -312,12 +368,12 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	if useCM {
 		src, err := c.cmSource(context.WithoutCancel(ctx), bp, st.ID)
 		if err != nil {
-			return stage.Input{}, nil, nil, err
+			return stage.Input{}, stageChecks{}, nil, err
 		}
 
 		cmTools, closer, err := c.opts.CMTools(ctx, sess.mcpKey, src.Tag())
 		if err != nil {
-			return stage.Input{}, nil, nil, fmt.Errorf("blueprint: open the ContextMatrix tools: %w", err)
+			return stage.Input{}, stageChecks{}, nil, fmt.Errorf("blueprint: open the ContextMatrix tools: %w", err)
 		}
 
 		if closer != nil {
@@ -329,25 +385,42 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	}
 
 	var (
-		checked    *validatorState
+		checks     stageChecks
 		validators []func(context.Context, stage.Artifact) error
 	)
 
+	bounded := func(v func(context.Context, stage.Artifact) error, s *validatorState) {
+		validators = append(validators, v)
+		checks.bounded = append(checks.bounded, s)
+	}
+
 	if slices.Contains(st.Checks, pack.CheckAssumptions) {
-		validators = append(validators, c.assumptionsValidator())
+		bounded(c.assumptionsValidator())
+	}
+
+	if slices.Contains(st.Checks, pack.CheckDecisions) {
+		bounded(c.decisionsValidator(bp, st.ID))
+	}
+
+	if slices.Contains(st.Checks, pack.CheckSlices) {
+		bounded(c.slicesValidator(bp))
+	}
+
+	if slices.Contains(st.Checks, pack.CheckCriteria) {
+		bounded(c.criteriaValidator(bp, st.ID))
 	}
 
 	if slices.Contains(st.Checks, pack.CheckCards) {
 		var cards func(context.Context, stage.Artifact) error
 
-		cards, checked = c.cardsValidator(sess, bp)
+		cards, checks.cards = c.cardsValidator(sess, bp)
 		validators = append(validators, cards)
 		in.Instructions += "\n\n# Card template\n\n" + c.opts.Pack.CardTemplate()
 	}
 
 	in.Validate = allOf(validators)
 
-	return in, checked, closeCM, nil
+	return in, checks, closeCM, nil
 }
 
 // allOf runs every validator on every submit and joins their refusals, nil
@@ -391,6 +464,38 @@ func (c *Controller) nextAttempt(ctx context.Context, id, stageID string) (int, 
 	return attempt, nil
 }
 
+// askedIn counts the questions the runs of stageID's attempt asked,
+// answered or not.
+func (c *Controller) askedIn(ctx context.Context, id, stageID string, attempt int) (int, error) {
+	runs, err := c.opts.Store.ListRuns(ctx, id)
+	if err != nil {
+		return 0, fmt.Errorf("list runs failed: %w", err)
+	}
+
+	in := map[int64]bool{}
+
+	for _, r := range runs {
+		if r.Kind == store.RunKindStage && r.Stage == stageID && r.Attempt == attempt {
+			in[r.ID] = true
+		}
+	}
+
+	questions, err := c.opts.Store.ListEventsOfKind(ctx, id, EventQuestion)
+	if err != nil {
+		return 0, fmt.Errorf("blueprint: count the questions asked: %w", err)
+	}
+
+	n := 0
+
+	for _, e := range questions {
+		if in[e.RunID] {
+			n++
+		}
+	}
+
+	return n, nil
+}
+
 // fail records an error event and marks the blueprint failed.
 func (c *Controller) fail(ctx context.Context, au audit, id string, runID int64, msg string) {
 	c.opts.Logger.Error("blueprint: stage failed", "blueprint", id, "run", runID, "message", au.text(msg))
@@ -424,20 +529,28 @@ func cancelReason(ctx context.Context) string {
 // numbers each, refuses one past the stage's cap or with an option the
 // webhook would take as a command, parks the run on its slot until a
 // message answers it and records the answer. Under the stage's auto policy
-// it tells the stage to decide itself.
+// the responder answers it.
 type asker struct {
 	c     *Controller
 	bp    store.Blueprint
 	stage string
-	// max caps the questions this run may ask; 0 is no cap.
+	// max caps the questions this run's attempt may ask; 0 is no cap.
 	max   int
 	runID int64
 	run   *run
 	audit audit
+	sess  *session
+	// attempt numbers the responder's runs with the asking run's attempt.
+	attempt int
+	// tools are the asking stage's tools, which its responder reads with.
+	tools []tools.Tool
+	// sink is the asking run's, which a responder's cost is charged to.
+	sink *harnessSink
 
 	// mu keeps one question open at a time, so two asks of one tool batch
 	// never share a number or the run's answer channel.
-	mu    sync.Mutex
+	mu sync.Mutex
+	// asked counts the attempt's questions, its earlier rounds' included.
 	asked int
 }
 
@@ -456,7 +569,7 @@ func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
 	}
 
 	if a.max > 0 && a.asked >= a.max {
-		return "", fmt.Errorf("this stage may ask %d question(s) per run and has asked them; decide the rest yourself and, where this stage records assumptions, record each decision as one", a.max)
+		return "", fmt.Errorf("this stage may ask %d question(s) per attempt and has asked them; decide the rest yourself and, where this stage records assumptions, record each decision as one", a.max)
 	}
 
 	bg := context.WithoutCancel(ctx)
@@ -482,9 +595,19 @@ func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
 
 	if policy == pack.PolicyAuto {
 		payload["responder"] = store.ResponderAuto
+
+		// As the human path: an abort or End never starts a responder run.
+		a.c.mu.Lock()
+		err := ctx.Err()
+		a.c.mu.Unlock()
+
+		if err != nil {
+			return "", err
+		}
+
 		a.audit.event(bg, Event{Kind: EventQuestion, BlueprintID: a.bp.ID, RunID: a.runID, Payload: payload})
 
-		return "", errNoResponder
+		return a.respond(ctx, q, number)
 	}
 
 	payload["responder"] = store.ResponderHuman
@@ -513,7 +636,7 @@ func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
 		a.c.setState(bg, a.bp.ID, StateRunning)
 		a.record(bg, q, number, ans)
 
-		return ans.text, nil
+		return fmt.Sprintf("Q%d: %s", number, ans.text), nil
 	case <-ctx.Done():
 		a.c.mu.Lock()
 
@@ -571,6 +694,8 @@ type harnessSink struct {
 
 	mu    sync.Mutex
 	spent float64
+	// charged is the part of spent that served runs cost.
+	charged float64
 }
 
 func (s *harnessSink) Write(p []byte) (int, error) {
@@ -591,7 +716,7 @@ func (s *harnessSink) Write(p []byte) (int, error) {
 
 // account prices a usage line and stops the run once the cap is passed.
 func (s *harnessSink) account(line []byte) {
-	if s.price == nil || s.capUSD <= 0 || s.stop == nil {
+	if !s.capped() {
 		return
 	}
 
@@ -620,6 +745,52 @@ func (s *harnessSink) account(line []byte) {
 	if s.spent > s.capUSD {
 		s.stop(errCostCap)
 	}
+}
+
+// capped reports whether the sink enforces a cap: a priced model and a
+// positive cap. A nil sink enforces none.
+func (s *harnessSink) capped() bool {
+	return s != nil && s.price != nil && s.capUSD > 0 && s.stop != nil
+}
+
+// left is what the run cap has not spent; capped is false when the sink
+// enforces no cap.
+func (s *harnessSink) left() (float64, bool) {
+	if !s.capped() {
+		return 0, false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.capUSD - s.spent, true
+}
+
+// charge adds the cost of a run served on this run's behalf, and stops the
+// run once the cap is passed. A nil or uncapped sink ignores it.
+func (s *harnessSink) charge(usd float64) {
+	if !s.capped() {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.spent += usd
+	s.charged += usd
+
+	if s.spent > s.capUSD {
+		s.stop(errCostCap)
+	}
+}
+
+// tally is what the sink has priced, and how much of it was charged for
+// runs served on this run's behalf.
+func (s *harnessSink) tally() (spent, charged float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.spent, s.charged
 }
 
 func (s *harnessSink) isCanceled() bool {

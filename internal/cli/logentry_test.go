@@ -57,14 +57,16 @@ func TestLogEntryFor(t *testing.T) {
 		{"aborted", blueprint.Event{Kind: blueprint.EventAborted, BlueprintID: "S1"}, "system", nil, false},
 		{"exported", blueprint.Event{Kind: blueprint.EventExported, BlueprintID: "S1", Payload: map[string]any{"path": "/state/exports/S1/t", "files": 7}}, "system", []string{"/state/exports/S1/t", "7 files"}, false},
 		{"error", blueprint.Event{Kind: blueprint.EventError, BlueprintID: "S1", Payload: map[string]any{"message": "cost cap"}}, "stderr", []string{"cost cap"}, false},
-		{"answer is echoed by CM", blueprint.Event{Kind: blueprint.EventAnswer, BlueprintID: "S1"}, "", nil, true},
+		{"answer is echoed by CM", blueprint.Event{Kind: blueprint.EventAnswer, BlueprintID: "S1", Payload: map[string]any{"text": "helm", "responder": "human"}}, "", nil, true},
+		{"an auto answer", blueprint.Event{Kind: blueprint.EventAnswer, BlueprintID: "S1", Payload: map[string]any{
+			"number": 3, "text": "helm", "responder": "auto", "reasoning": "a chart exists [S1]", "grounded": true,
+		}}, "text", []string{"Q3", "helm", "a chart exists [S1]"}, false},
 		{"harness lines go through the bridge", blueprint.Event{Kind: blueprint.EventHarness, BlueprintID: "S1"}, "", nil, true},
 		{"CM ended the session itself", blueprint.Event{Kind: blueprint.EventEnded, BlueprintID: "S1"}, "", nil, true},
 		{"the watch's state is internal", blueprint.Event{Kind: blueprint.EventWatchState, BlueprintID: "S1", Payload: map[string]any{"cards": []any{}}}, "", nil, true},
 		{"reopened", blueprint.Event{Kind: blueprint.EventReopened, BlueprintID: "S1", Payload: map[string]any{"state": "idle"}}, "system", []string{"idle"}, false},
-		{"design awaited", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "design", "prompt": "Paste the design."}}, "text", []string{"Paste the design."}, false},
-		{"awaited without a prompt", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "design", "prompt": ""}}, "text", []string{"design"}, false},
-		{"pasted design", blueprint.Event{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{"stage": "design", "body": "the long design", "source": "human", "version": 1}}, "system", []string{"design"}, false},
+		{"a stopped emission awaited", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "signoff", "prompt": "Emission is stopped; reply approve to resume it."}}, "text", []string{"reply approve to resume it"}, false},
+		{"awaited without a prompt", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "signoff", "prompt": ""}}, "text", []string{"signoff"}, false},
 		{"note that re-runs a stage", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "go on", "retries": "grounding"}}, "system", []string{"grounding"}, false},
 		{"grounded", blueprint.Event{Kind: blueprint.EventGrounded, BlueprintID: "S1", Payload: map[string]any{"stage": "grounding", "sources": []any{
 			map[string]any{"tag": "S1", "project": "alpha", "identity": "https://example.com/alpha.git", "sha": "0123456789abcdef0123"},
@@ -139,6 +141,37 @@ func TestLogEntryFor(t *testing.T) {
 			"text": "keep the API stable", "stage": "intake", "during_run": true,
 		}}, "system", []string{"Noted"}, false},
 		{"note with a hint", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "hm", "hint": "Reply approve or reject."}}, "system", []string{"Reply approve or reject."}, false},
+		{"a review started", blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "shape", "kind": "reviewer", "persona": "reviewer",
+		}}, "system", []string{"Review of shape"}, false},
+		{"a review ended", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "shape", "kind": "reviewer", "status": "done", "cost_usd": 0.02,
+		}}, "system", []string{"Review of shape", "0.02"}, false},
+		{"a verdict", blueprint.Event{Kind: blueprint.EventReview, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "shape", "version": 2, "score": 3, "threshold": 4, "findings": []any{"name the owner"}, "round": 1,
+		}}, "system", []string{"shape", "3", "4", "name the owner"}, false},
+		{"a gate with a verdict", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "shape", "version": 7, "actions": []any{},
+			"review": map[string]any{"score": 2, "threshold": 4, "findings": []any{"split it"}, "round": 3, "passed": false},
+		}}, "text", []string{"2", "- split it\n\n"}, false},
+		{"a gate whose checks accepted problems", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "solution_design", "version": 1, "actions": []any{},
+			"review":   map[string]any{"score": 4, "threshold": 4, "findings": []any{"name the owner"}, "round": 1, "passed": true},
+			"problems": []any{"Q1: unused_answer: the question was answered, but no decision rests on it"},
+		}}, "text", []string{"- name the owner\n\n", "- Q1: unused_answer: the question was answered, but no decision rests on it\n\n"}, false},
+		{"a note that runs a review again", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{
+			"text": "go on", "retries": "shape", "critique": true,
+		}}, "system", []string{"shape"}, false},
+		{"a fold", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "slicing", "decision": "fold", "feedback": "solution_design", "responder": "auto",
+		}}, "system", []string{"slicing", "solution_design"}, false},
+		{"a folded gate", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "solution_design", "version": 1, "folded": []any{map[string]any{"stage": "slicing", "version": 1}},
+			"actions": []any{map[string]any{"label": "Reject slicing", "reply": "reject slicing", "feedback": true}},
+		}}, "text", []string{"slicing", "`reject slicing <feedback>`"}, false},
+		{"a folded gate names what it also judges", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "solution_design", "version": 1, "folded": []any{map[string]any{"stage": "slicing", "version": 3}}, "actions": []any{},
+		}}, "text", []string{"slicing", "3"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -170,14 +203,6 @@ func TestLogEntryFor_RefusedNeedShowsOnlyTheMessage(t *testing.T) {
 	}})
 	require.True(t, ok)
 	assert.Equal(t, "cost cap 1.00 USD would be breached (spent 1.00)", entry.Content, "the need stays in the audit log, not the panel")
-}
-
-func TestLogEntryFor_PastedDesignIsNotEchoed(t *testing.T) {
-	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{
-		"stage": "design", "body": "the long design", "source": "human", "version": 1,
-	}})
-	require.True(t, ok)
-	assert.NotContains(t, entry.Content, "the long design", "CM already shows the message the design came from")
 }
 
 func TestLogEntryFor_ANoteAtAnEndedPipelineIsToldApart(t *testing.T) {
@@ -403,4 +428,55 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 			assert.Equal(t, tt.want, entry.Prompt)
 		})
 	}
+}
+
+func TestLogEntryFor_ANoteThatRunsAReviewIsNotCalledAStageRun(t *testing.T) {
+	stage, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "go on", "retries": "shape"}})
+	require.True(t, ok)
+
+	review, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "go on", "retries": "shape", "critique": true}})
+	require.True(t, ok)
+
+	assert.NotEqual(t, stage.Content, review.Content)
+}
+
+func TestLogEntryFor_AFoldedGateShowsTheDesignOnce(t *testing.T) {
+	const designed, sliced = "# Design\n\nPostgres, managed.", "# Slices\n\nSL1 ships the endpoint."
+
+	const designProblem, slicingProblem = "Q1: unused_answer: the question was answered, but no decision rests on it", "SL1: slice_title: a slice needs a title"
+
+	events := []blueprint.Event{
+		{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{"stage": "solution_design", "version": 2, "body": designed}},
+		{Kind: blueprint.EventReview, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "solution_design", "version": 2, "score": 5, "threshold": 4, "findings": []any{}, "round": 1,
+		}},
+		{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "solution_design", "version": 2, "problems": []any{designProblem},
+			"folded":  []any{map[string]any{"stage": "slicing", "version": 1, "body": sliced, "problems": []any{slicingProblem}}},
+			"actions": []any{map[string]any{"label": "Approve", "reply": "approve", "feedback": false}},
+		}},
+	}
+
+	var (
+		panel strings.Builder
+		gate  protocol.LogEntry
+	)
+
+	for _, e := range events {
+		entry, ok := logEntryFor(e)
+		require.True(t, ok)
+
+		panel.WriteString(entry.Content + "\n")
+
+		if e.Kind == blueprint.EventGate {
+			gate = entry
+		}
+	}
+
+	assert.Equal(t, 1, strings.Count(panel.String(), designed), "the design is shown once, above its gate")
+	assert.Contains(t, gate.Content, sliced, "the gate shows the folded artifact")
+	assert.NotContains(t, gate.Content, designed)
+	assert.Contains(t, gate.Content, "- "+designProblem)
+	assert.Less(t, strings.Index(gate.Content, sliced), strings.Index(gate.Content, "- "+slicingProblem), "each folded artifact with its problems")
+	assert.Equal(t, "gate:solution_design:v2", gate.Prompt.ID, "the prompt is the design gate's")
 }

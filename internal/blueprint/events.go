@@ -35,15 +35,15 @@ const (
 	EventAborted      = "aborted"
 	EventExported     = "exported"
 	EventError        = "error"
-	// EventAwaitInput says the next stage takes the user's next message as
-	// its artifact, or, with stage signoff, that a stopped emission waits for
-	// approve; the payload carries the stage and the prompt to show.
+	// EventAwaitInput says a stopped emission or run start waits for
+	// approve; the payload carries stage signoff and the prompt to show.
 	EventAwaitInput = "await_input"
 	// EventGrounded lists the sources a code stage checked out.
 	EventGrounded = "grounded"
-	// EventSetupGaps lists, when grounding ends, what each target project
-	// lacks for an agent run: a verify command, an instruction file, any
-	// commit. None of it blocks; decomposition plans it as setup.
+	// EventSetupGaps lists, when the first stage with the code tools ends,
+	// what each target project lacks for an agent run: a verify command, an
+	// instruction file, any commit. None of it blocks; decomposition plans
+	// it as setup.
 	EventSetupGaps = "setup_gaps"
 	// EventPolicy records a gate <stage> human|auto reply: the stage's new
 	// policy, or why the reply changed nothing.
@@ -75,14 +75,18 @@ const (
 	// decide; the blueprint waits for approve or reject.
 	EventSignOff = "signoff"
 	// EventGate shows a stage's gate: the stage, the version of its artifact
-	// that waits, and the replies that decide it.
+	// that waits, the artifacts folded into it, and the replies that decide
+	// it.
 	EventGate = "gate"
+	// EventReview is a reviewer's verdict on a stage's artifact: the score,
+	// the threshold that passes, the findings and the round.
+	EventReview = "review"
 	// EventReshow publishes an open question again after a reply CM's panel
 	// took as its answer but the architect took as a command. The payload
 	// carries the original event's kind and payload.
 	EventReshow = "reshow"
 	// EventDecided records a decision at a stage's gate or the sign-off, by a
-	// human or the auto policy.
+	// human or the auto policy, or a stage's fold into a later gate.
 	EventDecided = "decided"
 	// EventEnded records that CM ended the session; the blueprint persists.
 	EventEnded = "session_ended"

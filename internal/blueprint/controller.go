@@ -99,7 +99,7 @@ type Workspace interface {
 	Checkout(ctx context.Context, blueprintID, name, repoURL string, creds code.Credentials) (code.Checkout, error)
 	TreeRoot(blueprintID string) string
 	// RemoteHead reads a repository's default branch and its sha without
-	// fetching; preflight compares it with what grounding recorded.
+	// fetching; preflight compares it with the sha the checkout recorded.
 	RemoteHead(ctx context.Context, repoURL string, creds code.Credentials) (string, string, error)
 	// Remove deletes a blueprint's trees; emission calls it once the cards exist.
 	Remove(ctx context.Context, blueprintID string) error
@@ -248,16 +248,16 @@ func effectivePrice(p *protocol.ModelPrice) *protocol.ModelPrice {
 	return p
 }
 
-// Start attaches a session to the blueprint with in.ID, creating it on first
-// sight. A stage left running by a crash is marked interrupted and re-run, a
-// stage whose inputs were stored but which never started runs, and a
-// human-sourced stage that waits shows its prompt again. An open gate is
-// shown again, or, never shown, opened under the policy now in effect. At a
-// ready end an open sign-off is shown again or, never shown, runs; an
+// Start attaches a session to the blueprint with in.ID, creating it on
+// first sight. A stage left running by a crash is marked interrupted and
+// re-run, and a stage whose inputs were stored but which never started
+// runs. An open gate is shown again, or, never shown, opened under the
+// policy now in effect once its pending review or builder round has run. At
+// a ready end an open sign-off is shown again or, never shown, runs; an
 // emission a restart cut short resumes, a stopped one is reminded of
-// approve, and an emitted blueprint's watch restarts. A reopen that finds the
-// ended session's run still finishing waits for it to leave the slot first.
-// Start on a session already attached does nothing.
+// approve, and an emitted blueprint's watch restarts. A reopen that finds
+// the ended session's run still finishing waits for it to leave the slot
+// first. Start on a session already attached does nothing.
 func (c *Controller) Start(ctx context.Context, in StartInput) error {
 	in.Price = effectivePrice(in.Price)
 
@@ -341,13 +341,7 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 		return nil
 	}
 
-	// The prompt is shown again: the panel lost it with the ended session,
-	// and the next message becomes the stage's artifact.
-	if next.human {
-		c.await(ctx, sess.audit, bp.ID, next.stage)
-	}
-
-	if next.stage == "" || next.human {
+	if next.stage == "" {
 		c.release(in.ID, r)
 
 		return nil
@@ -389,19 +383,25 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 // interruptedStage marks every run a crash left running as interrupted and
 // returns the stage of the latest such stage run, to re-run. A responder run
 // left running sat inside its stage's run, so the stage run alone is re-run.
-// Empty means no stage run was interrupted. The caller holds the run slot.
+// A builder round is not returned: the critique runs that round again, in
+// its attempt. Empty means no stage is re-run. The caller holds the run slot.
 func (c *Controller) interruptedStage(ctx context.Context, bp store.Blueprint) (string, error) {
 	left, err := c.leftRunning(ctx, bp.ID)
 	if err != nil || len(left) == 0 {
 		return "", err
 	}
 
-	stageID := ""
+	var latest store.Run
 
 	for _, r := range left {
 		if r.Kind == store.RunKindStage {
-			stageID = r.Stage
+			latest = r
 		}
+	}
+
+	stageID := latest.Stage
+	if latest.Round > 1 {
+		stageID = ""
 	}
 
 	// Stage runs are closed last. A partial close must never leave the stage
@@ -454,8 +454,7 @@ func (c *Controller) leftRunning(ctx context.Context, id string) ([]store.Run, e
 }
 
 // Message handles one user message: the answer to an open question, the
-// need while the first stage has no artifact, the artifact of a
-// human-sourced stage that waits for it, the sign-off decision (approve or
+// need while the first stage has no artifact, the sign-off decision (approve or
 // reject <feedback>) at a ready end, or a note. The abort and export
 // commands are parsed by the webhook and reach Abort and Export instead.
 func (c *Controller) Message(ctx context.Context, id, text, msgID string) error {
@@ -654,43 +653,29 @@ func (c *Controller) modelFor(sess *session, persona string) runModel {
 	return runModel{name: sess.model, price: sess.price}
 }
 
-// capAllows reports whether a run of stageID on model m may start under the
-// blueprint's cost cap, and the cap the run must stay under: the configured
-// per-run cap, or what is left of the blueprint cap when that is smaller; 0
-// means no cap (a run cap of 0 on an uncapped blueprint). A
-// capped blueprint whose run would be unpriced is refused, because the cap
-// could not bind. A refusal is reported to the panel, with refused merged
-// into its event payload, and leaves the blueprint idle.
-func (c *Controller) capAllows(ctx context.Context, au audit, bp store.Blueprint, stageID string, m runModel, refused map[string]any) (float64, bool) {
+// runCap is the cap a run of stageID on model m must stay under: the
+// configured per-run cap, or what is left of the blueprint cap when that is
+// smaller; 0 means no cap. refused says why the run may not start: a capped
+// blueprint whose run would be unpriced, since the cap could not bind, or a
+// spent cap. It reports nothing.
+func (c *Controller) runCap(ctx context.Context, bp store.Blueprint, stageID string, m runModel) (float64, string, error) {
 	runCap := c.opts.MaxRunCostUSD
 
 	if bp.CostCapUSD <= 0 {
-		return runCap, true
-	}
-
-	refuse := func(msg string) (float64, bool) {
-		payload := map[string]any{"stage": stageID, "message": msg}
-		maps.Copy(payload, refused)
-
-		au.event(ctx, Event{Kind: EventError, BlueprintID: bp.ID, Payload: payload})
-		c.setState(ctx, bp.ID, StateIdle)
-
-		return 0, false
+		return runCap, "", nil
 	}
 
 	if m.price == nil {
 		if m.override {
-			return refuse(fmt.Sprintf("cost cap %.2f USD is set but model %q, the configured override for stage %s, has no price (CM prices only the session model), so the cap cannot bind; drop the override, or start a new blueprint without a cap", bp.CostCapUSD, m.name, stageID))
+			return 0, fmt.Sprintf("cost cap %.2f USD is set but model %q, the configured override for stage %s, has no price (CM prices only the session model), so the cap cannot bind; drop the override, or start a new blueprint without a cap", bp.CostCapUSD, m.name, stageID), nil
 		}
 
-		return refuse(fmt.Sprintf("cost cap %.2f USD is set but model %q has no price, so the cap cannot bind; pick a priced model, or start a new blueprint without a cap", bp.CostCapUSD, m.name))
+		return 0, fmt.Sprintf("cost cap %.2f USD is set but model %q has no price, so the cap cannot bind; pick a priced model, or start a new blueprint without a cap", bp.CostCapUSD, m.name), nil
 	}
 
 	spent, err := c.opts.Store.BlueprintCost(ctx, bp.ID)
 	if err != nil {
-		c.fail(ctx, au, bp.ID, 0, "cost lookup failed: "+err.Error())
-
-		return 0, false
+		return 0, "", fmt.Errorf("cost lookup failed: %w", err)
 	}
 
 	// A run cap of zero means no per-run cap; the blueprint cap alone
@@ -700,7 +685,32 @@ func (c *Controller) capAllows(ctx context.Context, au audit, bp store.Blueprint
 	}
 
 	if runCap <= 0 {
-		return refuse(fmt.Sprintf("cost cap %.2f USD would be breached (spent %.2f)", bp.CostCapUSD, spent))
+		return 0, fmt.Sprintf("cost cap %.2f USD would be breached (spent %.2f)", bp.CostCapUSD, spent), nil
+	}
+
+	return runCap, "", nil
+}
+
+// capAllows reports whether a run of stageID on model m may start under the
+// blueprint's cost cap, and the cap it must stay under (see runCap). A
+// refusal is reported to the panel, with refused merged into its event
+// payload, and leaves the blueprint idle.
+func (c *Controller) capAllows(ctx context.Context, au audit, bp store.Blueprint, stageID string, m runModel, refused map[string]any) (float64, bool) {
+	runCap, reason, err := c.runCap(ctx, bp, stageID, m)
+	if err != nil {
+		c.fail(ctx, au, bp.ID, 0, err.Error())
+
+		return 0, false
+	}
+
+	if reason != "" {
+		payload := map[string]any{"stage": stageID, "message": reason}
+		maps.Copy(payload, refused)
+
+		au.event(ctx, Event{Kind: EventError, BlueprintID: bp.ID, Payload: payload})
+		c.setState(ctx, bp.ID, StateIdle)
+
+		return 0, false
 	}
 
 	return runCap, true

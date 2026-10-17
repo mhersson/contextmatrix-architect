@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -50,9 +51,10 @@ func newGatedOn(t *testing.T, st *store.Store, script stageScript) (*Controller,
 
 func gatedScript() stageScript {
 	return stageScript{
-		"intake": returns("# Need", map[string]any{"slices": 1}),
-		"shape":  returns("# Shape", nil),
-		"plan":   returns("# Plan", nil),
+		"intake":       returns("# Need", map[string]any{"slices": 1}),
+		"shape":        returns("# Shape", nil),
+		"shape.review": returns("# Review", map[string]any{"score": float64(5), "findings": []any{}}),
+		"plan":         returns("# Plan", nil),
 	}
 }
 
@@ -69,14 +71,35 @@ func startGated(t *testing.T, c *Controller, mode string) {
 	c.Wait("BP1")
 }
 
-// stagesRun lists the stage of every run the fake runner was asked for.
+// stagesRun lists the stage of every stage run the fake runner was asked
+// for; reviewer and responder runs, whose stage names hold a dot, are left
+// out.
 func stagesRun(r *fakeRunner) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	out := make([]string, 0, len(r.inputs))
+
 	for _, in := range r.inputs {
-		out = append(out, in.Stage)
+		if !strings.Contains(in.Stage, ".") {
+			out = append(out, in.Stage)
+		}
+	}
+
+	return out
+}
+
+// inputsOf returns the input of every run of stageID, oldest first.
+func inputsOf(r *fakeRunner, stageID string) []stage.Input {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var out []stage.Input
+
+	for _, in := range r.inputs {
+		if in.Stage == stageID {
+			out = append(out, in)
+		}
 	}
 
 	return out
@@ -173,7 +196,7 @@ func TestGate_RejectRunsTheStageAgainWithItsArtifactAndEveryFeedback(t *testing.
 
 	assert.Equal(t, []string{"intake", "shape", "shape", "shape"}, stagesRun(runner))
 
-	third := runner.input(3)
+	third := inputsOf(runner, "shape")[2]
 	assert.Contains(t, third.Task, "# Shape 2", "the rejected artifact")
 	assert.Contains(t, third.Task, "make it smaller")
 	assert.Contains(t, third.Task, "split the second part")

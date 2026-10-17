@@ -21,8 +21,9 @@ const (
 	CommandGate   = "gate"
 )
 
-// errNoResponder tells a stage whose policy is auto to decide a question
-// itself; ask_human returns it as a tool error and the run goes on.
+// errNoResponder tells a stage whose policy is auto, in a pack without
+// stages/responder.md, to decide a question itself; ask_human returns it as
+// a tool error and the run goes on.
 var errNoResponder = errors.New("nobody answers this stage's questions under its auto policy; decide yourself and, where this stage records assumptions, record the decision as one")
 
 // ParseCommand recognises a reply that is a command rather than text for
@@ -57,10 +58,9 @@ func commandOption(options []string) error {
 
 // SetPolicy records a stage's responder policy for this blueprint, for its
 // questions and its gate, from the next one on: a question or gate already
-// open keeps the responder it was put to. The sign-off follows the mode, a
-// human-sourced stage takes no policy and an unknown stage is refused; each
-// is reported and never stored as a policy. Like export, it works while a
-// stage runs.
+// open keeps the responder it was put to. The sign-off follows the mode and an
+// unknown stage is refused; each is reported and never stored as a policy.
+// Like export, it works while a stage runs.
 func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID string) error {
 	c.mu.Lock()
 	sess, ok := c.sessions[id]
@@ -87,9 +87,7 @@ func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID s
 	case strings.EqualFold(stageID, signoffStage):
 		payload["refused"] = "The sign-off follows the mode: default and auto modes show it, auto+emit and yolo approve it when preflight finds nothing for a human."
 	case !known:
-		payload["refused"] = fmt.Sprintf("There is no stage %s; the stages are %s.", stageID, strings.Join(c.modelStages(), ", "))
-	case st.Source == pack.SourceHuman:
-		payload["refused"] = fmt.Sprintf("Stage %s is human-sourced and takes no policy; a gate reply may name %s.", stageID, strings.Join(c.modelStages(), ", "))
+		payload["refused"] = fmt.Sprintf("There is no stage %s; the stages are %s.", stageID, strings.Join(c.stageIDs(), ", "))
 	default:
 		payload["stage"] = st.ID
 
@@ -107,8 +105,8 @@ func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID s
 	return nil
 }
 
-// stageNamed finds a pack stage by id, human-sourced ones included, ignoring
-// case: a gate reply arrives lowercased.
+// stageNamed finds a pack stage by id, ignoring case: a gate reply arrives
+// lowercased.
 func (c *Controller) stageNamed(name string) (pack.Stage, bool) {
 	for _, st := range c.opts.Pack.Stages {
 		if strings.EqualFold(st.ID, name) {
@@ -120,8 +118,9 @@ func (c *Controller) stageNamed(name string) (pack.Stage, bool) {
 }
 
 // gateOpenAt reports whether stageID's gate is open, the blueprint waiting
-// on its decision. A record that cannot be read reports no open gate and is
-// logged: it only drops a hint.
+// on its decision; a gate whose critique is pending was never shown. A
+// record that cannot be read reports no open gate and is logged: it only
+// drops a hint.
 func (c *Controller) gateOpenAt(ctx context.Context, id, stageID string) bool {
 	bp, err := c.opts.Store.GetBlueprint(ctx, id)
 	if err != nil {
@@ -137,18 +136,15 @@ func (c *Controller) gateOpenAt(ctx context.Context, id, stageID string) bool {
 		return false
 	}
 
-	return out.gate && out.stage == stageID
+	return out.gate && !out.critique && out.stage == stageID
 }
 
-// modelStages names the pack's model stages in order: the stages a gate
-// reply may name.
-func (c *Controller) modelStages() []string {
+// stageIDs names the pack's stages in order: the stages a gate reply may name.
+func (c *Controller) stageIDs() []string {
 	var out []string
 
 	for _, st := range c.opts.Pack.Stages {
-		if st.Source != pack.SourceHuman {
-			out = append(out, st.ID)
-		}
+		out = append(out, st.ID)
 	}
 
 	return out
@@ -199,10 +195,6 @@ func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.B
 	stages := make([]any, 0, len(c.opts.Pack.Stages))
 
 	for _, st := range c.opts.Pack.Stages {
-		if st.Source == pack.SourceHuman {
-			continue
-		}
-
 		policy, err := c.policy(ctx, bp, st.ID)
 		if err != nil {
 			c.opts.Logger.Warn("blueprint: gate plan not posted", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/mhersson/contextmatrix-architect/internal/contract"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
@@ -47,7 +46,8 @@ type verdict struct {
 // assumption is ignored. A verdict applies only when its artifact was
 // stored after the latest artifact of every stating stage up to the
 // assumption's own: ids are positional, so an older verdict would judge
-// whatever sentence holds the id now.
+// whatever sentence holds the id now. Every auto answer follows as Q<n>,
+// verified when the responder grounded it.
 func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, error) {
 	all, err := c.opts.Store.ListArtifacts(ctx, id)
 	if err != nil {
@@ -82,6 +82,29 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 			out = append(out, assumption{ID: fmt.Sprintf("A%d", len(out)+1), Stage: st.ID, Text: text, Status: assumptionUnverified})
 			source = append(source, newest)
 		}
+	}
+
+	questions, err := c.opts.Store.ListQuestions(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("blueprint: assumptions: %w", err)
+	}
+
+	for _, q := range questions {
+		if !q.Assumption {
+			continue
+		}
+
+		status := assumptionUnverified
+		if q.Grounded {
+			status = assumptionVerified
+		}
+
+		out = append(out, assumption{
+			ID: q.Tag(), Stage: q.Stage, Status: status,
+			Text: fmt.Sprintf("%s The responder answered: %s", q.Text, q.Answer),
+		})
+		// A Q<n> id is stable, so any verdict applies to it.
+		source = append(source, -1)
 	}
 
 	for _, st := range c.opts.Pack.Stages {
@@ -218,31 +241,13 @@ func assumptionsPayload(list []assumption) []any {
 }
 
 // assumptionsValidator refuses a submit whose assumptions are not
-// standalone sentences. The third failing submit is accepted as it is, so a
-// stage never loops until its turns are spent.
-func (c *Controller) assumptionsValidator() func(context.Context, stage.Artifact) error {
+// standalone sentences, as boundedValidator bounds it.
+func (c *Controller) assumptionsValidator() (func(context.Context, stage.Artifact) error, *validatorState) {
 	lists := c.opts.Pack.Lists()
 
-	var (
-		mu     sync.Mutex
-		rounds int
-	)
-
-	return func(_ context.Context, a stage.Artifact) error {
-		problems := assumptionProblems(a.Data, lists)
-
-		mu.Lock()
-		defer mu.Unlock()
-
-		rounds++
-
-		if len(problems) == 0 || rounds >= maxContractRounds {
-			return nil
-		}
-
-		return fmt.Errorf("%d problem(s) with the assumptions; fix them and submit again (submit %d of %d):\n%s",
-			len(problems), rounds, maxContractRounds, strings.Join(problems, "\n"))
-	}
+	return boundedValidator("assumptions", func(_ context.Context, a stage.Artifact) ([]string, error) {
+		return assumptionProblems(a.Data, lists), nil
+	})
 }
 
 // assumptionProblems checks a submit's assumptions: a list of sentences,

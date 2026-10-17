@@ -23,16 +23,23 @@ import (
 //go:embed default
 var defaultFS embed.FS
 
-// Stage sources, tools and checks a pack.yaml may name.
+// Tool groups and checks a pack.yaml may name.
 const (
-	SourceModel = "model"
-	SourceHuman = "human"
-	ToolCode    = "code"
+	ToolCode = "code"
 	// ToolCM is the read-only ContextMatrix tool group.
 	ToolCM     = "cm"
 	CheckCards = "cards"
 	// CheckAssumptions checks a submit's assumptions: standalone sentences.
 	CheckAssumptions = "assumptions"
+	// CheckDecisions checks a design's decisions: each made, with a
+	// rejected option and a basis, and every answer used.
+	CheckDecisions = "decisions"
+	// CheckSlices checks a slicing's slices: at least one, unique ids, a
+	// title each, target projects only.
+	CheckSlices = "slices"
+	// CheckCriteria checks acceptance's criteria and manual checks, and
+	// makes decomposition map every criterion to exactly one card.
+	CheckCriteria = "criteria"
 )
 
 // Responder policies: who answers a stage's questions and decides its gate.
@@ -41,9 +48,16 @@ const (
 	PolicyAuto  = "auto"
 )
 
+// The instructions every reviewer or responder run reads, under stages/.
+// No stage may take these ids.
+const (
+	reviewInstructions    = "review"
+	responderInstructions = "responder"
+)
+
 // Fold lets a gate fold into the next gated stage's gate: when the stage's
-// data array Field holds at most Max entries, nothing is decided at it and
-// the next gate judges both artifacts.
+// data array Field holds at most Max entries and both gates have the same
+// policy, the next gate and its reviewer judge both artifacts.
 type Fold struct {
 	Field string `yaml:"field"`
 	Max   int    `yaml:"max"`
@@ -57,8 +71,8 @@ type Reviewer struct {
 	Threshold int    `yaml:"threshold"`
 }
 
-// Stage is one unit of work in the pipeline: a model run, or an artifact a
-// human pastes.
+// Stage is one unit of work in the pipeline: one model run, and the gate
+// after it when it has one.
 type Stage struct {
 	ID       string `yaml:"id"`
 	Persona  string `yaml:"persona"`
@@ -72,12 +86,9 @@ type Stage struct {
 	Gate     bool      `yaml:"gate"`
 	Fold     *Fold     `yaml:"fold"`
 	Reviewer *Reviewer `yaml:"reviewer"`
-	// MaxQuestions caps the questions one run of the stage may ask; 0 is no
-	// cap.
+	// MaxQuestions caps the questions one attempt of the stage may ask, its
+	// builder rounds included; 0 is no cap.
 	MaxQuestions int `yaml:"max_questions"`
-	// Source is "model" (default) or "human": a human-sourced stage waits
-	// for the user's next message and stores it as the artifact.
-	Source string `yaml:"source"`
 	// Consumes lists earlier stages whose latest artifacts are this stage's
 	// input, in the order they are presented.
 	Consumes []string `yaml:"consumes"`
@@ -109,6 +120,8 @@ type Pack struct {
 	instructions map[string]string
 	lists        contract.Lists
 	card         string
+	review       string
+	responder    string
 }
 
 // LoadEmbedded loads the pack compiled into the binary.
@@ -155,39 +168,15 @@ func load(fsys fs.FS) (*Pack, error) {
 	for i := range m.Stages {
 		s := &m.Stages[i]
 
-		if s.Source == "" {
-			s.Source = SourceModel
-		}
-
 		if err := validateStage(*s, seen); err != nil {
 			return nil, err
 		}
 
-		// The controller launches the first stage on the need and runs every
-		// other stage through the model unless its source is human, so a
-		// human-sourced first stage would be run as a model stage.
-		if i == 0 && s.Source == SourceHuman {
-			return nil, fmt.Errorf("pack: stage %q: the first stage cannot be human-sourced", s.ID)
-		}
-
-		if s.Source == SourceModel && s.Policy == "" {
+		if s.Policy == "" {
 			s.Policy = PolicyAuto
 		}
 
 		seen[s.ID] = *s
-
-		if s.Source == SourceHuman {
-			// A human-sourced stage has no persona; its instructions file,
-			// when present, is the prompt the panel shows while waiting.
-			text, err := fs.ReadFile(fsys, path.Join("stages", s.ID+".md"))
-			if err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return nil, fmt.Errorf("pack: stage %q: instructions: %w", s.ID, err)
-			}
-
-			p.instructions[s.ID] = string(text)
-
-			continue
-		}
 
 		if err := p.loadPersona(fsys, s.ID, s.Persona); err != nil {
 			return nil, err
@@ -228,7 +217,7 @@ func load(fsys fs.FS) (*Pack, error) {
 		}
 	}
 
-	raw, err = optionalFile(fsys, "lists.yaml", checker)
+	raw, err = optionalFile(fsys, "lists.yaml", checker, "checks cards")
 	if err != nil {
 		return nil, err
 	}
@@ -237,12 +226,36 @@ func load(fsys fs.FS) (*Pack, error) {
 		return nil, err
 	}
 
-	card, err := optionalFile(fsys, "card.md", checker)
+	card, err := optionalFile(fsys, "card.md", checker, "checks cards")
 	if err != nil {
 		return nil, err
 	}
 
 	p.card = string(card)
+
+	reviewed := ""
+
+	for _, s := range p.Stages {
+		if s.Reviewer != nil {
+			reviewed = s.ID
+
+			break
+		}
+	}
+
+	review, err := optionalFile(fsys, path.Join("stages", reviewInstructions+".md"), reviewed, "has a reviewer")
+	if err != nil {
+		return nil, err
+	}
+
+	p.review = string(review)
+
+	responder, err := optionalFile(fsys, path.Join("stages", responderInstructions+".md"), "", "")
+	if err != nil {
+		return nil, err
+	}
+
+	p.responder = string(responder)
 
 	return p, nil
 }
@@ -264,8 +277,8 @@ func (p *Pack) loadPersona(fsys fs.FS, stageID, name string) error {
 }
 
 // optionalFile reads name from the pack; a missing file is empty unless
-// checker names a stage that checks cards, which needs it.
-func optionalFile(fsys fs.FS, name, checker string) ([]byte, error) {
+// stageID names a stage that needs it, for the reason why.
+func optionalFile(fsys fs.FS, name, stageID, why string) ([]byte, error) {
 	raw, err := fs.ReadFile(fsys, name)
 
 	switch {
@@ -273,8 +286,8 @@ func optionalFile(fsys fs.FS, name, checker string) ([]byte, error) {
 		return raw, nil
 	case !errors.Is(err, fs.ErrNotExist):
 		return nil, fmt.Errorf("pack: read %s: %w", name, err)
-	case checker != "":
-		return nil, fmt.Errorf("pack: stage %q checks cards, so the pack needs %s", checker, name)
+	case stageID != "":
+		return nil, fmt.Errorf("pack: stage %q %s, so the pack needs %s", stageID, why, name)
 	default:
 		return nil, nil
 	}
@@ -311,36 +324,21 @@ func validateStage(s Stage, seen map[string]Stage) error {
 		return fmt.Errorf("pack: stage needs an id: %+v", s)
 	}
 
+	if s.ID == reviewInstructions || s.ID == responderInstructions {
+		return fmt.Errorf("pack: stage id %q is reserved for the %s instructions", s.ID, s.ID)
+	}
+
+	// A reviewer's verdicts are artifacts of <stage>.review.
+	if strings.Contains(s.ID, ".") {
+		return fmt.Errorf("pack: stage id %q has a dot, which names a stage's review", s.ID)
+	}
+
 	if _, dup := seen[s.ID]; dup {
 		return fmt.Errorf("pack: duplicate stage %q", s.ID)
 	}
 
-	switch s.Source {
-	case SourceModel:
-		if s.Persona == "" {
-			return fmt.Errorf("pack: stage %q needs a persona", s.ID)
-		}
-	case SourceHuman:
-		// The panel waits for the user at a human-sourced stage, so nothing
-		// a model run would use applies; refuse rather than ignore it.
-		var set []string
-
-		for key, present := range map[string]bool{
-			"tools": len(s.Tools) > 0, "checks": len(s.Checks) > 0, "loops_to": s.LoopsTo != "",
-			"policy": s.Policy != "", "gate": s.Gate, "max_questions": s.MaxQuestions != 0,
-		} {
-			if present {
-				set = append(set, key)
-			}
-		}
-
-		if len(set) > 0 {
-			slices.Sort(set)
-
-			return fmt.Errorf("pack: stage %q is human-sourced, so it takes no %s", s.ID, strings.Join(set, ", "))
-		}
-	default:
-		return fmt.Errorf("pack: stage %q: unknown source %q", s.ID, s.Source)
+	if s.Persona == "" {
+		return fmt.Errorf("pack: stage %q needs a persona", s.ID)
 	}
 
 	if err := validateDialog(s); err != nil {
@@ -360,7 +358,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	}
 
 	for _, check := range s.Checks {
-		if check != CheckCards && check != CheckAssumptions {
+		if check != CheckCards && check != CheckAssumptions && check != CheckDecisions && check != CheckSlices && check != CheckCriteria {
 			return fmt.Errorf("pack: stage %q: unknown check %q", s.ID, check)
 		}
 	}
@@ -372,13 +370,9 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	}
 
 	if s.LoopsTo != "" {
-		target, ok := seen[s.LoopsTo]
+		_, ok := seen[s.LoopsTo]
 		if !ok {
 			return fmt.Errorf("pack: stage %q loops to %q, which is not an earlier stage", s.ID, s.LoopsTo)
-		}
-
-		if target.Source == SourceHuman {
-			return fmt.Errorf("pack: stage %q loops to %q, which is human-sourced and would run through the model", s.ID, s.LoopsTo)
 		}
 
 		if s.MaxRounds <= 0 {
@@ -457,3 +451,11 @@ func (p *Pack) Lists() contract.Lists { return p.lists }
 
 // CardTemplate returns the card body template handed to decomposition.
 func (p *Pack) CardTemplate() string { return p.card }
+
+// ReviewInstructions returns what every reviewer run reads; empty when no
+// stage declares a reviewer and the pack carries none.
+func (p *Pack) ReviewInstructions() string { return p.review }
+
+// ResponderInstructions returns what every responder run reads; empty when
+// the pack has none, and then an auto question returns to its stage.
+func (p *Pack) ResponderInstructions() string { return p.responder }

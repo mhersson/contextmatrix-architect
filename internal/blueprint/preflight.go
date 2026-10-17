@@ -30,7 +30,7 @@ type preflightResult struct {
 
 // preflight checks what emission needs: every card's project in
 // ContextMatrix with a repository; every repository's default branch where
-// grounding read it; and no draft title already a card in another runnable
+// the checkout read it; and no draft title already a card in another runnable
 // playbook. A project ContextMatrix declares no verify command for is a
 // step when the draft proposes one and a warning when it proposes none. A
 // missing instruction file is no finding: the contract makes a card write
@@ -108,10 +108,10 @@ func (c *Controller) preflight(ctx context.Context, sess *session, bp store.Blue
 }
 
 // movedRepos warns about every repository whose default branch moved since
-// grounding recorded it or could not be read, and returns the identity of
+// the checkout recorded it or could not be read, and returns the identity of
 // every repository with no commits that a card runs in (targets, by clean
 // url): the agent needs a base branch to work from. A first commit to a
-// repository that was empty at grounding is no move: it is the push step
+// repository that was empty at the checkout is no move: it is the push step
 // done.
 func (c *Controller) movedRepos(ctx context.Context, sess *session, bp store.Blueprint, targets map[string]bool) ([]string, []string, error) {
 	if c.opts.Workspace == nil {
@@ -157,7 +157,7 @@ func (c *Controller) movedRepos(ctx context.Context, sess *session, bp store.Blu
 		}
 
 		if sha != src.Version && src.Version != "" {
-			warnings = append(warnings, fmt.Sprintf("the default branch of %s [%s] moved since grounding, from %s to %s", identity, src.Tag(), commitOf(src.Version), commitOf(sha)))
+			warnings = append(warnings, fmt.Sprintf("the default branch of %s [%s] moved since the checkout, from %s to %s", identity, src.Tag(), commitOf(src.Version), commitOf(sha)))
 		}
 
 		if sha == "" && targets[identity] {

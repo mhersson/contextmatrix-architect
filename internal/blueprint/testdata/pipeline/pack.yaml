@@ -7,25 +7,21 @@ stages:
     policy: human
     max_questions: 3
     checks: [assumptions]
-  - id: design
-    source: human
-    produces: design
-    consumes: [intake]
   - id: grounding
     persona: senior_developer
     produces: grounding
-    consumes: [intake, design]
+    consumes: [intake]
     tools: [code, cm]
   - id: decomposition
     persona: senior_developer
     produces: cards
-    consumes: [intake, design, grounding]
+    consumes: [intake, grounding]
     tools: [code]
     checks: [cards]
   - id: readiness
     persona: reviewer
     produces: readiness
-    consumes: [intake, design, grounding, decomposition]
+    consumes: [intake, grounding, decomposition]
     tools: [code, cm]
     loops_to: decomposition
     max_rounds: 3

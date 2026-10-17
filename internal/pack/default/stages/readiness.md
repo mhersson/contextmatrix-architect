@@ -1,7 +1,7 @@
 # Readiness
 
-Input: the draft cards with the need, design and grounding; a read-only
-checkout of each target project.
+Input: the draft cards with the need, slices, design, grounding and
+acceptance; a read-only checkout of each target project.
 
 For every card, answer with the checkout open: could an agent with only this
 repository and this card finish it on the first attempt? Judge one

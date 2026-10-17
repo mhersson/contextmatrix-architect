@@ -8,15 +8,15 @@ import (
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/blueprint"
-	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
 // logEntryFor renders a controller event as a panel entry. A question or gate
 // a human answers carries a prompt, whose actions the panel shows as buttons
 // and whose replies come back as ordinary messages; the markdown stays the
-// readable fallback. Answers are echoed by CM itself and harness events reach
-// the hub through the bridge, so both are skipped here.
+// readable fallback. A human's answer is echoed by CM itself and harness
+// events reach the hub through the bridge, so both are skipped here; the
+// responder's answer is shown.
 func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	entry := protocol.LogEntry{Timestamp: e.Time, SessionID: e.BlueprintID}
 	if entry.Timestamp.IsZero() {
@@ -38,11 +38,11 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = fmt.Sprintf("Blueprint reopened (state %s).", str(p["state"]))
 	case blueprint.EventStageStarted:
 		entry.Type = "system"
-		entry.Content = fmt.Sprintf("Stage %s started as %s.", str(p["stage"]), strings.ReplaceAll(str(p["persona"]), "_", " "))
+		entry.Content = fmt.Sprintf("%s started as %s.", runLabel(p), strings.ReplaceAll(str(p["persona"]), "_", " "))
 	case blueprint.EventQuestion:
 		if str(p["responder"]) == store.ResponderAuto {
 			entry.Type = "system"
-			entry.Content = fmt.Sprintf("Stage %s asked Q%.0f: %s Its policy is auto, so it decides this itself; the question stays in the blueprint's event log.", str(p["stage"]), num(p["number"]), str(p["text"]))
+			entry.Content = fmt.Sprintf("Stage %s asked Q%.0f: %s Its policy is auto.", str(p["stage"]), num(p["number"]), str(p["text"]))
 
 			break
 		}
@@ -78,14 +78,6 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = b.String()
 		entry.Prompt = questionPrompt(p)
 	case blueprint.EventArtifact:
-		// CM already shows the message a human-sourced artifact came from.
-		if str(p["source"]) == pack.SourceHuman {
-			entry.Type = "system"
-			entry.Content = fmt.Sprintf("Your message is stored as the %s (version %.0f).", str(p["stage"]), num(p["version"]))
-
-			break
-		}
-
 		entry.Type = "text"
 		entry.Content = str(p["body"])
 	case blueprint.EventStageEnded:
@@ -96,14 +88,17 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			label = "cost"
 		}
 
-		entry.Content = fmt.Sprintf("Stage %s %s (%s %.2f USD).", str(p["stage"]), str(p["status"]), label, num(p["cost_usd"]))
+		entry.Content = fmt.Sprintf("%s %s (%s %.2f USD).", runLabel(p), str(p["status"]), label, num(p["cost_usd"]))
 	case blueprint.EventNote:
 		entry.Type = "system"
 
 		duringRun, _ := p["during_run"].(bool)
 		ended, _ := p["ended"].(bool)
+		critique, _ := p["critique"].(bool)
 
 		switch stage := str(p["retries"]); {
+		case stage != "" && critique:
+			entry.Content = fmt.Sprintf("Noted. The review of %s, or its next builder round, runs again, and it and every run after it get the note.", stage)
 		case stage != "":
 			entry.Content = fmt.Sprintf("Noted. Stage %s runs again, and it and every stage after it get the note.", stage)
 		case ended:
@@ -125,6 +120,9 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Type = "text"
 		entry.Content = gateText(p)
 		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:%s:v%.0f", str(p["stage"]), num(p["version"])), p["actions"])
+	case blueprint.EventReview:
+		entry.Type = "system"
+		entry.Content = reviewText(p)
 	case blueprint.EventReshow:
 		// The open question again, rendered as it was first shown.
 		inner, _ := p["payload"].(map[string]any)
@@ -331,6 +329,19 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		}
 
 		entry.Content = b.String()
+	case blueprint.EventAnswer:
+		// CM shows a human's answer as the message it was.
+		if str(p["responder"]) != store.ResponderAuto {
+			return protocol.LogEntry{}, false
+		}
+
+		grounded := "unverified, an assumption for the sign-off"
+		if g, _ := p["grounded"].(bool); g {
+			grounded = "grounded"
+		}
+
+		entry.Type = "text"
+		entry.Content = fmt.Sprintf("**Q%.0f, answered by the responder** (%s): %s\n\n%s", num(p["number"]), grounded, str(p["text"]), str(p["reasoning"]))
 	default:
 		return protocol.LogEntry{}, false
 	}
@@ -566,8 +577,9 @@ func gatePlanText(p map[string]any) string {
 	return b.String()
 }
 
-// gateText renders a stage's gate: which artifact waits and the replies
-// that decide it.
+// gateText renders a stage's gate: the artifact above waits, with the
+// artifacts folded into it shown below, the problems its checks accepted
+// them with, and the replies that decide it.
 func gateText(p map[string]any) string {
 	var replies []string
 
@@ -580,17 +592,92 @@ func gateText(p map[string]any) string {
 		replies = append(replies, reply+"`")
 	}
 
-	return fmt.Sprintf("**Gate: %s, version %.0f.** The artifact above waits for your decision. Reply %s.",
-		str(p["stage"]), num(p["version"]), strings.Join(replies, " or "))
+	stage, version := str(p["stage"]), num(p["version"])
+	folded := anyMaps(p["folded"])
+
+	text := fmt.Sprintf("**Gate: %s, version %.0f.** The artifact above waits for your decision.", stage, version)
+
+	if len(folded) > 0 {
+		names := make([]string, 0, len(folded))
+		for _, f := range folded {
+			names = append(names, fmt.Sprintf("%s version %.0f", str(f["stage"]), num(f["version"])))
+		}
+
+		text += fmt.Sprintf(" It also judges %s, whose gate folded into this one, shown below.", strings.Join(names, " and "))
+	}
+
+	// A blank line ends a list or an artifact, so the next line is not read
+	// as part of it.
+	sep := " "
+
+	if v, ok := p["review"].(map[string]any); ok {
+		if passed, _ := v["passed"].(bool); passed {
+			text += fmt.Sprintf(" The reviewer scored it %.0f of 5 (passes at %.0f).", num(v["score"]), num(v["threshold"]))
+		} else {
+			text += fmt.Sprintf(" The reviewer did not pass it after %.0f round(s): %.0f of 5 (passes at %.0f).", num(v["round"]), num(v["score"]), num(v["threshold"]))
+		}
+
+		if findings := stringsOf(v["findings"]); len(findings) > 0 {
+			for _, f := range findings {
+				text += "\n- " + f
+			}
+
+			sep = "\n\n"
+		}
+	}
+
+	if list := problemsList(p["problems"]); list != "" {
+		lead := " "
+		if sep != " " {
+			lead = sep
+		}
+
+		text += lead + list
+		sep = "\n\n"
+	}
+
+	if len(folded) > 0 {
+		for _, f := range folded {
+			text += fmt.Sprintf("\n\n**%s, version %.0f**\n\n%s", str(f["stage"]), num(f["version"]), str(f["body"]))
+
+			if list := problemsList(f["problems"]); list != "" {
+				text += "\n\n" + list
+			}
+		}
+
+		sep = "\n\n"
+	}
+
+	return text + sep + fmt.Sprintf("Reply %s.", strings.Join(replies, " or "))
 }
 
-// decidedText renders a decision at a stage's gate or at the sign-off; a
-// decision without a stage is the sign-off's.
+// problemsList renders the problems an artifact's checks accepted it with;
+// "" when there are none.
+func problemsList(v any) string {
+	problems := stringsOf(v)
+	if len(problems) == 0 {
+		return ""
+	}
+
+	text := "Its checks still found these problems when they accepted its third failing submit:"
+
+	for _, p := range problems {
+		text += "\n- " + p
+	}
+
+	return text
+}
+
+// decidedText renders a decision at a stage's gate, a fold into a later
+// gate, or a decision at the sign-off; a decision without a stage is the
+// sign-off's.
 func decidedText(p map[string]any) string {
 	reject, auto := str(p["decision"]) == "reject", str(p["responder"]) == "auto"
 
 	if stage := str(p["stage"]); stage != "" && stage != "signoff" {
 		switch {
+		case str(p["decision"]) == "fold":
+			return fmt.Sprintf("%s folds into %s's gate, which judges both.", stage, str(p["feedback"]))
 		case reject:
 			return fmt.Sprintf("Rejected %s; it runs again with your feedback.", stage)
 		case auto:
@@ -608,6 +695,31 @@ func decidedText(p map[string]any) string {
 	default:
 		return "Approved. Emission starts."
 	}
+}
+
+// runLabel names a run in the panel: a stage, a stage's review, or the
+// responder answering for a stage.
+func runLabel(p map[string]any) string {
+	switch str(p["kind"]) {
+	case store.RunKindReviewer:
+		return "Review of " + str(p["stage"])
+	case store.RunKindResponder:
+		return "The responder for " + str(p["stage"])
+	default:
+		return "Stage " + str(p["stage"])
+	}
+}
+
+// reviewText renders a reviewer's verdict.
+func reviewText(p map[string]any) string {
+	text := fmt.Sprintf("The reviewer scored %s version %.0f %.0f of 5 (passes at %.0f), round %.0f.",
+		str(p["stage"]), num(p["version"]), num(p["score"]), num(p["threshold"]), num(p["round"]))
+
+	for _, f := range stringsOf(p["findings"]) {
+		text += "\n- " + f
+	}
+
+	return text
 }
 
 // labelMax caps the option text of a button's label in runes; the reply keeps
@@ -684,12 +796,12 @@ func capLabel(s string) string {
 	return string(r[:labelMax-1]) + "…"
 }
 
-// setupGapsText renders what grounding found the target projects lack for
+// setupGapsText renders what the checkout found the target projects lack for
 // an agent run, and what happens to each gap.
 func setupGapsText(p map[string]any) string {
 	var b strings.Builder
 
-	b.WriteString("**Setup.** Grounding found what the target projects lack for an agent run. None of it blocks; the cards plan it as work:")
+	b.WriteString("**Setup.** The code checkout found what the target projects lack for an agent run. None of it blocks; the cards plan it as work:")
 
 	for _, g := range anyMaps(p["projects"]) {
 		name := str(g["project"])

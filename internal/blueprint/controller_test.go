@@ -567,7 +567,7 @@ func TestMessage_AnswersAPendingQuestion(t *testing.T) {
 
 	art, err := st.LatestArtifact(ctx, "BP1", "intake")
 	require.NoError(t, err)
-	assert.Equal(t, "# Need\n\nhelm", art.Body)
+	assert.Equal(t, "# Need\n\nQ1: helm", art.Body)
 	assert.True(t, rec.has(EventAnswer))
 }
 
@@ -1887,7 +1887,7 @@ func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
 
 	_, err := st.AddGate(ctx, store.Gate{BlueprintID: "BP1", Stage: signoffStage, Version: 1, Decision: store.GateReject, Feedback: "split the card", Responder: store.ResponderHuman, DecidedAt: time.Now()})
 	require.NoError(t, err)
-	_, err = st.AddGate(ctx, store.Gate{BlueprintID: "BP1", Stage: "design", Version: 1, Decision: store.GateApprove, Responder: store.ResponderAuto, DecidedAt: time.Now()})
+	_, err = st.AddGate(ctx, store.Gate{BlueprintID: "BP1", Stage: "solution_design", Version: 1, Decision: store.GateApprove, Responder: store.ResponderAuto, DecidedAt: time.Now()})
 	require.NoError(t, err)
 	require.NoError(t, st.AddEmission(ctx, store.Emission{BlueprintID: "BP1", Kind: store.EmitCard, DraftID: "D1", Project: "alpha", CMID: "ALPHA-042", CreatedAt: time.Now()}))
 
@@ -1926,7 +1926,7 @@ func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(summary), "split the card")
 	assert.Contains(t, string(summary), "ALPHA-042")
-	assert.Contains(t, string(summary), "| design | 1 | approve | auto |", "a stage's gate is listed beside the sign-off's")
+	assert.Contains(t, string(summary), "| solution_design | 1 | approve | auto |", "a stage's gate is listed beside the sign-off's")
 	assert.Contains(t, string(summary), "| signoff | 1 | reject | human |")
 }
 

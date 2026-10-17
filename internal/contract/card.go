@@ -26,6 +26,8 @@ type Card struct {
 	DependsOn []string `json:"depends_on"`
 	Body      string   `json:"body"`
 	Where     []Where  `json:"where"`
+	// Criteria names the acceptance criteria (AC ids) the card carries.
+	Criteria []string `json:"criteria,omitempty"`
 }
 
 // Manual is a playbook step for a human: a check no card can carry, such as
@@ -35,6 +37,9 @@ type Manual struct {
 	ID   string `json:"id"`
 	Text string `json:"text"`
 	Note string `json:"note,omitempty"`
+	// Criteria names the manual checks (MC ids) of acceptance the entry
+	// carries.
+	Criteria []string `json:"criteria,omitempty"`
 }
 
 // Setup is what decomposition plans for a target project an agent run is

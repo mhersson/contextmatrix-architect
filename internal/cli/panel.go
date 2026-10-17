@@ -45,11 +45,15 @@ func eventSink(hub *logbridge.Hub) func(blueprint.Event) {
 
 func waitsOnUser(e blueprint.Event) bool {
 	switch e.Kind {
-	case blueprint.EventError, blueprint.EventAborted,
+	case blueprint.EventAborted,
 		blueprint.EventAwaitInput, blueprint.EventGate, blueprint.EventReshow, blueprint.EventSignOff, blueprint.EventRunStarted, blueprint.EventWatchEnded:
 		return true
+	case blueprint.EventError:
+		// A refused responder leaves the asking stage running.
+		return e.Payload["reason"] != "responder_refused"
 	case blueprint.EventQuestion:
-		// A question the stage decides itself leaves the run working.
+		// An auto question, answered by the responder or by the stage itself,
+		// leaves the run working.
 		responder, _ := e.Payload["responder"].(string)
 
 		return responder != store.ResponderAuto
@@ -73,11 +77,13 @@ func waitsOnUser(e blueprint.Event) bool {
 
 		return !runFollows
 	case blueprint.EventStageEnded:
-		// After a completed stage the next one may start at once; the await,
-		// report or error that ends the chain is followed by the idle frame.
+		// After a completed stage the next one may start at once, and a
+		// responder's end leaves its stage working; the await, gate, report
+		// or error that ends a chain is followed by the idle frame.
 		status, _ := e.Payload["status"].(string)
+		kind, _ := e.Payload["kind"].(string)
 
-		return status != store.RunDone
+		return status != store.RunDone && kind != store.RunKindResponder
 	case blueprint.EventExported:
 		// CM arms its working indicator on every message, so an export that
 		// leaves nothing running must clear it.
