@@ -29,12 +29,16 @@ const (
 	EventStageStarted = "stage_started"
 	EventQuestion     = "question"
 	EventAnswer       = "answer"
-	EventArtifact     = "artifact"
-	EventStageEnded   = "stage_ended"
-	EventNote         = "note"
-	EventAborted      = "aborted"
-	EventExported     = "exported"
-	EventError        = "error"
+	// EventRound is one snapshot of a question round, the whole round each
+	// time: as posted, after answers, chat or a revision, and when closed.
+	// The newest snapshot of a round number is the round.
+	EventRound      = "round"
+	EventArtifact   = "artifact"
+	EventStageEnded = "stage_ended"
+	EventNote       = "note"
+	EventAborted    = "aborted"
+	EventExported   = "exported"
+	EventError      = "error"
 	// EventAwaitInput says a stopped emission or run start waits for
 	// approve; the payload carries stage signoff and the prompt to show.
 	EventAwaitInput = "await_input"
