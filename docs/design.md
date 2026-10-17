@@ -778,10 +778,13 @@ frames on the session's chat stream.
   version is listed with its status (current, reviewing, at_gate,
   approved, rejected, superseded, folded), who decided its gate (you, the
   responder, or automatically for a sign-off an emitting mode approved) and
-  when, and its reviewer's verdict. A verdict's findings are sent to the
-  next version when the verdict sends the builder back. A finding is marked
-  addressed in that version, with its note, only when the revision listed
-  it. A run whose end is recorded counts in the ledger only.
+  when, and its reviewer's verdict. A rejected version stays rejected; any
+  other is superseded once a newer one exists, or once a gate row records
+  it superseded, as `reject slicing` does for the design version it
+  replaces. A verdict's findings are sent to the next version when the
+  verdict sends the builder back. A finding is marked addressed in that
+  version, with its note, only when the revision listed it. A run whose end
+  is recorded counts in the ledger only.
   `Seq` is the id of the newest events row the view reflects, and every
   state change writes one. The view reads the store and memory only, so an
   ended session's blueprint has one while the architect is up. A record the

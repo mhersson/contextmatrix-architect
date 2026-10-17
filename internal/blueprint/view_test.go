@@ -416,6 +416,31 @@ func TestView_States(t *testing.T) {
 			},
 		},
 		{
+			name: "superseded by a rejection of the stage folded into its gate",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				through(t, c, st, "intake")
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", map[string]any{"slices": []any{map[string]any{"id": "SL1"}}})
+				gateRow(t, st, "slicing", 1, store.GateFold, store.ResponderAuto, "solution_design")
+				ran(t, st, "solution_design", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "solution_design", nil)
+				appendEvent(t, st, EventGate, map[string]any{"stage": "solution_design", "version": 1})
+				gateRow(t, st, "slicing", 1, store.GateReject, store.ResponderHuman, "merge them")
+				gateRow(t, st, "solution_design", 1, store.GateSuperseded, store.ResponderHuman, "slicing")
+				flying(t, c, st, "slicing", store.RunKindStage, 1)
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				d := refOf(t, v, "solution_design", 1)
+				assert.Equal(t, artSuperseded, d.Status)
+				assert.Empty(t, d.DecidedBy)
+				assert.Nil(t, d.DecidedAt)
+				assert.Equal(t, artRejected, refOf(t, v, "slicing", 1).Status)
+				assert.Equal(t, stepRunning, stepOf(t, v, "slicing").Status)
+				assert.Equal(t, stepPending, stepOf(t, v, "solution_design").Status)
+				assert.Nil(t, v.Open)
+			},
+		},
+		{
 			name: "readiness round 2",
 			setup: func(t *testing.T, c *Controller, st *store.Store) {
 				through(t, c, st, "decomposition")
