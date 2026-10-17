@@ -30,7 +30,7 @@ specification and must stay true at HEAD.
 - `internal/blueprint` - controller: blueprint state machine, stage chaining, responder policies and the gate reply, the auto responder, gates at any stage and their folding, reviewer rounds, code stage preparation, the readiness loop, reply handling (answers, the need, notes delivered to later runs), abort and export, numbered questions, assumptions, events, sign-off, emission and the run watch, the blueprint view and the runs in flight, and the live stream of views and drafts.
 - `internal/stage` - one harness run: persona + instructions + the ask_human and submit_artifact tools, plus per-run tool sets (the code tools and `repo_info`), submit validation, and the draft of the artifact body as it streams.
 - `internal/pack` - pipeline packs: stages, personas, instructions, lists.yaml and card.md; the default pack is embedded.
-- `internal/code` - read-only mirrors and per-blueprint trees for the code stages; repo facts.
+- `internal/code` - read-only mirrors and per-blueprint trees for the code stages; repo facts; the names a checkout declares, for the leak guard.
 - `internal/research` - web research: the leak guard that refuses code-shaped and project-specific text in search queries and URLs.
 - `internal/cm` - MCP client to ContextMatrix: list_projects, the read-only `cm_` tools stage runs get, and typed card, playbook and run calls.
 - `internal/contract` - the card contract: lists data and the mechanical checks.
