@@ -50,9 +50,8 @@ const (
 
 // Open prompt kinds, as the prompts themselves name them.
 const (
-	promptQuestion = "question"
-	promptGate     = "gate"
-	promptRound    = "round"
+	promptGate  = "gate"
+	promptRound = "round"
 )
 
 // record is what one view is built from: the blueprint's stored record,
@@ -74,10 +73,6 @@ type record struct {
 	pos      outcome
 	last     store.Run
 	flights  []flightView
-	// question is the open question's number and asking its stage; 0 and ""
-	// when none is open.
-	question int
-	asking   string
 	// round is the open round's number and roundStage its stage; 0 and ""
 	// when none waits.
 	round      int
@@ -208,12 +203,6 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 
 		rec.pos, rec.last = outcome{}, store.Run{}
 	}
-
-	c.mu.Lock()
-	if r := c.runs[bp.ID]; r != nil && r.answer != nil {
-		rec.question, rec.asking = r.question, r.stage
-	}
-	c.mu.Unlock()
 
 	place, found, err := c.roundAt(ctx, bp.ID)
 	if err != nil {
@@ -510,7 +499,7 @@ func (c *Controller) currentIndex(rec record) int {
 
 // stageStatus is the state of pack stage st at index i: done or folded
 // behind the current stage, pending after it, and at it what its live run,
-// open question, open round, gate or last run says.
+// open round, gate or last run says.
 func (rec record) stageStatus(st pack.Stage, i, current int) string {
 	switch {
 	case current < 0 || i > current:
@@ -521,10 +510,6 @@ func (rec record) stageStatus(st pack.Stage, i, current int) string {
 		}
 
 		return stepDone
-	}
-
-	if rec.question > 0 && rec.asking == st.ID {
-		return stepWaiting
 	}
 
 	if f, ok := rec.flightOf(st.ID); ok {
@@ -658,8 +643,7 @@ func (rec record) current() *protocol.CurrentRun {
 	}
 }
 
-// open is the prompt that waits for the operator: the open question, the
-// open round, a shown gate or the shown sign-off, undecided, or a stopped
+// open is the prompt that waits for the operator: the open round, a shown gate or the shown sign-off, undecided, or a stopped
 // emission or run start, which approve resumes.
 func (rec record) open() *protocol.OpenPrompt {
 	if rec.waitsToResume() {
@@ -667,8 +651,6 @@ func (rec record) open() *protocol.OpenPrompt {
 	}
 
 	switch {
-	case rec.question > 0:
-		return &protocol.OpenPrompt{PromptID: fmt.Sprintf("Q%d", rec.question), Kind: promptQuestion}
 	case rec.round > 0:
 		return &protocol.OpenPrompt{PromptID: roundPromptID(rec.round), Kind: promptRound}
 	case rec.pos.gate && !rec.pos.critique && rec.shown[rec.pos.stage][rec.pos.art.Version]:

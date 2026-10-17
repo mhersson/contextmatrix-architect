@@ -163,7 +163,7 @@ func TestReview_AHumanGateShowsTheVerdict(t *testing.T) {
 	assert.Contains(t, judged[0].Task, "# Shape", "the reviewer judges the artifact")
 	assert.Contains(t, judged[0].Task, "# Need", "with the stage's inputs")
 	assert.Nil(t, judged[0].History, "never the builder's transcript")
-	assert.Nil(t, judged[0].Asker)
+	assert.Nil(t, judged[0].Interviewer)
 	assert.Equal(t, c.opts.Pack.Persona("reviewer"), judged[0].Persona)
 	assert.Equal(t, c.opts.Pack.ReviewInstructions(), judged[0].Instructions)
 	assert.Empty(t, judged[0].Tools, "a reviewer gets no tools")

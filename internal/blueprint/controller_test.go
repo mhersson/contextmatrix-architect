@@ -1995,7 +1995,7 @@ func TestStart_ClosesEveryRunACrashLeftAndRerunsTheStageOnce(t *testing.T) {
 	_, err := st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: "need", Body: "the stored need"})
 	require.NoError(t, err)
 
-	// The stage's run was parked in ask_human while a responder run answered.
+	// The stage's run was parked in an auto round while a responder run answered.
 	stageRun, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
 	require.NoError(t, err)
 	responderRun, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Kind: store.RunKindResponder, Attempt: 7, Round: 1, Status: store.RunRunning, StartedAt: now})

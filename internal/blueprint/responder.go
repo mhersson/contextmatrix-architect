@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 
+	protocol "github.com/mhersson/contextmatrix-protocol"
+
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
@@ -108,34 +110,27 @@ func parseAnswer(data map[string]any) (answer, error) {
 // the asking stage's persona and tools, the responder instructions, and
 // responderTask, never the asker's transcript. The answer is recorded as an
 // assumption, grounded only when its evidence cites a tool result of its
-// own run. A pack without responder instructions, or a responder that
-// fails, leaves the stage to decide; a cancel ends the asking run too. The
-// responder spends from the asking run's cap.
-func (a *asker) respond(ctx context.Context, q stage.Question, number int) (string, error) {
-	c := a.c
+// own run. A responder that fails leaves the stage to decide; a cancel ends
+// the asking run too. The responder spends from the asking run's cap.
+func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion) (protocol.RoundAnswer, error) {
+	c, au, stageID := iv.c, iv.sess.audit, iv.st.ID
 	bg := context.WithoutCancel(ctx)
-
-	if c.opts.Pack.ResponderInstructions() == "" {
-		return "", errNoResponder
-	}
 
 	undecided := func(err error) error {
 		return fmt.Errorf("no answer (%w); decide yourself and, where this stage records assumptions, record the decision as one", err)
 	}
 
-	st, _ := c.opts.Pack.Stage(a.stage)
-
-	task, err := c.responderTask(bg, a.bp, st, a.attempt, q)
+	task, err := c.responderTask(bg, iv.bp, iv.st, iv.attempt, q)
 	if err != nil {
-		return "", undecided(err)
+		return protocol.RoundAnswer{}, undecided(err)
 	}
 
-	out, err := c.runSide(ctx, a.run, a.sess, a.bp, sideRun{
-		kind: store.RunKindResponder, stage: a.stage, persona: st.Persona, attempt: a.attempt, round: number,
-		parent: a.sink,
+	out, err := c.runSide(ctx, iv.r, iv.sess, iv.bp, sideRun{
+		kind: store.RunKindResponder, stage: stageID, persona: iv.st.Persona, attempt: iv.attempt, round: q.Number,
+		parent: iv.sink,
 		in: stage.Input{
-			Stage: a.stage + ".responder", Persona: c.opts.Pack.Persona(st.Persona),
-			Instructions: c.opts.Pack.ResponderInstructions(), Task: task, Tools: a.tools,
+			Stage: stageID + ".responder", Persona: c.opts.Pack.Persona(iv.st.Persona),
+			Instructions: c.opts.Pack.ResponderInstructions(), Task: task, Tools: iv.tools,
 			Validate: func(_ context.Context, art stage.Artifact) error {
 				_, err := parseAnswer(art.Data)
 
@@ -146,23 +141,23 @@ func (a *asker) respond(ctx context.Context, q stage.Question, number int) (stri
 
 	switch {
 	case ctx.Err() != nil:
-		return "", ctx.Err()
+		return protocol.RoundAnswer{}, ctx.Err()
 	case err != nil:
 		var refused refusal
 		if errors.As(err, &refused) {
 			// The stage still runs and decides, so this is not the blueprint's failure.
-			a.audit.event(bg, Event{Kind: EventError, BlueprintID: a.bp.ID, RunID: a.runID, Payload: map[string]any{
-				"stage": a.stage, "reason": "responder_refused",
-				"message": fmt.Sprintf("The responder for %s did not run: %s. The stage decides Q%d itself.", a.stage, refused.reason, number),
+			au.event(bg, Event{Kind: EventError, BlueprintID: iv.bp.ID, RunID: iv.runID, Payload: map[string]any{
+				"stage": stageID, "reason": "responder_refused",
+				"message": fmt.Sprintf("The responder for %s did not run: %s. The stage decides Q%d itself.", stageID, refused.reason, q.Number),
 			}})
 		}
 
-		return "", undecided(err)
+		return protocol.RoundAnswer{}, undecided(err)
 	}
 
 	ans, err := parseAnswer(out.Artifact.Data)
 	if err != nil {
-		return "", undecided(err)
+		return protocol.RoundAnswer{}, undecided(err)
 	}
 
 	grounded := ans.Grounded && citesToolResult(ans.Evidence, out.Result.Messages)
@@ -172,28 +167,39 @@ func (a *asker) respond(ctx context.Context, q stage.Question, number int) (stri
 		evidence = ans.Evidence
 	}
 
-	a.audit.event(bg, Event{Kind: EventAnswer, BlueprintID: a.bp.ID, RunID: a.runID, Payload: map[string]any{
-		"number": number, "text": ans.Answer, "responder": store.ResponderAuto,
+	au.event(bg, Event{Kind: EventAnswer, BlueprintID: iv.bp.ID, RunID: iv.runID, Payload: map[string]any{
+		"number": q.Number, "text": ans.Answer, "responder": store.ResponderAuto,
 		"reasoning": ans.Reasoning, "grounded": grounded, "evidence": evidence,
 	}})
 
-	if err := c.opts.Store.AddQuestion(bg, store.Question{
-		BlueprintID: a.bp.ID, RunID: a.runID, Stage: a.stage, Number: number,
-		Text: a.audit.text(q.Text), Options: a.audit.texts(q.Options), Context: a.audit.text(q.Context),
-		Answer: a.audit.text(ans.Answer), Responder: store.ResponderAuto, Assumption: true, Grounded: grounded,
-		AnsweredAt: c.opts.Now().UTC(),
-	}); err != nil {
-		c.opts.Logger.Error("blueprint: record the auto answer", "blueprint", a.bp.ID, "question", number, "error", err)
+	options := make([]string, 0, len(q.Options))
+	for _, o := range q.Options {
+		options = append(options, o.Title)
 	}
 
-	return fmt.Sprintf("Q%d: %s\nQ%d was %s.", number, ans.Answer, number, answeredByResponder), nil
+	if err := c.opts.Store.AddQuestion(bg, store.Question{
+		BlueprintID: iv.bp.ID, RunID: iv.runID, Stage: stageID, Number: q.Number,
+		Text: au.text(q.Text), Options: au.texts(options), Context: au.text(q.Why),
+		Answer: au.text(ans.Answer), Responder: store.ResponderAuto, Assumption: true, Grounded: grounded,
+		AnsweredAt: c.opts.Now().UTC(),
+	}); err != nil {
+		c.opts.Logger.Error("blueprint: record the auto answer", "blueprint", iv.bp.ID, "question", q.Number, "error", err)
+	}
+
+	for i, o := range q.Options {
+		if strings.EqualFold(strings.TrimSpace(o.Title), ans.Answer) {
+			return protocol.RoundAnswer{Number: q.Number, Option: i + 1}, nil
+		}
+	}
+
+	return protocol.RoundAnswer{Number: q.Number, Text: ans.Answer}, nil
 }
 
 // responderTask is what a responder is given: the target projects, the
 // need, the asking stage's inputs, the gate feedback the asking attempt
 // addresses, the user's notes, every answer so far and the question with its
 // options and context.
-func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st pack.Stage, attempt int, q stage.Question) (string, error) {
+func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st pack.Stage, attempt int, q protocol.RoundQuestion) (string, error) {
 	var b strings.Builder
 
 	if err := c.writeInputs(ctx, &b, bp, st, true, "responder task"); err != nil {
@@ -223,8 +229,8 @@ func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st p
 
 	fmt.Fprintf(&b, "## The question, asked by %s\n\n%s\n", st.ID, q.Text)
 
-	if q.Context != "" {
-		b.WriteString("\n" + q.Context + "\n")
+	if q.Why != "" {
+		b.WriteString("\n" + q.Why + "\n")
 	}
 
 	for i, o := range q.Options {
@@ -233,7 +239,20 @@ func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st p
 			marker = " (the stage recommends this one)"
 		}
 
-		fmt.Fprintf(&b, "%d. %s%s\n", i+1, o, marker)
+		line := fmt.Sprintf("%d. %s", i+1, o.Title)
+		if o.Summary != "" {
+			line += ": " + o.Summary
+		}
+
+		fmt.Fprintf(&b, "%s%s\n", line, marker)
+
+		for _, p := range o.Pros {
+			fmt.Fprintf(&b, "   + %s\n", p)
+		}
+
+		for _, cn := range o.Cons {
+			fmt.Fprintf(&b, "   - %s\n", cn)
+		}
 	}
 
 	return b.String(), nil

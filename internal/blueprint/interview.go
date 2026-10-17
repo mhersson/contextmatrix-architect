@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/mhersson/contextmatrix-harness/tools"
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
@@ -28,6 +29,14 @@ type interviewer struct {
 	st    pack.Stage
 	sess  *session
 	runID int64
+	r     *run
+	// tools are the asking stage's, which its responder reads with; sink is
+	// the asking run's, which a responder's cost is charged to.
+	tools []tools.Tool
+	sink  *harnessSink
+	// max caps the questions the run's attempt may ask under auto, 0 none;
+	// asked counts them, the attempt's earlier runs included.
+	max, asked int
 	// attempt, builderRound and revisedFor are the run's place, which a
 	// continuation of its round takes over.
 	attempt, builderRound, revisedFor int
@@ -43,6 +52,23 @@ func (iv *interviewer) Ask(ctx context.Context, rd stage.Round) (string, error) 
 
 	c, bg := iv.c, context.WithoutCancel(ctx)
 
+	// Read at every round, so a gate reply during the run applies from the
+	// next round on.
+	policy, err := c.policy(bg, iv.bp, iv.st.ID)
+	if err != nil {
+		return "", err
+	}
+
+	auto := policy == pack.PolicyAuto
+
+	switch {
+	case auto && c.opts.Pack.ResponderInstructions() == "":
+		return "", errNoResponder
+	case auto && iv.max > 0 && iv.asked+len(rd.Questions) > iv.max:
+		return "", fmt.Errorf("under the auto policy this stage may ask %d question(s) per attempt and %d are left; ask at most that many and decide the rest yourself, recording each decision as an assumption where this stage records them",
+			iv.max, max(iv.max-iv.asked, 0))
+	}
+
 	if err := c.repeated(bg, iv.bp.ID, rd.Questions); err != nil {
 		return "", err
 	}
@@ -54,16 +80,39 @@ func (iv *interviewer) Ask(ctx context.Context, rd stage.Round) (string, error) 
 
 	lock := c.roundLock(iv.bp.ID)
 	lock.Lock()
-	defer lock.Unlock()
+	s, err := iv.numbered(bg, rd, sources)
 
-	number, err := c.nextRoundNumber(bg, iv.bp.ID)
+	if err == nil && !auto {
+		c.putRound(bg, iv.sess.audit, iv.bp.ID, iv.runID, s)
+		iv.posted = s.Number
+	}
+
+	lock.Unlock()
+
 	if err != nil {
 		return "", err
 	}
 
-	first, err := c.nextQuestionNumber(bg, iv.bp.ID)
+	if auto {
+		return iv.respondAll(ctx, s)
+	}
+
+	return postedText(s), nil
+}
+
+// numbered frames rd as the run's next round. The caller holds the
+// blueprint's round lock.
+func (iv *interviewer) numbered(ctx context.Context, rd stage.Round, sources map[string]protocol.RoundSource) (roundState, error) {
+	c := iv.c
+
+	number, err := c.nextRoundNumber(ctx, iv.bp.ID)
 	if err != nil {
-		return "", err
+		return roundState{}, err
+	}
+
+	first, err := c.nextQuestionNumber(ctx, iv.bp.ID)
+	if err != nil {
+		return roundState{}, err
 	}
 
 	s := roundState{
@@ -77,11 +126,44 @@ func (iv *interviewer) Ask(ctx context.Context, rd stage.Round) (string, error) 
 	}
 
 	if err := fits(s); err != nil {
-		return "", err
+		return roundState{}, err
 	}
 
-	c.putRound(bg, iv.sess.audit, iv.bp.ID, iv.runID, s)
-	iv.posted = number
+	return s, nil
+}
+
+// respondAll has the responder answer each question of auto round s inside
+// the asking run, stores the round closed and read-only, and ends the run
+// on it like a human's round; the stage continues at once. A cancel leaves
+// no round, so a re-run asks again. A question the responder cannot answer
+// is left to the stage, which decides it.
+func (iv *interviewer) respondAll(ctx context.Context, s roundState) (string, error) {
+	s.Frame.Responder = true
+
+	for _, q := range s.Frame.Questions {
+		ans, err := iv.respond(ctx, q)
+
+		switch {
+		case ctx.Err() != nil:
+			return "", ctx.Err()
+		case err != nil:
+			ans = protocol.RoundAnswer{Number: q.Number, Text: err.Error()}
+		}
+
+		s.Frame.Answers = append(s.Frame.Answers, ans)
+	}
+
+	iv.asked += len(s.Frame.Questions)
+	s.Change, s.Frame.Closed = changeClosed, true
+
+	bg := context.WithoutCancel(ctx)
+
+	lock := iv.c.roundLock(iv.bp.ID)
+	lock.Lock()
+	iv.c.putRound(bg, iv.sess.audit, iv.bp.ID, iv.runID, s)
+	lock.Unlock()
+
+	iv.posted = s.Number
 
 	return postedText(s), nil
 }

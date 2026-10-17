@@ -45,8 +45,6 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		payload  map[string]any
 		wantIdle bool
 	}{
-		{"question", blueprint.EventQuestion, nil, true},
-		{"question the stage decides itself", blueprint.EventQuestion, map[string]any{"responder": "auto"}, false},
 		{"gate reply on an idle blueprint", blueprint.EventPolicy, map[string]any{"during_run": false}, true},
 		{"gate reply while a stage runs", blueprint.EventPolicy, map[string]any{"during_run": true}, false},
 		{"gate plan", blueprint.EventGatePlan, nil, false},
@@ -57,7 +55,6 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		{"report the sign-off follows", blueprint.EventReport, map[string]any{"ready": true, "signoff": true}, false},
 		{"signoff", blueprint.EventSignOff, map[string]any{"cards": []any{}}, true},
 		{"gate", blueprint.EventGate, map[string]any{"stage": "shape"}, true},
-		{"a question shown again", blueprint.EventReshow, map[string]any{"kind": "question"}, true},
 		{"decided", blueprint.EventDecided, map[string]any{"decision": "approve"}, false},
 		{"emitted", blueprint.EventEmitted, map[string]any{"cards": []any{}}, true},
 		{"emitted, the run start follows", blueprint.EventEmitted, map[string]any{"cards": []any{}, "run_follows": true}, false},
@@ -138,7 +135,7 @@ func TestHarnessForwarder_DropsStopLines(t *testing.T) {
 	}{
 		{"stop is not shown", `{"seq":9,"kind":"state_change","data":{"stop":"done","turns":2,"via":"terminating_tool"}}`, ""},
 		{"stop on a cap is not shown", `{"seq":9,"kind":"state_change","data":{"stop":"max_cost","cost_usd":2}}`, ""},
-		{"a tool call is shown", `{"seq":3,"kind":"tool_call","data":{"id":"c1","name":"ask_human","raw_args":"{}"}}`, "tool_call"},
+		{"a tool call is shown", `{"seq":3,"kind":"tool_call","data":{"id":"c1","name":"ask_questions","raw_args":"{}"}}`, "tool_call"},
 	}
 
 	for _, tc := range cases {

@@ -207,9 +207,8 @@ func TestRun_ToolSetFollowsTheInput(t *testing.T) {
 		set   func(*Input)
 		tools []string
 	}{
-		{"no asker, no interviewer", func(*Input) {}, []string{"submit_artifact"}},
+		{"no interviewer", func(*Input) {}, []string{"submit_artifact"}},
 		{"interviewer", func(in *Input) { in.Interviewer = &stubInterviewer{} }, []string{"ask_questions", "submit_artifact"}},
-		{"asker", func(in *Input) { in.Asker = &stubAsker{answer: "yes"} }, []string{"ask_human", "submit_artifact"}},
 	}
 
 	for _, tt := range tests {

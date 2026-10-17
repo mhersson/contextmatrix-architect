@@ -11,22 +11,6 @@ import (
 	"github.com/mhersson/contextmatrix-harness/tools"
 )
 
-// Question is what a stage asks a human (or the auto responder).
-type Question struct {
-	Text    string
-	Options []string
-	Context string
-	// Recommended is the position, from 1, of the option the stage
-	// recommends; 0 for none.
-	Recommended int
-}
-
-// Asker answers a stage's question. The call blocks until the answer exists
-// or ctx ends; the controller implements it over the session's reply channel.
-type Asker interface {
-	Ask(ctx context.Context, q Question) (string, error)
-}
-
 // Artifact is what a stage submits.
 type Artifact struct {
 	Body string         `json:"body"`
@@ -75,78 +59,6 @@ func recommendedPosition(v any, given int, kept, marked []int) (int, error) {
 	}
 
 	return 0, nil
-}
-
-type askHumanTool struct {
-	asker Asker
-}
-
-func (askHumanTool) Name() string { return "ask_human" }
-
-func (askHumanTool) Schema() llm.Tool {
-	return llm.Tool{Type: "function", Function: llm.ToolFunction{
-		Name: "ask_human",
-		Description: "Ask the person driving this blueprint one question you cannot decide yourself. " +
-			"Blocks until they answer; the result starts with the question's number (Q<n>), which is how to cite the answer. Offer options when there are natural ones.",
-		Parameters: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"question": {"type": "string", "description": "the question, one sentence"},
-				"options": {"type": "array", "items": {"type": "string"}, "description": "candidate answers as plain text, optional; never write (recommended) into one"},
-				"recommended": {"type": "integer", "description": "the position, from 1, of the option you recommend, optional; the panel marks it"},
-				"context": {"type": "string", "description": "why it matters, optional"}
-			},
-			"required": ["question"]
-		}`),
-	}}
-}
-
-func (t askHumanTool) Execute(ctx context.Context, args map[string]any) (tools.Result, error) {
-	q := Question{Text: strings.TrimSpace(stringArg(args, "question")), Context: stringArg(args, "context")}
-	if q.Text == "" {
-		return tools.Result{}, errors.New("ask_human: question is required")
-	}
-
-	given, _ := args["options"].([]any)
-	// kept[i] is the 1-based position of given[i] among the kept options, 0
-	// for a blank one; marked holds the kept positions of options whose text
-	// carried the marker.
-	kept := make([]int, len(given))
-
-	var marked []int
-
-	for i, o := range given {
-		s, ok := o.(string)
-		if !ok {
-			continue
-		}
-
-		s, isMarked := cutRecommended(s)
-		if strings.TrimSpace(s) == "" {
-			continue
-		}
-
-		q.Options = append(q.Options, s)
-		kept[i] = len(q.Options)
-
-		if isMarked {
-			marked = append(marked, kept[i])
-		}
-	}
-
-	rec, err := recommendedPosition(args["recommended"], len(given), kept, marked)
-	if err != nil {
-		return tools.Result{}, fmt.Errorf("ask_human: %w", err)
-	}
-
-	q.Recommended = rec
-
-	answer, err := t.asker.Ask(ctx, q)
-	if err != nil {
-		return tools.Result{}, fmt.Errorf("ask_human: %w", err)
-	}
-
-	return tools.Result{Text: answer}, nil
 }
 
 type submitArtifactTool struct {

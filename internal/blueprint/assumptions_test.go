@@ -373,7 +373,7 @@ func TestAssumptions_ABasisOnAnUnverifiedAutoAnswerMergesItsEntry(t *testing.T) 
 func TestAssumptions_AnEntryRestingOnAnAutoAnswerCarriesItToTheSignoff(t *testing.T) {
 	script := happyScript()
 	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?", Options: []string{"helm", "kustomize"}}); err != nil {
+		if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Deploy", "Helm or kustomize?", "helm", "kustomize")}}); err != nil {
 			return stage.Output{}, err
 		}
 

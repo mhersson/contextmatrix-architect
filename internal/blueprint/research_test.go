@@ -408,7 +408,7 @@ func TestResearch_ResponderLookupsCarryTheResponderRun(t *testing.T) {
 	runner.fn = func(ctx context.Context, in stage.Input) (stage.Output, error) {
 		switch in.Stage {
 		case "shape":
-			if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Which store?", Options: []string{"sqlite", "postgres"}}); err != nil {
+			if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Store", "Which store?", "sqlite", "postgres")}}); err != nil {
 				return stage.Output{}, err
 			}
 		case "shape.responder":

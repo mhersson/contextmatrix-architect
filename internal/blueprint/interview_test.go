@@ -565,3 +565,146 @@ func TestRelease_AHolderTheSessionEndCutShortLeavesARoundChangeToTheReopen(t *te
 	assert.Equal(t, 1, runner.calls(), "the ended holder's release runs nothing; the reopen owns the slot")
 	assert.False(t, latestRound(t, c, "BP1", 1).Frame.Closed)
 }
+
+func autoStart(id string) StartInput {
+	in := startInput(id)
+	in.Mode = "auto"
+
+	return in
+}
+
+// answering is a responder fake: it answers every question with answer.
+func answering(answer string, in stage.Input) stage.Output {
+	return stage.Output{
+		Artifact: stage.Artifact{Body: answer, Data: map[string]any{"answer": answer, "reasoning": "fits the need", "grounded": false}},
+		Result:   harness.Result{Completed: true, Reason: "done", Messages: []llm.Message{{Role: "user", Content: in.Task}}},
+	}
+}
+
+func respondsWith(answer string) func(context.Context, stage.Input) (stage.Output, error) {
+	return func(_ context.Context, in stage.Input) (stage.Output, error) { return answering(answer, in), nil }
+}
+
+func TestRound_TheAutoResponderAnswersAndTheStageContinues(t *testing.T) {
+	c, st, runner, _, _ := newDialog(t, stageScript{
+		"intake.responder": respondsWith("Kustomize"),
+		"intake": func(ctx context.Context, in stage.Input) (stage.Output, error) {
+			if in.History != nil {
+				// The later stages are not this test's subject.
+				return stage.Output{}, errors.New("stop after intake")
+			}
+
+			if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{
+				roundQ("Deploy", "Helm or Kustomize?", "Helm", "Kustomize"), roundQ("Users", "Who uses it?"),
+			}}); err != nil {
+				return stage.Output{}, err
+			}
+
+			return askedOutput(in), nil
+		},
+	})
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, autoStart("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	s := latestRound(t, c, "BP1", 1)
+	assert.True(t, s.Frame.Responder)
+	assert.True(t, s.Frame.Closed)
+	assert.Equal(t, []protocol.RoundAnswer{{Number: 1, Option: 2}, {Number: 2, Text: "Kustomize"}}, s.Frame.Answers,
+		"an answer that names an option picks it")
+
+	qs, err := st.ListQuestions(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, qs, 2)
+	assert.Equal(t, store.ResponderAuto, qs[0].Responder)
+	assert.True(t, qs[0].Assumption)
+
+	// stage run, two responders, then the continuation with the answers.
+	require.Equal(t, 4, runner.calls())
+	cont := runner.input(3)
+	assert.NotNil(t, cont.History)
+	assert.Contains(t, cont.Task, "[Q1]")
+}
+
+func TestRound_TheAutoCapCountsTheAttempt(t *testing.T) {
+	var refused error
+
+	c, _, _, _, _ := newDialog(t, stageScript{
+		"intake.responder": respondsWith("yes"),
+		"intake": func(ctx context.Context, in stage.Input) (stage.Output, error) {
+			if in.History == nil {
+				if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("A", "One?"), roundQ("B", "Two?")}}); err != nil {
+					return stage.Output{}, err
+				}
+
+				return askedOutput(in), nil
+			}
+
+			_, refused = in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("C", "Three?")}})
+
+			return stage.Output{}, errors.New("stop")
+		},
+	})
+	c.opts.Pack.Stages[0].MaxQuestions = 2
+
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, autoStart("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	require.Error(t, refused, "the continuation is in the same attempt, so the cap is spent")
+}
+
+func TestRound_AnAutoPolicyWithoutAResponderTellsTheStageToDecide(t *testing.T) {
+	var refused error
+
+	// The single pack carries no stages/responder.md.
+	c, _, _, _ := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		_, refused = in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("A", "One?")}})
+
+		return artifactOutput("# Need", in), nil
+	})
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, autoStart("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	require.ErrorIs(t, refused, errNoResponder)
+}
+
+func TestRound_AGateReplyDuringARunAppliesToItsNextRound(t *testing.T) {
+	asked := make(chan struct{})
+	gate := make(chan struct{})
+	closeGate := closer(t, gate)
+
+	c, _, _, _, _ := newDialog(t, stageScript{
+		"intake.responder": respondsWith("yes"),
+		"intake": func(ctx context.Context, in stage.Input) (stage.Output, error) {
+			if in.History != nil {
+				return stage.Output{}, errors.New("stop")
+			}
+
+			signal(asked)
+			<-gate
+
+			if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("A", "One?")}}); err != nil {
+				return stage.Output{}, err
+			}
+
+			return askedOutput(in), nil
+		},
+	})
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	receive(t, asked, "intake's run")
+	require.NoError(t, c.SetPolicy(ctx, "BP1", "intake", "auto", "m2"))
+	closeGate()
+	c.Wait("BP1")
+
+	assert.True(t, latestRound(t, c, "BP1", 1).Frame.Responder)
+}

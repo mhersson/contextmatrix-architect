@@ -68,11 +68,6 @@ const reasonSessionEnded = "session_ended"
 // message.
 const endedRunWait = 10 * time.Second
 
-// reply is a message that answers an open question.
-type reply struct {
-	text, msgID string
-}
-
 // StartInput is what a CM session start carries.
 type StartInput struct {
 	ID         string
@@ -215,13 +210,6 @@ type run struct {
 	// aborted is set under Controller.mu by Abort: a reopen waiting for the
 	// run to leave resumes nothing, as after any abort.
 	aborted bool
-	// answer is the open question's reply channel; nil when none is open.
-	answer chan reply
-	// question is the open question's number.
-	question int
-	// pending is the payload of the question waiting for its answer; it
-	// means something only while answer is set.
-	pending map[string]any
 	// stage is the stage the run in flight runs, or the sign-off while it and
 	// its emission hold the slot; set under Controller.mu.
 	stage string
@@ -491,9 +479,9 @@ func (c *Controller) leftRunning(ctx context.Context, id string) ([]store.Run, e
 	return out, nil
 }
 
-// Message handles one user message: the answer to an open question, the
-// need while the first stage has no artifact, the sign-off decision (approve or
-// reject <feedback>) at a ready end, or a note. The abort and export
+// Message handles one user message: the need while the first stage has no
+// artifact, the sign-off decision (approve or reject <feedback>) at a ready
+// end, or a note. The abort and export
 // commands are parsed by the webhook and reach Abort and Export instead.
 func (c *Controller) Message(ctx context.Context, id, text, msgID string) error {
 	trimmed := strings.TrimSpace(text)
@@ -510,23 +498,10 @@ func (c *Controller) Message(ctx context.Context, id, text, msgID string) error 
 	r := c.runs[id]
 
 	if r != nil {
-		answer, number, open := r.answer, r.question, r.stage
-		r.answer = nil
+		open := r.stage
 		c.mu.Unlock()
 
-		if answer == nil {
-			sess.audit.event(ctx, noteEvent(id, trimmed, msgID, open, true))
-
-			return nil
-		}
-
-		// Logged before it is delivered, so the answer precedes what the run
-		// does with it. The channel is buffered: the send never blocks.
-		sess.audit.event(ctx, Event{Kind: EventAnswer, BlueprintID: id, Payload: map[string]any{
-			"text": trimmed, "message_id": msgID, "number": number,
-		}})
-
-		answer <- reply{text: trimmed, msgID: msgID}
+		sess.audit.event(ctx, noteEvent(id, trimmed, msgID, open, true))
 
 		return nil
 	}
@@ -543,9 +518,8 @@ func (c *Controller) Message(ctx context.Context, id, text, msgID string) error 
 	return c.input(ctx, runCtx, r, sess, id, trimmed, msgID)
 }
 
-// Abort ends the run in flight, if any. During an open question it is the
-// abort, not the answer. The blueprint persists; the next message retries
-// the stage that was cut short.
+// Abort ends the run in flight, if any. The blueprint persists; the next
+// message retries the stage that was cut short.
 func (c *Controller) Abort(ctx context.Context, id, msgID string) error {
 	c.mu.Lock()
 
@@ -556,10 +530,7 @@ func (c *Controller) Abort(ctx context.Context, id, msgID string) error {
 		return ErrNotFound
 	}
 
-	// Cancelled under c.mu, so Ask cannot open a new question on a run that
-	// is already aborted.
 	if r := c.runs[id]; r != nil {
-		r.answer = nil
 		r.aborted = true
 		r.cancel(nil)
 	}
@@ -659,8 +630,7 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 	}
 
 	c.mu.Lock()
-	r, running := c.runs[id]
-	asked := openQuestion(r)
+	_, running := c.runs[id]
 	c.mu.Unlock()
 
 	// during_run tells the panel whether a stage keeps working after the
@@ -668,7 +638,6 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 	sess.audit.event(ctx, Event{Kind: EventExported, BlueprintID: id, Payload: map[string]any{
 		"path": dir, "files": len(files), "message_id": msgID, "during_run": running,
 	}})
-	c.reshowQuestion(ctx, sess.audit, id, asked)
 
 	return nil
 }
@@ -779,7 +748,6 @@ func (c *Controller) End(ctx context.Context, id string) error {
 	delete(c.sessions, id)
 
 	if r := c.runs[id]; r != nil {
-		r.answer = nil
 		r.ended = true
 		r.cancel(errSessionEnded)
 	}
@@ -820,7 +788,6 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 
 	for _, r := range c.runs {
 		r.shutdown = true
-		r.answer = nil
 		r.cancel(nil)
 
 		dones = append(dones, r.done)
@@ -931,8 +898,6 @@ func (c *Controller) release(id string, r *run) {
 	if c.runs[id] == r {
 		delete(c.runs, id)
 	}
-
-	r.answer = nil
 
 	var (
 		next    *run

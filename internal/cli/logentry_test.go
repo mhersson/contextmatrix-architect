@@ -21,12 +21,9 @@ func TestLogEntryFor(t *testing.T) {
 		carries  []string
 		skipped  bool
 	}{
-		{"question the stage decides itself", blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: map[string]any{
-			"number": 4, "stage": "grounding", "text": "Which port?", "responder": "auto",
-		}}, "system", []string{"grounding", "Q4", "Which port?"}, false},
 		{"an automatic sign-off's record is for the sheet", blueprint.Event{Kind: blueprint.EventSignOffAuto, BlueprintID: "S1", Payload: map[string]any{"version": 1}}, "", nil, true},
 		{"gate reply", blueprint.Event{Kind: blueprint.EventPolicy, BlueprintID: "S1", Payload: map[string]any{
-			"stage": "intake", "policy": "auto", "open": "question",
+			"stage": "intake", "policy": "auto", "open": "round",
 		}}, "system", []string{"intake", "auto"}, false},
 		{"refused gate reply", blueprint.Event{Kind: blueprint.EventPolicy, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "nosuch", "policy": "auto", "refused": "There is no stage nosuch.",
@@ -49,8 +46,6 @@ func TestLogEntryFor(t *testing.T) {
 		}, false},
 		{"created", blueprint.Event{Kind: blueprint.EventCreated, BlueprintID: "S1", Payload: map[string]any{"projects": []string{"alpha", "beta"}, "mode": "yolo"}}, "system", []string{"alpha", "beta", "yolo"}, false},
 		{"stage started", blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "persona": "product_owner", "pack": "default", "pack_version": "1"}}, "system", []string{"intake"}, false},
-		{"question", blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: map[string]any{"number": 2, "text": "Helm or kustomize?", "options": []string{"helm", "kustomize"}}}, "text", []string{"Q2", "Helm or kustomize?", "helm", "kustomize"}, false},
-		{"question with a recommended option", blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: map[string]any{"number": 3, "text": "Which?", "options": []string{"a", "b"}, "recommended": 2}}, "text", []string{"2. b (recommended)"}, false},
 		{"artifact", blueprint.Event{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "version": 1, "body": "# Need\n\nk8s", "persona": "product_owner"}}, "text", []string{"intake rev 1"}, false},
 		{"stage ended", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "status": "done", "cost_usd": 0.25}}, "system", []string{"intake", "done", "0.25"}, false},
 		{"stage ended priced", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "status": "done", "cost_usd": 0.2, "priced": true}}, "system", []string{"0.20"}, false},
@@ -377,30 +372,12 @@ func TestLogEntryFor_ARunAlreadyThereIsRecordedNotStarted(t *testing.T) {
 }
 
 func TestLogEntryFor_Prompts(t *testing.T) {
-	long := strings.Repeat("ø", 70)
-
 	tests := []struct {
 		name     string
 		event    blueprint.Event
 		wantType string
 		want     *protocol.LogPrompt
 	}{
-		{"a question for a human", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
-			"number": 3, "text": "Helm or kustomize?", "options": []any{"helm", "kustomize"}, "recommended": 2, "responder": "human",
-		}}, "text", &protocol.LogPrompt{ID: "Q3", Kind: "question", FreeText: true, Actions: []protocol.LogAction{
-			{Label: "helm", Reply: "helm"}, {Label: "kustomize", Reply: "kustomize", Recommended: true},
-		}}},
-		{"a question without options", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
-			"number": 1, "text": "Which cluster?", "responder": "human",
-		}}, "text", &protocol.LogPrompt{ID: "Q1", Kind: "question", FreeText: true}},
-		{"a long option keeps its full label", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
-			"number": 2, "text": "Which?", "options": []any{long}, "responder": "human",
-		}}, "text", &protocol.LogPrompt{ID: "Q2", Kind: "question", FreeText: true, Actions: []protocol.LogAction{
-			{Label: long, Reply: long},
-		}}},
-		{"a question the stage decides itself", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
-			"number": 4, "text": "Which port?", "responder": "auto",
-		}}, "system", nil},
 		{"a stage's gate", blueprint.Event{Kind: blueprint.EventGate, Payload: map[string]any{
 			"stage": "shape", "version": 2, "actions": []any{
 				map[string]any{"label": "Approve", "reply": "approve", "feedback": false},
@@ -432,9 +409,6 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 		{"a stopped emission shown on reopen", blueprint.Event{Kind: blueprint.EventAwaitInput, Payload: map[string]any{
 			"stage": "signoff", "prompt": "Emission is stopped; reply approve to resume it.", "resume": "emission", "version": 3,
 		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Kind: "gate", Actions: []protocol.LogAction{{Label: "Resume emission", Reply: "approve"}}}},
-		{"a question shown again", blueprint.Event{Kind: blueprint.EventReshow, Payload: map[string]any{
-			"kind": "question", "payload": map[string]any{"number": 3, "text": "Helm or kustomize?", "options": []any{"helm"}, "responder": "human"},
-		}}, "text", &protocol.LogPrompt{ID: "Q3", Kind: "question", FreeText: true, Actions: []protocol.LogAction{{Label: "helm", Reply: "helm"}}}},
 		{"any other error", blueprint.Event{Kind: blueprint.EventError, Payload: map[string]any{"message": "cost cap"}}, "stderr", nil},
 	}
 
@@ -455,57 +429,6 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 			}
 
 			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestLogEntryFor_AQuestionsTextLeavesOutItsOptions(t *testing.T) {
-	tests := []struct {
-		name       string
-		payload    map[string]any
-		wantNumber string
-		wantText   []string
-		options    []any
-	}{
-		{"numbered with context", map[string]any{
-			"number": 4, "text": "Which packaging?", "context": "The cluster runs Flux.",
-			"options": []any{"a Helm chart under deploy/chart", "kustomize overlays under deploy/"}, "recommended": 2, "responder": "human",
-		}, "Q4", []string{"Which packaging?", "The cluster runs Flux."}, []any{"a Helm chart under deploy/chart", "kustomize overlays under deploy/"}},
-		{"numbered without context", map[string]any{
-			"number": 5, "text": "Which registry?",
-			"options": []any{"the in-cluster registry", "a hosted registry"}, "recommended": 1, "responder": "human",
-		}, "Q5", []string{"Which registry?"}, []any{"the in-cluster registry", "a hosted registry"}},
-		{"unnumbered with context", map[string]any{
-			"text": "Which database?", "context": "Writes are rare.",
-			"options": []any{"SQLite on a volume", "a managed Postgres"}, "recommended": 1, "responder": "human",
-		}, "", []string{"Which database?", "Writes are rare."}, []any{"SQLite on a volume", "a managed Postgres"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			asked, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: tt.payload})
-			require.True(t, ok)
-			require.NotNil(t, asked.Prompt)
-
-			text := asked.Prompt.Text
-			if tt.wantNumber != "" {
-				assert.Contains(t, text, tt.wantNumber)
-			}
-
-			for _, w := range tt.wantText {
-				assert.Contains(t, text, w)
-			}
-
-			assert.True(t, strings.HasPrefix(asked.Content, text), "the fallback starts with the prompt's text")
-
-			for _, o := range tt.options {
-				assert.NotContains(t, text, o, "an option is a button, not text")
-				assert.Contains(t, asked.Content, o, "the fallback keeps the options")
-			}
-
-			reshown, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventReshow, BlueprintID: "S1", Payload: map[string]any{"kind": "question", "payload": tt.payload}})
-			require.True(t, ok)
-			assert.Equal(t, asked.Prompt, reshown.Prompt, "a question shown again keeps its text, kind and actions")
 		})
 	}
 }

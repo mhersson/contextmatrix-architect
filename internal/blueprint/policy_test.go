@@ -127,7 +127,7 @@ func TestSetPolicy_ARefusedReplyNeverBecomesAPolicy(t *testing.T) {
 	assert.Equal(t, pack.PolicyAuto, got, "nothing was stored for it")
 }
 
-func TestAsk_ACancelledRunRecordsNoQuestion(t *testing.T) {
+func TestAsk_ACancelledRunRecordsNoRound(t *testing.T) {
 	c, _, _, rec := newController(t, artifactRun("# Need"))
 	ctx := context.Background()
 
@@ -141,10 +141,13 @@ func TestAsk_ACancelledRunRecordsNoQuestion(t *testing.T) {
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
 
-	a := &asker{c: c, bp: bp, stage: "intake", run: &run{}}
-	_, err = a.Ask(cancelled, stage.Question{Text: "Which port?"})
+	intake, ok := c.opts.Pack.Stage("intake")
+	require.True(t, ok)
+
+	iv := &interviewer{c: c, bp: bp, st: intake, r: &run{}}
+	_, err = iv.Ask(cancelled, stage.Round{Questions: []stage.RoundQuestion{roundQ("Port", "Which port?")}})
 	require.ErrorIs(t, err, context.Canceled)
-	assert.False(t, rec.has(EventQuestion))
+	assert.False(t, rec.has(EventRound))
 }
 
 func TestSetPolicy_AnOpenRoundKeepsItsResponder(t *testing.T) {
@@ -171,33 +174,4 @@ func TestSetPolicy_AnOpenRoundKeepsItsResponder(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, qs, 1)
 	assert.Equal(t, store.ResponderHuman, qs[0].Responder, "the human the round was put to answered it")
-}
-
-func TestAsk_AnAutoPolicyTellsTheStageToDecide(t *testing.T) {
-	asked := make(chan error, 1)
-
-	c, st, _, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		_, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"})
-		asked <- err
-
-		return artifactOutput("# Need", in), nil
-	})
-	ctx := context.Background()
-
-	in := startInput("BP1")
-	in.Mode = protocol.ArchitectModeAuto
-	require.NoError(t, c.Start(ctx, in))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	c.Wait("BP1")
-
-	require.ErrorIs(t, <-asked, errNoResponder)
-	assert.False(t, rec.has(EventAnswer))
-
-	q, ok := rec.first(EventQuestion)
-	require.True(t, ok)
-	assert.Equal(t, store.ResponderAuto, q.Payload["responder"])
-	assert.Equal(t, "intake", q.Payload["stage"])
-
-	_, err := st.LatestArtifact(ctx, "BP1", "intake")
-	require.NoError(t, err, "the stage goes on and submits")
 }

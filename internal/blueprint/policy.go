@@ -22,8 +22,8 @@ const (
 )
 
 // errNoResponder tells a stage whose policy is auto, in a pack without
-// stages/responder.md, to decide a question itself; ask_human returns it as
-// a tool error and the run goes on.
+// stages/responder.md, to decide a question itself; ask_questions returns it
+// as a tool error and the run goes on.
 var errNoResponder = errors.New("nobody answers this stage's questions under its auto policy; decide yourself and, where this stage records assumptions, record the decision as one")
 
 // ParseCommand recognises a reply that is a command rather than text for
@@ -44,18 +44,6 @@ func ParseCommand(text string) (string, []string) {
 	}
 }
 
-// commandOption refuses an option the webhook would take as a command: a
-// click on it would abort, export or change a policy instead of answering.
-func commandOption(options []string) error {
-	for _, o := range options {
-		if name, _ := ParseCommand(o); name != "" {
-			return fmt.Errorf("option %q is a reply the architect takes as a command; reword it", o)
-		}
-	}
-
-	return nil
-}
-
 // SetPolicy records a stage's responder policy for this blueprint, for its
 // questions and its gate, from the next one on: a question, round or gate
 // already open keeps the responder it was put to. The sign-off follows the
@@ -66,12 +54,6 @@ func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID s
 	sess, ok := c.sessions[id]
 	r := c.runs[id]
 	running := r != nil
-	asked := openQuestion(r)
-	openStage := ""
-
-	if r != nil && r.answer != nil {
-		openStage = r.stage
-	}
 
 	c.mu.Unlock()
 
@@ -92,8 +74,6 @@ func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID s
 		payload["stage"] = st.ID
 
 		switch {
-		case openStage == st.ID:
-			payload["open"] = "question"
 		case c.roundOpenAt(ctx, id, st.ID):
 			payload["open"] = "round"
 		case !running && c.gateOpenAt(ctx, id, st.ID):
@@ -102,7 +82,6 @@ func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID s
 	}
 
 	sess.audit.event(ctx, Event{Kind: EventPolicy, BlueprintID: id, Payload: payload})
-	c.reshowQuestion(ctx, sess.audit, id, asked)
 
 	return nil
 }

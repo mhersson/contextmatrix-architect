@@ -18,18 +18,18 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-// askingIntake scripts an intake that asks one question and puts the
-// answer, or the error it got, in its artifact.
+// askingIntake scripts an intake that asks one question round and reports
+// the error it got.
 func askingIntake(got chan<- error) func(context.Context, stage.Input) (stage.Output, error) {
 	return func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		a, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?", Options: []string{"helm", "kustomize"}})
+		_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Deploy", "Helm or kustomize?", "helm", "kustomize")}})
 		got <- err
 
 		if ctx.Err() != nil {
 			return stage.Output{}, ctx.Err()
 		}
 
-		return done("# Need\n\n"+a, map[string]any{"slices": 1}), nil
+		return done("# Need", map[string]any{"slices": 1}), nil
 	}
 }
 
@@ -54,10 +54,9 @@ func TestResponder_AnswersAnAutoQuestionAsAnAssumption(t *testing.T) {
 
 	require.NoError(t, <-got)
 
-	need, err := st.LatestArtifact(ctx, "BP1", "intake")
-	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(need.Body, "# Need\n\nQ1: helm\n"), "the stage goes on with the answer first")
-	assert.Contains(t, need.Body, answeredByResponder, "and is told the responder gave it")
+	round := latestRound(t, c, "BP1", 1)
+	assert.True(t, round.Frame.Responder)
+	assert.Equal(t, []protocol.RoundAnswer{{Number: 1, Option: 1}}, round.Frame.Answers, "the answer names the first option")
 
 	responders := inputsOf(runner, "intake.responder")
 	require.Len(t, responders, 1)
@@ -66,7 +65,7 @@ func TestResponder_AnswersAnAutoQuestionAsAnAssumption(t *testing.T) {
 	assert.Contains(t, responders[0].Task, "Helm or kustomize?")
 	assert.Contains(t, responders[0].Task, "the need")
 	assert.Nil(t, responders[0].History, "never the asker's transcript")
-	assert.Nil(t, responders[0].Asker)
+	assert.Nil(t, responders[0].Interviewer)
 
 	recorded, err := st.ListQuestions(ctx, "BP1")
 	require.NoError(t, err)
@@ -138,7 +137,7 @@ func TestResponder_AFailureLeavesTheStageToDecide(t *testing.T) {
 
 	driveIn(t, c, autoInput())
 
-	require.Error(t, <-got, "ask_human returns a tool error")
+	require.NoError(t, <-got, "the round is posted and the stage decides the question")
 	require.Len(t, inputsOf(runner, "intake.responder"), 1, "the responder ran")
 
 	runs, err := st.ListRuns(ctx, "BP1")
@@ -153,6 +152,10 @@ func TestResponder_AFailureLeavesTheStageToDecide(t *testing.T) {
 	recorded, err := st.ListQuestions(ctx, "BP1")
 	require.NoError(t, err)
 	assert.Empty(t, recorded)
+
+	answers := latestRound(t, c, "BP1", 1).Frame.Answers
+	require.Len(t, answers, 1)
+	assert.NotEmpty(t, answers[0].Text, "the stage is told it has no answer")
 }
 
 func TestResponder_SeesTheNotesAndEarlierAnswers(t *testing.T) {
@@ -161,14 +164,14 @@ func TestResponder_SeesTheNotesAndEarlierAnswers(t *testing.T) {
 
 	script := happyScript()
 	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"}); err != nil {
+		if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Deploy", "Helm or kustomize?")}}); err != nil {
 			return stage.Output{}, err
 		}
 
 		signal(asked)
 		<-cont
 
-		if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Which cluster?"}); err != nil {
+		if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Cluster", "Which cluster?")}}); err != nil {
 			return stage.Output{}, err
 		}
 
@@ -307,7 +310,7 @@ func TestResponder_NoBudgetLeftLeavesTheStageToDecide(t *testing.T) {
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
 	c.Wait("BP1")
 
-	require.Error(t, <-got, "ask_human returns a tool error")
+	require.NoError(t, <-got, "the stage decides the question")
 	assert.Empty(t, inputsOf(runner, "intake.responder"), "no responder run without budget")
 
 	runs, err := st.ListRuns(ctx, "BP1")
@@ -331,7 +334,7 @@ func TestResponder_GetsTheGateFeedbackItsAttemptAddresses(t *testing.T) {
 	script := gatedScript()
 	script["shape"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
 		if shapes.Add(1) == 2 {
-			if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Which store?"}); err != nil {
+			if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Store", "Which store?")}}); err != nil {
 				return stage.Output{}, err
 			}
 		}
@@ -548,29 +551,38 @@ func TestQuestions_TheResponderIsToldWhoAnsweredEarlierOnes(t *testing.T) {
 	intake, ok := c.opts.Pack.Stage("intake")
 	require.True(t, ok)
 
-	task, err := c.responderTask(ctx, bp, intake, 1, stage.Question{Text: "Next?"})
+	task, err := c.responderTask(ctx, bp, intake, 1, protocol.RoundQuestion{Number: 3, Text: "Next?"})
 	require.NoError(t, err)
 
 	assertAttributed(t, task)
 }
 
-func TestQuestions_ToolResultsKeepTheAnswerFirst(t *testing.T) {
-	auto := make(chan string, 1)
+func TestRound_TheContinuationListsTheResponderAnswers(t *testing.T) {
+	c, _, runner, _, _ := newDialog(t, stageScript{
+		"intake.responder": respondsWith("helm"),
+		"intake": func(ctx context.Context, in stage.Input) (stage.Output, error) {
+			if in.History != nil {
+				return stage.Output{}, errors.New("stop after intake")
+			}
 
-	script := happyScript()
-	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		a, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm?"})
-		auto <- a
+			if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Deploy", "Helm?")}}); err != nil {
+				return stage.Output{}, err
+			}
 
-		return done("# Need", nil), err
-	}
-	script["intake.responder"] = returns("# Answer", map[string]any{"answer": "helm", "reasoning": "r", "grounded": false})
+			return askedOutput(in), nil
+		},
+	})
+	ctx := context.Background()
 
-	c, _, _, _, _ := newPipeline(t, script)
-	driveIn(t, c, autoInput())
+	require.NoError(t, c.Start(ctx, autoInput()))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
 
-	got := <-auto
-	assert.True(t, strings.HasPrefix(got, "Q1: helm\n"))
-	assert.Contains(t, got, answeredByResponder)
-	assert.NotContains(t, got, answeredByUser)
+	require.Equal(t, 3, runner.calls())
+
+	task := runner.input(2).Task
+	assert.Contains(t, task, "[Q1]")
+	assert.Contains(t, task, "helm")
+	assert.Contains(t, task, answeredByResponder)
+	assert.NotContains(t, task, answeredByUser)
 }

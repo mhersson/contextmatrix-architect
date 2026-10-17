@@ -66,50 +66,6 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Type = "text"
 		entry.Content = roundText(n, frame)
 		entry.Prompt = &protocol.LogPrompt{ID: fmt.Sprintf("round:%d", n), Kind: "round", Text: roundHeading(n, frame), Round: &frame}
-	case blueprint.EventQuestion:
-		if str(p["responder"]) == store.ResponderAuto {
-			entry.Type = "system"
-			entry.Content = fmt.Sprintf("Stage %s asked Q%.0f: %s Its policy is auto.", str(p["stage"]), num(p["number"]), str(p["text"]))
-
-			break
-		}
-
-		entry.Type = "text"
-
-		var b strings.Builder
-
-		heading := "**Question:**"
-		if n := num(p["number"]); n > 0 {
-			heading = fmt.Sprintf("**Question Q%.0f:**", n)
-		}
-
-		b.WriteString(heading + " " + str(p["text"]))
-
-		if ctxText := str(p["context"]); ctxText != "" {
-			b.WriteString("\n\n" + ctxText)
-		}
-
-		// The prompt's text is the question alone: a consumer that renders it
-		// shows the options only as buttons.
-		text := b.String()
-
-		b.WriteString("\n")
-
-		if opts := stringsOf(p["options"]); len(opts) > 0 {
-			b.WriteString("\nOptions:\n")
-
-			for i, o := range opts {
-				if i+1 == int(num(p["recommended"])) {
-					o += " (recommended)"
-				}
-
-				fmt.Fprintf(&b, "%d. %s\n", i+1, o)
-			}
-		}
-
-		b.WriteString("\nReply with your answer.")
-		entry.Content = b.String()
-		entry.Prompt = questionPrompt(p, text)
 	case blueprint.EventArtifact:
 		// A sheet reference: the body is on the sheet, never transcript text.
 		note := artifactNote(p)
@@ -176,11 +132,6 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventReview:
 		entry.Type = "system"
 		entry.Content = reviewText(p)
-	case blueprint.EventReshow:
-		// The open question again, rendered as it was first shown.
-		inner, _ := p["payload"].(map[string]any)
-
-		return logEntryFor(blueprint.Event{Kind: str(p["kind"]), BlueprintID: e.BlueprintID, Time: e.Time, Payload: inner})
 	case blueprint.EventDecided:
 		entry.Type = "system"
 		entry.Content = decidedText(p)
@@ -751,10 +702,6 @@ func policyText(p map[string]any) string {
 
 	text := fmt.Sprintf("Stage %s is now %s for this blueprint, from its next question or gate.", str(p["stage"]), str(p["policy"]))
 
-	if str(p["open"]) == "question" {
-		text += " Its open question stays with whoever it was put to."
-	}
-
 	if str(p["open"]) == "round" {
 		text += " Its open round of questions stays with whoever it was put to."
 	}
@@ -945,21 +892,6 @@ func reviewText(p map[string]any) string {
 	}
 
 	return text
-}
-
-// questionPrompt makes a human's question answerable by a click: one action
-// per option, its label and reply the full option, which reaches the stage
-// verbatim. Any typed reply answers it too.
-func questionPrompt(p map[string]any, text string) *protocol.LogPrompt {
-	recommended := int(num(p["recommended"]))
-
-	var actions []protocol.LogAction
-
-	for i, o := range stringsOf(p["options"]) {
-		actions = append(actions, protocol.LogAction{Label: o, Reply: o, Recommended: i+1 == recommended})
-	}
-
-	return &protocol.LogPrompt{ID: fmt.Sprintf("Q%.0f", num(p["number"])), Text: text, Kind: "question", FreeText: true, Actions: actions}
 }
 
 // actionsPrompt makes a gate decidable by a click from the replies its

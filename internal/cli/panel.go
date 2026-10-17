@@ -46,7 +46,7 @@ func eventSink(hub *logbridge.Hub) func(blueprint.Event) {
 func waitsOnUser(e blueprint.Event) bool {
 	switch e.Kind {
 	case blueprint.EventAborted,
-		blueprint.EventAwaitInput, blueprint.EventGate, blueprint.EventReshow, blueprint.EventSignOff, blueprint.EventRunStarted, blueprint.EventWatchEnded:
+		blueprint.EventAwaitInput, blueprint.EventGate, blueprint.EventSignOff, blueprint.EventRunStarted, blueprint.EventWatchEnded:
 		return true
 	case blueprint.EventError:
 		// A refused responder leaves the asking stage running, and a stale
@@ -54,12 +54,6 @@ func waitsOnUser(e blueprint.Event) bool {
 		duringRun, _ := e.Payload["during_run"].(bool)
 
 		return e.Payload["reason"] != "responder_refused" && !duringRun
-	case blueprint.EventQuestion:
-		// An auto question, answered by the responder or by the stage itself,
-		// leaves the run working.
-		responder, _ := e.Payload["responder"].(string)
-
-		return responder != store.ResponderAuto
 	case blueprint.EventRound:
 		// An open round a human answers waits on the user. A closed one, one
 		// the responder answers, or one whose every question has an answer,
