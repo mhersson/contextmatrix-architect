@@ -3,6 +3,7 @@ package blueprint
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -55,7 +56,8 @@ func TestResponder_AnswersAnAutoQuestionAsAnAssumption(t *testing.T) {
 
 	need, err := st.LatestArtifact(ctx, "BP1", "intake")
 	require.NoError(t, err)
-	assert.Equal(t, "# Need\n\nQ1: helm", need.Body, "the stage goes on with the answer")
+	assert.True(t, strings.HasPrefix(need.Body, "# Need\n\nQ1: helm\n"), "the stage goes on with the answer first")
+	assert.Contains(t, need.Body, answeredByResponder, "and is told the responder gave it")
 
 	responders := inputsOf(runner, "intake.responder")
 	require.Len(t, responders, 1)
@@ -479,4 +481,96 @@ func TestCitesToolResult(t *testing.T) {
 			assert.Equal(t, tt.want, citesToolResult(tt.evidence, msgs))
 		})
 	}
+}
+
+// blockOf is the entry writeQuestions rendered for question tag.
+func blockOf(text, tag string) string {
+	_, rest, _ := strings.Cut(text, "- ["+tag+"]")
+	block, _, _ := strings.Cut(rest, "\n- [")
+
+	return block
+}
+
+func seedMixedAnswers(t *testing.T, st *store.Store) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	for _, q := range []store.Question{
+		{BlueprintID: "BP1", RunID: 1, Stage: "intake", Number: 1, Text: "Where?", Answer: "helm", Responder: store.ResponderHuman},
+		{BlueprintID: "BP1", RunID: 1, Stage: "intake", Number: 2, Text: "Which cluster?", Answer: "prod", Responder: store.ResponderAuto, Assumption: true},
+	} {
+		require.NoError(t, st.AddQuestion(ctx, q))
+	}
+}
+
+func assertAttributed(t *testing.T, task string) {
+	t.Helper()
+
+	human, auto := blockOf(task, "Q1"), blockOf(task, "Q2")
+	require.NotEmpty(t, human)
+	require.NotEmpty(t, auto)
+	assert.Contains(t, human, answeredByUser)
+	assert.NotContains(t, human, answeredByResponder)
+	assert.Contains(t, auto, answeredByResponder)
+	assert.NotContains(t, auto, answeredByUser)
+}
+
+func TestQuestions_ARerunIsToldWhoAnsweredEach(t *testing.T) {
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+
+	driveIn(t, c, startInput("BP1"))
+	seedMixedAnswers(t, st)
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	intake, ok := c.opts.Pack.Stage("intake")
+	require.True(t, ok)
+
+	task, err := c.taskFor(ctx, bp, intake)
+	require.NoError(t, err)
+
+	assertAttributed(t, task)
+}
+
+func TestQuestions_TheResponderIsToldWhoAnsweredEarlierOnes(t *testing.T) {
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+
+	driveIn(t, c, startInput("BP1"))
+	seedMixedAnswers(t, st)
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	intake, ok := c.opts.Pack.Stage("intake")
+	require.True(t, ok)
+
+	task, err := c.responderTask(ctx, bp, intake, 1, stage.Question{Text: "Next?"})
+	require.NoError(t, err)
+
+	assertAttributed(t, task)
+}
+
+func TestQuestions_ToolResultsKeepTheAnswerFirst(t *testing.T) {
+	auto := make(chan string, 1)
+
+	script := happyScript()
+	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		a, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm?"})
+		auto <- a
+
+		return done("# Need", nil), err
+	}
+	script["intake.responder"] = returns("# Answer", map[string]any{"answer": "helm", "reasoning": "r", "grounded": false})
+
+	c, _, _, _, _ := newPipeline(t, script)
+	driveIn(t, c, autoInput())
+
+	got := <-auto
+	assert.True(t, strings.HasPrefix(got, "Q1: helm\n"))
+	assert.Contains(t, got, answeredByResponder)
+	assert.NotContains(t, got, answeredByUser)
 }

@@ -576,10 +576,26 @@ func (c *Controller) writeAnsweredAfter(ctx context.Context, b *strings.Builder,
 	return nil
 }
 
-// writeQuestions lists answered questions, one tagged line and its answer each.
+// Who answered a question, as every model that reads one is told.
+const (
+	answeredByUser      = "answered by the user"
+	answeredByResponder = "answered by the responder for the user under the auto policy; an assumption, not the user's choice"
+)
+
+// answeredBy is the label for a question's recorded responder.
+func answeredBy(q store.Question) string {
+	if q.Responder == store.ResponderAuto {
+		return answeredByResponder
+	}
+
+	return answeredByUser
+}
+
+// writeQuestions lists answered questions, one tagged line and its answer
+// each, saying who gave the answer.
 func writeQuestions(b *strings.Builder, questions []store.Question) {
 	for _, q := range questions {
-		fmt.Fprintf(b, "- [%s] %s\n  Answer: %s\n", q.Tag(), q.Text, q.Answer)
+		fmt.Fprintf(b, "- [%s] %s\n  Answer (%s): %s\n", q.Tag(), q.Text, answeredBy(q), q.Answer)
 	}
 
 	b.WriteString("\n")
