@@ -115,7 +115,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   fallback. A question's prompt also carries its own text, the entry without
   its option list and reply line, and the kind `question`; each option is an
   action whose label and reply are the full option, the recommended one
-  flagged. A click sends the reply as an ordinary message, so the
+  flagged. A gate's, the sign-off's, a stopped emission's or a run start's
+  prompt carries the entry without its reply instruction as its text, and
+  the kind `gate`. A click sends the reply as an ordinary message, so the
   architect's reply parsing is the same for a click and a typed answer.
   Questions are `Q<n>`, gates `gate:<stage>:v<n>`, the sign-off
   `gate:signoff:v<n>`, and a stopped emission or run start `emission:v<n>`.
@@ -123,9 +125,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   open, and the gate plan is plain text. The panel takes any later message
   as a free-text prompt's answer, so after a reply the architect takes as a
   command while a question is open (`export` or a gate reply), the question
-  is published again with the same id and actions. A gate or the sign-off
-  stays open across a reply that matches none of its actions, so it is never
-  published again.
+  is published again with the same id, text, kind and actions. A gate or the
+  sign-off stays open across a reply that matches none of its actions, so it
+  is never published again.
 - **Every blueprint is a CM session, started by CM.** The start payload is the
   `ChatStartPayload` with its `architect` block: the architect takes its LLM
   endpoint (fail-closed, no local fallback), MCP key, model and
@@ -805,7 +807,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Panel: a new-session dialog for blueprints with a multi-project picker, mode and cost cap | slice 0 |
 | The git-credentials endpoint treats an attached architect session as live | slice 1 |
 | CM re-sends the start to an architect session after the architect restarts: on a 404 `not_found` for a message (then re-sends the message once), and when the log stream ends | slice 2 |
-| Panel: question and gate prompts (`LogEntry.Prompt`, protocol v0.24.0) rendered as buttons; the gate plan stays text, and lesson prompts reuse the same shape | slice 3 (lessons slice 4) |
+| Panel: question and gate prompts (`LogEntry.Prompt`, protocol v0.24.0, with their own text, kind and recommended option from v0.25.0) rendered as buttons; the gate plan stays text, and lesson prompts reuse the same shape | slice 3 (lessons slice 4) |
 | Panel: a gate inbox and a blueprint view (stages, assumptions, cards with readiness, cost), read from the architect through a signed endpoint | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

@@ -14,10 +14,10 @@ import (
 // logEntryFor renders a controller event as a panel entry. A question or gate
 // a human answers carries a prompt, whose actions the panel shows as buttons
 // and whose replies come back as ordinary messages; the markdown stays the
-// readable fallback. A question's prompt also carries its own text, the entry
-// without the options and reply line. A human's answer is echoed by CM
-// itself and harness events reach the hub through the bridge, so both are
-// skipped here; the responder's answer is shown.
+// readable fallback. A prompt also carries a kind and its own text, the entry
+// without its option list or reply instruction. A human's answer is echoed
+// by CM itself and harness events reach the hub through the bridge, so both
+// are skipped here; the responder's answer is shown.
 func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	entry := protocol.LogEntry{Timestamp: e.Time, SessionID: e.BlueprintID}
 	if entry.Timestamp.IsZero() {
@@ -121,12 +121,14 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		}
 	case blueprint.EventSignOff:
 		entry.Type = "text"
-		entry.Content = signoffText(p)
-		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:signoff:v%.0f", num(p["version"])), p["actions"])
+		body, reply := signoffText(p)
+		entry.Content = body + reply
+		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:signoff:v%.0f", num(p["version"])), body, p["actions"])
 	case blueprint.EventGate:
 		entry.Type = "text"
-		entry.Content = gateText(p)
-		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:%s:v%.0f", str(p["stage"]), num(p["version"])), p["actions"])
+		body, reply := gateText(p)
+		entry.Content = body + reply
+		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:%s:v%.0f", str(p["stage"]), num(p["version"])), body, p["actions"])
 	case blueprint.EventReview:
 		entry.Type = "system"
 		entry.Content = reviewText(p)
@@ -423,9 +425,10 @@ func stringsOf(v any) []string {
 	}
 }
 
-// signoffText renders the sign-off: the entries in playbook order, the
-// playbook, the preflight result and how to decide.
-func signoffText(p map[string]any) string {
+// signoffText renders the sign-off: the body (the entries in playbook order,
+// the playbook and the preflight result) and the reply line that decides it,
+// which starts with its separator.
+func signoffText(p map[string]any) (body, reply string) {
 	var b strings.Builder
 
 	if auto, _ := p["auto_stopped"].(bool); auto {
@@ -526,15 +529,16 @@ func signoffText(p map[string]any) string {
 		b.WriteString("\nPreflight found nothing for a human.\n")
 	}
 
-	b.WriteString("\nReply `approve` to emit the cards")
+	body = strings.TrimSuffix(b.String(), "\n")
+	reply = "\n\nReply `approve` to emit the cards"
 
 	if len(warnings) > 0 {
-		b.WriteString(" (this also overrides the warnings)")
+		reply += " (this also overrides the warnings)"
 	}
 
-	b.WriteString(", or `reject <feedback>` to re-run decomposition with your feedback.")
+	reply += ", or `reject <feedback>` to re-run decomposition with your feedback."
 
-	return b.String()
+	return body, reply
 }
 
 // policyText renders a gate reply: the change it made and what it leaves
@@ -584,19 +588,20 @@ func gatePlanText(p map[string]any) string {
 	return b.String()
 }
 
-// gateText renders a stage's gate: the artifact above waits, with the
+// gateText renders a stage's gate: the body (the artifact above waits, the
 // reviewer's score, the artifacts folded into it shown below, the problems
-// its checks accepted them with, and the replies that decide it.
-func gateText(p map[string]any) string {
+// its checks accepted them with) and the reply line that decides it, which
+// starts with its separator.
+func gateText(p map[string]any) (body, reply string) {
 	var replies []string
 
 	for _, a := range anyMaps(p["actions"]) {
-		reply := "`" + str(a["reply"])
+		quoted := "`" + str(a["reply"])
 		if feedback, _ := a["feedback"].(bool); feedback {
-			reply += " <feedback>"
+			quoted += " <feedback>"
 		}
 
-		replies = append(replies, reply+"`")
+		replies = append(replies, quoted+"`")
 	}
 
 	stage, version := str(p["stage"]), num(p["version"])
@@ -655,7 +660,7 @@ func gateText(p map[string]any) string {
 		sep = "\n\n"
 	}
 
-	return text + sep + fmt.Sprintf("Reply %s.", strings.Join(replies, " or "))
+	return text, sep + fmt.Sprintf("Reply %s.", strings.Join(replies, " or "))
 }
 
 // problemsList renders the problems an artifact's checks accepted it with;
@@ -748,8 +753,9 @@ func questionPrompt(p map[string]any, text string) *protocol.LogPrompt {
 
 // actionsPrompt makes a gate decidable by a click from the replies its
 // event carries; nil when it carries none, as an event stored before the
-// replies travelled with it.
-func actionsPrompt(id string, v any) *protocol.LogPrompt {
+// replies travelled with it. The text is the gate's body without its reply
+// line.
+func actionsPrompt(id, text string, v any) *protocol.LogPrompt {
 	var actions []protocol.LogAction
 
 	for _, a := range anyMaps(v) {
@@ -761,11 +767,12 @@ func actionsPrompt(id string, v any) *protocol.LogPrompt {
 		return nil
 	}
 
-	return &protocol.LogPrompt{ID: id, Actions: actions}
+	return &protocol.LogPrompt{ID: id, Text: text, Kind: "gate", Actions: actions}
 }
 
 // resumePrompt offers approve on a stopped emission or run start; nil on
-// any other error or wait.
+// any other error or wait. The text is the stop without its reply
+// instruction, empty on an event stored before resume events carried one.
 func resumePrompt(p map[string]any) *protocol.LogPrompt {
 	var label string
 
@@ -782,6 +789,8 @@ func resumePrompt(p map[string]any) *protocol.LogPrompt {
 
 	return &protocol.LogPrompt{
 		ID:      fmt.Sprintf("emission:v%.0f", num(p["version"])),
+		Text:    str(p["text"]),
+		Kind:    "gate",
 		Actions: []protocol.LogAction{{Label: label, Reply: "approve"}},
 	}
 }

@@ -325,15 +325,18 @@ func TestYolo_AnEmptyRepositoryEmitsTheCardsAndStartsNoRun(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, false, ev.Payload["run_follows"])
 
-	var prompt string
+	var prompt, text string
 
 	for _, a := range rec.all(EventAwaitInput) {
 		if p, _ := a.Payload["prompt"].(string); strings.Contains(p, "has no commits") {
 			prompt = p
+			text, _ = a.Payload["text"].(string)
 		}
 	}
 
 	assert.Contains(t, prompt, "https://example.com/alpha.git has no commits")
+	assert.NotEmpty(t, text)
+	assert.NotContains(t, text, store.GateApprove)
 
 	bp, err := st.GetBlueprint(context.Background(), "BP1")
 	require.NoError(t, err)
@@ -388,7 +391,15 @@ func TestEmptyReposPrompt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, emptyReposPrompt(tt.repos))
+			text, prompt := emptyReposPrompt(tt.repos)
+			assert.Equal(t, tt.want, prompt)
+			assert.NotEmpty(t, text)
+			assert.NotContains(t, text, store.GateApprove)
+			assert.Contains(t, text, "ContextMatrix", "the route through ContextMatrix is kept")
+
+			for _, r := range tt.repos {
+				assert.Contains(t, text, r)
+			}
 		})
 	}
 }
@@ -711,6 +722,9 @@ func TestEmit_AStopSaysWhatStoppedIt(t *testing.T) {
 			errs := rec.all(EventError)
 			require.Len(t, errs, 1)
 			assert.Equal(t, tc.want, errs[0].Payload["message"])
+			text, _ := errs[0].Payload["text"].(string)
+			assert.NotEmpty(t, text)
+			assert.NotContains(t, text, store.GateApprove)
 			assert.Equal(t, []string{"Add the parser"}, fake.titles())
 			assert.Equal(t, string(StateIdle), stateOf(t, st, "BP1"))
 		})
@@ -737,6 +751,11 @@ func TestYolo_AnAbortBeforeTheRunStartSaysSo(t *testing.T) {
 	errs := rec.all(EventError)
 	require.Len(t, errs, 1)
 	assert.Equal(t, "The cards are emitted, but the run start was stopped by abort. Reply approve to retry the start, or start it in ContextMatrix and reply approve.", errs[0].Payload["message"])
+
+	text, _ := errs[0].Payload["text"].(string)
+	assert.NotEmpty(t, text)
+	assert.NotContains(t, text, store.GateApprove)
+	assert.Contains(t, text, "ContextMatrix", "the route through ContextMatrix is kept")
 	assert.Empty(t, fake.cardRuns(), "no run is started")
 	assert.Equal(t, []string{"Add the thing"}, fake.titles())
 	assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
