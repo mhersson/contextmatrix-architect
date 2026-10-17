@@ -91,6 +91,11 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	assert.Equal(t, PolicyHuman, intake.Policy)
 	assert.Equal(t, 3, intake.MaxQuestions)
 
+	for _, id := range []string{"intake", "slicing", "solution_design"} {
+		s, _ := p.Stage(id)
+		assert.Contains(t, s.Tools, ToolResearch, "%s researches its questions when research is on", id)
+	}
+
 	grounding, _ := p.Stage("grounding")
 	assert.Equal(t, PolicyAuto, grounding.Policy)
 
@@ -299,6 +304,15 @@ func TestLoad_AcceptsTheCMToolGroup(t *testing.T) {
 	s1, ok := p.Stage("s1")
 	require.True(t, ok)
 	assert.Equal(t, []string{ToolCode, ToolCM}, s1.Tools)
+}
+
+func TestLoad_AcceptsTheResearchToolGroup(t *testing.T) {
+	p, err := load(packFS("    tools: [code, research]\n", nil))
+	require.NoError(t, err)
+
+	s1, ok := p.Stage("s1")
+	require.True(t, ok)
+	assert.Equal(t, []string{ToolCode, ToolResearch}, s1.Tools)
 }
 
 func TestLoad_AcceptsTheAssumptionsCheck(t *testing.T) {

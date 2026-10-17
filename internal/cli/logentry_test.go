@@ -69,6 +69,21 @@ func TestLogEntryFor(t *testing.T) {
 		{"a stopped emission awaited", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "signoff", "prompt": "Emission is stopped; reply approve to resume it."}}, "text", []string{"reply approve to resume it"}, false},
 		{"awaited without a prompt", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "signoff", "prompt": ""}}, "text", []string{"signoff"}, false},
 		{"note that re-runs a stage", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "go on", "retries": "grounding"}}, "system", []string{"grounding"}, false},
+		{"research off", blueprint.Event{Kind: blueprint.EventResearchOff, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "intake", "reason": "ContextMatrix has research off",
+		}}, "system", []string{"Research is off", "ContextMatrix has research off"}, false},
+		{"a page read", blueprint.Event{Kind: blueprint.EventResearch, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "intake", "tool": "web_fetch", "url": "https://x.example/a", "final_url": "https://x.example/b", "tag": "S4", "title": "Backups",
+		}}, "system", []string{"Backups", "https://x.example/b", "[S4]"}, false},
+		{"a refused fetch", blueprint.Event{Kind: blueprint.EventResearch, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "intake", "tool": "web_fetch", "url": "https://x.example/a", "refused": "address",
+		}}, "", nil, true},
+		{"a failed fetch", blueprint.Event{Kind: blueprint.EventResearch, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "intake", "tool": "web_fetch", "url": "https://x.example/a", "error": "timeout",
+		}}, "", nil, true},
+		{"a search is the tool call's own entry", blueprint.Event{Kind: blueprint.EventResearch, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "intake", "tool": "web_search", "query": "kustomize overlays", "results": 8,
+		}}, "", nil, true},
 		{"grounded", blueprint.Event{Kind: blueprint.EventGrounded, BlueprintID: "S1", Payload: map[string]any{"stage": "grounding", "sources": []any{
 			map[string]any{"tag": "S1", "project": "alpha", "identity": "https://example.com/alpha.git", "sha": "0123456789abcdef0123"},
 			map[string]any{"tag": "S2", "project": "alpha", "identity": "https://example.com/docs.git", "sha": "fedcba9876543210fedc"},

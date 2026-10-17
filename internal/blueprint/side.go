@@ -93,7 +93,7 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 		price: m.price, capUSD: runCap, stop: stop, flight: f,
 	}
 
-	out, runErr := c.opts.Runner.Run(runCtx, in)
+	out, runErr := c.opts.Runner.Run(withRun(runCtx, runID), in)
 
 	if runErr != nil && c.shuttingDown(r) {
 		return out, runErr

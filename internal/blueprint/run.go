@@ -17,6 +17,7 @@ import (
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
+	"github.com/mhersson/contextmatrix-architect/internal/research"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
@@ -193,7 +194,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	)
 
 	if err == nil {
-		in, checks, closeTools, err = c.stageInput(ctx, sess, bp, st)
+		in, checks, closeTools, err = c.stageInput(ctx, sess, bp, runID, st)
 	}
 
 	if err != nil {
@@ -290,7 +291,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		c.live.draft(id, protocol.Draft{Stage: stageID, Version: version, Offset: f.Offset, Text: f.Text, Refused: f.Refused, Reason: f.Reason})
 	}
 
-	out, runErr := c.opts.Runner.Run(runCtx, in)
+	out, runErr := c.opts.Runner.Run(withRun(runCtx, runID), in)
 
 	// A run Shutdown cut short is crash-equivalent: no result writes, so
 	// recovery re-runs the stage on the next Start. A completed run still
@@ -418,11 +419,12 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 // stageInput builds what a run of st is given besides its model and limits:
 // the persona, the instructions, the task from the artifacts it consumes,
-// the code tools over the blueprint's checkouts, the CM read tools, and the
-// card contract on submit with the card template, and the states of its
-// checks. The closer ends the run's CM session; it is a no-op without cm
-// tools and never nil when err is nil.
-func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blueprint, st pack.Stage) (stage.Input, stageChecks, func(), error) {
+// the code tools over the blueprint's checkouts, the CM read tools, the
+// research tools when the session has research on, and the card contract on
+// submit with the card template, and the states of its checks. The closer
+// ends the run's CM session; it is a no-op without cm tools and never nil
+// when err is nil.
+func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blueprint, runID int64, st pack.Stage) (stage.Input, stageChecks, func(), error) {
 	noop := func() {}
 
 	task, err := c.taskFor(context.WithoutCancel(ctx), bp, st)
@@ -442,9 +444,10 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		return stage.Input{}, stageChecks{}, nil, errNoCMSupport
 	}
 
+	var facts *codeFacts
+
 	if slices.Contains(st.Tools, pack.ToolCode) {
-		facts, err := c.prepareCode(ctx, sess, bp, st.ID)
-		if err != nil {
+		if facts, err = c.prepareCode(ctx, sess, bp, st.ID); err != nil {
 			return stage.Input{}, stageChecks{}, nil, err
 		}
 
@@ -471,6 +474,20 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 
 		in.Tools = append(in.Tools, cmTools...)
 		in.Task = fmt.Sprintf("ContextMatrix board reads (the %s tools) are source [%s]; cite it for anything read there.\n\n", cm.ToolPrefix+"*", src.Tag()) + in.Task
+	}
+
+	if slices.Contains(st.Tools, pack.ToolResearch) {
+		if c.researchOn(sess, st) {
+			guard := c.researchGuard(sess, bp, st.ID, facts)
+			ledger := researchLedger{c: c, au: sess.audit, id: bp.ID, stage: st.ID}
+
+			in.Tools = append(in.Tools, research.Tools(sess.searcher, c.opts.Fetch, guard, ledger)...)
+			in.Task = researchOnTask + in.Task
+		} else {
+			c.noteResearchOff(ctx, sess, bp.ID, runID, st.ID)
+
+			in.Task = researchOffTask + in.Task
+		}
 	}
 
 	var (

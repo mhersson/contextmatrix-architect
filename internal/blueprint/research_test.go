@@ -5,9 +5,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io/fs"
+	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 
+	"github.com/mhersson/contextmatrix-harness/llm"
+	protocol "github.com/mhersson/contextmatrix-protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -261,4 +268,310 @@ func TestResearchLedger_MasksSessionSecretsInTheEvent(t *testing.T) {
 		assert.NotContains(t, string(e.Payload), testMCPKey)
 		assert.NotContains(t, string(e.Payload), testGitToken)
 	}
+}
+
+const testSearchKey = "brave-search-key-0123456789"
+
+type fakeSearcher struct{ results []research.Result }
+
+func (f fakeSearcher) Search(context.Context, string) ([]research.Result, error) {
+	return f.results, nil
+}
+
+type fakeFetcher struct{ page research.Page }
+
+func (f fakeFetcher) Fetch(context.Context, string) (research.Page, error) { return f.page, nil }
+
+func searchOK(string, string) (research.Searcher, error) { return fakeSearcher{}, nil }
+
+func researchStart(id string) StartInput {
+	in := startInput(id)
+	in.SearchProvider, in.SearchAPIKey = research.ProviderBrave, testSearchKey
+
+	return in
+}
+
+// newResearchPipeline runs the research test pack on runner, with search
+// as the session's provider factory.
+func newResearchPipeline(t *testing.T, runner Runner, search func(string, string) (research.Searcher, error), fetch research.PageFetcher) (*Controller, *store.Store, *recorder) {
+	t.Helper()
+
+	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "architect.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	pk, err := pack.LoadDir("testdata/research")
+	require.NoError(t, err)
+
+	rec := newRecorder()
+	c := New(Options{
+		Store: st, Pack: pk, Runner: runner, MaxRunCostUSD: 2, MaxTurns: 10,
+		Sink: rec.sink, HarnessLine: rec.line, ExportDir: t.TempDir(),
+		Workspace: &fakeWorkspace{root: t.TempDir()}, Projects: listAlpha,
+		Search: search, Fetch: fetch,
+	})
+	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
+
+	return c, st, rec
+}
+
+func TestResearch_StagesGetTheWebToolsWhenResearchIsOn(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		runs = map[string]int64{}
+	)
+
+	runner := &fakeRunner{fn: func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		mu.Lock()
+		runs[in.Stage] = runOf(ctx)
+		mu.Unlock()
+
+		return done("# "+in.Stage, nil), nil
+	}}
+
+	c, st, rec := newResearchPipeline(t, runner, searchOK, fakeFetcher{})
+	driveIn(t, c, researchStart("BP1"))
+
+	require.Equal(t, 2, runner.calls())
+
+	for i := range 2 {
+		assert.Subset(t, toolNames(runner.input(i)), []string{"web_search", "web_fetch"}, runner.input(i).Stage)
+	}
+
+	assert.False(t, rec.has(EventResearchOff))
+
+	stored, err := st.ListRuns(context.Background(), "BP1")
+	require.NoError(t, err)
+
+	for _, r := range stored {
+		assert.Equal(t, r.ID, runs[r.Stage], "the run's context carries its id, for %s", r.Stage)
+	}
+}
+
+func TestResearch_OffIsSaidOncePerSession(t *testing.T) {
+	unknown := researchStart("BP1")
+	unknown.SearchProvider = "nosuch"
+
+	tests := []struct {
+		name   string
+		in     StartInput
+		search func(string, string) (research.Searcher, error)
+		reason string
+	}{
+		{"ContextMatrix has research off", startInput("BP1"), searchOK, "off"},
+		{"an unknown provider", unknown, research.NewSearcher, `"nosuch"`},
+		{"no research support", researchStart("BP1"), nil, "without research"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeRunner{fn: func(_ context.Context, in stage.Input) (stage.Output, error) {
+				return done("# "+in.Stage, nil), nil
+			}}
+			c, _, rec := newResearchPipeline(t, runner, tt.search, fakeFetcher{})
+			driveIn(t, c, tt.in)
+
+			require.Equal(t, 2, runner.calls())
+
+			for i := range 2 {
+				assert.NotContains(t, toolNames(runner.input(i)), "web_search")
+			}
+
+			offs := rec.all(EventResearchOff)
+			require.Len(t, offs, 1, "said once, though two stages have the group")
+			assert.Equal(t, "intake", offs[0].Payload["stage"])
+			assert.Contains(t, offs[0].Payload["reason"], tt.reason)
+		})
+	}
+}
+
+func TestResearch_TheSearchKeyIsMaskedLikeEverySecret(t *testing.T) {
+	runner := &fakeRunner{fn: func(_ context.Context, in stage.Input) (stage.Output, error) {
+		return done("# Need with "+testSearchKey, nil), nil
+	}}
+	c, st, _ := newResearchPipeline(t, runner, searchOK, fakeFetcher{})
+	driveIn(t, c, researchStart("BP1"))
+
+	art, err := st.LatestArtifact(context.Background(), "BP1", "intake")
+	require.NoError(t, err)
+	assert.NotContains(t, art.Body, testSearchKey)
+}
+
+func TestResearch_ResponderLookupsCarryTheResponderRun(t *testing.T) {
+	var (
+		mu             sync.Mutex
+		responderRun   int64
+		responderTools []string
+	)
+
+	runner := &fakeRunner{}
+	runner.fn = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		switch in.Stage {
+		case "shape":
+			if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Which store?", Options: []string{"sqlite", "postgres"}}); err != nil {
+				return stage.Output{}, err
+			}
+		case "shape.responder":
+			mu.Lock()
+			responderRun, responderTools = runOf(ctx), toolNames(in)
+			mu.Unlock()
+
+			return done("", map[string]any{"answer": "sqlite", "reasoning": "small"}), nil
+		}
+
+		return done("# "+in.Stage, nil), nil
+	}
+
+	c, st, _ := newResearchPipeline(t, runner, searchOK, fakeFetcher{})
+	driveIn(t, c, researchStart("BP1"))
+
+	stored, err := st.ListRuns(context.Background(), "BP1")
+	require.NoError(t, err)
+
+	i := slices.IndexFunc(stored, func(r store.Run) bool { return r.Kind == store.RunKindResponder })
+	require.GreaterOrEqual(t, i, 0, "the responder ran")
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	assert.Equal(t, stored[i].ID, responderRun)
+	assert.Subset(t, responderTools, []string{"web_search", "web_fetch"}, "the responder researches with the asking stage's tools")
+}
+
+// scriptLLM replays responses across every run it serves and keeps a copy
+// of each request.
+type scriptLLM struct {
+	mu        sync.Mutex
+	responses []llm.Response
+	requests  []llm.Request
+}
+
+func (s *scriptLLM) Send(_ context.Context, req llm.Request) (llm.Response, error) {
+	return s.next(req), nil
+}
+
+func (s *scriptLLM) SendStream(_ context.Context, req llm.Request, _ func(llm.Delta)) (llm.Response, error) {
+	return s.next(req), nil
+}
+
+func (s *scriptLLM) next(req llm.Request) llm.Response {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	req.Messages = slices.Clone(req.Messages)
+	s.requests = append(s.requests, req)
+
+	if len(s.responses) == 0 {
+		return llm.Response{Content: "done", FinishReason: "stop"}
+	}
+
+	r := s.responses[0]
+	s.responses = s.responses[1:]
+
+	return r
+}
+
+func call(id, name, args string) llm.Response {
+	return llm.Response{FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{{ID: id, Type: "function", Function: llm.FunctionCall{Name: name, Arguments: args}}}}
+}
+
+func TestResearch_SearchResultListsAreNeverStored(t *testing.T) {
+	model := &scriptLLM{responses: []llm.Response{
+		call("c1", "web_search", `{"query":"postgres operator backups"}`),
+		call("c2", "web_fetch", `{"url":"https://docs.example.org/backup"}`),
+		call("c3", "submit_artifact", `{"body":"# Need"}`),
+		call("c4", "submit_artifact", `{"body":"# Shape"}`),
+	}}
+
+	searcher := fakeSearcher{results: []research.Result{{Title: "Result title zebra", URL: "https://hit.example.org/zebra", Snippet: "snippet quokka"}}}
+	fetcher := fakeFetcher{page: research.Page{URL: "https://docs.example.org/backup", Title: "Backup docs", Text: "page body walrus " + testSearchKey}}
+	runner := &stage.Runner{NewLLM: func(protocol.LLMEndpoint) llm.LLM { return model }}
+
+	c, st, _ := newResearchPipeline(t, runner, func(string, string) (research.Searcher, error) { return searcher, nil }, fetcher)
+	driveIn(t, c, researchStart("BP1"))
+
+	ctx := context.Background()
+
+	// The model read the list in its run.
+	model.mu.Lock()
+
+	var sawList bool
+
+	for _, req := range model.requests {
+		for _, m := range req.Messages {
+			sawList = sawList || strings.Contains(m.Content, "Result title zebra")
+		}
+	}
+
+	model.mu.Unlock()
+	assert.True(t, sawList, "the model saw the result list")
+
+	forbidden := []string{"zebra", "quokka", testSearchKey}
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+
+	var transcripts strings.Builder
+
+	for _, r := range runs {
+		raw, err := st.GetTranscript(ctx, r.ID)
+		if err == nil {
+			transcripts.Write(raw)
+		}
+	}
+
+	assert.Contains(t, transcripts.String(), `web_search: 1 result for \"postgres operator backups\"`)
+	assert.Contains(t, transcripts.String(), "page body walrus", "a fetched page is kept")
+
+	events, err := st.ListEvents(ctx, "BP1")
+	require.NoError(t, err)
+
+	for _, e := range events {
+		for _, word := range forbidden {
+			assert.NotContains(t, string(e.Payload), word, "event %s", e.Kind)
+		}
+	}
+
+	for _, word := range forbidden {
+		assert.NotContains(t, transcripts.String(), word)
+	}
+
+	var fetchRun int64
+
+	for _, e := range events {
+		if e.Kind == EventResearch && strings.Contains(string(e.Payload), "web_fetch") {
+			fetchRun = e.RunID
+		}
+	}
+
+	intake := slices.IndexFunc(runs, func(r store.Run) bool { return r.Stage == "intake" })
+	require.GreaterOrEqual(t, intake, 0)
+	assert.Equal(t, runs[intake].ID, fetchRun, "a research event carries the run that made the call")
+
+	sources, err := st.ListSources(ctx, "BP1")
+	require.NoError(t, err)
+	assert.True(t, slices.ContainsFunc(sources, func(s store.Source) bool {
+		return s.Kind == "url" && s.Identity == "https://docs.example.org/backup"
+	}))
+
+	require.NoError(t, c.Export(ctx, "BP1", "m-export"))
+
+	exportFS := os.DirFS(c.opts.ExportDir)
+
+	require.NoError(t, fs.WalkDir(exportFS, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+
+		b, err := fs.ReadFile(exportFS, path)
+		if err != nil {
+			return err
+		}
+
+		for _, word := range forbidden {
+			assert.NotContains(t, string(b), word, path)
+		}
+
+		return nil
+	}))
 }

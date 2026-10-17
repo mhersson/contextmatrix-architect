@@ -1,5 +1,5 @@
 name: default
-version: "0.11"
+version: "0.12"
 stages:
   - id: intake
     persona: product_owner
@@ -7,10 +7,12 @@ stages:
     checks: [assumptions]
     policy: human
     max_questions: 3
+    tools: [research]
   - id: slicing
     persona: product_owner
     produces: slices
     consumes: [intake]
+    tools: [research]
     checks: [slices]
     policy: human
     gate: true
@@ -20,7 +22,7 @@ stages:
     persona: system_designer
     produces: design
     consumes: [intake, slicing]
-    tools: [code]
+    tools: [code, research]
     checks: [assumptions, decisions]
     policy: human
     gate: true

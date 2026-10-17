@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mhersson/contextmatrix-architect/internal/code"
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/research"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
@@ -180,4 +181,53 @@ func repoNames(raw string) []string {
 	}
 
 	return out
+}
+
+// The lines a research stage's task starts with. They are the controller's,
+// not the pack's, because they depend on the session.
+const (
+	researchOnTask = "Web research: web_search lists pages for a query, and web_fetch reads one; its result starts with the source tag to cite. " +
+		"Research a question with real alternatives before you ask it. Cite and quote only pages you fetched, never a search result or its snippet. " +
+		"Search result lists are not kept after this run; the pages you fetch are, so fetch what you will cite before you ask. " +
+		"Queries use plain words and technology names: the leak guard refuses paths, file names, code, the project's own identifiers and names, and card ids.\n\n"
+	researchOffTask = "Research is off for this session: there are no web tools, so options rest on your own knowledge; say so instead of citing a web source.\n\n"
+)
+
+// sessionResearch is the search provider a start's research settings name,
+// or why research is off.
+func (c *Controller) sessionResearch(in StartInput, au audit) (research.Searcher, string) {
+	switch {
+	case in.SearchProvider == "":
+		return nil, "ContextMatrix has research off"
+	case c.opts.Search == nil || c.opts.Fetch == nil:
+		return nil, "this architect runs without research tools"
+	}
+
+	s, err := c.opts.Search(in.SearchProvider, in.SearchAPIKey)
+	if err != nil {
+		reason := "its search settings were refused: " + au.text(err.Error())
+		c.opts.Logger.Warn("blueprint: research off", "blueprint", in.ID, "reason", reason)
+
+		return nil, reason
+	}
+
+	return s, ""
+}
+
+// researchOn reports whether a run of st gets the research tools: the pack
+// gives st the group and the session has research on.
+func (c *Controller) researchOn(sess *session, st pack.Stage) bool {
+	return slices.Contains(st.Tools, pack.ToolResearch) && sess.searcher != nil && c.opts.Fetch != nil
+}
+
+// noteResearchOff says, the first time a stage with the research group runs
+// in a session without research, that research is off and why.
+func (c *Controller) noteResearchOff(ctx context.Context, sess *session, id string, runID int64, stageID string) {
+	if !sess.offNoted.CompareAndSwap(false, true) {
+		return
+	}
+
+	sess.audit.event(context.WithoutCancel(ctx), Event{Kind: EventResearchOff, BlueprintID: id, RunID: runID, Payload: map[string]any{
+		"stage": stageID, "reason": sess.researchOff,
+	}})
 }

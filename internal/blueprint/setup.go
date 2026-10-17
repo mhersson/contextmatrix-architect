@@ -14,8 +14,7 @@ import (
 )
 
 // checkoutStage is the first stage in pack order with the code tools, the one
-// that checks the trees out and reports what they lack; "" when the pack has
-// none.
+// that reports what the trees lack; "" when the pack has none.
 func (c *Controller) checkoutStage() string {
 	for _, st := range c.opts.Pack.Stages {
 		if slices.Contains(st.Tools, pack.ToolCode) {

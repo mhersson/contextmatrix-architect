@@ -1,0 +1,14 @@
+name: research
+version: "1"
+stages:
+  - id: intake
+    persona: product_owner
+    produces: need
+    policy: human
+    tools: [research]
+  - id: shape
+    persona: product_owner
+    produces: shape
+    consumes: [intake]
+    policy: auto
+    tools: [research]

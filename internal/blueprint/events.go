@@ -45,6 +45,9 @@ const (
 	// tag, or the guard rule that refused it, or the error. A search's
 	// result list is never in it.
 	EventResearch = "research"
+	// EventResearchOff says, once per session, at the first stage with the
+	// research tools, that research is off and why.
+	EventResearchOff = "research_off"
 	// EventSetupGaps lists, when the first stage with the code tools ends,
 	// what each target project lacks for an agent run: a verify command, an
 	// instruction file, any commit. None of it blocks; decomposition plans
