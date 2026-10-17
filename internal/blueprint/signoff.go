@@ -135,13 +135,20 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 		return
 	}
 
-	// A need that cannot be read shows as no assumptions, and the log says why.
-	assumptions := ""
+	// Assumptions that cannot be read show as none, and the log says why. An
+	// intake from before assumptions were data gives its section's text,
+	// which the panel shows as it shows an older sign-off.
+	var assumptions any = []any{}
 
-	if sum, err := c.summary(bg, bp.ID); err != nil {
+	sum, err := c.summary(bg, bp.ID)
+
+	switch {
+	case err != nil:
 		c.opts.Logger.Warn("blueprint: sign-off assumptions", "blueprint", bp.ID, "error", au.text(err.Error()))
-	} else {
-		assumptions = sum.assumptions
+	case sum.prose != "":
+		assumptions = sum.prose
+	default:
+		assumptions = assumptionsPayload(signoffOrder(sum.assumptions))
 	}
 
 	cards := make([]any, 0, len(draft.Cards))

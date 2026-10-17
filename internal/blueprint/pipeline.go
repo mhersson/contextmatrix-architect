@@ -431,6 +431,10 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.St
 		return "", err
 	}
 
+	if err := c.writeAssumptions(ctx, &b, bp, st); err != nil {
+		return "", err
+	}
+
 	if st.Gate {
 		if err := c.writeGateFeedback(ctx, &b, bp, st); err != nil {
 			return "", err
@@ -446,6 +450,34 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.St
 	}
 
 	return b.String(), nil
+}
+
+// writeAssumptions gives a stage that consumes a stage with stated
+// assumptions every assumption so far, each with its id and latest status:
+// the ids a verdict names.
+func (c *Controller) writeAssumptions(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pack.Stage) error {
+	states := slices.ContainsFunc(st.Consumes, func(id string) bool {
+		consumed, _ := c.opts.Pack.Stage(id)
+
+		return slices.Contains(consumed.Checks, pack.CheckAssumptions)
+	})
+	if !states {
+		return nil
+	}
+
+	list, err := c.assumptions(ctx, bp.ID)
+	if err != nil {
+		return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
+	}
+
+	if len(list) == 0 {
+		return nil
+	}
+
+	b.WriteString("## Assumptions so far\n\nEach with its id and latest status; a verdict names the id:\n\n")
+	b.WriteString(assumptionLines(list) + "\n\n")
+
+	return nil
 }
 
 // writeNotes gives a run every note the user left so far, in arrival order,

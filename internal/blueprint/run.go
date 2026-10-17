@@ -328,14 +328,48 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		in.Task = fmt.Sprintf("ContextMatrix board reads (the %s tools) are source [%s]; cite it for anything read there.\n\n", cm.ToolPrefix+"*", src.Tag()) + in.Task
 	}
 
-	var checked *validatorState
+	var (
+		checked    *validatorState
+		validators []func(context.Context, stage.Artifact) error
+	)
+
+	if slices.Contains(st.Checks, pack.CheckAssumptions) {
+		validators = append(validators, c.assumptionsValidator())
+	}
 
 	if slices.Contains(st.Checks, pack.CheckCards) {
-		in.Validate, checked = c.cardsValidator(sess, bp)
+		var cards func(context.Context, stage.Artifact) error
+
+		cards, checked = c.cardsValidator(sess, bp)
+		validators = append(validators, cards)
 		in.Instructions += "\n\n# Card template\n\n" + c.opts.Pack.CardTemplate()
 	}
 
+	in.Validate = allOf(validators)
+
 	return in, checked, closeCM, nil
+}
+
+// allOf runs every validator on every submit and joins their refusals, nil
+// only when all accept: each validator counts the submits it sees, so one
+// that never ran would lose count of the third, the one that is accepted.
+// nil when there are no validators.
+func allOf(validators []func(context.Context, stage.Artifact) error) func(context.Context, stage.Artifact) error {
+	if len(validators) == 0 {
+		return nil
+	}
+
+	return func(ctx context.Context, a stage.Artifact) error {
+		var errs []error
+
+		for _, v := range validators {
+			if err := v(ctx, a); err != nil {
+				errs = append(errs, err)
+			}
+		}
+
+		return errors.Join(errs...)
+	}
 }
 
 // nextAttempt numbers a new run of stageID after every earlier stage run of

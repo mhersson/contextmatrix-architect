@@ -227,6 +227,7 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "human stage with loops_to", stage: "  - id: s2\n    source: human\n    loops_to: s1\n    max_rounds: 2\n", want: "takes no loops_to"},
 		{name: "loops_to a human stage", stage: "  - id: s2\n    source: human\n  - id: s3\n    persona: po\n    loops_to: s2\n    max_rounds: 2\n", files: map[string]string{"stages/s3.md": "x"}, want: "which is human-sourced"},
 		{name: "bad regex", files: map[string]string{"lists.yaml": "forbidden_references:\n  - name: broken\n    pattern: '(['\n"}, want: "forbidden reference"},
+		{name: "blank dangling reference", files: map[string]string{"lists.yaml": "dangling_references: [\" \"]\n"}, want: "dangling_references"},
 		{name: "unknown lists.yaml key", files: map[string]string{"lists.yaml": "required_section: [Context]\n"}, want: "lists.yaml"},
 		{name: "card checks without lists.yaml", stage: "    tools: [code]\n    checks: [cards]\n", files: map[string]string{"lists.yaml": ""}, want: "lists.yaml"},
 		{name: "card checks without card.md", stage: "    tools: [code]\n    checks: [cards]\n", files: map[string]string{"card.md": ""}, want: "card.md"},
@@ -285,4 +286,10 @@ func TestLoad_AcceptsTheCMToolGroup(t *testing.T) {
 	s1, ok := p.Stage("s1")
 	require.True(t, ok)
 	assert.Equal(t, []string{ToolCode, ToolCM}, s1.Tools)
+}
+
+func TestLoad_AcceptsTheAssumptionsCheck(t *testing.T) {
+	p, err := load(packFS("    checks: [assumptions]\n", map[string]string{"lists.yaml": "dangling_references: [see above]\n"}))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"see above"}, p.Lists().DanglingReferences)
 }

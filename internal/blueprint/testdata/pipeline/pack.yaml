@@ -6,6 +6,7 @@ stages:
     produces: need
     policy: human
     max_questions: 3
+    checks: [assumptions]
   - id: design
     source: human
     produces: design

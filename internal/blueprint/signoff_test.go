@@ -364,7 +364,7 @@ func TestSignoff_ApproveWhileAStageRunsIsANote(t *testing.T) {
 
 func TestSignoff_ShowsIntakesAssumptions(t *testing.T) {
 	script := happyScript()
-	script["intake"] = returns(needBody, nil)
+	script["intake"] = returns(needBody, map[string]any{"assumptions": []any{"The parser stays in Go."}})
 
 	c, _, _, rec, _ := newPipeline(t, script)
 
@@ -372,7 +372,9 @@ func TestSignoff_ShowsIntakesAssumptions(t *testing.T) {
 
 	so, ok := rec.first(EventSignOff)
 	require.True(t, ok)
-	assert.Equal(t, "- The parser stays in Go.", so.Payload["assumptions"])
+	assert.Equal(t, []any{
+		map[string]any{"id": "A1", "stage": "intake", "text": "The parser stays in Go.", "status": "unverified", "evidence": ""},
+	}, so.Payload["assumptions"])
 }
 
 func TestSignoff_ASecondApproveAfterEmissionIsANote(t *testing.T) {

@@ -454,9 +454,23 @@ func signoffText(p map[string]any) string {
 		b.WriteString("\nOne card, so no playbook.\n")
 	}
 
-	if a := str(p["assumptions"]); a != "" {
-		b.WriteString("\nAssumptions:\n" + a + "\n")
-	} else {
+	switch list := anyMaps(p["assumptions"]); {
+	case len(list) > 0:
+		b.WriteString("\nAssumptions, unverified first:\n")
+
+		for _, a := range list {
+			status := str(a["status"])
+			if evidence := str(a["evidence"]); evidence != "" {
+				status += ": " + evidence
+			}
+
+			fmt.Fprintf(&b, "- %s (%s) %s\n", str(a["id"]), status, str(a["text"]))
+		}
+	case str(p["assumptions"]) != "":
+		// Intake's section text: a sign-off stored before assumptions were
+		// data, or one whose intake predates them.
+		b.WriteString("\nAssumptions:\n" + str(p["assumptions"]) + "\n")
+	default:
 		b.WriteString("\nAssumptions: none recorded.\n")
 	}
 

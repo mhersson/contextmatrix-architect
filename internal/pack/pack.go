@@ -31,6 +31,8 @@ const (
 	// ToolCM is the read-only ContextMatrix tool group.
 	ToolCM     = "cm"
 	CheckCards = "cards"
+	// CheckAssumptions checks a submit's assumptions: standalone sentences.
+	CheckAssumptions = "assumptions"
 )
 
 // Responder policies: who answers a stage's questions and decides its gate.
@@ -295,6 +297,12 @@ func parseLists(raw []byte) (contract.Lists, error) {
 		}
 	}
 
+	for _, phrase := range lists.DanglingReferences {
+		if strings.TrimSpace(phrase) == "" {
+			return contract.Lists{}, errors.New("pack: lists.yaml: a dangling_references entry is blank")
+		}
+	}
+
 	return lists, nil
 }
 
@@ -352,7 +360,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	}
 
 	for _, check := range s.Checks {
-		if check != CheckCards {
+		if check != CheckCards && check != CheckAssumptions {
 			return fmt.Errorf("pack: stage %q: unknown check %q", s.ID, check)
 		}
 	}

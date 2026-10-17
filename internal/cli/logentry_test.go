@@ -101,6 +101,13 @@ func TestLogEntryFor(t *testing.T) {
 			"title":    "",
 			"blocking": []any{"project alpha declares no repository"}, "warnings": []any{"moved"}, "auto_stopped": false, "assumptions": "- The parser stays in Go.",
 		}}, "text", []string{"D1", "Add the thing", "declares no repository", "moved", "approve", "The parser stays in Go."}, false},
+		{"signoff with assumptions as data", blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
+			"cards": []any{}, "order": []any{}, "manual": []any{}, "blocking": []any{}, "warnings": []any{},
+			"assumptions": []any{
+				map[string]any{"id": "A2", "text": "The API keeps its routes.", "status": "unverified", "evidence": ""},
+				map[string]any{"id": "A1", "text": "The parser stays in Go.", "status": "verified", "evidence": "[S1] x.go"},
+			},
+		}}, "text", []string{"A2 (unverified) The API keeps its routes.", "A1 (verified: [S1] x.go) The parser stays in Go."}, false},
 		{"signoff marks the instruction card", blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
 			"cards":    []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing", "type": "feature", "priority": "medium", "writes": "AGENTS.md"}},
 			"order":    []any{"D1"},

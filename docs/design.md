@@ -264,7 +264,8 @@ personas/*.md      role text, one file per persona
 stages/*.md        instructions, one file per stage
 card.md            the card body template
 lists.yaml         data for mechanical checks: required sections, stripped headings,
-                   defect phrases, maintenance labels and verbs, forbidden content
+                   defect phrases, maintenance labels and verbs, forbidden content,
+                   dangling references
 ```
 
 - The default pack is embedded in the binary. The `pack` config key
@@ -399,6 +400,7 @@ release.
 | Required sections present, criteria numbered                       | mechanical                 |
 | No local paths, file URLs or another CM project's repository, as CM's self-containment lint finds them | mechanical (lists.yaml and list_projects) |
 | No defect phrase or bug title verb in a card that is not a bug; no criteria under a stripped heading | mechanical (lists.yaml) |
+| No phrase pointing at text the card does not carry, such as "as noted above" | mechanical (lists.yaml) |
 | Every path and symbol in Where exists at the recorded sha          | mechanical (code tool)     |
 | `depends_on` graph acyclic within each project                     | mechanical                 |
 | Every acceptance criterion of the slice maps to exactly one card   | mechanical                 |
@@ -427,7 +429,9 @@ resolves, first match winning, from the blueprint's latest
 makes it `auto`), then the pack. Until the responder run exists, a question
 under `auto` returns to the stage at once, the stage decides itself, and the
 question stays in the blueprint's event log; until the reviewer run exists,
-an `auto` gate approves on its own.
+an `auto` gate approves on its own. Only a stage that declares the
+`assumptions` check records what it decides as data, so only those
+decisions reach the sign-off and the cards.
 
 | Policy  | Questions                                                                                   | Gates                                                                 |
 | ------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -439,9 +443,26 @@ have answered (the product owner for intake questions, the system designer for
 design questions). It gets the need, the artifacts so far and the read tools,
 never the asker's transcript, so the asker cannot answer itself conveniently.
 It returns the answer and its reasoning. When it cannot ground the answer, it
-still decides and marks the assumption `unverified`. Sign-off lists every
-unverified assumption. The export and the playbook description list every
-assumption, so whoever reviews the result sees which decisions the AI made.
+still decides and marks the assumption `unverified`. The sign-off and the
+playbook description list every assumption, and the export carries them in
+the artifact data and in the sign-off event, so whoever reviews the result
+sees which decisions the AI made.
+
+**Assumptions are data.** A stage that declares the `assumptions` check
+(intake) submits each assumption as a standalone sentence; one that points
+at other text (the `dangling_references` list) is refused, and the third
+failing submit is accepted as it is. The controller numbers them A1, A2, ...
+across those stages in pack order and gives every later stage that
+consumes a stating stage the list with the ids. A later stage (grounding)
+submits verdicts, verified or contradicted with evidence, as new artifact
+data, never an update. A verdict counts only when it is newer than the
+assumptions it judges (the latest artifacts of the stating stages up to the
+assumption's own), so a re-run's assumptions read unverified until
+grounding judges them again. The sign-off (unverified first), the playbook
+description and a single card's Context list every assumption with its
+latest status. When no stage stated any as data, as with an intake stored
+before assumptions were data, they show the text of intake's Assumptions
+section instead, without ids or statuses.
 
 Later policy: `jira` (question posted as a comment; after two reminders
 without a reply it falls through to `auto`, logged as such).
@@ -528,9 +549,12 @@ Then, in order:
    it lints it, the readiness checks mirror its lint, and the outcomes stage
    learns from what slips through.
 3. **Playbook**, for two or more cards: card and manual entries in draft
-   order, the draft's title, and a description with intake's problem, value
-   and assumptions. A single card carries the problem and the assumptions in
-   its Context section, and its manual checks are listed in the session.
+   order, the draft's title, and a description with intake's problem and
+   value and every assumption with its latest status, with a Sources
+   section naming the repositories of every project its cards are in. A
+   single card carries the problem and the assumptions with their status
+   in its Context section, and its manual checks are listed in the
+   session.
 4. The blueprint's trees are removed and its state is `emitted`. Running is
    a human action in CM, or in yolo mode `run_card` for one card and
    `run_playbook` for several, started once and recorded in `emissions`.

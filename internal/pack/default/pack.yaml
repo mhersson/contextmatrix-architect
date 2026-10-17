@@ -1,11 +1,12 @@
 name: default
-version: "0.5"
+version: "0.6"
 stages:
   - id: intake
     persona: product_owner
     produces: need
     policy: human
     max_questions: 3
+    checks: [assumptions]
   - id: design
     source: human
     produces: design
