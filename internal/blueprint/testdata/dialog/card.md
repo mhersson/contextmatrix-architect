@@ -8,7 +8,7 @@ understands it. For a bug: the root-cause hypothesis and its evidence.
 The files, functions and types in this repository the change touches,
 verified at the recorded commit. For a wiring change, every call site.
 
-## Change
+## Solution
 
 The decided approach. Every decision is made; never "A or B". Binding
 constraints are restated under Acceptance criteria, because nothing else

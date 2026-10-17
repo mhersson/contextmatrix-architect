@@ -1,7 +1,7 @@
 required_sections:
   - Context
   - Where
-  - Change
+  - Solution
   - Acceptance criteria
   - Tests expected
   - Out of scope

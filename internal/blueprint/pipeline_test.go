@@ -205,7 +205,7 @@ func goodCards() map[string]any {
 	return map[string]any{
 		"cards": []any{map[string]any{
 			"id": "D1", "project": "alpha", "title": "Add the thing", "type": "feature", "depends_on": []any{},
-			"body":  "## Context\nwhy\n## Where\ninternal/x.go\n## Change\nadd\n## Acceptance criteria\n1. go test ./... passes.\n## Tests expected\nTestThing.\n## Out of scope\nrest.\n",
+			"body":  "## Context\nwhy\n## Where\ninternal/x.go\n## Solution\nadd\n## Acceptance criteria\n1. go test ./... passes.\n## Tests expected\nTestThing.\n## Out of scope\nrest.\n",
 			"where": []any{map[string]any{"path": "internal/x.go", "symbol": "Thing"}},
 		}},
 		"order": []any{"D1"},

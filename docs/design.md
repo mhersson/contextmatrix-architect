@@ -398,6 +398,7 @@ Verified against `contextmatrix-agent` at harness v0.25.0.
 - The task-skill menu reaches the coder, fix, document and specialist prompts,
   not the planner.
 - The root `AGENTS.md`, else `CLAUDE.md`, is injected verbatim into every phase.
+- A non-empty `## Solution` skips the HITL brainstorm.
 
 These facts are data in `lists.yaml` and must be re-verified on every agent
 release.
@@ -428,7 +429,7 @@ release.
 | ------------------- | ---------------------------------------------------------------------------------------------------------- |
 | Context             | Why, written into the card. For a bug, the root-cause hypothesis and its evidence.                          |
 | Where               | Files, functions and types in this repo, verified at a sha. For wiring changes, every call site.            |
-| Change              | The decided approach. Binding constraints are restated in the criteria, since nothing else reaches review. |
+| Solution            | The decided approach. Binding constraints are restated in the criteria, since nothing else reaches review. |
 | Acceptance criteria | Numbered. Each is a test or command checkable in the working tree.                                         |
 | Tests expected      | The test cases to write.                                                                                   |
 | Out of scope        | Explicit non-goals.                                                                                        |

@@ -42,7 +42,7 @@ Setup is work the cards carry, never a reason to stop. Read repo_info:
   repository root, covering the stack, the verify command, the layout and
   the conventions the other cards follow. Name that card in
   `setup.<project>.instruction_card`, and make every other card of the
-  project depend on it. Its Change section and criteria say what AGENTS.md
+  project depend on it. Its Solution section and criteria say what AGENTS.md
   holds.
 - An empty repository has no files yet. `where` lists only paths that
   exist, so its cards name the files they create in the Where section and
