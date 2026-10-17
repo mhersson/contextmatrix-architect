@@ -6,23 +6,26 @@ chat panel is its client. See `docs/design.md`.
 
 ## What it does today
 
-A blueprint session runs intake on the first message, the need. Slicing
-then cuts the need into slices and waits at its gate, which folds into
-solution design's when there is one slice and both gates have the same
-policy. Solution design asks its questions and waits at its gate, and
-grounding, decomposition and readiness run in turn over read-only checkouts
-of the target projects' repositories. Every decomposition submit is checked against the card contract inside the
-run, and readiness sends cards that are not ready back to decomposition for up
-to three rounds. The session then reports whether the cards are ready. Ready
-cards go to sign-off: reply approve to create them in ContextMatrix, with a
-playbook for two or more, or reject with feedback to re-run decomposition. The
+A blueprint session runs intake on the first message, the need. Slicing then
+cuts the need into slices and waits at its gate, which folds into solution
+design's when there is one slice and both gates have the same policy. Solution
+design asks its questions and waits at its gate, and grounding, acceptance,
+decomposition and readiness run in turn; solution design, grounding,
+decomposition and readiness work over read-only checkouts of the target
+projects' repositories, and acceptance writes the criteria each card must
+carry. Every decomposition submit is checked against the card contract inside
+the run, including that every criterion maps to exactly one card, and
+readiness sends cards that are not ready back to decomposition for up to three
+rounds. The session then reports whether the cards are ready. Ready cards go
+to sign-off: reply approve to create them in ContextMatrix, with a playbook
+for two or more, or reject with feedback to re-run decomposition. The
 auto+emit and yolo modes approve on their own when the preflight finds nothing
 that needs a human first; manual steps it lists are shown with the emitted
-cards. In yolo mode the architect then starts the run: one card with
-run_card, several with run_playbook. If a card's repository has no commits it
-waits for a first commit and a reply of approve. While the session is open the
-architect watches the emitted cards and playbook in ContextMatrix and posts
-each change, ending with the pull requests and compare links.
+cards. In yolo mode the architect then starts the run: one card with run_card,
+several with run_playbook. If a card's repository has no commits it waits for
+a first commit and a reply of approve. While the session is open the architect
+watches the emitted cards and playbook in ContextMatrix and posts each change,
+ending with the pull requests and compare links.
 
 ## Run
 

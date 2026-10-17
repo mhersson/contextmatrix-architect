@@ -30,16 +30,24 @@ stages:
     produces: grounding
     consumes: [intake, slicing, solution_design]
     tools: [code, cm]
+  - id: acceptance
+    persona: senior_developer
+    produces: acceptance
+    consumes: [intake, slicing, solution_design, grounding]
+    checks: [criteria]
+    policy: auto
+    gate: true
+    reviewer: {persona: senior_developer, threshold: 4}
   - id: decomposition
     persona: senior_developer
     produces: cards
-    consumes: [intake, slicing, solution_design, grounding]
+    consumes: [intake, slicing, solution_design, grounding, acceptance]
     tools: [code]
     checks: [cards]
   - id: readiness
     persona: reviewer
     produces: readiness
-    consumes: [intake, slicing, solution_design, grounding, decomposition]
+    consumes: [intake, slicing, solution_design, grounding, acceptance, decomposition]
     tools: [code, cm]
     loops_to: decomposition
     max_rounds: 3

@@ -128,33 +128,51 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 		designed[strings.TrimSpace(s.ID)] = true
 	}
 
-	if st, ok := c.opts.Pack.Stage(stageID); ok {
-		for _, id := range st.Consumes {
-			consumed, _ := c.opts.Pack.Stage(id)
-			if !slices.Contains(consumed.Checks, pack.CheckSlices) {
-				continue
-			}
-
-			art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, id)
-
-			switch {
-			case errors.Is(err, store.ErrNotFound):
-				continue
-			case err != nil:
-				return nil, fmt.Errorf("read %s: %w", id, err)
-			}
-
-			for _, sliceID := range sliceIDs(art) {
-				if !designed[sliceID] {
-					out = append(out, problem(sliceID, "slice_missing", id+"'s slice has no design"))
-				}
-			}
-		}
+	missing, err := c.missingSlices(ctx, bp, stageID, designed)
+	if err != nil {
+		return nil, err
 	}
+
+	out = append(out, missing...)
 
 	for _, tag := range own {
 		if !used[tag] {
 			out = append(out, problem(tag, "unused_answer", "the question was answered, but no decision rests on it"))
+		}
+	}
+
+	return out, nil
+}
+
+// missingSlices reports every slice of a slicing stageID consumes that
+// present lacks; a slicing without an artifact has none.
+func (c *Controller) missingSlices(ctx context.Context, bp store.Blueprint, stageID string, present map[string]bool) ([]string, error) {
+	st, ok := c.opts.Pack.Stage(stageID)
+	if !ok {
+		return nil, nil
+	}
+
+	var out []string
+
+	for _, id := range st.Consumes {
+		consumed, _ := c.opts.Pack.Stage(id)
+		if !slices.Contains(consumed.Checks, pack.CheckSlices) {
+			continue
+		}
+
+		art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, id)
+
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			continue
+		case err != nil:
+			return nil, fmt.Errorf("read %s: %w", id, err)
+		}
+
+		for _, sliceID := range sliceIDs(art) {
+			if !present[sliceID] {
+				out = append(out, problem(sliceID, "slice_missing", id+"'s slice is missing here"))
+			}
 		}
 	}
 

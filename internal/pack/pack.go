@@ -37,6 +37,9 @@ const (
 	// CheckSlices checks a slicing's slices: at least one, unique ids, a
 	// title each, target projects only.
 	CheckSlices = "slices"
+	// CheckCriteria checks acceptance's criteria and manual checks, and
+	// makes decomposition map every criterion to exactly one card.
+	CheckCriteria = "criteria"
 )
 
 // Responder policies: who answers a stage's questions and decides its gate.
@@ -355,7 +358,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	}
 
 	for _, check := range s.Checks {
-		if check != CheckCards && check != CheckAssumptions && check != CheckDecisions && check != CheckSlices {
+		if check != CheckCards && check != CheckAssumptions && check != CheckDecisions && check != CheckSlices && check != CheckCriteria {
 			return fmt.Errorf("pack: stage %q: unknown check %q", s.ID, check)
 		}
 	}

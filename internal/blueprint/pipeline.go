@@ -788,8 +788,11 @@ func (s *validatorState) last() []string {
 // read of ContextMatrix or the checkout that fails refuses the submit
 // without spending a round. The third failing submit is accepted with its
 // findings recorded, so the pipeline stops and reports instead of looping
-// until the run's turns are spent. A draft that does not decode is refused
-// without spending a round.
+// until the run's turns are spent. When the pack has acceptance, every
+// criterion must be carried by exactly one card of its project and every
+// manual check by a manual entry; acceptance data that does not decode is a
+// finding of its own. A draft that does not decode is refused without
+// spending a round.
 func (c *Controller) cardsValidator(sess *session, bp store.Blueprint) (func(context.Context, stage.Artifact) error, *validatorState) {
 	state := &validatorState{}
 	lists := c.opts.Pack.Lists()
@@ -808,6 +811,23 @@ func (c *Controller) cardsValidator(sess *session, bp store.Blueprint) (func(con
 		problems := draftProblems(draft)
 		for _, f := range contract.Check(draft, lists, projects) {
 			problems = append(problems, f.String())
+		}
+
+		acc, acceptanceID, found, err := c.acceptanceOf(ctx, bp.ID)
+		if err != nil {
+			return fmt.Errorf("the cards were not judged (%w); submit the same draft again", err)
+		}
+
+		switch {
+		case !found:
+		case acc.unreadable != nil:
+			problems = append(problems, problem(acceptanceID, "criteria_unreadable", acc.unreadable.Error()))
+		case len(acc.criteria) == 0:
+			problems = append(problems, problem(acceptanceID, "criteria_empty", "acceptance defines no criterion, so nothing maps to the cards"))
+		default:
+			for _, f := range contract.CheckCriteria(draft, acc.criteria, acc.manual) {
+				problems = append(problems, f.String())
+			}
 		}
 
 		state.mu.Lock()

@@ -60,6 +60,8 @@ func dialogScript() stageScript {
 	s["slicing.review"] = passing()
 	s["solution_design"] = returns("# Design", goodDesign("assumption"))
 	s["solution_design.review"] = passing()
+	s["acceptance"] = returns("# Acceptance", goodAcceptance())
+	s["acceptance.review"] = passing()
 
 	return s
 }
@@ -172,7 +174,7 @@ func TestSolutionDesign_AConversationThenItsGate(t *testing.T) {
 	require.NoError(t, c.Message(ctx, "BP1", "approve", "m4"))
 	c.Wait("BP1")
 
-	assert.Equal(t, []string{"intake", "slicing", "solution_design", "grounding", "decomposition", "readiness"}, stagesRun(runner))
+	assert.Equal(t, []string{"intake", "slicing", "solution_design", "grounding", "acceptance", "decomposition", "readiness"}, stagesRun(runner))
 	assert.Equal(t, 1, ws.checkouts(), "grounding reads the tree solution design checked out")
 	assert.True(t, rec.has(EventSignOff))
 }

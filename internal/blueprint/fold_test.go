@@ -79,7 +79,7 @@ func TestFold_OneSliceFoldsIntoTheDesignGate(t *testing.T) {
 	require.NoError(t, c.Message(ctx, "BP1", "approve", "m2"))
 	c.Wait("BP1")
 
-	assert.Equal(t, []string{"slicing@1:fold", "slicing@1:approve", "solution_design@1:approve"}, gateRows(t, st))
+	assert.Equal(t, []string{"slicing@1:fold", "slicing@1:approve", "solution_design@1:approve", "acceptance@1:approve"}, gateRows(t, st))
 	assert.True(t, rec.has(EventSignOff))
 }
 
@@ -443,7 +443,7 @@ func TestFold_AnAutoGateHandsSlicingToTheDesignReviewer(t *testing.T) {
 	assert.Empty(t, inputsOf(runner, "slicing.review"), "slicing's review is folded into the design's")
 	assert.Len(t, inputsOf(runner, "solution_design.review"), 1)
 	assert.False(t, rec.has(EventGate))
-	assert.Equal(t, []string{"slicing@1:fold", "slicing@1:approve", "solution_design@1:approve"}, gateRows(t, st))
+	assert.Equal(t, []string{"slicing@1:fold", "slicing@1:approve", "solution_design@1:approve", "acceptance@1:approve"}, gateRows(t, st))
 }
 
 func TestSlicesValidator(t *testing.T) {

@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slices 0 and 1 are implemented, and slice 2 signs off ready cards, emits them and a playbook into CM and starts them in yolo mode, then reports their run. Slice 3's foundations are implemented: a responder policy per stage, gates after any gated stage, numbered and recorded questions, CM prompts, notes that reach later stages and assumptions with grounding's verdicts, reviewer runs with the critique loop, the auto responder, and the slicing and solution design stages with slicing's gate folding; the acceptance stage is design, and so is the export's commit to a repository (slice 4); the export writes the bundle under the state directory.
+Status: agreed design, 2026-10-15. Slices 0 and 1 are implemented, and slice 2 signs off ready cards, emits them and a playbook into CM and starts them in yolo mode, then reports their run. Slice 3's foundations are implemented: a responder policy per stage, gates after any gated stage, numbered and recorded questions, CM prompts, notes that reach later stages and assumptions with grounding's verdicts, reviewer runs with the critique loop, the auto responder, and the slicing, solution design and acceptance stages with slicing's gate folding; the export's commit to a repository is design (slice 4); the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -229,7 +229,7 @@ developer (DEV), reviewer (REV).
 | 8  | Sign-off        | human   | everything        | approval; then emission                                                                               | yes       |
 | -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   |
 
-The embedded pack holds intake, slicing, solution design, grounding, decomposition and readiness; acceptance is design. Sign-off is the controller's step after readiness (see Emission). Every stage is a model run; a design the user already has goes in the need or an answer, and solution design adopts it.
+The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign-off is the controller's step after readiness (see Emission). Every stage is a model run; a design the user already has goes in the need or an answer, and solution design adopts it.
 
 - Intake states the shape it expects (slices, projects involved). When its
   run completes, the controller posts the gate plan: who answers each
@@ -249,6 +249,12 @@ The embedded pack holds intake, slicing, solution design, grounding, decompositi
   basis (`Q<n>`, `S<n>` or `assumption`); and every question it got answered
   since the slicing it consumes was built is the basis of a decision; an
   answer from before a re-slice stays a basis it may cite.
+- Acceptance's submit is checked: it has slices, every slice of slicing
+  among them and each with at least one criterion; every criterion has an
+  id of its own, a target project and its text, and every manual check an
+  id of its own and its text. At decomposition, acceptance data that does
+  not decode (`criteria_unreadable`) or defines no criterion
+  (`criteria_empty`) is a contract finding, not a stalled run.
 - A gate folds when the pack's condition on its artifact holds and the gate
   it folds into has the same policy: the slicing gate folds into the
   solution design gate when there is exactly one slice. Folding is decided
@@ -378,6 +384,9 @@ release.
   the agent routes on the title's first word, whatever the type.
 - `skills` names the task skills the work needs.
 - `depends_on` within the project only.
+- `criteria` names the acceptance criteria the card carries. Every
+  criterion of a slice is carried by exactly one card of its project, and
+  every manual check of acceptance by a manual entry.
 
 **Body** (plain `##` sections)
 
@@ -433,7 +442,7 @@ release.
 | No phrase pointing at text the card does not carry, such as "as noted above" | mechanical (lists.yaml) |
 | Every path and symbol in Where exists at the recorded sha          | mechanical (code tool)     |
 | `depends_on` graph acyclic within each project                     | mechanical                 |
-| Every acceptance criterion of the slice maps to exactly one card   | mechanical                 |
+| Every acceptance criterion maps to exactly one card of its project, every manual check to a manual entry | mechanical (acceptance's artifact) |
 | Target project declares a repo                                     | mechanical (`list_projects`) |
 | A project without a verify command: the proposed command in every card's criteria | mechanical (`list_projects`) |
 | A repository without an instruction file: one card writes `AGENTS.md`, every other card of the project depends on it | mechanical (code tool) |
