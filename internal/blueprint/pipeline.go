@@ -447,24 +447,8 @@ func (c *Controller) report(ctx context.Context, sess *session, bp store.Bluepri
 func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.Stage) (string, error) {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "Target projects: %s\n\n", strings.Join(bp.Projects, ", "))
-
-	if len(st.Consumes) == 0 {
-		need, err := c.opts.Store.LatestArtifact(ctx, bp.ID, needStage)
-		if err != nil {
-			return "", fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
-		}
-
-		b.WriteString("Need:\n" + need.Body + "\n\n")
-	}
-
-	for _, id := range st.Consumes {
-		art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, id)
-		if err != nil {
-			return "", fmt.Errorf("blueprint: task for %s: input %s: %w", st.ID, id, err)
-		}
-
-		writeArtifact(&b, id, art)
+	if err := c.writeInputs(ctx, &b, bp, st, false, "task"); err != nil {
+		return "", err
 	}
 
 	if err := c.writeAnswered(ctx, &b, bp, st); err != nil {
@@ -603,11 +587,43 @@ func (c *Controller) writeAnsweredAfter(ctx context.Context, b *strings.Builder,
 
 	b.WriteString("## Questions this stage already asked\n\nThey are answered; use the answers and do not ask them again:\n\n")
 
-	for _, q := range own {
+	writeQuestions(b, own)
+
+	return nil
+}
+
+// writeQuestions lists answered questions, one tagged line and its answer each.
+func writeQuestions(b *strings.Builder, questions []store.Question) {
+	for _, q := range questions {
 		fmt.Fprintf(b, "- [%s] %s\n  Answer: %s\n", q.Tag(), q.Text, q.Answer)
 	}
 
 	b.WriteString("\n")
+}
+
+// writeInputs opens a task: the target projects, the need (always when
+// needAlways, else only for a stage that consumes nothing) and the latest
+// artifact of every stage st consumes. what names the task in an error.
+func (c *Controller) writeInputs(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pack.Stage, needAlways bool, what string) error {
+	fmt.Fprintf(b, "Target projects: %s\n\n", strings.Join(bp.Projects, ", "))
+
+	if needAlways || len(st.Consumes) == 0 {
+		need, err := c.opts.Store.LatestArtifact(ctx, bp.ID, needStage)
+		if err != nil {
+			return fmt.Errorf("blueprint: %s for %s: %w", what, st.ID, err)
+		}
+
+		b.WriteString("Need:\n" + need.Body + "\n\n")
+	}
+
+	for _, id := range st.Consumes {
+		art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, id)
+		if err != nil {
+			return fmt.Errorf("blueprint: %s for %s: input %s: %w", what, st.ID, id, err)
+		}
+
+		writeArtifact(b, id, art)
+	}
 
 	return nil
 }

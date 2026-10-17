@@ -15,8 +15,9 @@ import (
 // logEntryFor renders a controller event as a panel entry. A question or gate
 // a human answers carries a prompt, whose actions the panel shows as buttons
 // and whose replies come back as ordinary messages; the markdown stays the
-// readable fallback. Answers are echoed by CM itself and harness events reach
-// the hub through the bridge, so both are skipped here.
+// readable fallback. A human's answer is echoed by CM itself and harness
+// events reach the hub through the bridge, so both are skipped here; the
+// responder's answer is shown.
 func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	entry := protocol.LogEntry{Timestamp: e.Time, SessionID: e.BlueprintID}
 	if entry.Timestamp.IsZero() {
@@ -42,7 +43,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventQuestion:
 		if str(p["responder"]) == store.ResponderAuto {
 			entry.Type = "system"
-			entry.Content = fmt.Sprintf("Stage %s asked Q%.0f: %s Its policy is auto, so it decides this itself; the question stays in the blueprint's event log.", str(p["stage"]), num(p["number"]), str(p["text"]))
+			entry.Content = fmt.Sprintf("Stage %s asked Q%.0f: %s Its policy is auto.", str(p["stage"]), num(p["number"]), str(p["text"]))
 
 			break
 		}
@@ -337,6 +338,19 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		}
 
 		entry.Content = b.String()
+	case blueprint.EventAnswer:
+		// CM shows a human's answer as the message it was.
+		if str(p["responder"]) != store.ResponderAuto {
+			return protocol.LogEntry{}, false
+		}
+
+		grounded := "unverified, an assumption for the sign-off"
+		if g, _ := p["grounded"].(bool); g {
+			grounded = "grounded"
+		}
+
+		entry.Type = "text"
+		entry.Content = fmt.Sprintf("**Q%.0f, answered by the responder** (%s): %s\n\n%s", num(p["number"]), grounded, str(p["text"]), str(p["reasoning"]))
 	default:
 		return protocol.LogEntry{}, false
 	}

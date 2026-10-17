@@ -394,24 +394,8 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pack.Stage, art store.Artifact, attempt int) (string, error) {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "Target projects: %s\n\n", strings.Join(bp.Projects, ", "))
-
-	if len(st.Consumes) == 0 {
-		need, err := c.opts.Store.LatestArtifact(ctx, bp.ID, needStage)
-		if err != nil {
-			return "", fmt.Errorf("blueprint: review task for %s: %w", st.ID, err)
-		}
-
-		b.WriteString("Need:\n" + need.Body + "\n\n")
-	}
-
-	for _, id := range st.Consumes {
-		in, err := c.opts.Store.LatestArtifact(ctx, bp.ID, id)
-		if err != nil {
-			return "", fmt.Errorf("blueprint: review task for %s: input %s: %w", st.ID, id, err)
-		}
-
-		writeArtifact(&b, id, in)
+	if err := c.writeInputs(ctx, &b, bp, st, false, "review task"); err != nil {
+		return "", err
 	}
 
 	// The answers and the gate feedback are the user's directions; a

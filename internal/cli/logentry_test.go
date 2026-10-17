@@ -57,7 +57,10 @@ func TestLogEntryFor(t *testing.T) {
 		{"aborted", blueprint.Event{Kind: blueprint.EventAborted, BlueprintID: "S1"}, "system", nil, false},
 		{"exported", blueprint.Event{Kind: blueprint.EventExported, BlueprintID: "S1", Payload: map[string]any{"path": "/state/exports/S1/t", "files": 7}}, "system", []string{"/state/exports/S1/t", "7 files"}, false},
 		{"error", blueprint.Event{Kind: blueprint.EventError, BlueprintID: "S1", Payload: map[string]any{"message": "cost cap"}}, "stderr", []string{"cost cap"}, false},
-		{"answer is echoed by CM", blueprint.Event{Kind: blueprint.EventAnswer, BlueprintID: "S1"}, "", nil, true},
+		{"answer is echoed by CM", blueprint.Event{Kind: blueprint.EventAnswer, BlueprintID: "S1", Payload: map[string]any{"text": "helm", "responder": "human"}}, "", nil, true},
+		{"an auto answer", blueprint.Event{Kind: blueprint.EventAnswer, BlueprintID: "S1", Payload: map[string]any{
+			"number": 3, "text": "helm", "responder": "auto", "reasoning": "a chart exists [S1]", "grounded": true,
+		}}, "text", []string{"Q3", "helm", "a chart exists [S1]"}, false},
 		{"harness lines go through the bridge", blueprint.Event{Kind: blueprint.EventHarness, BlueprintID: "S1"}, "", nil, true},
 		{"CM ended the session itself", blueprint.Event{Kind: blueprint.EventEnded, BlueprintID: "S1"}, "", nil, true},
 		{"the watch's state is internal", blueprint.Event{Kind: blueprint.EventWatchState, BlueprintID: "S1", Payload: map[string]any{"cards": []any{}}}, "", nil, true},

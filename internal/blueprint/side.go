@@ -19,6 +19,9 @@ type sideRun struct {
 	attempt int
 	round   int
 	in      stage.Input
+	// parent is the sink of the in-flight run this one serves; it bounds this
+	// run's cap and is charged this run's cost.
+	parent *harnessSink
 }
 
 // refusal is why the cost cap refused a side run; nothing was written.
@@ -40,6 +43,14 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 	runCap, reason, err := c.runCap(bg, bp, s.stage, m)
 	if err != nil {
 		return stage.Output{}, err
+	}
+
+	if left, capped := s.parent.left(); capped {
+		if left <= 0 {
+			reason = fmt.Sprintf("the asking run's cost cap of %.2f USD is spent", s.parent.capUSD)
+		} else if runCap <= 0 || left < runCap {
+			runCap = left
+		}
 	}
 
 	if reason != "" {
@@ -89,6 +100,8 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 	}
 
 	usage := usageOf(m.price, out.Result)
+	s.parent.charge(usage.CostUSD)
+
 	status, endReason := store.RunDone, out.Result.Reason
 
 	switch {

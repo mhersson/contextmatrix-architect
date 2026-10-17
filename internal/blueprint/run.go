@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/mhersson/contextmatrix-harness/harness"
+	"github.com/mhersson/contextmatrix-harness/tools"
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
@@ -214,7 +215,10 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	in.Endpoint = sess.endpoint
 	in.MaxCostUSD = runCap
 	in.MaxTurns = c.opts.MaxTurns
-	in.Asker = &asker{c: c, bp: bp, stage: stageID, max: st.MaxQuestions, runID: runID, run: r, audit: au, asked: asked}
+	in.Asker = &asker{
+		c: c, bp: bp, stage: stageID, max: st.MaxQuestions, runID: runID, run: r, audit: au,
+		sess: sess, attempt: attempt, tools: in.Tools, sink: sink, asked: asked,
+	}
 	in.Events = sink
 	in.Secrets = sess.secrets()
 
@@ -280,10 +284,20 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		// one condition: the run cap was reached.
 		c.endRun(bg, runID, store.RunFailed, "max_cost", usage)
 		c.setState(bg, id, StateIdle)
+
+		spent, charged := sink.tally()
+		spent = max(spent, usage.CostUSD)
+
+		note := ""
+		if charged > 0 {
+			note = fmt.Sprintf(", %.2f USD of it for its responder runs", charged)
+		}
+
 		au.event(bg, Event{Kind: EventError, BlueprintID: id, RunID: runID, Payload: map[string]any{
-			"stage":   stageID,
-			"reason":  "max_cost",
-			"message": fmt.Sprintf("run cost cap %.2f USD reached after %.2f USD; the stage stopped", runCap, usage.CostUSD),
+			"stage":     stageID,
+			"reason":    "max_cost",
+			"spent_usd": spent,
+			"message":   fmt.Sprintf("run cost cap %.2f USD reached after %.2f USD%s; the stage stopped", runCap, spent, note),
 		}})
 	case ctx.Err() != nil:
 		// The harness reports a cancelled run as an error; abort and End
@@ -494,7 +508,7 @@ func cancelReason(ctx context.Context) string {
 // numbers each, refuses one past the stage's cap or with an option the
 // webhook would take as a command, parks the run on its slot until a
 // message answers it and records the answer. Under the stage's auto policy
-// it tells the stage to decide itself.
+// the responder answers it.
 type asker struct {
 	c     *Controller
 	bp    store.Blueprint
@@ -504,6 +518,13 @@ type asker struct {
 	runID int64
 	run   *run
 	audit audit
+	sess  *session
+	// attempt numbers the responder's runs with the asking run's attempt.
+	attempt int
+	// tools are the asking stage's tools, which its responder reads with.
+	tools []tools.Tool
+	// sink is the asking run's, which a responder's cost is charged to.
+	sink *harnessSink
 
 	// mu keeps one question open at a time, so two asks of one tool batch
 	// never share a number or the run's answer channel.
@@ -553,9 +574,19 @@ func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
 
 	if policy == pack.PolicyAuto {
 		payload["responder"] = store.ResponderAuto
+
+		// As the human path: an abort or End never starts a responder run.
+		a.c.mu.Lock()
+		err := ctx.Err()
+		a.c.mu.Unlock()
+
+		if err != nil {
+			return "", err
+		}
+
 		a.audit.event(bg, Event{Kind: EventQuestion, BlueprintID: a.bp.ID, RunID: a.runID, Payload: payload})
 
-		return "", errNoResponder
+		return a.respond(ctx, q, number)
 	}
 
 	payload["responder"] = store.ResponderHuman
@@ -642,6 +673,8 @@ type harnessSink struct {
 
 	mu    sync.Mutex
 	spent float64
+	// charged is the part of spent that served runs cost.
+	charged float64
 }
 
 func (s *harnessSink) Write(p []byte) (int, error) {
@@ -662,7 +695,7 @@ func (s *harnessSink) Write(p []byte) (int, error) {
 
 // account prices a usage line and stops the run once the cap is passed.
 func (s *harnessSink) account(line []byte) {
-	if s.price == nil || s.capUSD <= 0 || s.stop == nil {
+	if !s.capped() {
 		return
 	}
 
@@ -691,6 +724,52 @@ func (s *harnessSink) account(line []byte) {
 	if s.spent > s.capUSD {
 		s.stop(errCostCap)
 	}
+}
+
+// capped reports whether the sink enforces a cap: a priced model and a
+// positive cap. A nil sink enforces none.
+func (s *harnessSink) capped() bool {
+	return s != nil && s.price != nil && s.capUSD > 0 && s.stop != nil
+}
+
+// left is what the run cap has not spent; capped is false when the sink
+// enforces no cap.
+func (s *harnessSink) left() (float64, bool) {
+	if !s.capped() {
+		return 0, false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.capUSD - s.spent, true
+}
+
+// charge adds the cost of a run served on this run's behalf, and stops the
+// run once the cap is passed. A nil or uncapped sink ignores it.
+func (s *harnessSink) charge(usd float64) {
+	if !s.capped() {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.spent += usd
+	s.charged += usd
+
+	if s.spent > s.capUSD {
+		s.stop(errCostCap)
+	}
+}
+
+// tally is what the sink has priced, and how much of it was charged for
+// runs served on this run's behalf.
+func (s *harnessSink) tally() (spent, charged float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.spent, s.charged
 }
 
 func (s *harnessSink) isCanceled() bool {

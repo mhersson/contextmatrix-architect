@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slices 0 and 1 are implemented, and slice 2 signs off ready cards, emits them and a playbook into CM and starts them in yolo mode, then reports their run. Slice 3's foundations are implemented: a responder policy per stage, gates after any gated stage, numbered and recorded questions, CM prompts, notes that reach later stages and assumptions with grounding's verdicts, and reviewer runs with the critique loop; its responder runs and the slicing, solution design and acceptance stages are design, and so is the export's commit to a repository (slice 4); the export writes the bundle under the state directory.
+Status: agreed design, 2026-10-15. Slices 0 and 1 are implemented, and slice 2 signs off ready cards, emits them and a playbook into CM and starts them in yolo mode, then reports their run. Slice 3's foundations are implemented: a responder policy per stage, gates after any gated stage, numbered and recorded questions, CM prompts, notes that reach later stages and assumptions with grounding's verdicts, reviewer runs with the critique loop, and the auto responder; the slicing, solution design and acceptance stages are design, and so is the export's commit to a repository (slice 4); the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -30,7 +30,7 @@ commit and an `approve`.
 | gate          | A decision point after a stage: approve, or reject with feedback.                                   |
 | question      | Something a stage cannot decide alone, raised through `ask_human`.                                  |
 | responder     | Who answers a question or decides a gate: a human in the CM session, or the AI (`auto`).            |
-| persona       | The role a run plays: product owner, system designer, senior developer, reviewer, responder.        |
+| persona       | The role a run plays: product owner, system designer, senior developer, reviewer.                   |
 | pack          | A team's stages, personas, gate policies, checks and card template. Data, not code.                 |
 | source        | One external input a blueprint used, with its identity and version.                                 |
 | card contract | The rules a card must satisfy to be emitted. The core of this design.                               |
@@ -141,9 +141,8 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   stage's `human` policy its execution waits until the attached client
   answers, and the model's run continues with the answer as the tool result.
   No model is running while a human thinks; the run is parked on a channel.
-  Under `auto` it returns at once and the stage decides itself; the question
-  stays in the blueprint's event log, and the responder run that would answer
-  it is design.
+  Under `auto` a responder run answers inside the tool call (see
+  Interaction), and its answer is the tool result.
 - **A run ends on `submit_artifact`**, a terminal tool carrying the markdown
   body and the stage's structured yaml block. The controller stores the
   artifact and the full transcript.
@@ -273,7 +272,7 @@ pack.yaml          stage order; per stage: persona, source (model or human), con
                    reviewer's persona and threshold, the question cap, loop target
                    and rounds
 personas/*.md      role text, one file per persona
-stages/*.md        instructions, one file per stage, and review.md for every reviewer run
+stages/*.md        instructions, one file per stage, review.md for every reviewer run and responder.md for every responder run
 card.md            the card body template
 lists.yaml         data for mechanical checks: required sections, stripped headings,
                    defect phrases, maintenance labels and verbs, forbidden content,
@@ -439,26 +438,30 @@ round. The model-judged rows are the readiness stage.
 Every stage has one responder policy for its questions and its gate. It
 resolves, first match winning, from the blueprint's latest
 `gate <stage> human|auto` reply, then the mode (every mode but default
-makes it `auto`), then the pack. Until the responder run exists, a question
-under `auto` returns to the stage at once, the stage decides itself, and the
-question stays in the blueprint's event log. Only a stage that declares the
-`assumptions` check records what it decides as data, so only those
-decisions reach the sign-off and the cards.
+makes it `auto`), then the pack. A stage that declares the `assumptions`
+check records what it decides itself as data, and every responder answer is
+recorded as an assumption; only these reach the sign-off and the cards.
 
 | Policy  | Questions                                                                                   | Gates                                                                 |
 | ------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | `human` | Shown in the CM session as `Q<n>` with options, the recommended one marked; the run waits for the reply, which is recorded in `questions`. A stage asks at most its pack's `max_questions` per attempt, its builder rounds included; past it, and for an option the server would take as a command, `ask_human` returns an error and the stage decides. | Artifact shown with Approve and Reject; the reviewer's score and findings are shown with it; the reply, clicked or typed, is `approve` or `reject <feedback>`. |
-| `auto`  | A responder run answers. The answer is recorded as an `[assumption]` with responder `auto`. | The reviewer's score decides: approved at or above the threshold; below it the builder takes another round with the findings, three reviewer rounds per attempt, then a human decides. |
+| `auto`  | A responder run answers. The answer is recorded as an `[assumption]` with responder `auto`. The same `max_questions` applies; past it, `ask_human` returns an error and the stage decides. | The reviewer's score decides: approved at or above the threshold; below it the builder takes another round with the findings, three reviewer rounds per attempt, then a human decides. |
 
-**The responder run** is a separate harness run with the persona that would
-have answered (the product owner for intake questions, the system designer for
-design questions). It gets the need, the artifacts so far and the read tools,
-never the asker's transcript, so the asker cannot answer itself conveniently.
-It returns the answer and its reasoning. When it cannot ground the answer, it
-still decides and marks the assumption `unverified`. The sign-off and the
-playbook description list every assumption, and the export carries them in
-the artifact data and in the sign-off event, so whoever reviews the result
-sees which decisions the AI made.
+**The responder run** is a separate harness run with the persona of the
+stage that asks (the product owner for intake questions, the system designer
+for design questions) and `stages/responder.md`. It gets the need, the
+asking stage's inputs, the gate feedback the asking attempt addresses, the
+user's notes, every answer so far and that stage's read tools, never the
+asker's transcript, so the asker cannot answer itself conveniently. It
+returns the answer, its reasoning and whether it is grounded. When it cannot
+ground the answer it still decides, and the answer is recorded as an
+`unverified` assumption keyed by its question number (`Q<n>`; a grounded
+answer reads `verified`). The sign-off lists every assumption, unverified
+first; the export and the playbook description list every assumption, so
+whoever reviews the result sees which decisions the AI made. A responder
+that fails, and a pack without `stages/responder.md`, leave the question to
+the stage, which decides and records an assumption where it can. On a priced
+model a responder spends from the asking run's cost cap.
 
 **Assumptions are data.** A stage that declares the `assumptions` check
 (intake) submits each assumption as a standalone sentence; one that points
@@ -713,13 +716,14 @@ Replies the server understands, besides answers to questions:
   head and tail kept, as in the chat backend.
 - Cost: every run's token buckets are priced at the model price CM sends in
   the start payload; the ledger sums runs per blueprint. The per-run cap
-  (off at zero) stops a run within one model call of passing it, and a
-  capped blueprint whose model has no price does not run. An unpriced model on an uncapped blueprint
-  counts only the cost the endpoint reports, and max_turns still bounds every
-  run. CM prices only the session model, so a run on a per-persona override
-  is unpriced: a capped blueprint refuses it, an uncapped one counts the
-  reported cost. A critique round re-bills the conversation so far; the
-  ledger counts it.
+  (off at zero) stops a run within one model call of passing it, on a priced
+  model a responder run spends from the asking run's cap, and a capped
+  blueprint whose model has no price does not run. An unpriced model on an
+  uncapped blueprint counts only the cost the endpoint reports, and
+  max_turns still bounds every run. CM prices only the session model, so a
+  run on a per-persona override is unpriced: a capped blueprint refuses it,
+  an uncapped one counts the reported cost. A critique round re-bills the
+  conversation so far; the ledger counts it.
 - Every stage run compacts in its window: once a prompt reaches 85% of a
   128000-token window, the harness summarizes the older turns, keeps the
   last six messages and goes on. A model with a smaller window fails on the

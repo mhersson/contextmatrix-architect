@@ -21,8 +21,9 @@ const (
 	CommandGate   = "gate"
 )
 
-// errNoResponder tells a stage whose policy is auto to decide a question
-// itself; ask_human returns it as a tool error and the run goes on.
+// errNoResponder tells a stage whose policy is auto, in a pack without
+// stages/responder.md, to decide a question itself; ask_human returns it as
+// a tool error and the run goes on.
 var errNoResponder = errors.New("nobody answers this stage's questions under its auto policy; decide yourself and, where this stage records assumptions, record the decision as one")
 
 // ParseCommand recognises a reply that is a command rather than text for

@@ -70,6 +70,7 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		{"grounded", blueprint.EventGrounded, nil, false},
 		{"note that re-runs a stage", blueprint.EventNote, map[string]any{"during_run": false, "retries": "grounding"}, false},
 		{"error", blueprint.EventError, nil, true},
+		{"a refused responder, the stage runs on", blueprint.EventError, map[string]any{"reason": "responder_refused"}, false},
 		{"note on an idle blueprint", blueprint.EventNote, map[string]any{"during_run": false}, true},
 		{"note while a stage runs", blueprint.EventNote, map[string]any{"during_run": true}, false},
 		{"aborted", blueprint.EventAborted, nil, true},

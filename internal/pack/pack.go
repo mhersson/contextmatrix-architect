@@ -117,6 +117,7 @@ type Pack struct {
 	lists        contract.Lists
 	card         string
 	review       string
+	responder    string
 }
 
 // LoadEmbedded loads the pack compiled into the binary.
@@ -268,6 +269,13 @@ func load(fsys fs.FS) (*Pack, error) {
 	}
 
 	p.review = string(review)
+
+	responder, err := optionalFile(fsys, path.Join("stages", responderInstructions+".md"), "", "")
+	if err != nil {
+		return nil, err
+	}
+
+	p.responder = string(responder)
 
 	return p, nil
 }
@@ -495,3 +503,7 @@ func (p *Pack) CardTemplate() string { return p.card }
 // ReviewInstructions returns what every reviewer run reads; empty when no
 // stage declares a reviewer and the pack carries none.
 func (p *Pack) ReviewInstructions() string { return p.review }
+
+// ResponderInstructions returns what every responder run reads; empty when
+// the pack has none, and then an auto question returns to its stage.
+func (p *Pack) ResponderInstructions() string { return p.responder }

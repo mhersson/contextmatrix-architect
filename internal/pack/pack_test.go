@@ -302,3 +302,13 @@ func TestLoad_AcceptsTheAssumptionsCheck(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"see above"}, p.Lists().DanglingReferences)
 }
+
+func TestLoad_ResponderInstructionsAreOptional(t *testing.T) {
+	p, err := load(packFS("", nil))
+	require.NoError(t, err)
+	assert.Empty(t, p.ResponderInstructions(), "no responder without its instructions")
+
+	p, err = load(packFS("", map[string]string{"stages/responder.md": "answer it"}))
+	require.NoError(t, err)
+	assert.Equal(t, "answer it", p.ResponderInstructions())
+}
