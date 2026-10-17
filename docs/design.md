@@ -163,7 +163,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status, model, started, ended, cost, token buckets |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results, reviewer score                   |
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag, the answering message, answered at; written once, at the answer |
-| gates         | append-only: blueprint, stage, the judged artifact's version, decision (approve, reject), feedback, responder (human, auto), decided at |
+| gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted                                                                     |
 | events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning |
 | sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage |
@@ -260,10 +260,11 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
   carry `lists.yaml` and `card.md`; the loader refuses it otherwise, so an
   override pack cannot silently disable the card contract.
 - A gated stage declares a reviewer, so an auto gate has a decider once
-  reviewer runs exist. A reviewer or a fold needs a gate, a fold needs a
-  later gate to fold into, and a loop stage takes no gate. The loader
-  refuses a pack that breaks one of these, and one whose `gate` is not true
-  or false, such as a pack from before version 0.5 with `gate: questions`.
+  reviewer runs exist. Until then an auto gate approves on its own. A
+  reviewer or a fold needs a gate, a fold needs a later gate to fold into,
+  and a loop stage takes no gate. The loader refuses a pack that breaks one
+  of these, and one whose `gate` is not true or false, such as a pack from
+  before version 0.5 with `gate: questions`.
 - No include mechanism. Each file stands alone; shared text is duplicated. If
   that hurts, build-time expansion comes later.
 - A stage's responder policy comes from the pack; the mode and the
@@ -411,7 +412,8 @@ resolves, first match winning, from the blueprint's latest
 `gate <stage> human|auto` reply, then the mode (every mode but default
 makes it `auto`), then the pack. Until the responder run exists, a question
 under `auto` returns to the stage at once, the stage decides itself, and the
-question stays in the blueprint's event log.
+question stays in the blueprint's event log; until the reviewer run exists,
+an `auto` gate approves on its own.
 
 | Policy  | Questions                                                                                   | Gates                                                                 |
 | ------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -574,9 +576,9 @@ Replies the server understands, besides answers to questions:
 
 | Reply                         | Effect                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
-| `approve`, `reject <feedback>` | Decides the sign-off: approve emits, and resumes an emission that stopped; reject re-runs decomposition with the feedback. Only after the pipeline ends ready; before that the text is an answer, the design or a note. |
-| `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next question or gate on; an open question keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none; a human-sourced stage takes none either. |
-| `export`                      | Writes the markdown bundle (blueprint summary with the sign-off decisions and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
+| `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition with the feedback. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is an answer, the need, the design or a note. |
+| `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next question or gate on; an open question or gate keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none; a human-sourced stage takes none either. |
+| `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
 | `lessons`                     | Lists lessons and their state.                                          |
 | `abort`                       | Ends the open run; the blueprint stays and can be reopened.             |
@@ -587,7 +589,8 @@ Replies the server understands, besides answers to questions:
   but which never started runs, and a human-sourced stage that waits shows
   its prompt again. Completed artifacts are never lost. A record the pack
   cannot place, such as a stage the pack no longer has, is reported in the
-  session and nothing runs. An open sign-off is shown again as it was, an
+  session and nothing runs. An open gate or sign-off is shown again as it
+  was, a gate that was never shown opens under the policy now in effect, an
   emission a restart cut short resumes, a stopped one waits for approve, an
   emitted blueprint's watch restarts, and nothing is created or started
   twice. CM sends the start again after the architect restarts, when a

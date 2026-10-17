@@ -221,11 +221,12 @@ func effectivePrice(p *protocol.ModelPrice) *protocol.ModelPrice {
 // Start attaches a session to the blueprint with in.ID, creating it on first
 // sight. A stage left running by a crash is marked interrupted and re-run, a
 // stage whose inputs were stored but which never started runs, and a
-// human-sourced stage that waits shows its prompt again. At a ready end an
-// open sign-off is shown again or, never shown, runs; an emission a restart
-// cut short resumes, a stopped one is reminded of approve, and an emitted
-// blueprint's watch restarts. Start on a session already attached does
-// nothing.
+// human-sourced stage that waits shows its prompt again. An open gate is
+// shown again, or, never shown, opened under the policy now in effect. At a
+// ready end an open sign-off is shown again or, never shown, runs; an
+// emission a restart cut short resumes, a stopped one is reminded of
+// approve, and an emitted blueprint's watch restarts. Start on a session
+// already attached does nothing.
 func (c *Controller) Start(ctx context.Context, in StartInput) error {
 	in.Price = effectivePrice(in.Price)
 
@@ -290,6 +291,12 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 
 	if next.end {
 		c.resumeEnd(runCtx, r, sess, bp, next)
+
+		return nil
+	}
+
+	if next.gate {
+		c.resumeGate(runCtx, r, sess, bp, next)
 
 		return nil
 	}
@@ -539,7 +546,7 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 		return fmt.Errorf("blueprint: export: %w", err)
 	}
 
-	if bundle.Gates, err = c.opts.Store.ListGates(ctx, id, signoffStage); err != nil {
+	if bundle.Gates, err = c.opts.Store.AllGates(ctx, id); err != nil {
 		return fmt.Errorf("blueprint: export: %w", err)
 	}
 

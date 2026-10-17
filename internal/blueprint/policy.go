@@ -44,8 +44,8 @@ func ParseCommand(text string) (string, []string) {
 }
 
 // SetPolicy records a stage's responder policy for this blueprint, for its
-// questions and its gate, from the next one on: a question already open
-// keeps the responder it was put to. The sign-off follows the mode, a
+// questions and its gate, from the next one on: a question or gate already
+// open keeps the responder it was put to. The sign-off follows the mode, a
 // human-sourced stage takes no policy and an unknown stage is refused; each
 // is reported and never stored as a policy. Like export, it works while a
 // stage runs.
@@ -80,8 +80,11 @@ func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID s
 	default:
 		payload["stage"] = st.ID
 
-		if openStage == st.ID {
+		switch {
+		case openStage == st.ID:
 			payload["open"] = "question"
+		case !running && c.gateOpenAt(ctx, id, st.ID):
+			payload["open"] = "gate"
 		}
 	}
 
@@ -100,6 +103,27 @@ func (c *Controller) stageNamed(name string) (pack.Stage, bool) {
 	}
 
 	return pack.Stage{}, false
+}
+
+// gateOpenAt reports whether stageID's gate is open, the blueprint waiting
+// on its decision. A record that cannot be read reports no open gate and is
+// logged: it only drops a hint.
+func (c *Controller) gateOpenAt(ctx context.Context, id, stageID string) bool {
+	bp, err := c.opts.Store.GetBlueprint(ctx, id)
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: read the blueprint for an open gate", "blueprint", id, "stage", stageID, "error", err)
+
+		return false
+	}
+
+	out, _, err := c.position(ctx, bp)
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: read the position for an open gate", "blueprint", id, "stage", stageID, "error", err)
+
+		return false
+	}
+
+	return out.gate && out.stage == stageID
 }
 
 // modelStages names the pack's model stages in order: the stages a gate

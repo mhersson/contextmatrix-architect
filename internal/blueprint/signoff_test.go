@@ -198,6 +198,11 @@ func TestSignoff_AutoEmitStopsForAHumanOnAWarning(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, true, so.Payload["auto_stopped"])
 	assert.NotEmpty(t, so.Payload["warnings"])
+
+	actions := anyList(so.Payload["actions"])
+	require.Len(t, actions, 2)
+	assert.Equal(t, "Approve and override warnings", actions[0].(map[string]any)["label"])
+	assert.Equal(t, "approve", actions[0].(map[string]any)["reply"])
 }
 
 func TestSignoff_TheAutoModeStillWaitsForAHuman(t *testing.T) {
@@ -373,29 +378,6 @@ func TestSignoff_AnAbortBeforeThePreflightStillShowsTheSignOff(t *testing.T) {
 	gates, err := st.ListGates(ctx, "BP1", signoffStage)
 	require.NoError(t, err)
 	assert.Empty(t, gates)
-}
-
-func TestParseReject(t *testing.T) {
-	cases := []struct {
-		name, text, feedback string
-		ok                   bool
-	}{
-		{"plain", "reject split it", "split it", true},
-		{"multi-line", "reject\n- split D1\n- add tests", "- split D1\n- add tests", true},
-		{"tab", "reject\tsplit it", "split it", true},
-		{"bare", "reject", "", true},
-		{"capitalised", "Reject split it", "split it", true},
-		{"longer word", "rejected foo", "", false},
-		{"other", "approve", "", false},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			feedback, ok := parseReject(tc.text)
-			assert.Equal(t, tc.ok, ok)
-			assert.Equal(t, tc.feedback, feedback)
-		})
-	}
 }
 
 // slowCM holds ListPlaybooks, the last call of the preflight, until release, so a test can abort while the

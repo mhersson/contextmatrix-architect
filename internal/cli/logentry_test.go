@@ -111,6 +111,21 @@ func TestLogEntryFor(t *testing.T) {
 		}}, "text", []string{"ALPHA-001", "set verify command `go test ./...` on project alpha in ContextMatrix"}, false},
 		{"decided by the mode", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{"decision": "approve", "responder": "auto"}}, "system", []string{"needs a human first"}, false},
 		{"decided reject", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{"decision": "reject", "responder": "human", "feedback": "split it"}}, "system", []string{"Rejected"}, false},
+		{"gate", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "shape", "version": 2, "actions": []any{
+				map[string]any{"label": "Approve", "reply": "approve", "feedback": false},
+				map[string]any{"label": "Reject", "reply": "reject", "feedback": true},
+			},
+		}}, "text", []string{"shape", "`approve`", "`reject <feedback>`"}, false},
+		{"decided at a stage's gate", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "shape", "decision": "approve", "responder": "human",
+		}}, "system", []string{"shape"}, false},
+		{"rejected at a stage's gate", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "shape", "decision": "reject", "responder": "human", "feedback": "smaller",
+		}}, "system", []string{"shape"}, false},
+		{"gate reply at an open gate", blueprint.Event{Kind: blueprint.EventPolicy, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "shape", "policy": "auto", "open": "gate",
+		}}, "system", []string{"approve or reject"}, false},
 		{"note with a hint", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "hm", "hint": "Reply approve or reject."}}, "system", []string{"Reply approve or reject."}, false},
 	}
 	for _, tc := range cases {

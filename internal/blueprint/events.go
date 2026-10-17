@@ -74,8 +74,11 @@ const (
 	// EventSignOff shows the ready cards, the preflight result and how to
 	// decide; the blueprint waits for approve or reject.
 	EventSignOff = "signoff"
-	// EventDecided records a sign-off decision, by a human or the emitting
-	// mode's automatic approval.
+	// EventGate shows a stage's gate: the stage, the version of its artifact
+	// that waits, and the replies that decide it.
+	EventGate = "gate"
+	// EventDecided records a decision at a stage's gate or the sign-off, by a
+	// human or the auto policy.
 	EventDecided = "decided"
 	// EventEnded records that CM ended the session; the blueprint persists.
 	EventEnded = "session_ended"

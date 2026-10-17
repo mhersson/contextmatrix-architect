@@ -1848,6 +1848,8 @@ func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
 
 	_, err := st.AddGate(ctx, store.Gate{BlueprintID: "BP1", Stage: signoffStage, Version: 1, Decision: store.GateReject, Feedback: "split the card", Responder: store.ResponderHuman, DecidedAt: time.Now()})
 	require.NoError(t, err)
+	_, err = st.AddGate(ctx, store.Gate{BlueprintID: "BP1", Stage: "design", Version: 1, Decision: store.GateApprove, Responder: store.ResponderAuto, DecidedAt: time.Now()})
+	require.NoError(t, err)
 	require.NoError(t, st.AddEmission(ctx, store.Emission{BlueprintID: "BP1", Kind: store.EmitCard, DraftID: "D1", Project: "alpha", CMID: "ALPHA-042", CreatedAt: time.Now()}))
 
 	require.NoError(t, c.Export(ctx, "BP1", "m2"))
@@ -1885,6 +1887,8 @@ func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(summary), "split the card")
 	assert.Contains(t, string(summary), "ALPHA-042")
+	assert.Contains(t, string(summary), "| design | 1 | approve | auto |", "a stage's gate is listed beside the sign-off's")
+	assert.Contains(t, string(summary), "| signoff | 1 | reject | human |")
 }
 
 func TestExport_UnknownBlueprint(t *testing.T) {

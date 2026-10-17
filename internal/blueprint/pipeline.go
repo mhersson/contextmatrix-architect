@@ -21,10 +21,13 @@ import (
 const maxContractRounds = 3
 
 // outcome is what follows a stage: a model stage to run, a human-sourced
-// stage to await, or the pipeline's end with the artifact it ended on.
+// stage to await, the open gate of the stage that completed (gate, with
+// stage and art the artifact that waits), or the pipeline's end with the
+// artifact it ended on.
 type outcome struct {
 	stage    string
 	human    bool
+	gate     bool
 	end      bool
 	ready    bool
 	findings []string
@@ -84,6 +87,22 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 			return outcome{end: true, findings: findingsOf(art), art: art}, nil
 		}
 
+		// A gated stage's artifact waits at its gate: approved, what follows
+		// it runs; rejected, the stage runs again.
+		if st.Gate {
+			decision, err := c.gateDecision(ctx, bp.ID, st.ID, art.Version)
+			if err != nil {
+				return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
+			}
+
+			switch decision {
+			case "":
+				return outcome{stage: st.ID, gate: true, art: art}, nil
+			case store.GateReject:
+				return outcome{stage: st.ID}, nil
+			}
+		}
+
 		from = slices.IndexFunc(c.opts.Pack.Stages, func(s pack.Stage) bool { return s.ID == completed }) + 1
 		last = art
 	}
@@ -130,7 +149,7 @@ func (c *Controller) position(ctx context.Context, bp store.Blueprint) (outcome,
 	}
 
 	out, err := c.after(ctx, bp, completed)
-	if err != nil || out.stage == "" || out.human {
+	if err != nil || out.stage == "" || out.human || out.gate {
 		return out, "", err
 	}
 
@@ -150,9 +169,10 @@ func (c *Controller) position(ctx context.Context, bp store.Blueprint) (outcome,
 // started (a crash between storing one artifact and starting the next run),
 // or await a human-sourced stage, returned with human set. A failed or
 // aborted stage waits for the user's next message and an ended pipeline for
-// a new blueprint. A ready end is returned for the sign-off, emission or
-// watch to resume. A position the record does not yield is reported, not
-// returned: the session still attaches. The caller holds the run slot.
+// a new blueprint. An open gate is returned for the gate to resume. A ready
+// end is returned for the sign-off, emission or watch to resume. A position
+// the record does not yield is reported, not returned: the session still
+// attaches. The caller holds the run slot.
 func (c *Controller) resumePoint(ctx context.Context, au audit, bp store.Blueprint) (outcome, error) {
 	interrupted, err := c.interruptedStage(ctx, bp)
 	if err != nil || interrupted != "" {
@@ -167,6 +187,8 @@ func (c *Controller) resumePoint(ctx context.Context, au audit, bp store.Bluepri
 
 		return outcome{}, nil
 	case out.human:
+		return out, nil
+	case out.gate:
 		return out, nil
 	case out.end && out.ready && c.cardsStage() != "":
 		return out, nil
@@ -245,6 +267,10 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 		return c.paste(ctx, runCtx, r, sess, bp, out.stage, text, msgID)
 	}
 
+	if out.gate {
+		return c.atGate(ctx, runCtx, r, sess, bp, out, text, msgID)
+	}
+
 	if out.end && out.ready && c.cardsStage() != "" {
 		return c.atReadyEnd(ctx, runCtx, r, sess, bp, out, text, msgID)
 	}
@@ -311,20 +337,7 @@ func (c *Controller) paste(ctx, runCtx context.Context, r *run, sess *session, b
 		"stage": stageID, "version": version, "body": text, "source": pack.SourceHuman, "message_id": msgID,
 	}})
 
-	next, end := c.advance(ctx, sess, bp, stageID)
-	if end.ready {
-		c.launchEnd(runCtx, r, sess, bp, end)
-
-		return nil
-	}
-
-	if next == "" {
-		c.release(bp.ID, r)
-
-		return nil
-	}
-
-	c.launch(runCtx, r, sess, bp, next)
+	c.proceed(ctx, runCtx, r, sess, bp, stageID)
 
 	return nil
 }
@@ -332,6 +345,7 @@ func (c *Controller) paste(ctx, runCtx context.Context, r *run, sess *session, b
 // advance acts on what follows completed: it awaits a human-sourced stage,
 // reports an end, and returns the stage to run next, or the ready end the
 // caller hands to the sign-off when the pack has a stage that checks cards.
+// A gate is opened: shown, or decided under the auto policy and passed.
 // A failure to decide fails the blueprint.
 func (c *Controller) advance(ctx context.Context, sess *session, bp store.Blueprint, completed string) (string, outcome) {
 	out, err := c.after(ctx, bp, completed)
@@ -354,6 +368,8 @@ func (c *Controller) advance(ctx context.Context, sess *session, bp store.Bluepr
 		c.await(ctx, sess.audit, bp.ID, out.stage)
 
 		return "", outcome{}
+	case out.gate:
+		return c.openGate(ctx, sess, bp, out)
 	default:
 		return out.stage, outcome{}
 	}
@@ -371,8 +387,11 @@ func (c *Controller) report(ctx context.Context, sess *session, bp store.Bluepri
 	}})
 }
 
-// taskFor builds a stage's first user message from the artifacts it
-// consumes, in pack order, plus the loop findings when it is re-run.
+// taskFor builds a stage's first user message: the need for a stage that
+// consumes nothing, else the artifacts it consumes in pack order; for a
+// stage run again after a rejection at its gate, the rejected artifact and
+// every feedback; for a loop's target, its last submit and the loop's
+// findings.
 func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.Stage) (string, error) {
 	var b strings.Builder
 
@@ -384,9 +403,7 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.St
 			return "", fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
 		}
 
-		b.WriteString("Need:\n" + need.Body)
-
-		return b.String(), nil
+		b.WriteString("Need:\n" + need.Body + "\n\n")
 	}
 
 	for _, id := range st.Consumes {
@@ -398,8 +415,62 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.St
 		writeArtifact(&b, id, art)
 	}
 
-	// A stage re-run by a loop sees what it submitted last and the loop
-	// stage's verdict on it.
+	if st.Gate {
+		if err := c.writeGateFeedback(ctx, &b, bp, st); err != nil {
+			return "", err
+		}
+	}
+
+	if err := c.writeLoopFindings(ctx, &b, bp, st); err != nil {
+		return "", err
+	}
+
+	return b.String(), nil
+}
+
+// writeGateFeedback gives a stage run again after a rejection at its gate
+// the artifact that was rejected and the feedback of every rejection.
+func (c *Controller) writeGateFeedback(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pack.Stage) error {
+	feedback, err := c.gateFeedback(ctx, bp.ID, st.ID)
+	if err != nil {
+		return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
+	}
+
+	if len(feedback) == 0 {
+		return nil
+	}
+
+	rejected, err := c.opts.Store.LatestArtifact(ctx, bp.ID, st.ID)
+	if err != nil {
+		return fmt.Errorf("blueprint: task for %s: the rejected artifact: %w", st.ID, err)
+	}
+
+	// A later version approved at the gate was not rejected, and the
+	// feedback on earlier versions is already addressed in it.
+	decision, err := c.gateDecision(ctx, bp.ID, st.ID, rejected.Version)
+	if err != nil {
+		return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
+	}
+
+	if decision != store.GateReject {
+		return nil
+	}
+
+	writeArtifact(b, fmt.Sprintf("%s version %d, which was rejected at its gate", st.ID, rejected.Version), rejected)
+	b.WriteString("## Gate feedback\n\nEvery rejection at this stage's gate, oldest first; address all of it:\n\n")
+
+	for _, f := range feedback {
+		b.WriteString("- " + f + "\n")
+	}
+
+	b.WriteString("\n")
+
+	return nil
+}
+
+// writeLoopFindings gives a stage a loop re-runs what it submitted last,
+// the loop stage's verdict on it and the sign-off's feedback.
+func (c *Controller) writeLoopFindings(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pack.Stage) error {
 	for _, other := range c.opts.Pack.Stages {
 		if other.LoopsTo != st.ID {
 			continue
@@ -411,20 +482,20 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.St
 		case errors.Is(err, store.ErrNotFound):
 			continue
 		case err != nil:
-			return "", fmt.Errorf("blueprint: task for %s: findings of %s: %w", st.ID, other.ID, err)
+			return fmt.Errorf("blueprint: task for %s: findings of %s: %w", st.ID, other.ID, err)
 		}
 
 		judged, err := c.opts.Store.LatestArtifact(ctx, bp.ID, st.ID)
 		if err != nil {
-			return "", fmt.Errorf("blueprint: task for %s: the judged %s: %w", st.ID, st.ID, err)
+			return fmt.Errorf("blueprint: task for %s: the judged %s: %w", st.ID, st.ID, err)
 		}
 
-		writeArtifact(&b, fmt.Sprintf("%s version %d, which %s judged", st.ID, judged.Version, other.ID), judged)
-		writeArtifact(&b, fmt.Sprintf("%s findings (round %d)", other.ID, verdict.Version), verdict)
+		writeArtifact(b, fmt.Sprintf("%s version %d, which %s judged", st.ID, judged.Version, other.ID), judged)
+		writeArtifact(b, fmt.Sprintf("%s findings (round %d)", other.ID, verdict.Version), verdict)
 
-		feedback, err := c.rejectFeedback(ctx, bp.ID)
+		feedback, err := c.gateFeedback(ctx, bp.ID, signoffStage)
 		if err != nil {
-			return "", fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
+			return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
 		}
 
 		if len(feedback) > 0 {
@@ -438,7 +509,7 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.St
 		}
 	}
 
-	return b.String(), nil
+	return nil
 }
 
 // writeArtifact renders an artifact for a task: its body, then its data,

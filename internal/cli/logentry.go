@@ -101,17 +101,12 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventSignOff:
 		entry.Type = "text"
 		entry.Content = signoffText(p)
+	case blueprint.EventGate:
+		entry.Type = "text"
+		entry.Content = gateText(p)
 	case blueprint.EventDecided:
 		entry.Type = "system"
-
-		switch {
-		case str(p["decision"]) == "reject":
-			entry.Content = "Rejected. Decomposition runs again with your feedback."
-		case str(p["responder"]) == "auto":
-			entry.Content = "Preflight found nothing that needs a human first, so the mode approved the cards. Emission starts."
-		default:
-			entry.Content = "Approved. Emission starts."
-		}
+		entry.Content = decidedText(p)
 	case blueprint.EventAborted:
 		entry.Type = "system"
 		entry.Content = "Abort requested. Any running stage is canceled; the blueprint is kept and can be reopened."
@@ -489,6 +484,10 @@ func policyText(p map[string]any) string {
 		text += " Its open question stays with whoever it was put to."
 	}
 
+	if str(p["open"]) == "gate" {
+		text += " Its open gate stays as it is; decide it with approve or reject."
+	}
+
 	return text
 }
 
@@ -517,6 +516,50 @@ func gatePlanText(p map[string]any) string {
 	b.WriteString("\n\nReply `gate <stage> human` or `gate <stage> auto` to change a stage for this blueprint; it applies from the stage's next question or gate. The sign-off follows the mode.")
 
 	return b.String()
+}
+
+// gateText renders a stage's gate: which artifact waits and the replies
+// that decide it.
+func gateText(p map[string]any) string {
+	var replies []string
+
+	for _, a := range anyMaps(p["actions"]) {
+		reply := "`" + str(a["reply"])
+		if feedback, _ := a["feedback"].(bool); feedback {
+			reply += " <feedback>"
+		}
+
+		replies = append(replies, reply+"`")
+	}
+
+	return fmt.Sprintf("**Gate: %s, version %.0f.** The artifact above waits for your decision. Reply %s.",
+		str(p["stage"]), num(p["version"]), strings.Join(replies, " or "))
+}
+
+// decidedText renders a decision at a stage's gate or at the sign-off; a
+// decision without a stage is the sign-off's.
+func decidedText(p map[string]any) string {
+	reject, auto := str(p["decision"]) == "reject", str(p["responder"]) == "auto"
+
+	if stage := str(p["stage"]); stage != "" && stage != "signoff" {
+		switch {
+		case reject:
+			return fmt.Sprintf("Rejected %s; it runs again with your feedback.", stage)
+		case auto:
+			return fmt.Sprintf("%s passed its gate under the auto policy.", stage)
+		default:
+			return fmt.Sprintf("Approved %s.", stage)
+		}
+	}
+
+	switch {
+	case reject:
+		return "Rejected. Decomposition runs again with your feedback."
+	case auto:
+		return "Preflight found nothing that needs a human first, so the mode approved the cards. Emission starts."
+	default:
+		return "Approved. Emission starts."
+	}
 }
 
 // setupGapsText renders what grounding found the target projects lack for

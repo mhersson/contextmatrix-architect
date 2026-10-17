@@ -618,3 +618,24 @@ func TestListEventsOfKind(t *testing.T) {
 	assert.JSONEq(t, `{"n":1}`, string(got[0].Payload))
 	assert.JSONEq(t, `{"n":3}`, string(got[1].Payload))
 }
+
+func TestAllGates_EveryStageOldestFirst(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	for _, g := range []Gate{
+		{BlueprintID: "BP1", Stage: "shape", Version: 1, Decision: GateReject, Feedback: "smaller", Responder: ResponderHuman, DecidedAt: now},
+		{BlueprintID: "BP1", Stage: "signoff", Version: 1, Decision: GateApprove, Responder: ResponderHuman, DecidedAt: now},
+		{BlueprintID: "BP2", Stage: "shape", Version: 1, Decision: GateApprove, Responder: ResponderAuto, DecidedAt: now},
+	} {
+		_, err := s.AddGate(ctx, g)
+		require.NoError(t, err)
+	}
+
+	got, err := s.AllGates(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, "shape", got[0].Stage)
+	assert.Equal(t, "signoff", got[1].Stage)
+}

@@ -82,7 +82,7 @@ func blueprintMD(b Bundle) string {
 	fmt.Fprintf(&sb, "\nTotal recorded cost: %.4f USD\n", total)
 
 	if len(b.Gates) > 0 {
-		sb.WriteString("\n## Sign-off\n\n| Decided | Stage | Version | Decision | Responder | Feedback |\n|---|---|---|---|---|---|\n")
+		sb.WriteString("\n## Gates\n\n| Decided | Stage | Version | Decision | Responder | Feedback |\n|---|---|---|---|---|---|\n")
 
 		for _, g := range b.Gates {
 			fmt.Fprintf(&sb, "| %s | %s | %d | %s | %s | %s |\n",

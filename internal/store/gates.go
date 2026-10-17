@@ -46,8 +46,19 @@ func (s *Store) AddGate(ctx context.Context, g Gate) (int64, error) {
 
 // ListGates returns a blueprint's decisions at stage, oldest first.
 func (s *Store) ListGates(ctx context.Context, blueprintID, stage string) ([]Gate, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, blueprint_id, stage, version, decision, feedback, responder, decided_at
+	return s.listGates(ctx, `SELECT id, blueprint_id, stage, version, decision, feedback, responder, decided_at
 		FROM gates WHERE blueprint_id = ? AND stage = ? ORDER BY id`, blueprintID, stage)
+}
+
+// AllGates returns every decision of a blueprint, at every gate, oldest
+// first.
+func (s *Store) AllGates(ctx context.Context, blueprintID string) ([]Gate, error) {
+	return s.listGates(ctx, `SELECT id, blueprint_id, stage, version, decision, feedback, responder, decided_at
+		FROM gates WHERE blueprint_id = ? ORDER BY id`, blueprintID)
+}
+
+func (s *Store) listGates(ctx context.Context, query string, args ...any) ([]Gate, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: list gates: %w", err)
 	}
