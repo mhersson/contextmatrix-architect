@@ -607,6 +607,7 @@ func TestPipeline_CardsFailingTheContractAreReturnedThenReported(t *testing.T) {
 			report, ok := rec.first(EventReport)
 			require.True(t, ok)
 			assert.Equal(t, false, report.Payload["ready"])
+			assert.Equal(t, 3, report.Payload["rounds"], "the cards stopped on the last contract round")
 			assert.Equal(t, "decomposition", report.Payload["stage"])
 
 			findings, _ := report.Payload["findings"].([]string)

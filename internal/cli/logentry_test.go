@@ -838,3 +838,24 @@ func TestLogEntryFor_Markers(t *testing.T) {
 		})
 	}
 }
+
+func TestLogEntryFor_AReportWithoutARoundNamesNone(t *testing.T) {
+	report := func(payload map[string]any) protocol.LogEntry {
+		t.Helper()
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventReport, BlueprintID: "S1", Payload: payload})
+		require.True(t, ok)
+
+		return entry
+	}
+
+	ready := report(map[string]any{"ready": true, "rounds": 0})
+	notReady := report(map[string]any{"ready": false, "rounds": 0, "findings": []string{"D1: two deliverables"}})
+
+	assert.NotContains(t, ready.Content, "round")
+	assert.NotContains(t, notReady.Content, "round")
+	assert.Contains(t, notReady.Content, "D1: two deliverables")
+
+	assert.Contains(t, report(map[string]any{"ready": true, "rounds": 2}).Content, "round 2",
+		"the number is shown when a round applies")
+}

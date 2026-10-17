@@ -211,15 +211,27 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		// The verdict only: the artifact is on the sheet.
 		entry.Type = "text"
 
+		// No round is named when none applies to the end.
+		rounds := num(p["rounds"])
+
 		if ready, _ := p["ready"].(bool); ready {
-			entry.Content = fmt.Sprintf("**Ready** (round %.0f).", num(p["rounds"]))
+			entry.Content = "**Ready**."
+			if rounds > 0 {
+				entry.Content = fmt.Sprintf("**Ready** (round %.0f).", rounds)
+			}
 
 			break
 		}
 
 		var b strings.Builder
 
-		fmt.Fprintf(&b, "**Not ready** after round %.0f.", num(p["rounds"]))
+		b.WriteString("**Not ready**")
+
+		if rounds > 0 {
+			fmt.Fprintf(&b, " after round %.0f", rounds)
+		}
+
+		b.WriteString(".")
 
 		for _, f := range stringsOf(p["findings"]) {
 			b.WriteString("\n- " + f)
