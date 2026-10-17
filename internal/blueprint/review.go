@@ -338,7 +338,7 @@ func (c *Controller) builtHistory(ctx context.Context, id string, built store.Ru
 		return nil
 	}
 
-	return withoutSystem(history)
+	return stage.WithoutSystem(history)
 }
 
 // writeNewNotes gives a round that resumes runID's conversation the notes
@@ -359,20 +359,6 @@ func (c *Controller) writeNewNotes(ctx context.Context, b *strings.Builder, id s
 	}
 
 	return c.writeNotesAfter(ctx, b, id, after)
-}
-
-// withoutSystem drops a conversation's system message: a run's own comes
-// first, from its persona and instructions.
-func withoutSystem(msgs []llm.Message) []llm.Message {
-	out := make([]llm.Message, 0, len(msgs))
-
-	for _, m := range msgs {
-		if m.Role != "system" {
-			out = append(out, m)
-		}
-	}
-
-	return out
 }
 
 // runReviewer judges a gated stage's artifact with the pack's reviewer: its

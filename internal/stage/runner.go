@@ -191,8 +191,9 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 		drafts = newDraftExtractor(in.Secrets, in.Draft, now, every)
 	}
 
-	all := append([]tools.Tool{askHumanTool{asker: in.Asker}, submitArtifactTool{validate: in.Validate, drafts: drafts}}, in.Tools...)
-	reg := tools.NewRegistry(all...)
+	submit := submitArtifactTool{validate: in.Validate, drafts: drafts}
+	builtins := []tools.Tool{askHumanTool{asker: in.Asker}, submit}
+	reg := tools.NewRegistry(append(builtins, in.Tools...)...)
 
 	sink := in.Events
 	if sink == nil {
@@ -221,7 +222,13 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 		cfg.OnDelta = drafts.delta
 	}
 
-	res, err := harness.Run(ctx, r.NewLLM(in.Endpoint), reg, emit, in.Task, cfg)
+	client := r.NewLLM(in.Endpoint)
+
+	res, err := harness.Run(ctx, client, reg, emit, in.Task, cfg)
+	if err == nil && res.Completed && res.CompletionArgs == nil {
+		res, err = forceTerminal(ctx, client, terminalTools(builtins), emit, cfg, res)
+	}
+
 	if err != nil {
 		return Output{Result: res}, fmt.Errorf("stage %s: %w", in.Stage, err)
 	}
@@ -236,6 +243,19 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 	}
 
 	return Output{Artifact: art, Result: res}, nil
+}
+
+// terminalTools are the tools among ts that end a run.
+func terminalTools(ts []tools.Tool) []tools.Tool {
+	var out []tools.Tool
+
+	for _, t := range ts {
+		if term, ok := t.(tools.Terminal); ok && term.Terminal() {
+			out = append(out, t)
+		}
+	}
+
+	return out
 }
 
 // draftEvents passes the harness's event lines on and keeps the draft true

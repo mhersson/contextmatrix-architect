@@ -160,7 +160,13 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   Interaction), and its answer is the tool result.
 - **A run ends on `submit_artifact`**, a terminal tool carrying the markdown
   body and the stage's structured yaml block. The controller stores the
-  artifact and the full transcript (less web search result lists).
+  artifact and the full transcript (less web search result lists). A run that
+  stops with text and no terminal call gets one follow-up run on its
+  conversation. That run is offered only the run's terminal tools and made to
+  call one (`tool_choice`, sent once more without it when the endpoint refuses
+  that with a 400), with two turns, so a refused submit gets one retry. The
+  ledger and the transcript cover both runs. If the follow-up also stops with
+  text, the run failed. Reviewer and responder runs get the same follow-up.
 - **Critique loop inside a stage.** On submit, the mechanical checks run
   inside the run: a failing submit is returned to the model as the tool
   result and it submits again. The third failing submit is accepted: cards
