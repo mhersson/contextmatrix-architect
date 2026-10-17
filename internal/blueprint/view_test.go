@@ -441,6 +441,55 @@ func TestView_States(t *testing.T) {
 			},
 		},
 		{
+			name: "a failed review leaves the version current",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				through(t, c, st, "intake")
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", stageData("slicing"))
+
+				id, err := st.StartRun(context.Background(), store.Run{BlueprintID: viewID, Stage: "slicing", Kind: store.RunKindReviewer, Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: time.Now().UTC()})
+				require.NoError(t, err)
+				require.NoError(t, st.EndRun(context.Background(), id, store.RunFailed, "error", store.RunUsage{}, time.Now().UTC()))
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				assert.Equal(t, stepFailed, stepOf(t, v, "slicing").Status)
+				assert.Equal(t, artCurrent, refOf(t, v, "slicing", 1).Status)
+				assert.Nil(t, v.Open)
+			},
+		},
+		{
+			name: "a failed revision leaves the reviewed version current",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				through(t, c, st, "intake")
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", stageData("slicing"))
+				ran(t, st, "slicing", store.RunKindReviewer, 1, 1, 0.05)
+				put(t, st, reviewStage("slicing"), map[string]any{"score": 4, "findings": []any{"name the owner"}, "version": 1, "attempt": 1, "round": 1})
+
+				id, err := st.StartRun(context.Background(), store.Run{BlueprintID: viewID, Stage: "slicing", Kind: store.RunKindStage, Attempt: 1, Round: 2, Status: store.RunRunning, StartedAt: time.Now().UTC()})
+				require.NoError(t, err)
+				require.NoError(t, st.EndRun(context.Background(), id, store.RunFailed, "error", store.RunUsage{}, time.Now().UTC()))
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				assert.Equal(t, stepFailed, stepOf(t, v, "slicing").Status)
+				assert.Equal(t, artCurrent, refOf(t, v, "slicing", 1).Status)
+			},
+		},
+		{
+			name: "a review that ended without a verdict leaves the version current",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				through(t, c, st, "intake")
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", stageData("slicing"))
+				ran(t, st, "slicing", store.RunKindReviewer, 1, 1, 0.05)
+				require.NoError(t, st.SetBlueprintState(context.Background(), viewID, string(StateFailed)))
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				assert.Equal(t, stepFailed, stepOf(t, v, "slicing").Status)
+				assert.Equal(t, artCurrent, refOf(t, v, "slicing", 1).Status)
+			},
+		},
+		{
 			name: "readiness round 2",
 			setup: func(t *testing.T, c *Controller, st *store.Store) {
 				through(t, c, st, "decomposition")

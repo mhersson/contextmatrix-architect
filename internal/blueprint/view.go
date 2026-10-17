@@ -386,6 +386,12 @@ func (rec record) decision(stageID string, version int) (store.Gate, bool) {
 	return g, found
 }
 
+// failed reports whether the run that placed the pipeline failed, or the
+// blueprint did.
+func (rec record) failed() bool {
+	return rec.last.Status == store.RunFailed || rec.bp.State == string(StateFailed)
+}
+
 // supersededByGate reports whether a gates row records stageID's version
 // superseded, as a rejection of a stage folded into its gate does.
 func (rec record) supersededByGate(stageID string, version int) bool {
@@ -521,7 +527,7 @@ func (rec record) stageStatus(st pack.Stage, i, current int) string {
 	switch {
 	case rec.pos.gate && !rec.pos.critique:
 		return stepWaiting
-	case rec.last.Status == store.RunFailed || rec.bp.State == string(StateFailed):
+	case rec.failed():
 		return stepFailed
 	case rec.pos.gate && rec.pos.critique:
 		// A review or a builder round comes next.
@@ -720,7 +726,8 @@ func (c *Controller) artifactRefs(rec record) []protocol.ArtifactRef {
 // decide sets a pack stage version's status and who decided its gate: a
 // rejection stays rejected, an older version or one a gates row records
 // superseded is superseded, and the newest is approved, folded, at its
-// gate, being reviewed or current.
+// gate, being reviewed or current. A failed review or builder round leaves
+// it current: the version stands unjudged.
 func (rec record) decide(ref *protocol.ArtifactRef, newest bool) {
 	g, found := rec.decision(ref.Stage, ref.Version)
 	if found && (g.Decision == store.GateApprove || g.Decision == store.GateReject) {
@@ -739,9 +746,9 @@ func (rec record) decide(ref *protocol.ArtifactRef, newest bool) {
 		ref.Status = artApproved
 	case found && g.Decision == store.GateFold:
 		ref.Status = artFolded
-	case gated && rec.pos.critique:
+	case gated && rec.pos.critique && !rec.failed():
 		ref.Status = artReviewing
-	case gated && rec.pos.art.Version == ref.Version:
+	case gated && !rec.pos.critique && rec.pos.art.Version == ref.Version:
 		ref.Status = artAtGate
 	default:
 		ref.Status = artCurrent
