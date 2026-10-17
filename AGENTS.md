@@ -31,7 +31,7 @@ specification and must stay true at HEAD.
 - `internal/stage` - one harness run: persona + instructions + the ask_human and submit_artifact tools, plus per-run tool sets (the code tools and `repo_info`), submit validation, and the draft of the artifact body as it streams.
 - `internal/pack` - pipeline packs: stages, personas, instructions, lists.yaml and card.md; the default pack is embedded.
 - `internal/code` - read-only mirrors and per-blueprint trees for the code stages; repo facts; the names a checkout declares, for the leak guard.
-- `internal/research` - web research: the leak guard that refuses code-shaped and project-specific text in search queries and URLs, and the fetcher that reads public pages only, as readable text.
+- `internal/research` - web research: the leak guard that refuses code-shaped and project-specific text in search queries and URLs, the fetcher that reads public pages only, as readable text, and the search provider (Brave).
 - `internal/cm` - MCP client to ContextMatrix: list_projects, the read-only `cm_` tools stage runs get, and typed card, playbook and run calls.
 - `internal/contract` - the card contract: lists data and the mechanical checks.
 - `internal/store` - SQLite: blueprints, stage runs, artifacts, transcripts, events, sources, gates, emissions, questions.
