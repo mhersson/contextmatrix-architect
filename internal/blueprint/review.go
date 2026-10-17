@@ -30,11 +30,14 @@ type review struct {
 
 // round is a builder round after a review, a low one's next round or a
 // passing one's revision: the attempt it continues, its number, the
-// conversation it resumes (nil starts over) and the next message.
+// conversation it resumes (nil starts over), the next message, and how many
+// findings it was given, numbered from 1, which its submit may say it
+// addressed.
 type round struct {
 	attempt, number int
 	history         []llm.Message
 	task            string
+	findings        int
 }
 
 // reviewStage names the pseudo-stage a stage's verdicts are stored under.
@@ -274,7 +277,7 @@ func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp sto
 func (c *Controller) builderRound(ctx context.Context, bp store.Blueprint, st pack.Stage, built store.Run, art store.Artifact, v review) (*round, error) {
 	var b strings.Builder
 
-	rd := &round{attempt: built.Attempt, number: built.Round + 1, history: c.builtHistory(ctx, bp.ID, built)}
+	rd := &round{attempt: built.Attempt, number: built.Round + 1, history: c.builtHistory(ctx, bp.ID, built), findings: len(v.Findings)}
 
 	if len(rd.history) == 0 {
 		rd.history = nil
@@ -290,8 +293,9 @@ func (c *Controller) builderRound(ctx context.Context, bp store.Blueprint, st pa
 		fmt.Fprintf(&b, "The reviewer scored your artifact %d of 5; %d passes. Address every finding, then submit the artifact again:\n\n", v.Score, st.Reviewer.Threshold)
 	}
 
-	for _, f := range v.Findings {
-		b.WriteString("- " + f + "\n")
+	// Numbered: the round's submit names the findings it addressed by number.
+	for i, f := range v.Findings {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, f)
 	}
 
 	b.WriteString("\n")

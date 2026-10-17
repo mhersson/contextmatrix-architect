@@ -220,6 +220,19 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		} else {
 			in.Task += rd.task
 		}
+
+		if rd.findings > 0 {
+			check, state := addressedValidator(rd.findings)
+
+			validators := []func(context.Context, stage.Artifact) error{check}
+			if in.Validate != nil {
+				validators = append([]func(context.Context, stage.Artifact) error{in.Validate}, check)
+			}
+
+			in.Validate = allOf(validators)
+
+			checks.bounded = append(checks.bounded, state)
+		}
 	}
 
 	defer closeTools()

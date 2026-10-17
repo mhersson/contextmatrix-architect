@@ -171,6 +171,10 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   the gate without another review; the gate shows that it was revised and
   the version the reviewer scored. Each reviewer round is a harness run with
   its own cap, and so is a revision round; the ledger sums them.
+  The round is given the findings numbered, and its submit may list the ones
+  it addressed in its data as `addressed: [{finding, note}]`; a number the
+  round was not given is refused like any check problem, and the third
+  failing submit is accepted with its problems kept.
 - **A gate waits between runs.** The controller holds the stage's artifact and
   asks the client. Nothing runs meanwhile.
 - **A human rejection starts a new attempt**: a fresh run with the previous
