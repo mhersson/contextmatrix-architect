@@ -16,11 +16,21 @@ const (
 	RunCanceled    = "canceled"
 )
 
+// Run kinds. A stage run produces a stage's artifact; a reviewer run judges
+// one before its gate; a responder run answers a question inside the asking
+// stage's run. Only stage runs place the pipeline.
+const (
+	RunKindStage     = "stage"
+	RunKindReviewer  = "reviewer"
+	RunKindResponder = "responder"
+)
+
 // Run is one harness run of one stage.
 type Run struct {
 	ID          int64
 	BlueprintID string
 	Stage       string
+	Kind        string
 	Attempt     int
 	Round       int
 	Status      string
@@ -41,12 +51,18 @@ type RunUsage struct {
 	CostUSD          float64
 }
 
-// StartRun inserts a run and returns its id.
+// StartRun inserts a run and returns its id. A run without a kind is a stage
+// run.
 func (s *Store) StartRun(ctx context.Context, r Run) (int64, error) {
+	kind := r.Kind
+	if kind == "" {
+		kind = RunKindStage
+	}
+
 	res, err := s.db.ExecContext(ctx, `INSERT INTO stage_runs
-		(blueprint_id, stage, attempt, round, status, model, started_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		r.BlueprintID, r.Stage, r.Attempt, r.Round, r.Status, r.Model, r.StartedAt.Unix())
+		(blueprint_id, stage, kind, attempt, round, status, model, started_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.BlueprintID, r.Stage, kind, r.Attempt, r.Round, r.Status, r.Model, r.StartedAt.Unix())
 	if err != nil {
 		return 0, fmt.Errorf("store: insert run: %w", err)
 	}
@@ -78,7 +94,7 @@ func (s *Store) EndRun(ctx context.Context, id int64, status, reason string, usa
 
 // ListRuns returns a blueprint's runs oldest first.
 func (s *Store) ListRuns(ctx context.Context, blueprintID string) ([]Run, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, blueprint_id, stage, attempt, round, status, model,
+	rows, err := s.db.QueryContext(ctx, `SELECT id, blueprint_id, stage, kind, attempt, round, status, model,
 		started_at, ended_at, cost_usd, reason,
 		prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens FROM stage_runs WHERE blueprint_id = ? ORDER BY id`, blueprintID)
 	if err != nil {
@@ -96,7 +112,7 @@ func (s *Store) ListRuns(ctx context.Context, blueprintID string) ([]Run, error)
 			endedAt   sql.NullInt64
 		)
 
-		if err := rows.Scan(&r.ID, &r.BlueprintID, &r.Stage, &r.Attempt, &r.Round, &r.Status, &r.Model,
+		if err := rows.Scan(&r.ID, &r.BlueprintID, &r.Stage, &r.Kind, &r.Attempt, &r.Round, &r.Status, &r.Model,
 			&startedAt, &endedAt, &r.Usage.CostUSD, &r.Reason,
 			&r.Usage.PromptTokens, &r.Usage.CompletionTokens, &r.Usage.CacheReadTokens, &r.Usage.CacheWriteTokens); err != nil {
 			return nil, fmt.Errorf("store: scan run: %w", err)

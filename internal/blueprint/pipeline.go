@@ -113,7 +113,8 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 // position reads where a blueprint with no run in flight stands: what
 // follows the stage whose run completed last, and, when that is a model
 // stage, the status of its newest run since then ("" when it has not
-// started there).
+// started there). Only stage runs count; reviewer and responder runs place
+// nothing.
 func (c *Controller) position(ctx context.Context, bp store.Blueprint) (outcome, string, error) {
 	runs, err := c.opts.Store.ListRuns(ctx, bp.ID)
 	if err != nil {
@@ -123,7 +124,7 @@ func (c *Controller) position(ctx context.Context, bp store.Blueprint) (outcome,
 	completed, since := "", 0
 
 	for i, r := range runs {
-		if r.Status == store.RunDone {
+		if r.Kind == store.RunKindStage && r.Status == store.RunDone {
 			completed, since = r.Stage, i+1
 		}
 	}
@@ -136,7 +137,7 @@ func (c *Controller) position(ctx context.Context, bp store.Blueprint) (outcome,
 	status := ""
 
 	for _, r := range runs[since:] {
-		if r.Stage == out.stage {
+		if r.Kind == store.RunKindStage && r.Stage == out.stage {
 			status = r.Status
 		}
 	}

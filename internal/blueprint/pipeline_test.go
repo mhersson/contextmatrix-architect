@@ -2028,3 +2028,48 @@ func TestReportSetup_AnAbortedRunReportsNothing(t *testing.T) {
 	assert.Equal(t, before, reads.Load(), "an aborted run reads nothing")
 	assert.Equal(t, 1, rec.count(EventSetupGaps), "an aborted run tells the session nothing more")
 }
+
+func TestPosition_ReadsOnlyStageRuns(t *testing.T) {
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	// A responder run that ended after intake names a stage with no artifact;
+	// read as a stage, it would make the position unreadable.
+	now := time.Now().UTC()
+	id, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "decomposition", Kind: store.RunKindResponder, Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+	require.NoError(t, st.EndRun(ctx, id, store.RunDone, "done", store.RunUsage{}, now))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	out, _, err := c.position(ctx, bp)
+	require.NoError(t, err)
+	assert.Equal(t, "design", out.stage, "the human-sourced design follows intake")
+	assert.True(t, out.human)
+}
+
+func TestPosition_StatusIgnoresNonStageRunsOfTheNextStage(t *testing.T) {
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	// Intake has not started as a stage; a failed responder run naming it
+	// must not make the position read it as started and failed.
+	now := time.Now().UTC()
+	id, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Kind: store.RunKindResponder, Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+	require.NoError(t, st.EndRun(ctx, id, store.RunFailed, "boom", store.RunUsage{}, now))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	out, status, err := c.position(ctx, bp)
+	require.NoError(t, err)
+	assert.Equal(t, "intake", out.stage)
+	assert.Empty(t, status, "only stage runs give a stage its status")
+}

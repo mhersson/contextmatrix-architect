@@ -151,7 +151,7 @@ func TestOpen_MigratesV1(t *testing.T) {
 
 	var version int
 	require.NoError(t, s.db.QueryRow("PRAGMA user_version").Scan(&version))
-	assert.Equal(t, 3, version)
+	assert.Equal(t, 4, version)
 
 	// Every ALTER landed: usage written to the migrated table reads back.
 	ctx := context.Background()
@@ -166,6 +166,7 @@ func TestOpen_MigratesV1(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runs, 1)
 	assert.Equal(t, usage, runs[0].Usage)
+	assert.Equal(t, RunKindStage, runs[0].Kind, "the kind column landed too")
 }
 
 func TestOpen_FailedMigrationLeavesV1(t *testing.T) {
@@ -341,6 +342,7 @@ func TestAppendOnlyTablesRefuseRawWrites(t *testing.T) {
 	_, err = s.AddGate(ctx, Gate{BlueprintID: "BP1", Stage: "signoff", Version: 1, Decision: GateApprove, Responder: ResponderHuman, DecidedAt: now})
 	require.NoError(t, err)
 	require.NoError(t, s.AddEmission(ctx, Emission{BlueprintID: "BP1", Kind: EmitCard, DraftID: "D1", Project: "alpha", CMID: "ALPHA-1", CreatedAt: now}))
+	require.NoError(t, s.AddQuestion(ctx, Question{BlueprintID: "BP1", RunID: 1, Stage: "intake", Number: 1, Text: "q", Answer: "a", Responder: ResponderHuman, AnsweredAt: now}))
 
 	// Each table's one row, read back to prove a refused write changed nothing.
 	rows := map[string]struct{ query, want string }{
@@ -349,6 +351,7 @@ func TestAppendOnlyTablesRefuseRawWrites(t *testing.T) {
 		"artifacts":   {`SELECT body FROM artifacts`, "b"},
 		"gates":       {`SELECT decision FROM gates`, "approve"},
 		"emissions":   {`SELECT cm_id FROM emissions`, "ALPHA-1"},
+		"questions":   {`SELECT answer FROM questions`, "a"},
 	}
 
 	tests := []struct {
@@ -373,6 +376,10 @@ func TestAppendOnlyTablesRefuseRawWrites(t *testing.T) {
 		{"emissions delete", "emissions", `DELETE FROM emissions`},
 		{"emissions replace", "emissions", `INSERT OR REPLACE INTO emissions (blueprint_id, kind, draft_id, project, cm_id, created_at)
 			VALUES ('BP1', 'card', 'D1', 'alpha', 'X', 0)`},
+		{"questions update", "questions", `UPDATE questions SET answer = 'z'`},
+		{"questions delete", "questions", `DELETE FROM questions`},
+		{"questions replace", "questions", `INSERT OR REPLACE INTO questions (blueprint_id, run_id, stage, number, text, answer, responder, answered_at)
+			VALUES ('BP1', 1, 'intake', 1, 'q', 'z', 'human', 0)`},
 	}
 
 	for _, tt := range tests {
@@ -465,6 +472,8 @@ func TestOpen_MigratesV2(t *testing.T) {
 	for _, stmt := range []string{
 		`DROP TRIGGER gates_no_update`, `DROP TRIGGER gates_no_delete`, `DROP TABLE gates`,
 		`DROP TRIGGER emissions_no_update`, `DROP TRIGGER emissions_no_delete`, `DROP TABLE emissions`,
+		`DROP TRIGGER questions_no_update`, `DROP TRIGGER questions_no_delete`, `DROP TABLE questions`,
+		`ALTER TABLE stage_runs DROP COLUMN kind`,
 		`PRAGMA user_version = 2`,
 	} {
 		_, err := s.db.Exec(stmt)
@@ -479,8 +488,112 @@ func TestOpen_MigratesV2(t *testing.T) {
 
 	var version int
 	require.NoError(t, s.db.QueryRow("PRAGMA user_version").Scan(&version))
-	assert.Equal(t, 3, version)
+	assert.Equal(t, 4, version)
 
 	_, err = s.AddGate(context.Background(), Gate{BlueprintID: "BP1", Stage: "signoff", Version: 1, Decision: GateApprove, Responder: ResponderHuman, DecidedAt: time.Now()})
 	require.NoError(t, err)
+
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	_, err = s.StartRun(ctx, Run{BlueprintID: "BP1", Stage: "intake", Kind: RunKindResponder, Attempt: 1, Round: 1, Status: RunRunning, StartedAt: now})
+	require.NoError(t, err)
+
+	runs, err := s.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, RunKindResponder, runs[0].Kind, "the migrated stage_runs keeps a kind")
+
+	q := Question{BlueprintID: "BP1", RunID: runs[0].ID, Stage: "intake", Number: 1, Text: "q", Answer: "a", Responder: ResponderHuman, AnsweredAt: now}
+	require.NoError(t, s.AddQuestion(ctx, q))
+
+	got, err := s.ListQuestions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, []Question{q}, got)
+}
+
+func TestRunKindRoundTrip(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	_, err := s.StartRun(ctx, Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: RunRunning, StartedAt: now})
+	require.NoError(t, err)
+	_, err = s.StartRun(ctx, Run{BlueprintID: "BP1", Stage: "intake", Kind: RunKindResponder, Attempt: 1, Round: 1, Status: RunRunning, StartedAt: now})
+	require.NoError(t, err)
+
+	runs, err := s.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 2)
+	assert.Equal(t, RunKindStage, runs[0].Kind, "a run without a kind is a stage run")
+	assert.Equal(t, RunKindResponder, runs[1].Kind)
+}
+
+func TestQuestionsRoundTripAndNumbersAreUnique(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	q1 := Question{
+		BlueprintID: "BP1", RunID: 3, Stage: "intake", Number: 1, Text: "Helm or kustomize?",
+		Options: []string{"helm", "kustomize"}, Context: "how it deploys", Answer: "helm",
+		Responder: ResponderHuman, MessageID: "m2", AnsweredAt: now,
+	}
+	q2 := Question{
+		BlueprintID: "BP1", RunID: 4, Stage: "intake", Number: 2, Text: "Which cluster?", Answer: "dev",
+		Responder: ResponderAuto, Assumption: true, Grounded: true, AnsweredAt: now,
+	}
+
+	require.NoError(t, s.AddQuestion(ctx, q2))
+	require.NoError(t, s.AddQuestion(ctx, q1))
+	require.NoError(t, s.AddQuestion(ctx, Question{BlueprintID: "BP2", RunID: 9, Stage: "intake", Number: 1, Text: "x", Answer: "y", Responder: ResponderHuman, AnsweredAt: now}))
+
+	got, err := s.ListQuestions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, []Question{q1, q2}, got, "in number order, this blueprint only")
+	assert.Equal(t, "Q2", got[1].Tag())
+
+	require.Error(t, s.AddQuestion(ctx, q1), "a number is answered once per blueprint")
+}
+
+func TestOpen_MigratesV3(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "architect.db")
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	s, err := Open(ctx, path)
+	require.NoError(t, err)
+
+	_, err = s.StartRun(ctx, Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: RunDone, StartedAt: now})
+	require.NoError(t, err)
+
+	// A v3 file: no questions table, and stage_runs without a kind.
+	for _, stmt := range []string{
+		`DROP TRIGGER questions_no_update`, `DROP TRIGGER questions_no_delete`, `DROP TABLE questions`,
+		`ALTER TABLE stage_runs DROP COLUMN kind`,
+		`PRAGMA user_version = 3`,
+	} {
+		_, err := s.db.Exec(stmt)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, s.Close())
+
+	s, err = Open(ctx, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	var version int
+	require.NoError(t, s.db.QueryRow("PRAGMA user_version").Scan(&version))
+	assert.Equal(t, 4, version)
+
+	runs, err := s.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, RunKindStage, runs[0].Kind, "every run a v3 file holds was a stage run")
+
+	require.NoError(t, s.AddQuestion(ctx, Question{
+		BlueprintID: "BP1", RunID: runs[0].ID, Stage: "intake", Number: 1, Text: "q", Answer: "a",
+		Responder: ResponderHuman, AnsweredAt: now,
+	}))
 }

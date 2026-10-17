@@ -110,7 +110,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	}
 
 	runID, err := c.opts.Store.StartRun(bg, store.Run{
-		BlueprintID: id, Stage: stageID, Attempt: attempt, Round: 1,
+		BlueprintID: id, Stage: stageID, Kind: store.RunKindStage, Attempt: attempt, Round: 1,
 		Status: store.RunRunning, Model: m.name, StartedAt: c.opts.Now().UTC(),
 	})
 	if err != nil {
@@ -328,7 +328,8 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	return in, checked, closeCM, nil
 }
 
-// nextAttempt numbers a new run of stageID after every earlier one.
+// nextAttempt numbers a new run of stageID after every earlier stage run of
+// it; reviewer and responder runs are not attempts.
 func (c *Controller) nextAttempt(ctx context.Context, id, stageID string) (int, error) {
 	runs, err := c.opts.Store.ListRuns(ctx, id)
 	if err != nil {
@@ -338,7 +339,7 @@ func (c *Controller) nextAttempt(ctx context.Context, id, stageID string) (int, 
 	attempt := 1
 
 	for _, r := range runs {
-		if r.Stage == stageID && r.Attempt >= attempt {
+		if r.Kind == store.RunKindStage && r.Stage == stageID && r.Attempt >= attempt {
 			attempt = r.Attempt + 1
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"maps"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -336,51 +337,71 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 	return bp, nil
 }
 
-// interruptedStage marks a run a crash left running as interrupted and
-// returns its stage to re-run. Empty means nothing was interrupted. The
-// caller holds the run slot.
+// interruptedStage marks every run a crash left running as interrupted and
+// returns the stage of the latest such stage run, to re-run. A responder run
+// left running sat inside its stage's run, so the stage run alone is re-run.
+// Empty means no stage run was interrupted. The caller holds the run slot.
 func (c *Controller) interruptedStage(ctx context.Context, bp store.Blueprint) (string, error) {
-	interrupted, err := c.leftRunning(ctx, bp.ID)
-	if err != nil || interrupted == nil {
+	left, err := c.leftRunning(ctx, bp.ID)
+	if err != nil || len(left) == 0 {
 		return "", err
 	}
 
-	// Checked before the run is marked: a run marked interrupted after a
+	stageID := ""
+
+	for _, r := range left {
+		if r.Kind == store.RunKindStage {
+			stageID = r.Stage
+		}
+	}
+
+	// Stage runs are closed last. A partial close must never leave the stage
+	// run interrupted with a run inside it still running: the next start would
+	// see only the inner run and re-run nothing.
+	sort.SliceStable(left, func(i, j int) bool {
+		return left[i].Kind != store.RunKindStage && left[j].Kind == store.RunKindStage
+	})
+
+	// Checked before the runs are marked: a run marked interrupted after a
 	// transient error, with nothing relaunched, is never recovered. With no
-	// need stored there is nothing to re-run from; the run is closed and the
-	// next message becomes the need.
+	// need stored there is nothing to re-run from; the runs are closed and
+	// the next message becomes the need.
 	_, err = c.opts.Store.LatestArtifact(ctx, bp.ID, needStage)
 
 	noNeed := errors.Is(err, store.ErrNotFound)
 	if err != nil && !noNeed {
-		return "", fmt.Errorf("blueprint: start: load the need for interrupted %s: %w", interrupted.Stage, err)
+		return "", fmt.Errorf("blueprint: start: load the need for interrupted run %d: %w", left[0].ID, err)
 	}
 
-	if err := c.opts.Store.EndRun(ctx, interrupted.ID, store.RunInterrupted, "process restarted", store.RunUsage{}, c.opts.Now().UTC()); err != nil {
-		return "", fmt.Errorf("blueprint: mark interrupted: %w", err)
+	for _, r := range left {
+		if err := c.opts.Store.EndRun(ctx, r.ID, store.RunInterrupted, "process restarted", store.RunUsage{}, c.opts.Now().UTC()); err != nil {
+			return "", fmt.Errorf("blueprint: mark interrupted: %w", err)
+		}
 	}
 
 	if noNeed {
 		return "", nil
 	}
 
-	return interrupted.Stage, nil
+	return stageID, nil
 }
 
-// leftRunning returns the latest run a crash left in "running", or nil.
-func (c *Controller) leftRunning(ctx context.Context, id string) (*store.Run, error) {
+// leftRunning returns every run a crash left in "running", oldest first.
+func (c *Controller) leftRunning(ctx context.Context, id string) ([]store.Run, error) {
 	runs, err := c.opts.Store.ListRuns(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("blueprint: list runs: %w", err)
 	}
 
-	for i := len(runs) - 1; i >= 0; i-- {
-		if runs[i].Status == store.RunRunning {
-			return &runs[i], nil
+	var out []store.Run
+
+	for _, r := range runs {
+		if r.Status == store.RunRunning {
+			out = append(out, r)
 		}
 	}
 
-	return nil, nil
+	return out, nil
 }
 
 // Message handles one user message: the answer to an open question, the

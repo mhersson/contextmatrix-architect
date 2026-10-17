@@ -892,6 +892,48 @@ func TestStart_TransientRecoveryErrorLeavesTheRunRecoverable(t *testing.T) {
 	assert.Equal(t, store.RunDone, runs[1].Status)
 }
 
+func TestStart_PartialCloseOfCrashedRunsKeepsTheStageRecoverable(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "architect.db")
+	st, err := store.Open(ctx, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	c, _, runner, _ := newControllerOn(t, st, artifactRun("# Need"))
+	now := time.Now().UTC()
+
+	require.NoError(t, st.CreateBlueprint(ctx, store.Blueprint{
+		ID: "BP1", Projects: []string{"alpha"},
+		Model: "m", State: string(StateRunning), CreatedAt: now, UpdatedAt: now,
+	}))
+	_, err = st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: "need", Body: "the stored need"})
+	require.NoError(t, err)
+	_, err = st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+	_, err = st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Kind: store.RunKindResponder, Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+
+	// A second connection fails the close of the responder run.
+	raw, err := sql.Open("sqlite", "file:"+path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+
+	_, err = raw.ExecContext(ctx, `CREATE TRIGGER probe BEFORE UPDATE ON stage_runs WHEN OLD.kind = 'responder'
+		BEGIN SELECT RAISE(ABORT, 'transient'); END`)
+	require.NoError(t, err)
+
+	require.Error(t, c.Start(ctx, startInput("BP1")))
+	assert.Equal(t, 0, runner.calls())
+
+	_, err = raw.ExecContext(ctx, `DROP TRIGGER probe`)
+	require.NoError(t, err)
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	assert.Equal(t, 1, runner.calls(), "the stage still re-runs after the failed close")
+}
+
 func TestRunCapZero_DisablesThePerRunCap(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1943,4 +1985,37 @@ func TestHarnessErrorLineIsForwardedWhenTheRunWasNotCancelled(t *testing.T) {
 	}
 
 	assert.True(t, forwarded, "an error line on a run that was not cancelled reaches the panel")
+}
+
+func TestStart_ClosesEveryRunACrashLeftAndRerunsTheStageOnce(t *testing.T) {
+	c, st, runner, _ := newController(t, artifactRun("# Need"))
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	require.NoError(t, st.CreateBlueprint(ctx, store.Blueprint{
+		ID: "BP1", Projects: []string{"alpha"}, Model: "m", State: string(StateRunning), CreatedAt: now, UpdatedAt: now,
+	}))
+	_, err := st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: "need", Body: "the stored need"})
+	require.NoError(t, err)
+
+	// The stage's run was parked in ask_human while a responder run answered.
+	stageRun, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+	responderRun, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Kind: store.RunKindResponder, Attempt: 7, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	assert.Equal(t, 1, runner.calls(), "the stage runs again, once")
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 3)
+	assert.Equal(t, stageRun, runs[0].ID)
+	assert.Equal(t, store.RunInterrupted, runs[0].Status)
+	assert.Equal(t, responderRun, runs[1].ID)
+	assert.Equal(t, store.RunInterrupted, runs[1].Status, "the responder run is closed too")
+	assert.Equal(t, store.RunKindStage, runs[2].Kind)
+	assert.Equal(t, 2, runs[2].Attempt, "a responder run is not an attempt of its stage")
 }

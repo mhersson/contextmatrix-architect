@@ -158,9 +158,9 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | Table         | Holds                                                                                                                        |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | blueprints    | id, title, target CM projects, pack name and version, policy overrides, state, cost cap, model price as CM sent it                                        |
-| stage_runs    | blueprint, stage, attempt, round, status, model, started, ended, cost, token buckets                                                          |
+| stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status, model, started, ended, cost, token buckets |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results, reviewer score                   |
-| questions     | append-only: run, number, text, options, answer, responder (`human`, `auto`), assumption flag, verified flag                   |
+| questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag, the answering message, answered at; written once, at the answer |
 | gates         | append-only: blueprint, stage, the judged artifact's version, decision (approve, reject), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted                                                                     |
 | events        | append-only: time, blueprint, run, kind, payload                                                                              |

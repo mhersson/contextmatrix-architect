@@ -69,14 +69,14 @@ func blueprintMD(b Bundle) string {
 	fmt.Fprintf(&sb, "- Projects: %s\n- Mode: %s\n- State: %s\n- Cost cap: %.2f USD\n- Created: %s\n\n",
 		strings.Join(b.Blueprint.Projects, ", "), b.Blueprint.Mode, b.Blueprint.State, b.Blueprint.CostCapUSD, b.Blueprint.CreatedAt.Format("2006-01-02 15:04 UTC"))
 
-	sb.WriteString("## Runs\n\n| Run | Stage | Attempt | Round | Status | Model | Cost USD | Prompt | Completion |\n|---|---|---|---|---|---|---|---|---|\n")
+	sb.WriteString("## Runs\n\n| Run | Stage | Kind | Attempt | Round | Status | Model | Cost USD | Prompt | Completion |\n|---|---|---|---|---|---|---|---|---|---|\n")
 
 	total := 0.0
 
 	for _, r := range b.Runs {
 		total += r.Usage.CostUSD
-		fmt.Fprintf(&sb, "| %d | %s | %d | %d | %s | %s | %.4f | %d | %d |\n",
-			r.ID, r.Stage, r.Attempt, r.Round, r.Status, r.Model, r.Usage.CostUSD, r.Usage.PromptTokens, r.Usage.CompletionTokens)
+		fmt.Fprintf(&sb, "| %d | %s | %s | %d | %d | %s | %s | %.4f | %d | %d |\n",
+			r.ID, r.Stage, r.Kind, r.Attempt, r.Round, r.Status, r.Model, r.Usage.CostUSD, r.Usage.PromptTokens, r.Usage.CompletionTokens)
 	}
 
 	fmt.Fprintf(&sb, "\nTotal recorded cost: %.4f USD\n", total)

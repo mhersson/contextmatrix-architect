@@ -19,7 +19,7 @@ func TestWrite_RendersEveryPart(t *testing.T) {
 
 	files, err := Write(dir, Bundle{
 		Blueprint: store.Blueprint{ID: "BP1", Projects: []string{"alpha"}, Mode: "default", State: "idle", CostCapUSD: 3, CreatedAt: now, UpdatedAt: now},
-		Runs:      []store.Run{{ID: 7, Stage: "intake", Attempt: 1, Round: 1, Status: store.RunDone, Model: "m", StartedAt: now, Usage: store.RunUsage{CostUSD: 0.2}}},
+		Runs:      []store.Run{{ID: 7, Stage: "intake", Kind: store.RunKindResponder, Attempt: 1, Round: 1, Status: store.RunDone, Model: "m", StartedAt: now, Usage: store.RunUsage{CostUSD: 0.2}}},
 		Artifacts: []store.Artifact{{Stage: "need", Version: 1, Body: "the need"}, {Stage: "intake", Version: 1, Body: "# Need", Data: json.RawMessage(`{"slices":1}`)}},
 		Events: []store.Event{
 			{Time: now, Kind: "question", Payload: json.RawMessage(`{"text":"Which cluster?","options":["dev","prod"]}`)},
@@ -60,6 +60,7 @@ func TestWrite_RendersEveryPart(t *testing.T) {
 	assert.Contains(t, string(summary), `keep a\\\|b`, "a backslash cannot unescape the pipe after it")
 	assert.Contains(t, string(summary), "ALPHA-007")
 	assert.Contains(t, string(summary), "ship-it")
+	assert.Contains(t, string(summary), "| 7 | intake | "+store.RunKindResponder+" |", "the runs table shows the kind")
 
 	info, err := os.Stat(filepath.Join(dir, "blueprint.md"))
 	require.NoError(t, err)
