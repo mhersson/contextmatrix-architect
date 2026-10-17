@@ -28,9 +28,9 @@ type review struct {
 	Round    int      `json:"round"`
 }
 
-// round is a builder round after a low review: the attempt it continues,
-// its number, the conversation it resumes (nil starts over) and the next
-// message.
+// round is a builder round after a review, a low one's next round or a
+// passing one's revision: the attempt it continues, its number, the
+// conversation it resumes (nil starts over) and the next message.
 type round struct {
 	attempt, number int
 	history         []llm.Message
@@ -69,9 +69,9 @@ func parseReview(data map[string]any) (review, error) {
 	return v, nil
 }
 
-// latestReview is the newest verdict on stageID's artifact version; found
-// is false when the newest verdict judged another version or none exists.
-func (c *Controller) latestReview(ctx context.Context, id, stageID string, version int) (review, bool, error) {
+// newestReview is the newest verdict on any version of stageID's artifact;
+// found is false when none exists.
+func (c *Controller) newestReview(ctx context.Context, id, stageID string) (review, bool, error) {
 	art, err := c.opts.Store.LatestArtifact(ctx, id, reviewStage(stageID))
 
 	switch {
@@ -86,7 +86,52 @@ func (c *Controller) latestReview(ctx context.Context, id, stageID string, versi
 		return review{}, false, fmt.Errorf("blueprint: decode the review of %s: %w", stageID, err)
 	}
 
-	return v, v.Version == version, nil
+	return v, true, nil
+}
+
+// owesRevision reports a verdict that passed with findings: the builder
+// revises once more, and the revision goes to its gate unreviewed.
+func owesRevision(st pack.Stage, v review) bool {
+	return v.Score >= st.Reviewer.Threshold && len(v.Findings) > 0
+}
+
+// settled reports a verdict that leaves its artifact to the gate: a pass
+// without findings, or a low score on the attempt's last round.
+func settled(st pack.Stage, v review) bool {
+	return !owesRevision(st, v) && (v.Score >= st.Reviewer.Threshold || v.Round >= maxReviewRounds)
+}
+
+// gateReview is the verdict that decides st's gate on art: the newest
+// verdict when it judged art, or when art is the revision it owed (revised).
+// found is false otherwise, and for a stage without a reviewer.
+func (c *Controller) gateReview(ctx context.Context, id string, st pack.Stage, art store.Artifact) (v review, found, revised bool, err error) {
+	if st.Reviewer == nil {
+		return review{}, false, false, nil
+	}
+
+	v, found, err = c.newestReview(ctx, id, st.ID)
+
+	switch {
+	case err != nil || !found:
+		return review{}, false, false, err
+	case v.Version == art.Version:
+		return v, true, false, nil
+	case v.Version+1 != art.Version || !owesRevision(st, v):
+		return review{}, false, false, nil
+	}
+
+	// Within an attempt the only version after a passing verdict is its
+	// revision; a rejection at the gate starts a new attempt.
+	built, err := c.latestStageRun(ctx, id, st.ID)
+	if err != nil {
+		return review{}, false, false, err
+	}
+
+	if built.Attempt != v.Attempt {
+		return review{}, false, false, nil
+	}
+
+	return v, true, true, nil
 }
 
 // reviewRounds counts the verdicts on stageID in attempt.
@@ -109,20 +154,22 @@ func (c *Controller) reviewRounds(ctx context.Context, id, stageID string, attem
 }
 
 // critiquePending reports whether a gated stage's artifact still needs its
-// reviewer: no verdict on it yet, or one below the threshold with a builder
-// round left in the attempt. A gate already shown needs none: it stays with
-// the human it was put to, even without a verdict.
+// reviewer or its builder: no verdict on it yet, one below the threshold
+// with a builder round left in the attempt, or one that passed with
+// findings, which owes a revision. A revision needs neither. A gate already
+// shown needs none: it stays with the human it was put to, even without a
+// verdict or with a revision owed.
 func (c *Controller) critiquePending(ctx context.Context, id string, st pack.Stage, art store.Artifact) (bool, error) {
 	if st.Reviewer == nil {
 		return false, nil
 	}
 
-	v, found, err := c.latestReview(ctx, id, st.ID, art.Version)
-	if err != nil {
+	v, found, revised, err := c.gateReview(ctx, id, st, art)
+	if err != nil || revised {
 		return false, err
 	}
 
-	if found && (v.Score >= st.Reviewer.Threshold || v.Round >= maxReviewRounds) {
+	if found && settled(st, v) {
 		return false, nil
 	}
 
@@ -158,9 +205,10 @@ func (c *Controller) latestStageRun(ctx context.Context, id, stageID string) (st
 }
 
 // critique reviews a gated stage's latest artifact, unless a verdict on it
-// exists, and, when the score is below the threshold with a round left in
-// the attempt, runs the builder's next round with the findings. false when
-// a run did not complete, which has been reported.
+// exists, and runs the builder's next round with the findings when the
+// score is below the threshold with a round left in the attempt, or its
+// revision when the score passed with findings. A revision is never
+// reviewed. false when a run did not complete, which has been reported.
 func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string) bool {
 	bg := context.Background()
 	au := sess.audit
@@ -186,21 +234,23 @@ func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp sto
 		return false
 	}
 
-	v, found, err := c.latestReview(bg, bp.ID, stageID, art.Version)
-	if err != nil {
+	v, found, revised, err := c.gateReview(bg, bp.ID, st, art)
+
+	switch {
+	case err != nil:
 		c.fail(bg, au, bp.ID, 0, err.Error())
 
 		return false
-	}
-
-	if !found {
+	case revised:
+		return true
+	case !found:
 		var ok bool
 		if v, ok = c.runReviewer(ctx, r, sess, bp, st, art, built.Attempt); !ok {
 			return false
 		}
 	}
 
-	if v.Score >= st.Reviewer.Threshold || v.Round >= maxReviewRounds {
+	if settled(st, v) {
 		return true
 	}
 
@@ -214,12 +264,13 @@ func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp sto
 	return c.runStage(ctx, r, sess, bp, stageID, rd)
 }
 
-// builderRound is the round after a low verdict: the builder's conversation
-// so far, from the stored transcript of the run that built the artifact, and
-// as the next message the findings and what that conversation has not seen:
-// the notes, and the answers to questions a round cut short asked. Without a
-// transcript the round starts over, given its own artifact and the findings;
-// its task carries every note and answer already.
+// builderRound is the round after a low verdict, or the revision after a
+// passing one with findings: the builder's conversation so far, from the
+// stored transcript of the run that built the artifact, and as the next
+// message the findings and what that conversation has not seen: the notes,
+// and the answers to questions a round cut short asked. Without a transcript
+// the round starts over, given its own artifact and the findings; its task
+// carries every note and answer already.
 func (c *Controller) builderRound(ctx context.Context, bp store.Blueprint, st pack.Stage, built store.Run, art store.Artifact, v review) (*round, error) {
 	var b strings.Builder
 
@@ -231,8 +282,13 @@ func (c *Controller) builderRound(ctx context.Context, bp store.Blueprint, st pa
 		writeArtifact(&b, fmt.Sprintf("Your %s, version %d", st.ID, art.Version), art)
 	}
 
-	fmt.Fprintf(&b, "## Reviewer findings (round %d)\n\nThe reviewer scored your artifact %d of 5; %d passes. Address every finding, then submit the artifact again:\n\n",
-		v.Round, v.Score, st.Reviewer.Threshold)
+	fmt.Fprintf(&b, "## Reviewer findings (round %d)\n\n", v.Round)
+
+	if owesRevision(st, v) {
+		fmt.Fprintf(&b, "The reviewer passed your artifact at %d of 5 with these findings. Revise it to address every finding, then submit it again; the revised version goes to its gate without another review:\n\n", v.Score)
+	} else {
+		fmt.Fprintf(&b, "The reviewer scored your artifact %d of 5; %d passes. Address every finding, then submit the artifact again:\n\n", v.Score, st.Reviewer.Threshold)
+	}
 
 	for _, f := range v.Findings {
 		b.WriteString("- " + f + "\n")

@@ -166,8 +166,11 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   builder's conversation has not seen, resume that conversation from its
   stored transcript for another round of the same attempt. Three reviewer
   rounds per attempt, then the gate waits for a human regardless of policy.
-  Each reviewer round is a harness run with its own cap; the ledger sums
-  them.
+  A passing verdict with findings resumes the builder once more the same
+  way, a revision round of the same attempt, and the revised version goes to
+  the gate without another review; the gate records that it was revised and
+  the version the reviewer scored. Each reviewer round is a harness run with
+  its own cap, and so is a revision round; the ledger sums them.
 - **A gate waits between runs.** The controller holds the stage's artifact and
   asks the client. Nothing runs meanwhile.
 - **A human rejection starts a new attempt**: a fresh run with the previous
@@ -178,8 +181,8 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   reopening the blueprint's session re-runs the open stage from its inputs. A
   re-run is given the questions its stage already asked and their answers, so
   it does not ask them again. A stage run is never resumed from the store;
-  only a builder round after a low review resumes the transcript of the run
-  that built the artifact.
+  only a builder round after a review, a low one's next round or a passing
+  one's revision, resumes the transcript of the run that built the artifact.
 
 ## Data model
 
@@ -265,22 +268,25 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   solution design gate when there is exactly one slice. Folding is decided
   by the artifact, never by an estimate of size, and is recorded as a `fold`
   decision when the pipeline passes slicing, so a later policy change cannot
-  unfold it. A folded stage's reviewer is skipped; the gate it folds into,
-  and its reviewer, judge both; the reviewer gets the gate feedback each
-  folded stage's attempt addresses too. Approve approves both, `reject
-  <feedback>` runs solution design again, and `reject slicing <feedback>`
-  runs slicing and everything after it again and records the design
-  version it replaces as `superseded`, an audit row that decides nothing.
-  The folded gate shows slicing's artifact and refers to the design posted
-  above it, as every gate does, and it waits for a human while either
-  stage's policy is human; it approves both on its own only when both are
-  auto.
+  unfold it. A version its own reviewer judged never folds, and neither does
+  the revision that verdict owed, even when the revision meets the
+  condition: its gate was already put to its own reviewer. A folded stage's
+  reviewer is skipped; the gate it folds into, and its reviewer, judge both;
+  the reviewer gets the gate feedback each folded stage's attempt addresses
+  too. Approve approves both, `reject <feedback>` runs solution design
+  again, and `reject slicing <feedback>` runs slicing and everything after
+  it again and records the design version it replaces as `superseded`, an
+  audit row that decides nothing. The folded gate shows slicing's artifact
+  and refers to the design posted above it, as every gate does, and it
+  waits for a human while either stage's policy is human; it approves both
+  on its own only when both are auto.
 - Reviewer runs are declared on every gated stage in the pack and skipped
   when its gate folds. The default pack declares them for slicing, solution
   design and acceptance; readiness is decomposition's reviewer and gets
   none. A one-slice need costs nine runs: intake, slicing, solution design
   and its review, grounding, acceptance and its review, decomposition and
-  readiness.
+  readiness; up to eleven when both reviews pass with findings, each adding
+  a revision round.
 - In default mode a one-slice need touches the human at the questions of
   intake (three at most per attempt), slicing (no cap) and solution design
   (five at most per attempt, its builder rounds included), the solution
@@ -481,8 +487,8 @@ recorded as an assumption; only these reach the sign-off and the cards.
 
 | Policy  | Questions                                                                                   | Gates                                                                 |
 | ------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `human` | Shown in the CM session as `Q<n>` with options, the recommended one marked; the run waits for the reply, which is recorded in `questions`. A stage asks at most its pack's `max_questions` per attempt, its builder rounds included; past it, and for an option the server would take as a command, `ask_human` returns an error and the stage decides. | Artifact shown with Approve and Reject; the reviewer's score is shown with it, and its findings in the review line just above; the reply, clicked or typed, is `approve` or `reject <feedback>`. |
-| `auto`  | A responder run answers. The answer is recorded as an `[assumption]` with responder `auto`. The same `max_questions` applies; past it, `ask_human` returns an error and the stage decides. | The reviewer's score decides: approved at or above the threshold; below it the builder takes another round with the findings, three reviewer rounds per attempt, then a human decides. |
+| `human` | Shown in the CM session as `Q<n>` with options, the recommended one marked; the run waits for the reply, which is recorded in `questions`. A stage asks at most its pack's `max_questions` per attempt, its builder rounds included; past it, and for an option the server would take as a command, `ask_human` returns an error and the stage decides. | Artifact shown with Approve and Reject; the reviewer's score is shown with it, and its findings in the review line just above; after a revision round the gate shows the revised version and records that it was revised. The reply, clicked or typed, is `approve` or `reject <feedback>`. |
+| `auto`  | A responder run answers. The answer is recorded as an `[assumption]` with responder `auto`. The same `max_questions` applies; past it, `ask_human` returns an error and the stage decides. | The reviewer's score decides: approved at or above the threshold, after one revision round when it lists findings; below it the builder takes another round with the findings, three reviewer rounds per attempt, then a human decides. |
 
 **The responder run** is a separate harness run with the persona of the
 stage that asks (the product owner for intake questions, the system designer
@@ -679,12 +685,12 @@ Replies the server understands, besides answers to questions:
   record the pack cannot place, such as a stage the pack no longer has, is
   reported in the session and nothing runs. An open gate or sign-off is shown
   again as it was, a gate that was never shown opens under the policy now in
-  effect, a review or builder round a restart or the session's end cut short
-  runs again, one a crash kept from starting runs, an emission a restart cut
-  short resumes, a stopped one waits for approve, an emitted blueprint's watch
-  restarts, and nothing is created or started twice. CM sends the start again
-  after the architect restarts, when a message finds the session unknown or
-  the log stream ends.
+  effect, a review or builder round, a revision round included, a restart or
+  the session's end cut short runs again, one a crash kept from starting
+  runs, an emission a restart cut short resumes, a stopped one waits for
+  approve, an emitted blueprint's watch restarts, and nothing is created or
+  started twice. CM sends the start again after the architect restarts, when
+  a message finds the session unknown or the log stream ends.
 - A stage the session's end cut short, an open question included, runs
   again on reopen, given the answers its earlier runs got; a reopen that
   comes while that run still winds down waits for it first. A human's
@@ -693,11 +699,12 @@ Replies the server understands, besides answers to questions:
   given its answer; an abort ends the open question instead. An aborted
   stage waits for the next message, as below.
 - After a later stage fails or is aborted, the next message is logged as a
-  note and re-runs that stage; after a review or a builder round fails or is
-  aborted, the next message is a note and runs it again; after intake fails
-  or is aborted, the next message is the need again and intake re-runs on
-  it. A pipeline stopped by the card contract or by readiness's rounds is not
-  re-run; the user starts a new blueprint with a better design.
+  note and re-runs that stage; after a review or a builder round, a revision
+  round included, fails or is aborted, the next message is a note and runs
+  it again; after intake fails or is aborted, the next message is the need
+  again and intake re-runs on it. A pipeline stopped by the card contract or
+  by readiness's rounds is not re-run; the user starts a new blueprint with
+  a better design.
 - From slice 4, a project may opt into automatic export in config: a target
   repo, branch and directory; the bundle is committed there at each gate or at
   sign-off. Off by default.
@@ -762,7 +769,7 @@ Replies the server understands, besides answers to questions:
   max_turns still bounds every run. CM prices only the session model, so a
   run on a per-persona override is unpriced: a capped blueprint refuses it,
   an uncapped one counts the reported cost. A critique round re-bills the
-  conversation so far; the ledger counts it.
+  conversation so far, and so does a revision round; the ledger counts both.
 - Every stage run compacts in its window: once a prompt reaches 85% of a
   128000-token window, the harness summarizes the older turns, keeps the
   last six messages and goes on. A model with a smaller window fails on the
