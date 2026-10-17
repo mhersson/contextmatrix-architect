@@ -271,6 +271,25 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	in.Events = sink
 	in.Secrets = sess.secrets()
 
+	// The draft carries the version the artifact will be stored as; a read
+	// that fails leaves version 1, and only the hint's match suffers.
+	version := 1
+	if latest, err := c.opts.Store.LatestArtifact(bg, id, stageID); err == nil {
+		version = latest.Version + 1
+	}
+
+	in.Draft = func(f stage.DraftFrame) {
+		// A void draft is none: the next snapshot leaves it out.
+		if f.Void {
+			c.live.clearDraft(id)
+			c.live.touch(id)
+
+			return
+		}
+
+		c.live.draft(id, protocol.Draft{Stage: stageID, Version: version, Offset: f.Offset, Text: f.Text, Refused: f.Refused, Reason: f.Reason})
+	}
+
 	out, runErr := c.opts.Runner.Run(runCtx, in)
 
 	// A run Shutdown cut short is crash-equivalent: no result writes, so

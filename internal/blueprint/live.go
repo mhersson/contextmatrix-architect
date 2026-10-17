@@ -222,8 +222,6 @@ func (h *liveHub) stored(id, stage string, version int) {
 
 // draft applies one draft frame to id's whole draft and sends it on; a frame
 // a client would drop as a gap is dropped here too.
-//
-//nolint:unparam // only tests call it so far; the run's caller lands later and removes this
 func (h *liveHub) draft(id string, d protocol.Draft) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

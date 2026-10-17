@@ -821,6 +821,22 @@ frames on the session's chat stream.
   session's owner, and relays the live stream: one upstream connection per
   session while browsers are subscribed, its frames published on the
   session's chat stream.
+- **Drafts.** While a stage run's model writes `submit_artifact`, the
+  harness passes each argument fragment on. The stage runner decodes the
+  top-level `body` string as it grows (escapes, `\u` and multi-byte runes
+  split across fragments) and redacts the whole text with the session's
+  secrets, holding back a tail that could be the start of a secret. It
+  publishes at most four frames a second, the whole body when the submit
+  arrives, and a refused frame with the check's error when a check refuses
+  it. A reset before a replay after a mid-stream retry, and the next
+  attempt after a refusal, restart at offset 0. A harness error or a
+  compaction discard voids the draft: the harness abandoned that turn and
+  sends no reset for it. A submit whose arguments the harness repairs never
+  executes, so its draft is marked refused with the repair error. Each model
+  call starts a fresh draft, whatever tool-call ids the provider reuses.
+  Reviewer and responder runs draft nothing. A model whose stream carries
+  no tool-call fragments shows its body at submit. A restart loses the
+  draft, and the run re-runs from the ledger.
 
 ## Deployment
 
@@ -850,8 +866,8 @@ frames on the session's chat stream.
 
 ## Runtime
 
-- Go 1.27, `contextmatrix-harness` v0.25.0 (loop, llm client, jailed read
-  tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.8.0
+- Go 1.27, `contextmatrix-harness` v0.26.0 (loop, llm client, jailed read
+  tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.9.0
   (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.26.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.

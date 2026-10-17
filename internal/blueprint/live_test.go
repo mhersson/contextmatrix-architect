@@ -486,3 +486,139 @@ func TestObserve_HintsAndDraftEnds(t *testing.T) {
 		})
 	}
 }
+
+func TestRun_AStageRunsDraftReachesItsSubscribers(t *testing.T) {
+	c, _, _, _ := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+		in.Draft(stage.DraftFrame{Offset: 0, Text: "# Ne"})
+		in.Draft(stage.DraftFrame{Offset: 4, Text: "ed"})
+
+		return artifactOutput("# Need", in), nil
+	})
+	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	ch, err := c.Subscribe(ctx, "BP1")
+	require.NoError(t, err)
+
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+
+	frames := framesUntil(t, ch, func(f protocol.LiveFrame) bool { return f.Type == frameStored })
+
+	var drafts []protocol.Draft
+
+	for _, f := range frames {
+		if f.Type == frameDraft {
+			drafts = append(drafts, *f.Draft)
+		}
+	}
+
+	assert.Equal(t, []protocol.Draft{
+		{Stage: "intake", Version: 1, Offset: 0, Text: "# Ne"},
+		{Stage: "intake", Version: 1, Offset: 4, Text: "ed"},
+	}, drafts, "frames carry the stage and the version the artifact is stored as")
+}
+
+func TestRun_AVoidDraftLeavesTheSnapshotWithoutOne(t *testing.T) {
+	release := make(chan struct{})
+
+	c, _, _, _ := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		in.Draft(stage.DraftFrame{Offset: 0, Text: "# Ne"})
+		in.Draft(stage.DraftFrame{Void: true})
+
+		// The run stays open until the test has seen the snapshot the void
+		// caused, so nothing but the void can have cleared the draft.
+		parkUntil(ctx, release)
+
+		return artifactOutput("# Need", in), nil
+	})
+	c.live.interval = 10 * time.Millisecond
+
+	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
+
+	closeRelease := closer(t, release)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	ch, err := c.Subscribe(ctx, "BP1")
+	require.NoError(t, err)
+
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+
+	var sawDraft bool
+
+	frames := framesUntil(t, ch, func(f protocol.LiveFrame) bool {
+		if f.Type == frameDraft {
+			sawDraft = true
+		}
+
+		return sawDraft && f.Type == frameSnapshot && f.Draft == nil
+	})
+
+	closeRelease()
+
+	for _, f := range frames {
+		if f.Type == frameDraft {
+			assert.Equal(t, "# Ne", f.Draft.Text, "a void frame is never sent as a draft")
+		}
+	}
+
+	framesUntil(t, ch, func(f protocol.LiveFrame) bool { return f.Type == frameStored })
+}
+
+func TestRun_ADraftCarriesTheNextVersion(t *testing.T) {
+	script := gatedScript()
+	script["shape"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		in.Draft(stage.DraftFrame{Offset: 0, Text: "# Sh"})
+
+		return done("# Shape", nil), nil
+	}
+
+	c, _, _, _ := newGated(t, script)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	ch, err := c.Subscribe(ctx, "BP1")
+	require.NoError(t, err)
+
+	var versions []int
+
+	storedShape := func(version int) func(protocol.LiveFrame) bool {
+		return func(f protocol.LiveFrame) bool {
+			if f.Type == frameDraft {
+				versions = append(versions, f.Draft.Version)
+			}
+
+			return f.Type == frameStored && f.Stage == "shape" && f.Version == version
+		}
+	}
+
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	framesUntil(t, ch, storedShape(1))
+	c.Wait("BP1")
+
+	// A rejection runs the stage again: its artifact is stored as version 2.
+	require.NoError(t, c.Message(ctx, "BP1", "reject make it smaller", "m2"))
+	framesUntil(t, ch, storedShape(2))
+
+	assert.Equal(t, []int{1, 2}, versions)
+}
+
+func TestRun_AReviewDraftsNothing(t *testing.T) {
+	c, _, runner, _ := newGated(t, gatedScript())
+
+	startGated(t, c, protocol.ArchitectModeDefault)
+
+	reviews := inputsOf(runner, "shape.review")
+	require.NotEmpty(t, reviews)
+	assert.Nil(t, reviews[0].Draft)
+	assert.NotNil(t, inputsOf(runner, "shape")[0].Draft)
+}

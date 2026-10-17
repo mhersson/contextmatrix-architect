@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/mhersson/contextmatrix-harness/llm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -372,4 +373,35 @@ func TestDraft_ADifferentNameAtTheSameIndexIsANewCall(t *testing.T) {
 	x.fragment(0, "", submitArtifactName, `{"body":"x"}`)
 
 	assert.Equal(t, "x", got.text())
+}
+
+func TestDraft_TakesHarnessDeltas(t *testing.T) {
+	got := newDraftLog(t)
+	x := newDraftExtractor(nil, got.add, time.Now, 0)
+
+	tc := func(frag string) llm.Delta {
+		return llm.Delta{ToolCall: &llm.ToolCallDelta{Index: 0, ID: "c1", Name: submitArtifactName, ArgsFragment: frag}}
+	}
+
+	x.delta(llm.Delta{Content: "thinking out loud"})
+	x.delta(tc(`{"body":"first`))
+	x.delta(llm.Delta{Reset: true})
+	x.delta(tc(`{"body":"again"}`))
+
+	assert.Equal(t, "again", got.text())
+}
+
+func TestDraft_ANewModelCallRestartsEvenWhenItReusesTheID(t *testing.T) {
+	got := newDraftLog(t)
+	x := newDraftExtractor(nil, got.add, time.Now, 0)
+
+	x.fragment(0, "c1", submitArtifactName, `{"body":"first draft`)
+	x.newModelCall()
+	x.fragment(0, "c1", submitArtifactName, `{"body":"second"}`)
+
+	assert.Equal(t, "second", got.text())
+
+	for _, f := range got.frames {
+		assert.False(t, f.Void, "the shown draft is replaced, not voided")
+	}
 }

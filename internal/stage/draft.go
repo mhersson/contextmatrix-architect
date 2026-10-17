@@ -8,6 +8,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"github.com/mhersson/contextmatrix-harness/llm"
 	"github.com/mhersson/contextmatrix-harness/redact"
 )
 
@@ -16,8 +17,6 @@ const submitArtifactName = "submit_artifact"
 
 // draftInterval spaces draft frames while a body streams: about four a
 // second.
-//
-//nolint:unused // the runner wiring that follows uses it
 const draftInterval = 250 * time.Millisecond
 
 // minSecretLen mirrors the harness redactor, which ignores shorter secrets.
@@ -141,6 +140,33 @@ func (x *draftExtractor) fragment(index int, id, name, args string) {
 	}
 
 	x.emit(x.streamed(call))
+}
+
+// delta takes one streamed fragment from the harness: a tool call's
+// argument piece, or the reset that comes before a replay after a
+// mid-stream retry. Content and reasoning are not drafted.
+func (x *draftExtractor) delta(d llm.Delta) {
+	if d.Reset {
+		x.reset()
+	}
+
+	if tc := d.ToolCall; tc != nil {
+		x.fragment(tc.Index, tc.ID, tc.Name, tc.ArgsFragment)
+	}
+}
+
+// newModelCall drops the buffered calls of the previous response, so the
+// next response never continues a draft by reusing an id. What is shown
+// stays until the next frame replaces it.
+func (x *draftExtractor) newModelCall() {
+	if x == nil {
+		return
+	}
+
+	x.mu.Lock()
+	defer x.mu.Unlock()
+
+	x.clear()
 }
 
 // reset forgets everything streamed so far: the harness replays the

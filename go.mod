@@ -9,8 +9,8 @@ require (
 	github.com/knadh/koanf/providers/file v1.2.1
 	github.com/knadh/koanf/providers/structs v1.0.1
 	github.com/knadh/koanf/v2 v2.3.8
-	github.com/mhersson/contextmatrix-backendkit v0.8.0
-	github.com/mhersson/contextmatrix-harness v0.25.0
+	github.com/mhersson/contextmatrix-backendkit v0.9.0
+	github.com/mhersson/contextmatrix-harness v0.26.0
 	github.com/mhersson/contextmatrix-protocol v0.26.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/spf13/cobra v1.10.2
