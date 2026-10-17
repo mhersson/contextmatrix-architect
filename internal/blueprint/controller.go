@@ -175,6 +175,8 @@ type run struct {
 	shutdown bool
 	// answer is the open question's reply channel; nil when none is open.
 	answer chan string
+	// stage is the stage the run in flight runs; set under Controller.mu.
+	stage string
 }
 
 // Controller owns every attached blueprint.

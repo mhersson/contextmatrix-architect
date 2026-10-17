@@ -9,6 +9,7 @@ import (
 
 	"github.com/mhersson/contextmatrix-architect/internal/blueprint"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
+	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
 // logEntryFor renders a controller event as a panel entry. Until CM renders
@@ -38,6 +39,13 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Type = "system"
 		entry.Content = fmt.Sprintf("Stage %s started as %s.", str(p["stage"]), strings.ReplaceAll(str(p["persona"]), "_", " "))
 	case blueprint.EventQuestion:
+		if str(p["responder"]) == store.ResponderAuto {
+			entry.Type = "system"
+			entry.Content = fmt.Sprintf("Stage %s asked: %s Its policy is auto, so it decides this itself; the question stays in the blueprint's event log.", str(p["stage"]), str(p["text"]))
+
+			break
+		}
+
 		entry.Type = "text"
 
 		var b strings.Builder
@@ -124,6 +132,12 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventSetupGaps:
 		entry.Type = "text"
 		entry.Content = setupGapsText(p)
+	case blueprint.EventPolicy:
+		entry.Type = "system"
+		entry.Content = policyText(p)
+	case blueprint.EventGatePlan:
+		entry.Type = "text"
+		entry.Content = gatePlanText(p)
 	case blueprint.EventGrounded:
 		entry.Type = "system"
 
@@ -458,6 +472,49 @@ func signoffText(p map[string]any) string {
 	}
 
 	b.WriteString(", or `reject <feedback>` to re-run decomposition with your feedback.")
+
+	return b.String()
+}
+
+// policyText renders a gate reply: the change it made and what it leaves
+// alone, or why it changed nothing.
+func policyText(p map[string]any) string {
+	if refused := str(p["refused"]); refused != "" {
+		return "Nothing changed. " + refused + " Reply `gate <stage> human` or `gate <stage> auto`."
+	}
+
+	text := fmt.Sprintf("Stage %s is now %s for this blueprint, from its next question or gate.", str(p["stage"]), str(p["policy"]))
+
+	if str(p["open"]) == "question" {
+		text += " Its open question stays with whoever it was put to."
+	}
+
+	return text
+}
+
+// gatePlanText renders the gate plan: who answers each stage's questions
+// and decides its gate, and the replies that change it.
+func gatePlanText(p map[string]any) string {
+	var b strings.Builder
+
+	b.WriteString("**Gate plan.** Who answers each stage's questions and decides its gate:")
+
+	for _, s := range anyMaps(p["stages"]) {
+		fmt.Fprintf(&b, "\n- %s: %s", str(s["stage"]), str(s["policy"]))
+
+		if gate, _ := s["gate"].(bool); gate {
+			b.WriteString(", with a gate")
+		}
+	}
+
+	switch str(p["signoff"]) {
+	case "auto":
+		b.WriteString("\n- sign-off: auto when preflight finds nothing for a human")
+	case "human":
+		b.WriteString("\n- sign-off: human")
+	}
+
+	b.WriteString("\n\nReply `gate <stage> human` or `gate <stage> auto` to change a stage for this blueprint; it applies from the stage's next question or gate. The sign-off follows the mode.")
 
 	return b.String()
 }

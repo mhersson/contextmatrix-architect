@@ -45,6 +45,12 @@ const (
 	// lacks for an agent run: a verify command, an instruction file, any
 	// commit. None of it blocks; decomposition plans it as setup.
 	EventSetupGaps = "setup_gaps"
+	// EventPolicy records a gate <stage> human|auto reply: the stage's new
+	// policy, or why the reply changed nothing.
+	EventPolicy = "policy"
+	// EventGatePlan lists, once the first stage has completed, who answers
+	// each stage's questions and decides its gate.
+	EventGatePlan = "gate_plan"
 	// EventReport is the pipeline's end: the final artifact and whether the
 	// cards are ready.
 	EventReport = "report"

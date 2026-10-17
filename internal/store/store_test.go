@@ -597,3 +597,24 @@ func TestOpen_MigratesV3(t *testing.T) {
 		Responder: ResponderHuman, AnsweredAt: now,
 	}))
 }
+
+func TestListEventsOfKind(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	for _, e := range []Event{
+		{Time: now, BlueprintID: "BP1", Kind: "policy", Payload: json.RawMessage(`{"n":1}`)},
+		{Time: now, BlueprintID: "BP1", Kind: "note", Payload: json.RawMessage(`{"n":2}`)},
+		{Time: now, BlueprintID: "BP1", Kind: "policy", Payload: json.RawMessage(`{"n":3}`)},
+		{Time: now, BlueprintID: "BP2", Kind: "policy", Payload: json.RawMessage(`{"n":4}`)},
+	} {
+		require.NoError(t, s.AppendEvent(ctx, e))
+	}
+
+	got, err := s.ListEventsOfKind(ctx, "BP1", "policy")
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.JSONEq(t, `{"n":1}`, string(got[0].Payload))
+	assert.JSONEq(t, `{"n":3}`, string(got[1].Payload))
+}

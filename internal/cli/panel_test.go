@@ -46,6 +46,10 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		wantIdle bool
 	}{
 		{"question", blueprint.EventQuestion, nil, true},
+		{"question the stage decides itself", blueprint.EventQuestion, map[string]any{"responder": "auto"}, false},
+		{"gate reply on an idle blueprint", blueprint.EventPolicy, map[string]any{"during_run": false}, true},
+		{"gate reply while a stage runs", blueprint.EventPolicy, map[string]any{"during_run": true}, false},
+		{"gate plan", blueprint.EventGatePlan, nil, false},
 		{"stage canceled", blueprint.EventStageEnded, map[string]any{"status": "canceled"}, true},
 		{"stage done, what follows decides", blueprint.EventStageEnded, map[string]any{"status": "done"}, false},
 		{"design awaited", blueprint.EventAwaitInput, map[string]any{"stage": "design", "prompt": "Paste the design."}, true},

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
-	"strings"
 
 	"github.com/mhersson/contextmatrix-backendkit/webhookcore"
 	protocol "github.com/mhersson/contextmatrix-protocol"
@@ -134,11 +133,13 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
-	switch command(p.Content) {
-	case "abort":
+	switch name, args := blueprint.ParseCommand(p.Content); name {
+	case blueprint.CommandAbort:
 		err = s.ctl.Abort(ctx, p.SessionID, p.MessageID)
-	case "export":
+	case blueprint.CommandExport:
 		err = s.ctl.Export(ctx, p.SessionID, p.MessageID)
+	case blueprint.CommandGate:
+		err = s.ctl.SetPolicy(ctx, p.SessionID, args[0], args[1], p.MessageID)
 	default:
 		err = s.ctl.Message(ctx, p.SessionID, p.Content, p.MessageID)
 	}
@@ -163,17 +164,4 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 // controller that is shutting down like a draining backend.
 func writeDraining(w http.ResponseWriter) {
 	webhookcore.WriteError(w, http.StatusServiceUnavailable, protocol.CodeDraining, "backend is draining")
-}
-
-// command recognises a reply that is a command rather than text for the
-// blueprint: the whole message, trimmed and lowercased, is the command word.
-func command(text string) string {
-	switch strings.ToLower(strings.TrimSpace(text)) {
-	case "abort":
-		return "abort"
-	case "export":
-		return "export"
-	default:
-		return ""
-	}
 }

@@ -65,6 +65,10 @@ func (c *Controller) launch(ctx context.Context, r *run, sess *session, bp store
 				return
 			}
 
+			if stageID == c.opts.Pack.Stages[0].ID {
+				c.postGatePlan(context.WithoutCancel(ctx), sess, bp)
+			}
+
 			if stageID == c.groundingStage() {
 				c.reportSetup(ctx, sess, bp)
 			}
@@ -120,6 +124,11 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	}
 
 	c.setState(bg, id, StateRunning)
+
+	c.mu.Lock()
+	r.stage = stageID
+	c.mu.Unlock()
+
 	au.event(bg, Event{Kind: EventStageStarted, BlueprintID: id, RunID: runID, Payload: map[string]any{
 		"stage": stageID, "persona": st.Persona, "attempt": attempt, "model": m.name,
 		"pack": c.opts.Pack.Name, "pack_version": c.opts.Pack.Version,
@@ -166,7 +175,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	in.Endpoint = sess.endpoint
 	in.MaxCostUSD = runCap
 	in.MaxTurns = c.opts.MaxTurns
-	in.Asker = &asker{c: c, id: id, runID: runID, run: r, audit: au}
+	in.Asker = &asker{c: c, bp: bp, stage: stageID, runID: runID, run: r, audit: au}
 	in.Events = sink
 	in.Secrets = sess.secrets()
 
@@ -366,16 +375,42 @@ func (c *Controller) endRun(ctx context.Context, runID int64, status, reason str
 	}
 }
 
-// asker parks the run on its slot until a message answers the question.
+// asker parks the run on its slot until a message answers the question, or,
+// under the stage's auto policy, tells the stage to decide itself.
 type asker struct {
 	c     *Controller
-	id    string
+	bp    store.Blueprint
+	stage string
 	runID int64
 	run   *run
 	audit audit
 }
 
 func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
+	// Checked before anything is recorded: a cancelled run asks nothing.
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	bg := context.WithoutCancel(ctx)
+
+	// Read at every question, so a gate reply during the run applies from
+	// the next question on.
+	policy, err := a.c.policy(bg, a.bp, a.stage)
+	if err != nil {
+		return "", err
+	}
+
+	payload := map[string]any{"stage": a.stage, "text": q.Text, "options": q.Options, "context": q.Context}
+
+	if policy == pack.PolicyAuto {
+		payload["responder"] = store.ResponderAuto
+		a.audit.event(bg, Event{Kind: EventQuestion, BlueprintID: a.bp.ID, RunID: a.runID, Payload: payload})
+
+		return "", errNoResponder
+	}
+
+	payload["responder"] = store.ResponderHuman
 	ch := make(chan string, 1)
 
 	// Checked under c.mu: abort and End cancel under it, so a cancelled run
@@ -393,15 +428,12 @@ func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
 	a.run.answer = ch
 	a.c.mu.Unlock()
 
-	bg := context.WithoutCancel(ctx)
-	a.c.setState(bg, a.id, StateWaiting)
-	a.audit.event(bg, Event{Kind: EventQuestion, BlueprintID: a.id, RunID: a.runID, Payload: map[string]any{
-		"text": q.Text, "options": q.Options, "context": q.Context,
-	}})
+	a.c.setState(bg, a.bp.ID, StateWaiting)
+	a.audit.event(bg, Event{Kind: EventQuestion, BlueprintID: a.bp.ID, RunID: a.runID, Payload: payload})
 
 	select {
 	case answer := <-ch:
-		a.c.setState(bg, a.id, StateRunning)
+		a.c.setState(bg, a.bp.ID, StateRunning)
 
 		return answer, nil
 	case <-ctx.Done():

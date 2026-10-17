@@ -22,6 +22,7 @@ type Controller interface {
 	Message(ctx context.Context, id, text, msgID string) error
 	Abort(ctx context.Context, id, msgID string) error
 	Export(ctx context.Context, id, msgID string) error
+	SetPolicy(ctx context.Context, id, stageID, policy, msgID string) error
 	End(ctx context.Context, id string) error
 }
 

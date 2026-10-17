@@ -87,7 +87,7 @@ context window; never use film references.
 CM chat panel (the only client)
      |  internal/webhook (backendkit webhookcore + logbridge:
      |  session start, /message, /logs SSE, end-session)
-     |  commands in: answer, approve, reject, abort, note, export, outcomes, lesson decision
+     |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, outcomes, lesson decision
      |  events out: stage progress, tool calls, questions, gates, cost
 controller (internal/blueprint)     blueprint state machine, gates, responder policy, cost cap
      |
@@ -123,11 +123,13 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   dialog stages. Entries published before
   CM's consumer connects, or while it is reconnecting, are retained on the
   server and replayed to it once, ahead of live entries.
-- **A question blocks the run.** `ask_human` is an ordinary tool: its
-  execution waits until the attached client answers or, under `auto`, until a
-  responder run returns. The model's run continues with the answer as the tool
-  result. No model is running while a human thinks; the run is parked on a
-  channel.
+- **A question blocks the run.** `ask_human` is an ordinary tool: under the
+  stage's `human` policy its execution waits until the attached client
+  answers, and the model's run continues with the answer as the tool result.
+  No model is running while a human thinks; the run is parked on a channel.
+  Under `auto` it returns at once and the stage decides itself; the question
+  stays in the blueprint's event log, and the responder run that would answer
+  it is design.
 - **A run ends on `submit_artifact`**, a terminal tool carrying the markdown
   body and the stage's structured yaml block. The controller stores the
   artifact and the full transcript.
@@ -157,13 +159,13 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 
 | Table         | Holds                                                                                                                        |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| blueprints    | id, title, target CM projects, pack name and version, policy overrides, state, cost cap, model price as CM sent it                                        |
+| blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price as CM sent it                                        |
 | stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status, model, started, ended, cost, token buckets |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results, reviewer score                   |
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag, the answering message, answered at; written once, at the answer |
 | gates         | append-only: blueprint, stage, the judged artifact's version, decision (approve, reject), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted                                                                     |
-| events        | append-only: time, blueprint, run, kind, payload                                                                              |
+| events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning |
 | sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage |
 | ledger        | per-run cost rows summed per blueprint                                                                                        |
 | emissions     | append-only: blueprint, kind (card, playbook, run), the draft card id, project, CM id, created at; one row per blueprint, kind and draft id |
@@ -194,7 +196,7 @@ developer (DEV), reviewer (REV).
 
 | #  | Stage           | Persona | Consumes          | Produces                                                                                              | Gate      |
 | -- | --------------- | ------- | ----------------- | ----------------------------------------------------------------------------------------------------- | --------- |
-| 1  | Intake          | PO      | the need          | need: problem, value, scope in and out, measurable outcomes; the expected shape and the gate plan     | questions |
+| 1  | Intake          | PO      | the need          | need: problem, value, scope in and out, measurable outcomes, the expected shape                       | questions |
 | 2  | Slicing         | PO      | need              | slices, each delivering standalone value; one slice is fine                                           | yes; folds into 3 when there is one slice |
 | 3  | Solution design | SD      | need, slices      | per slice: projects involved, decisions with rejected options, cross-project contracts               | yes       |
 | 4  | Grounding       | DEV     | design            | per project: files, symbols and patterns verified at a sha, verify command, instruction file presence; when it ends, the session is told what each project lacks for an agent run | no        |
@@ -207,8 +209,10 @@ developer (DEV), reviewer (REV).
 The embedded pack holds intake, a human-sourced design stage, grounding, decomposition and readiness; slicing and acceptance arrive with the dialog stages. Sign-off is the controller's step after readiness (see Emission).
 The design stage is human-sourced until the dialog stages arrive: the message after intake's artifact is stored as the design. The loader refuses a human-sourced first stage, a human-sourced stage with tools, checks, loops_to, a policy, a gate or a question cap, and a loops_to naming a human-sourced stage.
 
-- Intake ends by stating the shape it expects (slices, projects involved) and
-  the gate plan in effect, so the operator can change the overrides before
+- Intake states the shape it expects (slices, projects involved). When its
+  run completes, the controller posts the gate plan: who answers each
+  stage's questions and decides its gate, and the `gate <stage> human|auto`
+  reply that changes it, so the operator can change a policy before
   grounding spends anything.
 - Grounding ends by telling the session what each target project lacks for
   an agent run: a verify command in CM (read again then), an instruction
@@ -262,7 +266,8 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
   or false, such as a pack from before version 0.5 with `gate: questions`.
 - No include mechanism. Each file stands alone; shared text is duplicated. If
   that hurts, build-time expansion comes later.
-- Gate and question policies come from the pack, overridable per blueprint.
+- A stage's responder policy comes from the pack; the mode and the
+  blueprint's `gate` replies override it (see Interaction).
 - A lesson that extends a list lands as a pack overlay stored in SQLite and
   applied at load time, so a lesson never needs a code change.
 - Pack prose is never tested. Tests check only that a pack parses and that
@@ -401,8 +406,12 @@ round. The model-judged rows are the readiness stage.
 
 ## Interaction
 
-Every question and gate has a responder policy from the pack, overridable per
-blueprint.
+Every stage has one responder policy for its questions and its gate. It
+resolves, first match winning, from the blueprint's latest
+`gate <stage> human|auto` reply, then the mode (every mode but default
+makes it `auto`), then the pack. Until the responder run exists, a question
+under `auto` returns to the stage at once, the stage decides itself, and the
+question stays in the blueprint's event log.
 
 | Policy  | Questions                                                                                   | Gates                                                                 |
 | ------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -426,9 +435,12 @@ without a reply it falls through to `auto`, logged as such).
 The mode is chosen in the panel's new-session dialog and recorded on the
 blueprint.
 
-- **Default**: policies as the pack sets them: `human` at solution design and
-  sign-off, `auto` at acceptance. A reply to the gate-plan message at the end
-  of intake changes a gate's policy for this blueprint.
+- **Default**: policies as the pack sets them. The embedded pack makes
+  intake `human` and every other model stage `auto`; when the dialog
+  stages arrive, solution design is `human` and acceptance `auto`. The
+  sign-off waits for a human. A `gate <stage> human|auto` reply, listed in
+  the gate plan posted after intake, changes a stage's policy for this
+  blueprint.
 - **`auto`**: every policy `auto`. Stops before emission. Cards auto-vet in
   CM on the non-Jira path, so this stop is the only human backstop.
 - **`auto+emit`**: as above, then emits the playbook and stops.
@@ -563,7 +575,7 @@ Replies the server understands, besides answers to questions:
 | Reply                         | Effect                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
 | `approve`, `reject <feedback>` | Decides the sign-off: approve emits, and resumes an emission that stopped; reject re-runs decomposition with the feedback. Only after the pipeline ends ready; before that the text is an answer, the design or a note. |
-| `gate <stage> human\|auto`    | Changes a gate's policy for this blueprint; offered at the gate plan.   |
+| `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next question or gate on; an open question keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none; a human-sourced stage takes none either. |
 | `export`                      | Writes the markdown bundle (blueprint summary with the sign-off decisions and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
 | `lessons`                     | Lists lessons and their state.                                          |
@@ -674,7 +686,7 @@ internal/cm          MCP client: the project list, the stage read tools, and the
 internal/outcomes    outcomes stage and lessons
 internal/export      markdown rendering into the state directory
 internal/config
-internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; reply parsing
+internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export and gate commands that internal/blueprint recognises
 ```
 
 ## Changes needed in CM

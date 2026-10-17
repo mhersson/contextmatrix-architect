@@ -362,7 +362,7 @@ func TestMessage_FirstMessageIsTheNeedAndRunsIntake(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(tr), "containerise this project")
 
-	assert.Equal(t, []string{EventCreated, EventStageStarted, EventArtifact, EventStageEnded, EventReport}, rec.kinds(),
+	assert.Equal(t, []string{EventCreated, EventStageStarted, EventArtifact, EventStageEnded, EventGatePlan, EventReport}, rec.kinds(),
 		"nothing follows intake in a one-stage pack, so the pipeline reports")
 
 	started, ok := rec.first(EventStageStarted)

@@ -2073,3 +2073,36 @@ func TestPosition_StatusIgnoresNonStageRunsOfTheNextStage(t *testing.T) {
 	assert.Equal(t, "intake", out.stage)
 	assert.Empty(t, status, "only stage runs give a stage its status")
 }
+
+func TestPipeline_TheGatePlanFollowsTheFirstStage(t *testing.T) {
+	c, _, _, rec, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.SetPolicy(ctx, "BP1", "grounding", "human", "m0"))
+
+	drive(t, c, "BP1")
+
+	plan, ok := rec.first(EventGatePlan)
+	require.True(t, ok)
+	assert.Equal(t, []any{
+		map[string]any{"stage": "intake", "policy": "human", "gate": false},
+		map[string]any{"stage": "grounding", "policy": "human", "gate": false},
+		map[string]any{"stage": "decomposition", "policy": "auto", "gate": false},
+		map[string]any{"stage": "readiness", "policy": "auto", "gate": false},
+	}, plan.Payload["stages"], "model stages only, each with its effective policy")
+	assert.Equal(t, "human", plan.Payload["signoff"])
+
+	rec.mu.Lock()
+	events := slices.Clone(rec.events)
+	rec.mu.Unlock()
+
+	at := func(kind, stage string) int {
+		return slices.IndexFunc(events, func(e Event) bool {
+			return e.Kind == kind && (stage == "" || e.Payload["stage"] == stage)
+		})
+	}
+
+	assert.Less(t, at(EventStageEnded, "intake"), at(EventGatePlan, ""), "posted when intake ends")
+	assert.Less(t, at(EventGatePlan, ""), at(EventStageStarted, "grounding"), "and before grounding starts")
+	assert.Equal(t, 1, rec.count(EventGatePlan))
+}
