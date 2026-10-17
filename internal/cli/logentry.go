@@ -12,12 +12,12 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-// logEntryFor renders a controller event as a panel entry. A question or gate
-// a human answers carries a prompt, whose actions the panel shows as buttons
-// and whose replies come back as ordinary messages; a round's prompt carries
-// the round, whose answers come back structured. The markdown stays the
-// readable fallback. A prompt also carries a kind and its own text, the entry
-// without its option list or reply instruction. A human's answer is echoed
+// logEntryFor renders a controller event as a panel entry. A gate a human
+// decides carries a prompt, whose actions the panel shows as buttons and
+// whose replies come back as ordinary messages; a round's prompt carries the
+// round, whose answers come back structured. The markdown stays the readable
+// fallback. A gate's prompt also carries a kind and its own text, the entry
+// without its reply instruction. A human's answer is echoed
 // by CM itself and harness events reach the hub through the bridge, so both
 // are skipped here; the responder's answer is shown.
 func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {

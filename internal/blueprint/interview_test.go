@@ -615,6 +615,10 @@ func TestRound_TheAutoResponderAnswersAndTheStageContinues(t *testing.T) {
 	assert.Equal(t, []protocol.RoundAnswer{{Number: 1, Option: 2}, {Number: 2, Text: "Kustomize"}}, s.Frame.Answers,
 		"an answer that names an option picks it")
 
+	posted, err := st.ListEventsOfKind(ctx, "BP1", EventRound)
+	require.NoError(t, err)
+	require.Len(t, posted, 1, "an auto round is published once, closed")
+
 	qs, err := st.ListQuestions(ctx, "BP1")
 	require.NoError(t, err)
 	require.Len(t, qs, 2)

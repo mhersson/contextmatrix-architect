@@ -135,7 +135,8 @@ func (iv *interviewer) numbered(ctx context.Context, rd stage.Round, sources map
 // respondAll has the responder answer each question of auto round s inside
 // the asking run, stores the round closed and read-only, and ends the run
 // on it like a human's round; the stage continues at once. A cancel leaves
-// no round, so a re-run asks again. A question the responder cannot answer
+// no round; the answers already given stay recorded, and a re-run asks only
+// what is still unanswered. A question the responder cannot answer
 // is left to the stage, which decides it.
 func (iv *interviewer) respondAll(ctx context.Context, s roundState) (string, error) {
 	s.Frame.Responder = true

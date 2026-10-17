@@ -141,7 +141,8 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   Each marker keeps a plain fallback line in `Content`, which a CM without
   markers shows instead.
   Rounds are `round:<n>` and their questions `Q<n>`, gates
-  `gate:<stage>:v<n>`, the sign-off `gate:signoff:v<n>`, and a stopped emission or run start `emission:v<n>`.
+  `gate:<stage>:v<n>`, the sign-off `gate:signoff:v<n>`, and a stopped
+  emission or run start `emission:v<n>`.
   A gate the auto policy approves never leaves a prompt open, and the gate
   plan is plain text. A gate or the sign-off stays open across a reply that
   matches none of its actions, so it is never published again.
@@ -736,7 +737,7 @@ Replies the server understands, besides a round's structured answers:
 | Reply                         | Effect                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
 | `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition with the feedback. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is a note its stage's next run gets. |
-| `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next question or gate on; an open question, round or gate keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
+| `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round or gate keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
 | `lessons`                     | Lists lessons and their state.                                          |

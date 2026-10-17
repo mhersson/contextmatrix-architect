@@ -3,6 +3,7 @@ package stage
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -221,6 +222,84 @@ func TestRun_ToolSetFollowsTheInput(t *testing.T) {
 			_, err := runnerWith(f).Run(context.Background(), in)
 			require.NoError(t, err)
 			assert.ElementsMatch(t, tt.tools, toolNames(f.requests[0].Tools))
+		})
+	}
+}
+
+func TestRun_AskQuestionsRecommendedOption(t *testing.T) {
+	titles := func(ts ...string) []any {
+		out := make([]any, 0, len(ts))
+		for _, x := range ts {
+			out = append(out, map[string]any{"title": x})
+		}
+
+		return out
+	}
+
+	tests := []struct {
+		name        string
+		options     []any
+		recommended any
+		wantOptions []string
+		wantRec     int
+		wantRefused bool
+	}{
+		{name: "none", options: titles("a", "b"), wantOptions: []string{"a", "b"}},
+		{name: "the second", options: titles("a", "b"), recommended: float64(2), wantOptions: []string{"a", "b"}, wantRec: 2},
+		{name: "past the options", options: titles("a", "b"), recommended: float64(3), wantRefused: true},
+		{name: "zero", options: titles("a"), recommended: float64(0), wantRefused: true},
+		{name: "not a whole number", options: titles("a", "b"), recommended: 1.5, wantRefused: true},
+		{name: "a blank option before it", options: titles("a", " ", "c"), recommended: float64(3), wantOptions: []string{"a", "c"}, wantRec: 2},
+		{name: "pointing at a blank option", options: titles("a", " ", "c"), recommended: float64(2), wantRefused: true},
+		{name: "a marker names its option", options: titles("a", "b (recommended)"), wantOptions: []string{"a", "b"}, wantRec: 2},
+		{name: "any case, with the whitespace around it", options: titles("a  (Recommended)  ", "b"), wantOptions: []string{"a", "b"}, wantRec: 1},
+		{name: "the position wins over a marker", options: titles("a", "b (recommended)"), recommended: float64(1), wantOptions: []string{"a", "b"}, wantRec: 1},
+		{name: "markers on two options name none", options: titles("a (recommended)", "b (RECOMMENDED)"), wantOptions: []string{"a", "b"}},
+		{name: "a marker alone is a blank option", options: titles("a", "(recommended)"), wantOptions: []string{"a"}},
+		{name: "text before the marker that is not ASCII", options: titles("\u00e9 (recommended)", "b"), wantOptions: []string{"\u00e9", "b"}, wantRec: 1},
+		{name: "a marker before the end stays", options: titles("(recommended) a", "a (recommended) b"), wantOptions: []string{"(recommended) a", "a (recommended) b"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := map[string]any{"title": "Scope", "question": "Which?", "options": tt.options}
+			if tt.recommended != nil {
+				q["recommended"] = tt.recommended
+			}
+
+			args, err := json.Marshal(map[string]any{"questions": []any{q}})
+			require.NoError(t, err)
+
+			f := &fakeLLM{responses: []llm.Response{
+				{ToolCalls: []llm.ToolCall{toolCall("c1", "ask_questions", string(args))}, FinishReason: "tool_calls"},
+				{ToolCalls: []llm.ToolCall{toolCall("c2", "submit_artifact", `{"body":"x"}`)}, FinishReason: "tool_calls"},
+			}}
+			iv := &stubInterviewer{}
+
+			in := baseInput(&bytes.Buffer{})
+			in.Interviewer = iv
+
+			out, err := runnerWith(f).Run(context.Background(), in)
+			require.NoError(t, err)
+
+			if tt.wantRefused {
+				assert.Empty(t, iv.asked, "the interviewer is not called")
+				assert.Equal(t, 1, out.Result.ToolCallFailures)
+
+				return
+			}
+
+			require.Len(t, iv.asked, 1)
+
+			got := iv.asked[0].Questions[0]
+
+			var titlesGot []string
+			for _, o := range got.Options {
+				titlesGot = append(titlesGot, o.Title)
+			}
+
+			assert.Equal(t, tt.wantOptions, titlesGot)
+			assert.Equal(t, tt.wantRec, got.Recommended)
 		})
 	}
 }

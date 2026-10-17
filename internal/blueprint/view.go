@@ -643,8 +643,9 @@ func (rec record) current() *protocol.CurrentRun {
 	}
 }
 
-// open is the prompt that waits for the operator: the open round, a shown gate or the shown sign-off, undecided, or a stopped
-// emission or run start, which approve resumes.
+// open is the prompt that waits for the operator: the open round, a shown
+// gate or the shown sign-off, undecided, or a stopped emission or run start,
+// which approve resumes.
 func (rec record) open() *protocol.OpenPrompt {
 	if rec.waitsToResume() {
 		return &protocol.OpenPrompt{PromptID: fmt.Sprintf("emission:v%d", signoffVersion(*rec.resume)), Kind: promptGate}
