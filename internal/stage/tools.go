@@ -140,14 +140,15 @@ func (t askHumanTool) Execute(ctx context.Context, args map[string]any) (tools.R
 
 type submitArtifactTool struct {
 	validate func(context.Context, Artifact) error
+	drafts   *draftExtractor
 }
 
-func (submitArtifactTool) Name() string   { return "submit_artifact" }
+func (submitArtifactTool) Name() string   { return submitArtifactName }
 func (submitArtifactTool) Terminal() bool { return true }
 
 func (submitArtifactTool) Schema() llm.Tool {
 	return llm.Tool{Type: "function", Function: llm.ToolFunction{
-		Name:        "submit_artifact",
+		Name:        submitArtifactName,
 		Description: "Submit the stage's finished artifact. Ends the stage.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
@@ -166,14 +167,23 @@ func (submitArtifactTool) Schema() llm.Tool {
 func (t submitArtifactTool) Execute(ctx context.Context, args map[string]any) (tools.Result, error) {
 	art := Artifact{Body: stringArg(args, "body")}
 
+	// The submit's own body is the authority on what the draft shows.
+	t.drafts.final(art.Body)
+
+	refuse := func(err error) (tools.Result, error) {
+		t.drafts.refuse(err.Error())
+
+		return tools.Result{}, err
+	}
+
 	if strings.TrimSpace(art.Body) == "" {
-		return tools.Result{}, errors.New("submit_artifact: body is required")
+		return refuse(errors.New("submit_artifact: body is required"))
 	}
 
 	if data, ok := args["data"]; ok && data != nil {
 		obj, isObject := data.(map[string]any)
 		if !isObject {
-			return tools.Result{}, errors.New("submit_artifact: data must be a JSON object")
+			return refuse(errors.New("submit_artifact: data must be a JSON object"))
 		}
 
 		art.Data = obj
@@ -181,6 +191,8 @@ func (t submitArtifactTool) Execute(ctx context.Context, args map[string]any) (t
 
 	if t.validate != nil {
 		if err := t.validate(ctx, art); err != nil {
+			t.drafts.refuse(err.Error())
+
 			return tools.Result{}, fmt.Errorf("submit_artifact rejected: %w", err)
 		}
 	}

@@ -1252,3 +1252,61 @@ func TestSignoff_AVerifyCommandSetBeforeApproveDropsTheStep(t *testing.T) {
 	require.True(t, ok)
 	assert.Empty(t, em.Payload["steps"], "emission reads ContextMatrix again")
 }
+
+func TestSignoff_AnAutomaticApprovalRecordsWhatItApproved(t *testing.T) {
+	c, _, _, rec, _ := newPipeline(t, happyScript())
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	ctx := context.Background()
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeAutoEmit
+	driveIn(t, c, in)
+
+	record, ok := rec.first(EventSignOffAuto)
+	require.True(t, ok, "the approved sign-off is recorded")
+	assert.False(t, rec.has(EventSignOff), "no gate was shown")
+	assert.NotContains(t, record.Payload, "actions", "nothing waits on it")
+	assert.NotContains(t, record.Payload, "auto_stopped", "it was not stopped")
+	assert.Len(t, record.Payload["cards"], 1)
+
+	rec.mu.Lock()
+
+	approved, recorded := -1, -1
+
+	for i, e := range rec.events {
+		switch {
+		case e.Kind == EventDecided && e.Payload["stage"] == signoffStage && approved < 0:
+			approved = i
+		case e.Kind == EventSignOffAuto && recorded < 0:
+			recorded = i
+		}
+	}
+
+	rec.mu.Unlock()
+
+	require.GreaterOrEqual(t, approved, 0, "the sign-off was decided")
+	assert.Less(t, approved, recorded, "the approval comes first")
+
+	version, _ := record.Payload["version"].(int)
+
+	art, err := c.Artifact(ctx, "BP1", signoffStage, version)
+	require.NoError(t, err)
+	assert.Contains(t, string(art.Data), `"cards"`)
+
+	v, err := c.View(ctx, "BP1")
+	require.NoError(t, err)
+
+	var found bool
+
+	for _, r := range v.Artifacts {
+		if r.Stage == signoffStage {
+			found = true
+
+			assert.Equal(t, artApproved, r.Status)
+			assert.Equal(t, byAutomatic, r.DecidedBy)
+		}
+	}
+
+	assert.True(t, found, "the Sign-off tab has its artifact")
+}

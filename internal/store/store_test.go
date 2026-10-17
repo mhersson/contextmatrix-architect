@@ -658,3 +658,44 @@ func TestCountEvents(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)
 }
+
+func TestLastEventID(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+
+	id, err := s.LastEventID(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Zero(t, id, "a blueprint with no events")
+
+	for _, bp := range []string{"BP1", "BP2", "BP1"} {
+		require.NoError(t, s.AppendEvent(ctx, Event{Time: time.Now(), BlueprintID: bp, Kind: "note"}))
+	}
+
+	all, err := s.ListEvents(ctx, "BP1")
+	require.NoError(t, err)
+
+	id, err = s.LastEventID(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, all[len(all)-1].ID, id, "the newest of its own events, not another blueprint's")
+}
+
+func TestGetArtifact(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+
+	for _, body := range []string{"v1", "v2"} {
+		_, err := s.PutArtifact(ctx, Artifact{BlueprintID: "BP1", Stage: "intake", Body: body, Data: json.RawMessage(`{"n":1}`)})
+		require.NoError(t, err)
+	}
+
+	a, err := s.GetArtifact(ctx, "BP1", "intake", 1)
+	require.NoError(t, err)
+	assert.Equal(t, "v1", a.Body)
+	assert.JSONEq(t, `{"n":1}`, string(a.Data))
+
+	_, err = s.GetArtifact(ctx, "BP1", "intake", 3)
+	require.ErrorIs(t, err, ErrNotFound)
+
+	_, err = s.GetArtifact(ctx, "BP2", "intake", 1)
+	require.ErrorIs(t, err, ErrNotFound)
+}

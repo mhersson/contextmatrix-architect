@@ -8,6 +8,7 @@ import (
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
+	"github.com/mhersson/contextmatrix-architect/internal/contract"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -117,14 +118,19 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	}
 
 	auto := emitsOnItsOwn(bp.Mode)
+	payload := c.signoffPayload(bg, au, bp, out, draft, pf, pfErr)
 
 	// Steps do not stop it: creating the cards does not need them, and they
-	// are shown again with the emitted cards.
+	// are shown again with the emitted cards. The approval goes first and
+	// the record of what it approved after it, so a crash between the two
+	// leaves an approved sign-off the restart emits, never an unapproved
+	// record.
 	if auto && ctx.Err() == nil && pfErr == nil && len(pf.Blocking) == 0 && len(pf.Warnings) == 0 {
 		if !c.decide(bg, au, bp.ID, signoffStage, out.art.Version, store.GateApprove, "", store.ResponderAuto, "") {
 			return
 		}
 
+		au.event(bg, Event{Kind: EventSignOffAuto, BlueprintID: bp.ID, Payload: payload})
 		c.emit(ctx, sess, bp)
 
 		return
@@ -135,12 +141,23 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 		return
 	}
 
-	// Assumptions that cannot be read show as none, and the log says why. An
-	// intake from before assumptions were data gives its section's text,
-	// which the panel shows as it shows an older sign-off.
+	payload["auto_stopped"] = auto
+	payload["actions"] = actionsPayload(signoffActions(len(pf.Warnings) > 0))
+
+	c.setState(bg, bp.ID, StateWaiting)
+	au.event(bg, Event{Kind: EventSignOff, BlueprintID: bp.ID, Payload: payload})
+}
+
+// signoffPayload is what a sign-off carries: the cards in playbook order,
+// the manual checks, the playbook title, what preflight found and the
+// assumptions, riskiest first. Assumptions that cannot be read show as
+// none, and the log says why; an intake from before assumptions were data
+// gives its section's text, which the panel shows as it shows an older
+// sign-off.
+func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blueprint, out outcome, draft contract.Draft, pf preflightResult, pfErr error) map[string]any {
 	var assumptions any = []any{}
 
-	sum, err := c.summary(bg, bp.ID)
+	sum, err := c.summary(ctx, bp.ID)
 
 	switch {
 	case err != nil:
@@ -173,16 +190,14 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 
 	payload := map[string]any{
 		"version": out.art.Version, "cards": cards, "order": draft.Order, "manual": manual, "title": draft.Title,
-		"blocking": pf.Blocking, "warnings": pf.Warnings, "steps": pf.Steps, "auto_stopped": auto, "assumptions": assumptions,
-		"actions": actionsPayload(signoffActions(len(pf.Warnings) > 0)),
+		"blocking": pf.Blocking, "warnings": pf.Warnings, "steps": pf.Steps, "assumptions": assumptions,
 	}
 
 	if pfErr != nil {
 		payload["preflight_error"] = pfErr.Error()
 	}
 
-	c.setState(bg, bp.ID, StateWaiting)
-	au.event(bg, Event{Kind: EventSignOff, BlueprintID: bp.ID, Payload: payload})
+	return payload
 }
 
 // atReadyEnd handles a message after the pipeline ended ready, matching it to
