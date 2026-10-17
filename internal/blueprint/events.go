@@ -74,6 +74,11 @@ const (
 	// EventSignOff shows the ready cards, the preflight result and how to
 	// decide; the blueprint waits for approve or reject.
 	EventSignOff = "signoff"
+	// EventSignOffAuto records the sign-off an emitting mode approved on its
+	// own, with the payload a shown sign-off carries less its replies and its
+	// auto_stopped flag, so the sheet shows what was approved. It follows the
+	// approval and is never shown in the transcript.
+	EventSignOffAuto = "signoff_auto"
 	// EventGate shows a stage's gate: the stage, the version of its artifact
 	// that waits, the artifacts folded into it, and the replies that decide
 	// it.
@@ -92,6 +97,10 @@ const (
 	EventEnded = "session_ended"
 	// EventHarness wraps one raw harness JSONL line; the payload is the line.
 	EventHarness = "harness"
+	// EventState records a change of the blueprint's state. It is stored,
+	// never sent to the panel: the view's sequence is the newest events row,
+	// so every change of what the view shows writes one.
+	EventState = "state"
 )
 
 var errNotJSON = errors.New("not a JSON document")
@@ -150,6 +159,8 @@ func (a audit) event(ctx context.Context, e Event) {
 	if a.c.opts.Sink != nil {
 		a.c.opts.Sink(e)
 	}
+
+	a.c.observe(e)
 }
 
 // harness stores one raw harness JSONL line as an event, then forwards it
@@ -172,6 +183,8 @@ func (a audit) harness(ctx context.Context, id string, runID int64, line []byte,
 	if forward && a.c.opts.HarnessLine != nil {
 		a.c.opts.HarnessLine(id, masked)
 	}
+
+	a.c.live.touch(id)
 }
 
 // artifact stores the next version of a stage's artifact and returns it.

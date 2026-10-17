@@ -86,7 +86,7 @@ context window; never use film references.
 ```
 CM chat panel (the only client)
      |  internal/webhook (backendkit webhookcore + logbridge:
-     |  session start, /message, /logs SSE, end-session)
+     |  session start, /message, /logs SSE, end-session, the blueprint view, artifacts and live SSE)
      |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, outcomes, lesson decision
      |  events out: stage progress, tool calls, questions, gates, cost
 controller (internal/blueprint)     blueprint state machine, gates, responder policy, cost cap
@@ -119,6 +119,15 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   prompt carries the entry without its reply instruction as its text, and
   the kind `gate`. A click sends the reply as an ordinary message, so the
   architect's reply parsing is the same for a click and a typed answer.
+  Round 1 of each attempt of a stage run is a stage divider
+  (`LogEntry.Marker` of kind `stage`, a system entry), and a stored
+  artifact is a sheet reference (kind `artifact`, a text entry) to that
+  stage and version in place of its body. Its one-line note says what is
+  known when it is stored: the persona that drew it, the findings a
+  revision was given, a loop stage's round, or that its checks refused it
+  until round 3. Reviewer verdicts and gate decisions stay prose entries.
+  Each marker keeps a plain fallback line in `Content`, which a CM without
+  markers shows instead.
   Questions are `Q<n>`, gates `gate:<stage>:v<n>`, the sign-off
   `gate:signoff:v<n>`, and a stopped emission or run start `emission:v<n>`.
   An auto answer or a gate the auto policy approves never leaves a prompt
@@ -171,6 +180,10 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   the gate without another review; the gate shows that it was revised and
   the version the reviewer scored. Each reviewer round is a harness run with
   its own cap, and so is a revision round; the ledger sums them.
+  The round is given the findings numbered, and its submit may list the ones
+  it addressed in its data as `addressed: [{finding, note}]`; a number the
+  round was not given is refused like any check problem, and the third
+  failing submit is accepted with its problems kept.
 - **A gate waits between runs.** The controller holds the stage's artifact and
   asks the client. Nothing runs meanwhile.
 - **A human rejection starts a new attempt**: a fresh run with the previous
@@ -197,7 +210,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once, at the answer |
 | gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted                                                                     |
-| events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning |
+| events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning; every change of the blueprint's state is a `state` row, stored and never sent to the panel |
 | sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage |
 | ledger        | per-run cost rows summed per blueprint                                                                                        |
 | emissions     | append-only: blueprint, kind (card, playbook, run), the draft card id, project, CM id, created at; one row per blueprint, kind and draft id |
@@ -206,7 +219,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 
 Schema bumps are one-way: an older binary refuses a newer file.
 
-**Audit.** Every action produces an event: blueprint created, run started
+**Audit.** Every action produces an event: blueprint created, state changed, run started
 (model, pack version, persona, config snapshot), tool call made, question
 asked, answer given, assumption recorded, check passed or failed, reviewer
 score, gate decided, artifact version stored, emission call and CM's response,
@@ -562,7 +575,8 @@ blueprint.
   this blueprint.
 - **`auto`**: every policy `auto`. Stops before emission. Cards auto-vet in
   CM on the non-Jira path, so this stop is the only human backstop.
-- **`auto+emit`**: as above, then emits the playbook and stops.
+- **`auto+emit`**: as above, then emits the playbook and stops. When it
+  approves a clean sign-off itself, it records what it approved, for the sheet.
 - **`yolo`**: as `auto+emit`, then starts the run, unless a card's repository
   has no commits: the cards are emitted, the session is told to push a first
   commit and reply `approve`, and no run starts until then. A single card is
@@ -740,6 +754,90 @@ Replies the server understands, besides answers to questions:
   `approve` or `reject` is a misplaced decision, not guidance: it is logged
   and reaches no run.
 
+## Blueprint view
+
+CM's pane for a blueprint session shows where the blueprint stands beside
+the transcript: the pipeline as a scale bar, the cost against the cap, and
+every artifact on a sheet. The architect owns that data. CM proxies the
+two reads, the view and an artifact, for architect sessions only and checks
+the session's owner, and relays the live stream: it holds one upstream
+connection per session while browsers are subscribed and publishes the
+frames on the session's chat stream.
+
+- **View.** `View` builds it from the store and what is in flight: one step
+  per pack stage, plus `signoff` and `emission` when the pack checks cards.
+  Each step carries its persona, gate, policy, fold target, status
+  (pending, running, reviewing, revising, waiting, done, failed, folded or
+  skipped), attempt, a loop stage's round of its maximum, latest version
+  and cost. The view also carries the run in flight (stage, kind, persona,
+  model, start, and the turns, tool calls and tokens its harness lines have
+  counted), the open prompt (`Q<n>`, `gate:<stage>:v<n>`,
+  `gate:signoff:v<n>`, or `emission:v<n>` for a stopped emission or run
+  start), and the cost: the ledger plus the runs in flight, the blueprint
+  and per-run caps, and whether every run was priced. Every artifact
+  version is listed with its status (current, reviewing, at_gate,
+  approved, rejected, superseded, folded), who decided its gate (you, the
+  responder, or automatically for a sign-off an emitting mode approved) and
+  when, and its reviewer's verdict. A verdict's findings are sent to the
+  next version when the verdict sends the builder back. A finding is marked
+  addressed in that version, with its note, only when the revision listed
+  it. A run whose end is recorded counts in the ledger only.
+  `Seq` is the id of the newest events row the view reflects, and every
+  state change writes one. The view reads the store and memory only, so an
+  ended session's blueprint has one while the architect is up. A record the
+  pack cannot place shows every step pending.
+- **Artifacts.** `Artifact` returns one version's body, data and the
+  problems its checks accepted it with. The sign-off is a pseudo-artifact
+  per version recorded, its data the sign-off's payload. An emitting mode
+  that approves a clean sign-off on its own records what it approved (a
+  `signoff_auto` event after the approval, never shown in the transcript),
+  so its artifact exists, stamped approved automatically. The board
+  (`emission`, version 1) exists once the cards are emitted. Its data is
+  the created cards with their ids and, once the watch has seen them, their
+  state and pull request, plus the playbook, compare links, manual checks
+  and steps, and the total cost. The need as typed and reviewer verdicts
+  are not artifacts here; verdicts travel in the view.
+- **Live stream.** `Subscribe` sends a snapshot of the view first. After
+  every controller event, state change and harness line it sends a fresh
+  snapshot, at most four a second. It sends an `artifact_stored` hint when
+  a stage's artifact, a sign-off or the board is stored or changes, and
+  each frame of the draft being written. Draft offsets count code points:
+  offset 0 replaces, an offset equal to what the client holds appends, and
+  any other is a gap the client drops until the next snapshot, which
+  carries the whole draft. A snapshot without a draft means none is in
+  progress: a stage run's start or end, a stored artifact and a restart end
+  it, and within a run a refused draft stays until the next attempt
+  replaces it. Each subscriber's queue is bounded. One that falls behind
+  loses its queued drafts and gets a snapshot next. Publishing never waits
+  for a subscriber.
+- **Endpoints.** Signed `GET /blueprints/{id}`,
+  `GET /blueprints/{id}/artifacts/{stage}/{version}` and SSE
+  `GET /blueprints/{id}/live`, behind the same HMAC auth as `/logs` and
+  outside the drain gate. They ignore unknown query parameters: CM signs a
+  nonce into each read, so two reads of one URI never replay. A stage is
+  `[A-Za-z0-9_-]{1,64}`. The live stream opens with `: connected`, sends one
+  `data:` line per frame and a keepalive comment every 15 s, and ends at
+  drain. CM proxies the two reads for architect sessions only, checking the
+  session's owner, and relays the live stream: one upstream connection per
+  session while browsers are subscribed, its frames published on the
+  session's chat stream.
+- **Drafts.** While a stage run's model writes `submit_artifact`, the
+  harness passes each argument fragment on. The stage runner decodes the
+  top-level `body` string as it grows (escapes, `\u` and multi-byte runes
+  split across fragments) and redacts the whole text with the session's
+  secrets, holding back a tail that could be the start of a secret. It
+  publishes at most four frames a second, the whole body when the submit
+  arrives, and a refused frame with the check's error when a check refuses
+  it. A reset before a replay after a mid-stream retry, and the next
+  attempt after a refusal, restart at offset 0. A harness error or a
+  compaction discard voids the draft: the harness abandoned that turn and
+  sends no reset for it. A submit whose arguments the harness repairs never
+  executes, so its draft is marked refused with the repair error. Each model
+  call starts a fresh draft, whatever tool-call ids the provider reuses.
+  Reviewer and responder runs draft nothing. A model whose stream carries
+  no tool-call fragments shows its body at submit. A restart loses the
+  draft, and the run re-runs from the ledger.
+
 ## Deployment
 
 - **One server.** `contextmatrix-architect serve` runs next to the agent and
@@ -768,9 +866,9 @@ Replies the server understands, besides answers to questions:
 
 ## Runtime
 
-- Go 1.27, `contextmatrix-harness` v0.25.0 (loop, llm client, jailed read
-  tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.8.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.24.0
+- Go 1.27, `contextmatrix-harness` v0.26.0 (loop, llm client, jailed read
+  tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.9.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.26.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
@@ -826,7 +924,7 @@ internal/cm          MCP client: the project list, the stage read tools, and the
 internal/outcomes    outcomes stage and lessons
 internal/export      markdown rendering into the state directory
 internal/config
-internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export and gate commands that internal/blueprint recognises
+internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export and gate commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
 ```
 
 ## Changes needed in CM
@@ -840,7 +938,8 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | The git-credentials endpoint treats an attached architect session as live | slice 1 |
 | CM re-sends the start to an architect session after the architect restarts: on a 404 `not_found` for a message (then re-sends the message once), and when the log stream ends | slice 2 |
 | Panel: question and gate prompts (`LogEntry.Prompt`, protocol v0.24.0, with their own text, kind and recommended option from v0.25.0) rendered as buttons; the gate plan stays text, and lesson prompts reuse the same shape | slice 3 (lessons slice 4) |
-| Panel: a gate inbox and a blueprint view (stages, assumptions, cards with readiness, cost), read from the architect through a signed endpoint | later |
+| Panel: the blueprint pane (scale bar, sheet, transcript markers), read through CM proxies of the architect's signed view and artifact endpoints, with its live stream relayed on the session's chat stream (protocol v0.26.0) | blueprint UI |
+| Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |
 | Endpoint returning a selection context for non-backend consumers                                     | later               |
@@ -871,7 +970,7 @@ Ordered so a real card comes out as early as possible.
 4. **Outcomes and lessons**, with pack overlays, and the per-project export
    opt-in that commits the bundle to a repository through an allowlist of
    target repositories.
-5. **Later**: a gate inbox and a blueprint view in CM's web UI;
+5. **Later**: a gate inbox in CM's web UI;
    seeding a blueprint from an existing CM card, in the same adapter shape as
    the Jira seed; Jira seed and mirror (decide REST against Atlassian MCP then,
    see open questions); search provider; composer; model selection via

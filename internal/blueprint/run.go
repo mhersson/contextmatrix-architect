@@ -113,6 +113,13 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	id := bp.ID
 	au := sess.audit
 
+	// Whatever way this run ends, its draft ends with it; a failure records
+	// no stage_ended for observe to clear it on.
+	defer func() {
+		c.live.clearDraft(id)
+		c.live.touch(id)
+	}()
+
 	st, ok := c.opts.Pack.Stage(stageID)
 	if !ok {
 		c.fail(bg, au, id, 0, fmt.Sprintf("unknown stage %q", stageID))
@@ -155,6 +162,12 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 		return false
 	}
+
+	f := &flight{
+		runID: runID, stage: stageID, kind: store.RunKindStage, persona: st.Persona, model: m.name,
+		round: number, startedAt: c.opts.Now().UTC(), price: m.price, capUSD: runCap,
+	}
+	defer c.fly(id, f)()
 
 	c.setState(bg, id, StateRunning)
 
@@ -220,6 +233,19 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		} else {
 			in.Task += rd.task
 		}
+
+		if rd.findings > 0 {
+			check, state := addressedValidator(rd.findings)
+
+			validators := []func(context.Context, stage.Artifact) error{check}
+			if in.Validate != nil {
+				validators = append([]func(context.Context, stage.Artifact) error{in.Validate}, check)
+			}
+
+			in.Validate = allOf(validators)
+
+			checks.bounded = append(checks.bounded, state)
+		}
 	}
 
 	defer closeTools()
@@ -231,7 +257,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	sink := &harnessSink{
 		audit: au, id: id, runID: runID, canceled: runCtx.Done(),
-		price: m.price, capUSD: runCap, stop: stop,
+		price: m.price, capUSD: runCap, stop: stop, flight: f,
 	}
 
 	in.Model = m.name
@@ -244,6 +270,25 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	}
 	in.Events = sink
 	in.Secrets = sess.secrets()
+
+	// The draft carries the version the artifact will be stored as; a read
+	// that fails leaves version 1, and only the hint's match suffers.
+	version := 1
+	if latest, err := c.opts.Store.LatestArtifact(bg, id, stageID); err == nil {
+		version = latest.Version + 1
+	}
+
+	in.Draft = func(f stage.DraftFrame) {
+		// A void draft is none: the next snapshot leaves it out.
+		if f.Void {
+			c.live.clearDraft(id)
+			c.live.touch(id)
+
+			return
+		}
+
+		c.live.draft(id, protocol.Draft{Stage: stageID, Version: version, Offset: f.Offset, Text: f.Text, Refused: f.Refused, Reason: f.Reason})
+	}
 
 	out, runErr := c.opts.Runner.Run(runCtx, in)
 
@@ -298,9 +343,30 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 		c.endRun(bg, runID, store.RunDone, out.Result.Reason, usage)
 		c.setState(bg, id, StateIdle)
-		au.event(bg, Event{Kind: EventArtifact, BlueprintID: id, RunID: runID, Payload: map[string]any{
+		// What the transcript's sheet reference says of this version, all
+		// known now: who drew it, the findings a revision was given, a loop
+		// stage's round, the round cards with findings were accepted on.
+		revisedFor := 0
+		if rd != nil {
+			revisedFor = rd.findings
+		}
+
+		payload := map[string]any{
 			"stage": stageID, "version": version, "body": out.Artifact.Body, "data": out.Artifact.Data, "findings": findings,
-		}})
+			"persona": st.Persona, "round": number, "revised_for": revisedFor,
+		}
+
+		if len(findings) > 0 {
+			payload["accepted_round"] = checks.cards.round()
+		}
+
+		if st.LoopsTo != "" {
+			if base, _, err := c.rejection(bg, id, version); err == nil {
+				payload["loop_round"], payload["max_rounds"] = version-base, st.MaxRounds
+			}
+		}
+
+		au.event(bg, Event{Kind: EventArtifact, BlueprintID: id, RunID: runID, Payload: payload})
 		au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
 			"stage": stageID, "kind": store.RunKindStage, "status": store.RunDone, "cost_usd": usage.CostUSD, "priced": isPriced,
 		}})
@@ -526,10 +592,26 @@ func (c *Controller) fail(ctx context.Context, au audit, id string, runID int64,
 	au.event(ctx, Event{Kind: EventError, BlueprintID: id, RunID: runID, Payload: map[string]any{"message": msg}})
 }
 
+// setState records a blueprint's state and appends a state row: the view's
+// sequence is its newest events row, so every change must write one. The
+// row is stored, never sent to the panel, which learns of the state from
+// the events around it.
 func (c *Controller) setState(ctx context.Context, id string, s State) {
 	if err := c.opts.Store.SetBlueprintState(ctx, id, string(s)); err != nil {
 		c.opts.Logger.Error("blueprint: set state", "blueprint", id, "state", s, "error", err)
+
+		return
 	}
+
+	payload, _ := json.Marshal(map[string]string{"state": string(s)})
+
+	if err := c.opts.Store.AppendEvent(ctx, store.Event{
+		Time: c.opts.Now().UTC(), BlueprintID: id, Kind: EventState, Payload: payload,
+	}); err != nil {
+		c.opts.Logger.Error("blueprint: store the state row", "blueprint", id, "state", s, "error", err)
+	}
+
+	c.live.touch(id)
 }
 
 func (c *Controller) endRun(ctx context.Context, runID int64, status, reason string, usage store.RunUsage) {
@@ -731,6 +813,8 @@ type harnessSink struct {
 	price  *protocol.ModelPrice
 	capUSD float64
 	stop   context.CancelCauseFunc
+	// flight counts the run's lines for the view; nil counts nothing.
+	flight *flight
 
 	mu    sync.Mutex
 	spent float64
@@ -748,6 +832,7 @@ func (s *harnessSink) Write(p []byte) (int, error) {
 	// audited, but the panel shows the cancel as the stage's end instead.
 	forward := !s.isCanceled() || !isErrorLine(line)
 
+	s.flight.count(line)
 	s.audit.harness(context.Background(), s.id, s.runID, line, forward)
 	s.account(line)
 
@@ -809,6 +894,10 @@ func (s *harnessSink) left() (float64, bool) {
 // charge adds the cost of a run served on this run's behalf, and stops the
 // run once the cap is passed. A nil or uncapped sink ignores it.
 func (s *harnessSink) charge(usd float64) {
+	if s != nil {
+		s.flight.charge(usd)
+	}
+
 	if !s.capped() {
 		return
 	}

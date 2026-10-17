@@ -217,7 +217,11 @@ type Controller struct {
 	sessions map[string]*session
 	runs     map[string]*run
 	watches  map[string]*watcher
-	closing  bool
+	// flights are each blueprint's runs in flight, outermost first, for the view.
+	flights map[string][]*flight
+	// live streams each blueprint's view and drafts to its subscribers.
+	live    *liveHub
+	closing bool
 }
 
 // New builds a Controller.
@@ -234,7 +238,10 @@ func New(opts Options) *Controller {
 		opts.WatchInterval = time.Minute
 	}
 
-	return &Controller{opts: opts, sessions: map[string]*session{}, runs: map[string]*run{}, watches: map[string]*watcher{}}
+	c := &Controller{opts: opts, sessions: map[string]*session{}, runs: map[string]*run{}, watches: map[string]*watcher{}, flights: map[string][]*flight{}}
+	c.live = newLiveHub(c.View, opts.Logger)
+
+	return c
 }
 
 // effectivePrice maps an all-zero price to nil. CM sends zero rates for a

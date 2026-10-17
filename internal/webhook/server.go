@@ -6,12 +6,14 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/mhersson/contextmatrix-backendkit/logbridge"
 	"github.com/mhersson/contextmatrix-backendkit/metrics"
 	"github.com/mhersson/contextmatrix-backendkit/webhookcore"
+	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/blueprint"
 )
@@ -24,6 +26,12 @@ type Controller interface {
 	Export(ctx context.Context, id, msgID string) error
 	SetPolicy(ctx context.Context, id, stageID, policy, msgID string) error
 	End(ctx context.Context, id string) error
+
+	// View, Artifact and Subscribe serve CM's blueprint pane; the blueprint
+	// id is the session id.
+	View(ctx context.Context, id string) (protocol.BlueprintView, error)
+	Artifact(ctx context.Context, id, stage string, version int) (protocol.BlueprintArtifact, error)
+	Subscribe(ctx context.Context, id string) (<-chan protocol.LiveFrame, error)
 }
 
 // Config wires a Server. Replay, Dedup and Draining default when nil.
@@ -47,6 +55,11 @@ type Server struct {
 	ctl    Controller
 	dedup  *webhookcore.DedupCache
 	logger *slog.Logger
+	// keepalive spaces the live stream's heartbeat comments.
+	keepalive time.Duration
+	// liveDone closes at drain and ends every live stream.
+	liveDone chan struct{}
+	liveOnce sync.Once
 }
 
 // NewServer builds a Server.
@@ -74,11 +87,12 @@ func NewServer(cfg Config) *Server {
 		LogsFilterAttr:  "session_id",
 	})
 
-	return &Server{Core: core, ctl: cfg.Controller, dedup: dedup, logger: logger}
+	return &Server{Core: core, ctl: cfg.Controller, dedup: dedup, logger: logger, keepalive: liveKeepalive, liveDone: make(chan struct{})}
 }
 
 // Routes mounts every route. /chat/start and /message sit behind the drain
-// gate; /chat/end, /logs, /health and /readyz stay reachable while draining.
+// gate; /chat/end, /logs, the blueprint reads and their live stream, /health
+// and /readyz stay reachable while draining.
 func (s *Server) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -86,8 +100,19 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /chat/end", s.RecordMetrics(s.Auth(s.handleEnd)))
 	mux.HandleFunc("POST /message", s.RecordMetrics(s.Auth(s.DrainGate(s.handleMessage))))
 	mux.HandleFunc("GET /logs", s.RecordMetrics(s.Auth(s.HandleLogs)))
+	mux.HandleFunc("GET /blueprints/{id}", s.RecordMetrics(s.Auth(s.handleView)))
+	mux.HandleFunc("GET /blueprints/{id}/artifacts/{stage}/{version}", s.RecordMetrics(s.Auth(s.handleArtifact)))
+	mux.HandleFunc("GET /blueprints/{id}/live", s.RecordMetrics(s.Auth(s.handleLive)))
 	mux.HandleFunc("GET /health", s.RecordMetrics(s.HandleHealth))
 	mux.HandleFunc("GET /readyz", s.RecordMetrics(s.HandleReadyz))
 
 	return mux
+}
+
+// CloseSSE ends every /logs stream and every blueprint live stream, for the
+// drain: an SSE stream never idles, so http.Server.Shutdown would otherwise
+// wait out its timeout. The browser reconnects and starts with a snapshot.
+func (s *Server) CloseSSE() {
+	s.Core.CloseSSE()
+	s.liveOnce.Do(func() { close(s.liveDone) })
 }

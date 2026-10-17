@@ -27,6 +27,12 @@ a first commit and a reply of approve. While the session is open the architect
 watches the emitted cards and playbook in ContextMatrix and posts each change,
 ending with the pull requests and compare links.
 
+In ContextMatrix's pane a blueprint session shows a scale bar of its
+pipeline, who acts and what it has spent, and a sheet with every artifact
+version, filled in live while the model writes it. ContextMatrix reads them
+through the architect's signed blueprint endpoints and live stream (see
+`docs/design.md`, "Blueprint view").
+
 ## Run
 
 ```bash
