@@ -11,6 +11,10 @@ that project. A check only a human can make, or one that needs a live
 environment, another repository or a deploy, is a manual check, never a
 criterion.
 
+A check that inspects output states it in the form the design specifies (its
+JSON encoding, indentation, field order), or checks only the content; never a
+byte-exact form the design does not fix.
+
 Produce markdown with one `## <slice id>` section per slice listing its
 criteria and manual checks. Submit with a data object
 `{"slices": [{"id": "SL1", "criteria": [{"id": "AC1", "project": "<name>", "text": "<the test or command and what passes>"}], "manual": [{"id": "MC1", "text": "<the check a human makes>"}]}]}`.

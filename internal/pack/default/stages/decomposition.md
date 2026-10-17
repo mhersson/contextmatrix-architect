@@ -21,6 +21,9 @@ template exactly; it is appended to these instructions. Rules:
   named in the card's `criteria` and written into its Acceptance criteria;
   every manual check of acceptance is carried by a manual entry, named in
   its `criteria`.
+- A manual check that inspects output states it in the form the design
+  specifies (its JSON encoding, indentation, field order), or checks only the
+  content; never a byte-exact form the design does not fix.
 - A human check, a live-environment check or a gate between projects is a
   manual entry, never a card criterion.
 - Never name another project's repository, by URL or owner/name, in a card;
