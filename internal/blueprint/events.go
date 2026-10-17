@@ -105,6 +105,20 @@ func (a audit) text(s string) string {
 	return a.red.Apply(s)
 }
 
+// texts masks the session's secrets in every string of ss.
+func (a audit) texts(ss []string) []string {
+	if ss == nil {
+		return nil
+	}
+
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = a.text(s)
+	}
+
+	return out
+}
+
 // event stores e, then hands it to the sink.
 func (a audit) event(ctx context.Context, e Event) {
 	if e.Time.IsZero() {
@@ -215,16 +229,7 @@ func (a audit) mask(v any) any {
 	case string:
 		return a.text(t)
 	case []string:
-		if t == nil {
-			return t
-		}
-
-		out := make([]string, len(t))
-		for i, s := range t {
-			out[i] = a.text(s)
-		}
-
-		return out
+		return a.texts(t)
 	case []any:
 		if t == nil {
 			return t

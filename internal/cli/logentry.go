@@ -41,7 +41,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventQuestion:
 		if str(p["responder"]) == store.ResponderAuto {
 			entry.Type = "system"
-			entry.Content = fmt.Sprintf("Stage %s asked: %s Its policy is auto, so it decides this itself; the question stays in the blueprint's event log.", str(p["stage"]), str(p["text"]))
+			entry.Content = fmt.Sprintf("Stage %s asked Q%.0f: %s Its policy is auto, so it decides this itself; the question stays in the blueprint's event log.", str(p["stage"]), num(p["number"]), str(p["text"]))
 
 			break
 		}
@@ -50,7 +50,12 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 
 		var b strings.Builder
 
-		b.WriteString("**Question:** " + str(p["text"]) + "\n")
+		heading := "**Question:**"
+		if n := num(p["number"]); n > 0 {
+			heading = fmt.Sprintf("**Question Q%.0f:**", n)
+		}
+
+		b.WriteString(heading + " " + str(p["text"]) + "\n")
 
 		if ctxText := str(p["context"]); ctxText != "" {
 			b.WriteString("\n" + ctxText + "\n")
@@ -60,6 +65,10 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			b.WriteString("\nOptions:\n")
 
 			for i, o := range opts {
+				if i+1 == int(num(p["recommended"])) {
+					o += " (recommended)"
+				}
+
 				fmt.Fprintf(&b, "%d. %s\n", i+1, o)
 			}
 		}

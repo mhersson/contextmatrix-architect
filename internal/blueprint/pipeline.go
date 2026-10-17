@@ -131,13 +131,12 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 
 // position reads where a blueprint with no run in flight stands: what
 // follows the stage whose run completed last, and, when that is a model
-// stage, the status of its newest run since then ("" when it has not
-// started there). Only stage runs count; reviewer and responder runs place
-// nothing.
-func (c *Controller) position(ctx context.Context, bp store.Blueprint) (outcome, string, error) {
+// stage, its newest run since then (zero when it has not started there).
+// Only stage runs count; reviewer and responder runs place nothing.
+func (c *Controller) position(ctx context.Context, bp store.Blueprint) (outcome, store.Run, error) {
 	runs, err := c.opts.Store.ListRuns(ctx, bp.ID)
 	if err != nil {
-		return outcome{}, "", fmt.Errorf("blueprint: list runs: %w", err)
+		return outcome{}, store.Run{}, fmt.Errorf("blueprint: list runs: %w", err)
 	}
 
 	completed, since := "", 0
@@ -150,18 +149,24 @@ func (c *Controller) position(ctx context.Context, bp store.Blueprint) (outcome,
 
 	out, err := c.after(ctx, bp, completed)
 	if err != nil || out.stage == "" || out.human || out.gate {
-		return out, "", err
+		return out, store.Run{}, err
 	}
 
-	status := ""
+	var last store.Run
 
 	for _, r := range runs[since:] {
 		if r.Kind == store.RunKindStage && r.Stage == out.stage {
-			status = r.Status
+			last = r
 		}
 	}
 
-	return out, status, nil
+	return out, last, nil
+}
+
+// endedWithSession reports a run End cut short: a reopen runs its stage
+// again.
+func endedWithSession(r store.Run) bool {
+	return r.Status == store.RunCanceled && r.Reason == reasonSessionEnded
 }
 
 // resumePoint decides what a reopened blueprint does: re-run a stage a
@@ -169,17 +174,18 @@ func (c *Controller) position(ctx context.Context, bp store.Blueprint) (outcome,
 // started (a crash between storing one artifact and starting the next run),
 // or await a human-sourced stage, returned with human set. A failed or
 // aborted stage waits for the user's next message and an ended pipeline for
-// a new blueprint. An open gate is returned for the gate to resume. A ready
-// end is returned for the sign-off, emission or watch to resume. A position
-// the record does not yield is reported, not returned: the session still
-// attaches. The caller holds the run slot.
+// a new blueprint. A stage the session's end cut short runs again. An open
+// gate is returned for the gate to resume. A ready end is returned for the
+// sign-off, emission or watch to resume. A position the record does not
+// yield is reported, not returned: the session still attaches. The caller
+// holds the run slot.
 func (c *Controller) resumePoint(ctx context.Context, au audit, bp store.Blueprint) (outcome, error) {
 	interrupted, err := c.interruptedStage(ctx, bp)
 	if err != nil || interrupted != "" {
 		return outcome{stage: interrupted}, err
 	}
 
-	out, status, err := c.position(ctx, bp)
+	out, last, err := c.position(ctx, bp)
 
 	switch {
 	case err != nil:
@@ -192,7 +198,10 @@ func (c *Controller) resumePoint(ctx context.Context, au audit, bp store.Bluepri
 		return out, nil
 	case out.end && out.ready && c.cardsStage() != "":
 		return out, nil
-	case out.stage == "" || status != "":
+	case out.stage == "":
+		return outcome{}, nil
+	case last.Status != "" && !endedWithSession(last):
+		// A failed, aborted or refused stage waits for the next message.
 		return outcome{}, nil
 	}
 
@@ -415,6 +424,10 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.St
 		writeArtifact(&b, id, art)
 	}
 
+	if err := c.writeAnswered(ctx, &b, bp, st); err != nil {
+		return "", err
+	}
+
 	if st.Gate {
 		if err := c.writeGateFeedback(ctx, &b, bp, st); err != nil {
 			return "", err
@@ -426,6 +439,38 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.St
 	}
 
 	return b.String(), nil
+}
+
+// writeAnswered gives a run the questions earlier runs of its stage asked
+// and got answered, so a stage run again after a crash, an End or a
+// rejection does not ask them again.
+func (c *Controller) writeAnswered(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pack.Stage) error {
+	questions, err := c.opts.Store.ListQuestions(ctx, bp.ID)
+	if err != nil {
+		return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
+	}
+
+	var own []store.Question
+
+	for _, q := range questions {
+		if q.Stage == st.ID {
+			own = append(own, q)
+		}
+	}
+
+	if len(own) == 0 {
+		return nil
+	}
+
+	b.WriteString("## Questions this stage already asked\n\nThey are answered; use the answers and do not ask them again:\n\n")
+
+	for _, q := range own {
+		fmt.Fprintf(b, "- [%s] %s\n  Answer: %s\n", q.Tag(), q.Text, q.Answer)
+	}
+
+	b.WriteString("\n")
+
+	return nil
 }
 
 // writeGateFeedback gives a stage run again after a rejection at its gate

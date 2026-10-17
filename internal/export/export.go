@@ -21,6 +21,7 @@ type Bundle struct {
 	Artifacts   []store.Artifact
 	Events      []store.Event
 	Sources     []store.Source
+	Questions   []store.Question
 	Gates       []store.Gate
 	Emissions   []store.Emission
 	Transcripts map[int64]json.RawMessage
@@ -31,7 +32,7 @@ type Bundle struct {
 func Write(dir string, b Bundle) ([]string, error) {
 	files := map[string][]byte{
 		"blueprint.md": []byte(blueprintMD(b)),
-		"questions.md": []byte(questionsMD(b.Events)),
+		"questions.md": []byte(questionsMD(b.Questions)),
 		"sources.md":   []byte(sourcesMD(b.Sources)),
 		"events.jsonl": eventsJSONL(b.Events),
 	}
@@ -124,38 +125,24 @@ func artifactMD(a store.Artifact) string {
 	return sb.String()
 }
 
-func questionsMD(events []store.Event) string {
+func questionsMD(questions []store.Question) string {
 	var sb strings.Builder
 
 	sb.WriteString("# Questions and answers\n\n")
 
-	for _, e := range events {
-		var p struct {
-			Text    string   `json:"text"`
-			Options []string `json:"options"`
-			Context string   `json:"context"`
+	for _, q := range questions {
+		fmt.Fprintf(&sb, "## %s (%s, answered by %s, %s)\n\n%s\n", q.Tag(), q.Stage, q.Responder,
+			q.AnsweredAt.Format("2006-01-02 15:04:05 UTC"), q.Text)
+
+		if q.Context != "" {
+			fmt.Fprintf(&sb, "\n%s\n", q.Context)
 		}
 
-		if len(e.Payload) > 0 {
-			_ = json.Unmarshal(e.Payload, &p)
+		for i, o := range q.Options {
+			fmt.Fprintf(&sb, "%d. %s\n", i+1, o)
 		}
 
-		switch e.Kind {
-		case "question":
-			fmt.Fprintf(&sb, "## %s\n\n%s\n", e.Time.Format("2006-01-02 15:04:05 UTC"), p.Text)
-
-			if p.Context != "" {
-				fmt.Fprintf(&sb, "\n%s\n", p.Context)
-			}
-
-			for i, o := range p.Options {
-				fmt.Fprintf(&sb, "%d. %s\n", i+1, o)
-			}
-
-			sb.WriteString("\n")
-		case "answer":
-			fmt.Fprintf(&sb, "**Answer:** %s\n\n", p.Text)
-		}
+		fmt.Fprintf(&sb, "\n**Answer:** %s\n\n", q.Answer)
 	}
 
 	return sb.String()

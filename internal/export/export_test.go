@@ -21,10 +21,11 @@ func TestWrite_RendersEveryPart(t *testing.T) {
 		Blueprint: store.Blueprint{ID: "BP1", Projects: []string{"alpha"}, Mode: "default", State: "idle", CostCapUSD: 3, CreatedAt: now, UpdatedAt: now},
 		Runs:      []store.Run{{ID: 7, Stage: "intake", Kind: store.RunKindResponder, Attempt: 1, Round: 1, Status: store.RunDone, Model: "m", StartedAt: now, Usage: store.RunUsage{CostUSD: 0.2}}},
 		Artifacts: []store.Artifact{{Stage: "need", Version: 1, Body: "the need"}, {Stage: "intake", Version: 1, Body: "# Need", Data: json.RawMessage(`{"slices":1}`)}},
-		Events: []store.Event{
-			{Time: now, Kind: "question", Payload: json.RawMessage(`{"text":"Which cluster?","options":["dev","prod"]}`)},
-			{Time: now, Kind: "answer", Payload: json.RawMessage(`{"text":"dev"}`)},
-		},
+		Events:    []store.Event{},
+		Questions: []store.Question{{
+			BlueprintID: "BP1", Stage: "intake", Number: 1, Text: "Which cluster?", Options: []string{"dev", "prod"},
+			Answer: "dev", Responder: store.ResponderHuman, AnsweredAt: now,
+		}},
 		Gates: []store.Gate{
 			{Stage: "signoff", Version: 1, Decision: store.GateReject, Feedback: "split it\nup | now", Responder: store.ResponderHuman, DecidedAt: now},
 			{Stage: "signoff", Version: 2, Decision: store.GateApprove, Responder: store.ResponderHuman, DecidedAt: now},
@@ -48,6 +49,7 @@ func TestWrite_RendersEveryPart(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(questions), "Which cluster?")
 	assert.Contains(t, string(questions), "dev")
+	assert.Contains(t, string(questions), "Q1")
 
 	intake, err := os.ReadFile(filepath.Join(dir, "artifacts/intake-v1.md"))
 	require.NoError(t, err)

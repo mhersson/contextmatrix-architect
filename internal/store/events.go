@@ -83,6 +83,17 @@ func (s *Store) listEvents(ctx context.Context, query string, args ...any) ([]Ev
 	return out, nil
 }
 
+// CountEvents counts a blueprint's events of kind.
+func (s *Store) CountEvents(ctx context.Context, blueprintID, kind string) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE blueprint_id = ? AND kind = ?`,
+		blueprintID, kind).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: count events: %w", err)
+	}
+
+	return n, nil
+}
+
 // LatestEvent returns a blueprint's newest event of kind, or ErrNotFound.
 func (s *Store) LatestEvent(ctx context.Context, blueprintID, kind string) (Event, error) {
 	var (

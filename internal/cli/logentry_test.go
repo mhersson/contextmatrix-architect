@@ -20,8 +20,8 @@ func TestLogEntryFor(t *testing.T) {
 		skipped  bool
 	}{
 		{"question the stage decides itself", blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: map[string]any{
-			"stage": "grounding", "text": "Which port?", "responder": "auto",
-		}}, "system", []string{"grounding", "Which port?"}, false},
+			"number": 4, "stage": "grounding", "text": "Which port?", "responder": "auto",
+		}}, "system", []string{"grounding", "Q4", "Which port?"}, false},
 		{"gate reply", blueprint.Event{Kind: blueprint.EventPolicy, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "intake", "policy": "auto", "open": "question",
 		}}, "system", []string{"intake", "auto"}, false},
@@ -46,7 +46,8 @@ func TestLogEntryFor(t *testing.T) {
 		}, false},
 		{"created", blueprint.Event{Kind: blueprint.EventCreated, BlueprintID: "S1", Payload: map[string]any{"projects": []string{"alpha", "beta"}, "mode": "yolo"}}, "system", []string{"alpha", "beta", "yolo"}, false},
 		{"stage started", blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "persona": "product_owner", "pack": "default", "pack_version": "1"}}, "system", []string{"intake"}, false},
-		{"question", blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: map[string]any{"text": "Helm or kustomize?", "options": []string{"helm", "kustomize"}}}, "text", []string{"Helm or kustomize?", "helm", "kustomize"}, false},
+		{"question", blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: map[string]any{"number": 2, "text": "Helm or kustomize?", "options": []string{"helm", "kustomize"}}}, "text", []string{"Q2", "Helm or kustomize?", "helm", "kustomize"}, false},
+		{"question with a recommended option", blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: map[string]any{"number": 3, "text": "Which?", "options": []string{"a", "b"}, "recommended": 2}}, "text", []string{"2. b (recommended)"}, false},
 		{"artifact", blueprint.Event{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "body": "# Need\n\nk8s"}}, "text", []string{"# Need\n\nk8s"}, false},
 		{"stage ended", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "status": "done", "cost_usd": 0.25}}, "system", []string{"intake", "done", "0.25"}, false},
 		{"stage ended priced", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "status": "done", "cost_usd": 0.2, "priced": true}}, "system", []string{"0.20"}, false},

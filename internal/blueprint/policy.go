@@ -43,6 +43,18 @@ func ParseCommand(text string) (string, []string) {
 	}
 }
 
+// commandOption refuses an option the webhook would take as a command: a
+// click on it would abort, export or change a policy instead of answering.
+func commandOption(options []string) error {
+	for _, o := range options {
+		if name, _ := ParseCommand(o); name != "" {
+			return fmt.Errorf("option %q is a reply the architect takes as a command; reword it", o)
+		}
+	}
+
+	return nil
+}
+
 // SetPolicy records a stage's responder policy for this blueprint, for its
 // questions and its gate, from the next one on: a question or gate already
 // open keeps the responder it was put to. The sign-off follows the mode, a

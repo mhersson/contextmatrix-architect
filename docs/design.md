@@ -150,8 +150,10 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
 - **Across stages only artifacts carry forward**, never transcripts. Each stage
   consumes the artifacts the pack names.
 - **Crash recovery.** Artifacts are stored per stage, so after a dead process
-  reopening the blueprint's session re-runs the open stage from its inputs. No
-  transcript is ever resumed from the store; transcripts exist for audit.
+  reopening the blueprint's session re-runs the open stage from its inputs. A
+  re-run is given the questions its stage already asked and their answers, so
+  it does not ask them again. No transcript is ever resumed from the store;
+  transcripts exist for audit.
 
 ## Data model
 
@@ -417,7 +419,7 @@ an `auto` gate approves on its own.
 
 | Policy  | Questions                                                                                   | Gates                                                                 |
 | ------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `human` | Shown in the CM session with options; the run waits for the reply.                           | Artifact shown; a reply beginning with approve or reject, feedback after it, until CM grows gate buttons. |
+| `human` | Shown in the CM session as `Q<n>` with options, the recommended one marked; the run waits for the reply, which is recorded in `questions`. A stage asks at most its pack's `max_questions` per run; past it, and for an option the server would take as a command, `ask_human` returns an error and the stage decides. | Artifact shown; a reply beginning with approve or reject, feedback after it, until CM grows gate buttons. |
 | `auto`  | A responder run answers. The answer is recorded as an `[assumption]` with responder `auto`. | A reviewer run scores; approved above the threshold, else rejected with feedback, three rounds, then waits for a human. |
 
 **The responder run** is a separate harness run with the persona that would
@@ -467,7 +469,7 @@ starts are bounded by CM's per-card guardrails, not by the architect.
 | code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock at the start of grounding, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. A repository with no commits checks out as an empty tree with no sha. `repo_info` returns the sha, instruction file presence, the project's verify command, whether the repository is empty and, to the stage that fetched the tree, the default branch. |
 | research | `web_fetch`                                                                                             | Readable text, recorded as a source. A search provider is deferred.                                                                               |
 | cm       | `list_projects`, `list_cards`, `get_card`, `get_playbook` as `cm_`-prefixed reads | Offered to grounding and readiness over the session's MCP key, one MCP session per run, chat's bridge adapter on the architect's client with a `cm_` prefix and an allowlist that skips tools CM does not serve. No `agent_id` is sent, so CM keeps redacting unvetted imported text; `get_card` never attaches images; a credential embedded in a URL is removed from every result and error before the model or the record sees it, since CM returns project config as stored; every result carries the blueprint's ContextMatrix source tag. Creating cards and playbooks and starting runs are controller calls with the configured caller identity, never model tools. |
-| control  | `ask_human`, `submit_artifact`                                                                          | `ask_human` blocks: question, options and context in; the answer out as the tool result. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
+| control  | `ask_human`, `submit_artifact`                                                                          | `ask_human` blocks: question, options, the recommended option's position and context in; the answer out as the tool result. Questions are numbered `Q<n>` per blueprint. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
 
 Every tool result passes the harness redactor for every secret the process
 holds.
@@ -595,6 +597,10 @@ Replies the server understands, besides answers to questions:
   emitted blueprint's watch restarts, and nothing is created or started
   twice. CM sends the start again after the architect restarts, when a
   message finds the session unknown or the log stream ends.
+- A stage the session's end cut short, an open question included, runs
+  again on reopen, given the answers its earlier runs got; a reopen that
+  comes while that run still winds down waits for it first. An aborted
+  stage waits for the next message, as below.
 - After a later stage fails or is aborted, the next message is logged as a
   note and re-runs that stage; after intake fails or is aborted, the next
   message is the need again and intake re-runs on it. A pipeline stopped by the card contract or by

@@ -639,3 +639,22 @@ func TestAllGates_EveryStageOldestFirst(t *testing.T) {
 	assert.Equal(t, "shape", got[0].Stage)
 	assert.Equal(t, "signoff", got[1].Stage)
 }
+
+func TestCountEvents(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	for _, e := range []Event{
+		{Time: now, BlueprintID: "BP1", Kind: "question"},
+		{Time: now, BlueprintID: "BP1", Kind: "answer"},
+		{Time: now, BlueprintID: "BP1", Kind: "question"},
+		{Time: now, BlueprintID: "BP2", Kind: "question"},
+	} {
+		require.NoError(t, s.AppendEvent(ctx, e))
+	}
+
+	n, err := s.CountEvents(ctx, "BP1", "question")
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+}

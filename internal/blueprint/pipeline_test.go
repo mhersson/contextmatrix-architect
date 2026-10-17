@@ -1297,6 +1297,41 @@ func TestPipeline_ProjectLookupFailureFailsTheRunAndIsRetried(t *testing.T) {
 	assert.Equal(t, store.RunDone, runs[2].Status)
 }
 
+func TestPipeline_EndDuringTheCheckoutRerunsTheStageOnReopen(t *testing.T) {
+	c, st, runner, rec, ws := newPipeline(t, happyScript())
+	ws.hold = make(chan struct{})
+
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+	require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
+	require.Eventually(t, func() bool { return ws.checkouts() == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	require.NoError(t, c.End(ctx, "BP1"))
+	c.Wait("BP1")
+
+	assert.False(t, rec.has(EventError), "a cancel is not an error")
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 2)
+	assert.Equal(t, store.RunCanceled, runs[1].Status)
+	assert.Equal(t, reasonSessionEnded, runs[1].Reason)
+
+	ws.hold = nil
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	assert.Greater(t, runner.calls(), 1, "the reopen runs the cut stage again")
+
+	runs, err = st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Greater(t, len(runs), 2)
+	assert.Equal(t, runs[1].Stage, runs[2].Stage)
+}
+
 func TestPipeline_SecretInAPrepareErrorIsMasked(t *testing.T) {
 	c, st, _, rec, _ := newPipeline(t, happyScript())
 	c.opts.Projects = func(_ context.Context, key string) ([]cm.Project, error) {
@@ -2068,10 +2103,10 @@ func TestPosition_StatusIgnoresNonStageRunsOfTheNextStage(t *testing.T) {
 	bp, err := st.GetBlueprint(ctx, "BP1")
 	require.NoError(t, err)
 
-	out, status, err := c.position(ctx, bp)
+	out, last, err := c.position(ctx, bp)
 	require.NoError(t, err)
 	assert.Equal(t, "intake", out.stage)
-	assert.Empty(t, status, "only stage runs give a stage its status")
+	assert.Empty(t, last.Status, "only stage runs give a stage its status")
 }
 
 func TestPipeline_TheGatePlanFollowsTheFirstStage(t *testing.T) {
