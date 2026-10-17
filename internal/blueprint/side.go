@@ -106,8 +106,6 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 	}
 
 	usage := usageOf(m.price, out.Result)
-	s.parent.charge(usage.CostUSD)
-
 	status, endReason := store.RunDone, out.Result.Reason
 
 	switch {
@@ -126,6 +124,9 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 	}
 
 	c.endRun(bg, runID, status, endReason, usage)
+	// Charged after the row ends: charged before it, a view in between
+	// would count the cost in both the parent and the flight.
+	s.parent.charge(usage.CostUSD)
 	au.event(bg, Event{Kind: EventStageEnded, BlueprintID: bp.ID, RunID: runID, Payload: map[string]any{
 		"stage": s.stage, "kind": s.kind, "status": status, "cost_usd": usage.CostUSD, "priced": m.price != nil,
 	}})

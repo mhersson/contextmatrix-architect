@@ -160,6 +160,12 @@ func (c *Controller) policy(ctx context.Context, bp store.Blueprint, stageID str
 		return "", fmt.Errorf("blueprint: read the gate replies: %w", err)
 	}
 
+	return c.resolvePolicy(bp, events, stageID)
+}
+
+// resolvePolicy is policy over the blueprint's policy events, oldest first,
+// so a caller resolving several stages reads them once.
+func (c *Controller) resolvePolicy(bp store.Blueprint, events []store.Event, stageID string) (string, error) {
 	for i := len(events) - 1; i >= 0; i-- {
 		var p struct {
 			Stage   string `json:"stage"`

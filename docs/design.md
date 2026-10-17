@@ -744,6 +744,39 @@ Replies the server understands, besides answers to questions:
   `approve` or `reject` is a misplaced decision, not guidance: it is logged
   and reaches no run.
 
+## Blueprint view
+
+CM's pane for a blueprint session shows where the blueprint stands beside
+the transcript: the pipeline as a scale bar, the cost against the cap, and
+every artifact on a sheet. The architect owns that data. CM proxies the
+two reads, the view and an artifact, for architect sessions only and checks
+the session's owner, and relays the live stream: it holds one upstream
+connection per session while browsers are subscribed and publishes the
+frames on the session's chat stream.
+
+- **View.** `View` builds it from the store and what is in flight: one step
+  per pack stage, plus `signoff` and `emission` when the pack checks cards.
+  Each step carries its persona, gate, policy, fold target, status
+  (pending, running, reviewing, revising, waiting, done, failed, folded or
+  skipped), attempt, a loop stage's round of its maximum, latest version
+  and cost. The view also carries the run in flight (stage, kind, persona,
+  model, start, and the turns, tool calls and tokens its harness lines have
+  counted), the open prompt (`Q<n>`, `gate:<stage>:v<n>`,
+  `gate:signoff:v<n>`, or `emission:v<n>` for a stopped emission or run
+  start), and the cost: the ledger plus the runs in flight, the blueprint
+  and per-run caps, and whether every run was priced. Every artifact
+  version is listed with its status (current, reviewing, at_gate,
+  approved, rejected, superseded, folded), who decided its gate (you, the
+  responder, or automatically for a sign-off an emitting mode approved) and
+  when, and its reviewer's verdict. A verdict's findings are sent to the
+  next version when the verdict sends the builder back. A finding is marked
+  addressed in that version, with its note, only when the revision listed
+  it. A run whose end is recorded counts in the ledger only.
+  `Seq` is the id of the newest events row the view reflects, and every
+  state change writes one. The view reads the store and memory only, so an
+  ended session's blueprint has one while the architect is up. A record the
+  pack cannot place shows every step pending.
+
 ## Deployment
 
 - **One server.** `contextmatrix-architect serve` runs next to the agent and
@@ -774,7 +807,7 @@ Replies the server understands, besides answers to questions:
 
 - Go 1.27, `contextmatrix-harness` v0.25.0 (loop, llm client, jailed read
   tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.8.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.24.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.26.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
