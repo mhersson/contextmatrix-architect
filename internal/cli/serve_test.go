@@ -159,7 +159,7 @@ func TestServe_EndToEnd(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &entry))
 		types = append(types, entry.Type)
 
-		if entry.Type == "text" && strings.Contains(entry.Content, "Run alpha on Kubernetes") {
+		if entry.Marker != nil && entry.Marker.Kind == "artifact" && entry.Marker.Stage == "intake" {
 			sawArtifact = true
 		}
 

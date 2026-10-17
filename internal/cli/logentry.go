@@ -40,6 +40,12 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventStageStarted:
 		entry.Type = "system"
 		entry.Content = fmt.Sprintf("%s started as %s.", runLabel(p), strings.ReplaceAll(str(p["persona"]), "_", " "))
+
+		// A stage run's first round is a divider; its builder rounds, its
+		// reviews and its responders are not.
+		if kind := str(p["kind"]); (kind == "" || kind == store.RunKindStage) && num(p["round"]) <= 1 {
+			entry.Marker = &protocol.LogMarker{Kind: "stage", Stage: str(p["stage"]), Persona: str(p["persona"])}
+		}
 	case blueprint.EventQuestion:
 		if str(p["responder"]) == store.ResponderAuto {
 			entry.Type = "system"
@@ -85,8 +91,13 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = b.String()
 		entry.Prompt = questionPrompt(p, text)
 	case blueprint.EventArtifact:
+		// A sheet reference: the body is on the sheet, never transcript text.
+		note := artifactNote(p)
 		entry.Type = "text"
-		entry.Content = str(p["body"])
+		entry.Content = fmt.Sprintf("%s rev %.0f: %s.", str(p["stage"]), num(p["version"]), note)
+		entry.Marker = &protocol.LogMarker{
+			Kind: "artifact", Stage: str(p["stage"]), Version: int(num(p["version"])), Persona: str(p["persona"]), Note: note,
+		}
 	case blueprint.EventStageEnded:
 		entry.Type = "system"
 
@@ -197,7 +208,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 
 		entry.Content = b.String() + "."
 	case blueprint.EventReport:
-		// The verdict only: the artifact entry before it showed the body.
+		// The verdict only: the artifact is on the sheet.
 		entry.Type = "text"
 
 		if ready, _ := p["ready"].(bool); ready {
@@ -359,6 +370,27 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	}
 
 	return entry, true
+}
+
+// artifactNote is a stored artifact's sheet reference note, finished prose
+// of what is known at store time: cards accepted with contract findings, a
+// loop stage's round, a revision for its reviewer's findings, or the
+// persona that drew it.
+func artifactNote(p map[string]any) string {
+	revisedFor := int(num(p["revised_for"]))
+
+	switch {
+	case num(p["accepted_round"]) > 0:
+		return fmt.Sprintf("Refused by checks, accepted on round %.0f", num(p["accepted_round"]))
+	case num(p["max_rounds"]) > 0:
+		return fmt.Sprintf("Round %.0f of %.0f", num(p["loop_round"]), num(p["max_rounds"]))
+	case revisedFor == 1:
+		return "Revised for the 1 finding"
+	case revisedFor > 1:
+		return fmt.Sprintf("Revised for the %d findings", revisedFor)
+	default:
+		return "Drawn by " + strings.ReplaceAll(str(p["persona"]), "_", " ")
+	}
 }
 
 func str(v any) string {

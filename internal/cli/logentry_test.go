@@ -50,7 +50,7 @@ func TestLogEntryFor(t *testing.T) {
 		{"stage started", blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "persona": "product_owner", "pack": "default", "pack_version": "1"}}, "system", []string{"intake"}, false},
 		{"question", blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: map[string]any{"number": 2, "text": "Helm or kustomize?", "options": []string{"helm", "kustomize"}}}, "text", []string{"Q2", "Helm or kustomize?", "helm", "kustomize"}, false},
 		{"question with a recommended option", blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: map[string]any{"number": 3, "text": "Which?", "options": []string{"a", "b"}, "recommended": 2}}, "text", []string{"2. b (recommended)"}, false},
-		{"artifact", blueprint.Event{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "body": "# Need\n\nk8s"}}, "text", []string{"# Need\n\nk8s"}, false},
+		{"artifact", blueprint.Event{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "version": 1, "body": "# Need\n\nk8s", "persona": "product_owner"}}, "text", []string{"intake rev 1"}, false},
 		{"stage ended", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "status": "done", "cost_usd": 0.25}}, "system", []string{"intake", "done", "0.25"}, false},
 		{"stage ended priced", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "status": "done", "cost_usd": 0.2, "priced": true}}, "system", []string{"0.20"}, false},
 		{"stage ended unpriced", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "status": "done", "cost_usd": 0.2, "priced": false}}, "system", []string{"0.20"}, false},
@@ -613,7 +613,7 @@ func TestLogEntryFor_AGateShowsItsReviewFindingsOnce(t *testing.T) {
 	assert.Contains(t, review.Content, finding)
 }
 
-func TestLogEntryFor_AFoldedGateShowsTheDesignOnce(t *testing.T) {
+func TestLogEntryFor_AFoldedGateShowsTheFoldedSheetAndNeverTheDesignBody(t *testing.T) {
 	const designed, sliced = "# Design\n\nPostgres, managed.", "# Slices\n\nSL1 ships the endpoint."
 
 	const designProblem, slicingProblem = "Q1: unused_answer: the question was answered, but no decision rests on it", "SL1: slice_title: a slice needs a title"
@@ -646,7 +646,7 @@ func TestLogEntryFor_AFoldedGateShowsTheDesignOnce(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, 1, strings.Count(panel.String(), designed), "the design is shown once, above its gate")
+	assert.Zero(t, strings.Count(panel.String(), designed), "the design body is on the sheet, never in the panel")
 	assert.Contains(t, gate.Content, sliced, "the gate shows the folded artifact")
 	assert.NotContains(t, gate.Content, designed)
 	assert.Contains(t, gate.Content, "- "+designProblem)
@@ -762,4 +762,79 @@ func TestLogEntryFor_AnAutoAnswerShowsItsEvidenceOnlyWhenGrounded(t *testing.T) 
 	assert.Contains(t, grounded, evidence)
 	assert.NotContains(t, ungrounded, evidence)
 	assert.NotEqual(t, grounded, ungrounded)
+}
+
+func TestLogEntryFor_Markers(t *testing.T) {
+	ev := func(kind string, p map[string]any) blueprint.Event {
+		return blueprint.Event{Kind: kind, BlueprintID: "S1", Payload: p}
+	}
+
+	sheet := func(stage string, version int, persona, note string) *protocol.LogMarker {
+		return &protocol.LogMarker{Kind: "artifact", Stage: stage, Version: version, Persona: persona, Note: note}
+	}
+
+	tests := []struct {
+		name     string
+		event    blueprint.Event
+		wantType string
+		want     *protocol.LogMarker
+		carries  string
+	}{
+		{
+			"a stage run's start is a stage divider",
+			ev(blueprint.EventStageStarted, map[string]any{"stage": "solution_design", "kind": "stage", "persona": "system_designer", "round": 1}),
+			"system", &protocol.LogMarker{Kind: "stage", Stage: "solution_design", Persona: "system_designer"}, "solution_design",
+		},
+		{"a builder round's start is no divider", ev(blueprint.EventStageStarted, map[string]any{"stage": "solution_design", "kind": "stage", "persona": "system_designer", "round": 2}), "system", nil, "solution_design"},
+		{"a review's start is no divider", ev(blueprint.EventStageStarted, map[string]any{"stage": "solution_design", "kind": "reviewer", "persona": "senior_developer", "round": 1}), "system", nil, "Review of solution_design"},
+		{
+			"a first version is drawn by its persona",
+			ev(blueprint.EventArtifact, map[string]any{"stage": "solution_design", "version": 1, "body": "# Design", "persona": "system_designer", "round": 1, "revised_for": 0}),
+			"text", sheet("solution_design", 1, "system_designer", "Drawn by system designer"), "solution_design rev 1: Drawn by system designer.",
+		},
+		{
+			"a revision says what it was revised for",
+			ev(blueprint.EventArtifact, map[string]any{"stage": "solution_design", "version": 2, "body": "# Design", "persona": "system_designer", "round": 2, "revised_for": 3}),
+			"text", sheet("solution_design", 2, "system_designer", "Revised for the 3 findings"), "solution_design rev 2",
+		},
+		{
+			"a revision for one finding",
+			ev(blueprint.EventArtifact, map[string]any{"stage": "slicing", "version": 2, "body": "# Slices", "persona": "product_owner", "round": 2, "revised_for": 1}),
+			"text", sheet("slicing", 2, "product_owner", "Revised for the 1 finding"), "slicing rev 2",
+		},
+		{
+			"a loop stage says its round",
+			ev(blueprint.EventArtifact, map[string]any{"stage": "readiness", "version": 2, "body": "# Ready", "persona": "reviewer", "round": 1, "revised_for": 0, "loop_round": 2, "max_rounds": 3}),
+			"text", sheet("readiness", 2, "reviewer", "Round 2 of 3"), "readiness rev 2",
+		},
+		{
+			"cards accepted with findings say so",
+			ev(blueprint.EventArtifact, map[string]any{"stage": "decomposition", "version": 1, "body": "# Cards", "persona": "senior_developer", "findings": []string{"D1: a"}, "accepted_round": 3}),
+			"text", sheet("decomposition", 1, "senior_developer", "Refused by checks, accepted on round 3"), "decomposition rev 1",
+		},
+		{
+			"a review stays a prose row",
+			ev(blueprint.EventReview, map[string]any{"stage": "solution_design", "version": 1, "score": 4, "threshold": 4, "findings": []string{"a"}, "round": 1}),
+			"system", nil, "4 of 5",
+		},
+		{
+			"a gate decision stays a prose row",
+			ev(blueprint.EventDecided, map[string]any{"stage": "solution_design", "decision": "approve", "responder": "human", "version": 2}),
+			"system", nil, "Approved solution_design",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry, ok := logEntryFor(tt.event)
+			require.True(t, ok)
+			assert.Equal(t, tt.wantType, entry.Type)
+			assert.Equal(t, tt.want, entry.Marker)
+			assert.Contains(t, entry.Content, tt.carries, "the fallback line")
+
+			for _, body := range []string{"# Design", "# Slices", "# Ready", "# Cards"} {
+				assert.NotContains(t, entry.Content, body, "an artifact's body is no transcript text")
+			}
+		})
+	}
 }

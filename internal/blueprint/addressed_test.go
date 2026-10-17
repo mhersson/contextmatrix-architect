@@ -133,3 +133,62 @@ func TestReview_ARevisionNamesTheFindingsItAddressed(t *testing.T) {
 	assert.Equal(t, []addressed{{finding: 2, note: "split into two"}}, addressedOf(art))
 	assert.NotContains(t, string(art.Data), "check_problems", "an accepted list leaves no problems")
 }
+
+// artifactsOf returns the artifact events of stageID, oldest first.
+func artifactsOf(rec *recorder, stageID string) []Event {
+	var out []Event
+
+	for _, e := range rec.all(EventArtifact) {
+		if e.Payload["stage"] == stageID {
+			out = append(out, e)
+		}
+	}
+
+	return out
+}
+
+func TestArtifactPayload_NamesWhoDrewItAndWhatFor(t *testing.T) {
+	script := gatedScript()
+	script["shape.review"] = verdicts(scored(4, "name the owner", "split it"))
+
+	c, _, _, rec := newGated(t, script)
+
+	startGated(t, c, protocol.ArchitectModeDefault)
+
+	shapes := artifactsOf(rec, "shape")
+	require.Len(t, shapes, 2)
+	assert.Equal(t, "product_owner", shapes[0].Payload["persona"])
+	assert.Equal(t, 1, shapes[0].Payload["round"])
+	assert.Equal(t, 0, shapes[0].Payload["revised_for"])
+	assert.Equal(t, 2, shapes[1].Payload["round"])
+	assert.Equal(t, 2, shapes[1].Payload["revised_for"], "the revision was given two findings")
+	assert.NotContains(t, shapes[1].Payload, "loop_round", "shape is no loop stage")
+}
+
+func TestArtifactPayload_ALoopStageCarriesItsRound(t *testing.T) {
+	c, _, _, rec, _ := newPipeline(t, happyScript())
+	c.opts.ConnectCM = newFakeCM().connect
+
+	driveIn(t, c, startInput("BP1"))
+
+	ready := artifactsOf(rec, "readiness")
+	require.NotEmpty(t, ready)
+	assert.Equal(t, 1, ready[0].Payload["loop_round"])
+	assert.Equal(t, 3, ready[0].Payload["max_rounds"])
+	assert.NotContains(t, artifactsOf(rec, "decomposition")[0].Payload, "accepted_round", "cards that passed")
+}
+
+func TestArtifactPayload_CardsAcceptedWithFindingsSaySo(t *testing.T) {
+	var submits int
+
+	script := happyScript()
+	script["decomposition"] = keepSubmitting(map[string]any{"cards": []any{}, "order": []any{}}, "no cards", &submits)
+
+	c, _, _, rec, _ := newPipeline(t, script)
+
+	driveIn(t, c, startInput("BP1"))
+
+	cards := artifactsOf(rec, "decomposition")
+	require.Len(t, cards, 1)
+	assert.Equal(t, 3, cards[0].Payload["accepted_round"])
+}

@@ -119,6 +119,15 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   prompt carries the entry without its reply instruction as its text, and
   the kind `gate`. A click sends the reply as an ordinary message, so the
   architect's reply parsing is the same for a click and a typed answer.
+  Round 1 of each attempt of a stage run is a stage divider
+  (`LogEntry.Marker` of kind `stage`, a system entry), and a stored
+  artifact is a sheet reference (kind `artifact`, a text entry) to that
+  stage and version in place of its body. Its one-line note says what is
+  known when it is stored: the persona that drew it, the findings a
+  revision was given, a loop stage's round, or that its checks refused it
+  until round 3. Reviewer verdicts and gate decisions stay prose entries.
+  Each marker keeps a plain fallback line in `Content`, which a CM without
+  markers shows instead.
   Questions are `Q<n>`, gates `gate:<stage>:v<n>`, the sign-off
   `gate:signoff:v<n>`, and a stopped emission or run start `emission:v<n>`.
   An auto answer or a gate the auto policy approves never leaves a prompt

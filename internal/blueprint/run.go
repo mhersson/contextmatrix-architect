@@ -324,9 +324,30 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 		c.endRun(bg, runID, store.RunDone, out.Result.Reason, usage)
 		c.setState(bg, id, StateIdle)
-		au.event(bg, Event{Kind: EventArtifact, BlueprintID: id, RunID: runID, Payload: map[string]any{
+		// What the transcript's sheet reference says of this version, all
+		// known now: who drew it, the findings a revision was given, a loop
+		// stage's round, the round cards with findings were accepted on.
+		revisedFor := 0
+		if rd != nil {
+			revisedFor = rd.findings
+		}
+
+		payload := map[string]any{
 			"stage": stageID, "version": version, "body": out.Artifact.Body, "data": out.Artifact.Data, "findings": findings,
-		}})
+			"persona": st.Persona, "round": number, "revised_for": revisedFor,
+		}
+
+		if len(findings) > 0 {
+			payload["accepted_round"] = checks.cards.round()
+		}
+
+		if st.LoopsTo != "" {
+			if base, _, err := c.rejection(bg, id, version); err == nil {
+				payload["loop_round"], payload["max_rounds"] = version-base, st.MaxRounds
+			}
+		}
+
+		au.event(bg, Event{Kind: EventArtifact, BlueprintID: id, RunID: runID, Payload: payload})
 		au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
 			"stage": stageID, "kind": store.RunKindStage, "status": store.RunDone, "cost_usd": usage.CostUSD, "priced": isPriced,
 		}})

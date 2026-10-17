@@ -797,6 +797,15 @@ func (s *validatorState) last() []string {
 	return slices.Clone(s.findings)
 }
 
+// round is how many submits the check has judged; on an accepted submit,
+// the round it was accepted on.
+func (s *validatorState) round() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.rounds
+}
+
 // cardsValidator returns decomposition's submit validator: the draft's own
 // problems and the contract run on every submit, and a failing submit goes
 // back to the model. Every submit reads the project list from ContextMatrix
