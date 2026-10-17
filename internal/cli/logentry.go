@@ -578,8 +578,8 @@ func gatePlanText(p map[string]any) string {
 }
 
 // gateText renders a stage's gate: the artifact above waits, with the
-// artifacts folded into it shown below, the problems its checks accepted
-// them with, and the replies that decide it.
+// reviewer's score, the artifacts folded into it shown below, the problems
+// its checks accepted them with, and the replies that decide it.
 func gateText(p map[string]any) string {
 	var replies []string
 
@@ -610,20 +610,20 @@ func gateText(p map[string]any) string {
 	// as part of it.
 	sep := " "
 
+	// The findings are in the review entry posted just above the gate, so the
+	// gate refers to them rather than listing them a second time.
 	if v, ok := p["review"].(map[string]any); ok {
 		if passed, _ := v["passed"].(bool); passed {
-			text += fmt.Sprintf(" The reviewer scored it %.0f of 5 (passes at %.0f).", num(v["score"]), num(v["threshold"]))
+			text += fmt.Sprintf(" The reviewer scored it %.0f of 5 (passes at %.0f)", num(v["score"]), num(v["threshold"]))
 		} else {
-			text += fmt.Sprintf(" The reviewer did not pass it after %.0f round(s): %.0f of 5 (passes at %.0f).", num(v["round"]), num(v["score"]), num(v["threshold"]))
+			text += fmt.Sprintf(" The reviewer did not pass it after %.0f round(s): %.0f of 5 (passes at %.0f)", num(v["round"]), num(v["score"]), num(v["threshold"]))
 		}
 
-		if findings := stringsOf(v["findings"]); len(findings) > 0 {
-			for _, f := range findings {
-				text += "\n- " + f
-			}
-
-			sep = "\n\n"
+		if len(stringsOf(v["findings"])) > 0 {
+			text += "; its findings are in the review above"
 		}
+
+		text += "."
 	}
 
 	if list := problemsList(p["problems"]); list != "" {
