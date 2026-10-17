@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"maps"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +52,24 @@ var ErrNotFound = errors.New("blueprint: not found")
 
 // ErrShuttingDown is returned when a call would launch a run after Shutdown.
 var ErrShuttingDown = errors.New("blueprint: shutting down")
+
+// errSessionEnded is the cancel cause End gives the run in flight: a stage
+// it cuts short is recorded session_ended and runs again on reopen.
+var errSessionEnded = errors.New("blueprint: the session ended")
+
+// reasonSessionEnded is the reason a run End cut short ends with.
+const reasonSessionEnded = "session_ended"
+
+// endedRunWait bounds how long a reopen waits for the ended session's run to
+// leave the slot. End's cancel winds a run down within moments; past this
+// the run is left to record its own end and the stage waits for the next
+// message.
+const endedRunWait = 10 * time.Second
+
+// reply is a message that answers an open question.
+type reply struct {
+	text, msgID string
+}
 
 // StartInput is what a CM session start carries.
 type StartInput struct {
@@ -167,13 +186,27 @@ func (s *session) secrets() []string {
 // recovery and the need check never overlap. Slots outlive sessions, so Wait
 // still blocks after End.
 type run struct {
-	cancel context.CancelFunc
+	cancel context.CancelCauseFunc
 	done   chan struct{}
 	// shutdown is set under Controller.mu by Shutdown: the run ends without
 	// touching the store.
 	shutdown bool
+	// ended is set under Controller.mu by End: a reopen that finds the run
+	// still in the slot waits for it to leave.
+	ended bool
+	// aborted is set under Controller.mu by Abort: a reopen waiting for the
+	// run to leave resumes nothing, as after any abort.
+	aborted bool
 	// answer is the open question's reply channel; nil when none is open.
-	answer chan string
+	answer chan reply
+	// question is the open question's number.
+	question int
+	// pending is the payload of the question waiting for its answer; it
+	// means something only while answer is set.
+	pending map[string]any
+	// stage is the stage the run in flight runs, or the sign-off while it and
+	// its emission hold the slot; set under Controller.mu.
+	stage string
 }
 
 // Controller owns every attached blueprint.
@@ -218,11 +251,13 @@ func effectivePrice(p *protocol.ModelPrice) *protocol.ModelPrice {
 // Start attaches a session to the blueprint with in.ID, creating it on first
 // sight. A stage left running by a crash is marked interrupted and re-run, a
 // stage whose inputs were stored but which never started runs, and a
-// human-sourced stage that waits shows its prompt again. At a ready end an
-// open sign-off is shown again or, never shown, runs; an emission a restart
-// cut short resumes, a stopped one is reminded of approve, and an emitted
-// blueprint's watch restarts. Start on a session already attached does
-// nothing.
+// human-sourced stage that waits shows its prompt again. An open gate is
+// shown again, or, never shown, opened under the policy now in effect. At a
+// ready end an open sign-off is shown again or, never shown, runs; an
+// emission a restart cut short resumes, a stopped one is reminded of
+// approve, and an emitted blueprint's watch restarts. A reopen that finds the
+// ended session's run still finishing waits for it to leave the slot first.
+// Start on a session already attached does nothing.
 func (c *Controller) Start(ctx context.Context, in StartInput) error {
 	in.Price = effectivePrice(in.Price)
 
@@ -270,11 +305,20 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 
 	c.sessions[in.ID] = sess
 	r, runCtx, claimed := c.claimLocked(in.ID)
+	prev := c.runs[in.ID]
+	ended := !claimed && prev.ended
 	c.mu.Unlock()
 
 	if !claimed {
-		// A run of an ended session is still finishing; it records its own end.
-		return nil
+		if !ended {
+			return nil
+		}
+
+		// The ended session's run records its own end before it leaves the
+		// slot, so the record then says what the reopen resumes.
+		if r, runCtx, claimed = c.claimAfterEnd(ctx, in.ID, sess, prev); !claimed {
+			return nil
+		}
 	}
 
 	next, err := c.resumePoint(ctx, sess.audit, bp)
@@ -287,6 +331,12 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 
 	if next.end {
 		c.resumeEnd(runCtx, r, sess, bp, next)
+
+		return nil
+	}
+
+	if next.gate {
+		c.resumeGate(runCtx, r, sess, bp, next)
 
 		return nil
 	}
@@ -336,51 +386,71 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 	return bp, nil
 }
 
-// interruptedStage marks a run a crash left running as interrupted and
-// returns its stage to re-run. Empty means nothing was interrupted. The
-// caller holds the run slot.
+// interruptedStage marks every run a crash left running as interrupted and
+// returns the stage of the latest such stage run, to re-run. A responder run
+// left running sat inside its stage's run, so the stage run alone is re-run.
+// Empty means no stage run was interrupted. The caller holds the run slot.
 func (c *Controller) interruptedStage(ctx context.Context, bp store.Blueprint) (string, error) {
-	interrupted, err := c.leftRunning(ctx, bp.ID)
-	if err != nil || interrupted == nil {
+	left, err := c.leftRunning(ctx, bp.ID)
+	if err != nil || len(left) == 0 {
 		return "", err
 	}
 
-	// Checked before the run is marked: a run marked interrupted after a
+	stageID := ""
+
+	for _, r := range left {
+		if r.Kind == store.RunKindStage {
+			stageID = r.Stage
+		}
+	}
+
+	// Stage runs are closed last. A partial close must never leave the stage
+	// run interrupted with a run inside it still running: the next start would
+	// see only the inner run and re-run nothing.
+	sort.SliceStable(left, func(i, j int) bool {
+		return left[i].Kind != store.RunKindStage && left[j].Kind == store.RunKindStage
+	})
+
+	// Checked before the runs are marked: a run marked interrupted after a
 	// transient error, with nothing relaunched, is never recovered. With no
-	// need stored there is nothing to re-run from; the run is closed and the
-	// next message becomes the need.
+	// need stored there is nothing to re-run from; the runs are closed and
+	// the next message becomes the need.
 	_, err = c.opts.Store.LatestArtifact(ctx, bp.ID, needStage)
 
 	noNeed := errors.Is(err, store.ErrNotFound)
 	if err != nil && !noNeed {
-		return "", fmt.Errorf("blueprint: start: load the need for interrupted %s: %w", interrupted.Stage, err)
+		return "", fmt.Errorf("blueprint: start: load the need for interrupted run %d: %w", left[0].ID, err)
 	}
 
-	if err := c.opts.Store.EndRun(ctx, interrupted.ID, store.RunInterrupted, "process restarted", store.RunUsage{}, c.opts.Now().UTC()); err != nil {
-		return "", fmt.Errorf("blueprint: mark interrupted: %w", err)
+	for _, r := range left {
+		if err := c.opts.Store.EndRun(ctx, r.ID, store.RunInterrupted, "process restarted", store.RunUsage{}, c.opts.Now().UTC()); err != nil {
+			return "", fmt.Errorf("blueprint: mark interrupted: %w", err)
+		}
 	}
 
 	if noNeed {
 		return "", nil
 	}
 
-	return interrupted.Stage, nil
+	return stageID, nil
 }
 
-// leftRunning returns the latest run a crash left in "running", or nil.
-func (c *Controller) leftRunning(ctx context.Context, id string) (*store.Run, error) {
+// leftRunning returns every run a crash left in "running", oldest first.
+func (c *Controller) leftRunning(ctx context.Context, id string) ([]store.Run, error) {
 	runs, err := c.opts.Store.ListRuns(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("blueprint: list runs: %w", err)
 	}
 
-	for i := len(runs) - 1; i >= 0; i-- {
-		if runs[i].Status == store.RunRunning {
-			return &runs[i], nil
+	var out []store.Run
+
+	for _, r := range runs {
+		if r.Status == store.RunRunning {
+			out = append(out, r)
 		}
 	}
 
-	return nil, nil
+	return out, nil
 }
 
 // Message handles one user message: the answer to an open question, the
@@ -403,21 +473,23 @@ func (c *Controller) Message(ctx context.Context, id, text, msgID string) error 
 	r := c.runs[id]
 
 	if r != nil {
-		answer := r.answer
+		answer, number, open := r.answer, r.question, r.stage
 		r.answer = nil
 		c.mu.Unlock()
 
 		if answer == nil {
-			sess.audit.event(ctx, noteEvent(id, trimmed, msgID, true))
+			sess.audit.event(ctx, noteEvent(id, trimmed, msgID, open, true))
 
 			return nil
 		}
 
 		// Logged before it is delivered, so the answer precedes what the run
 		// does with it. The channel is buffered: the send never blocks.
-		sess.audit.event(ctx, Event{Kind: EventAnswer, BlueprintID: id, Payload: map[string]any{"text": trimmed, "message_id": msgID}})
+		sess.audit.event(ctx, Event{Kind: EventAnswer, BlueprintID: id, Payload: map[string]any{
+			"text": trimmed, "message_id": msgID, "number": number,
+		}})
 
-		answer <- trimmed
+		answer <- reply{text: trimmed, msgID: msgID}
 
 		return nil
 	}
@@ -451,7 +523,8 @@ func (c *Controller) Abort(ctx context.Context, id, msgID string) error {
 	// is already aborted.
 	if r := c.runs[id]; r != nil {
 		r.answer = nil
-		r.cancel()
+		r.aborted = true
+		r.cancel(nil)
 	}
 
 	c.mu.Unlock()
@@ -516,7 +589,11 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 		return fmt.Errorf("blueprint: export: %w", err)
 	}
 
-	if bundle.Gates, err = c.opts.Store.ListGates(ctx, id, signoffStage); err != nil {
+	if bundle.Questions, err = c.opts.Store.ListQuestions(ctx, id); err != nil {
+		return fmt.Errorf("blueprint: export: %w", err)
+	}
+
+	if bundle.Gates, err = c.opts.Store.AllGates(ctx, id); err != nil {
 		return fmt.Errorf("blueprint: export: %w", err)
 	}
 
@@ -545,7 +622,8 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 	}
 
 	c.mu.Lock()
-	_, running := c.runs[id]
+	r, running := c.runs[id]
+	asked := openQuestion(r)
 	c.mu.Unlock()
 
 	// during_run tells the panel whether a stage keeps working after the
@@ -553,6 +631,7 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 	sess.audit.event(ctx, Event{Kind: EventExported, BlueprintID: id, Payload: map[string]any{
 		"path": dir, "files": len(files), "message_id": msgID, "during_run": running,
 	}})
+	c.reshowQuestion(ctx, sess.audit, id, asked)
 
 	return nil
 }
@@ -628,10 +707,11 @@ func (c *Controller) capAllows(ctx context.Context, au audit, bp store.Blueprint
 }
 
 // noteEvent records a message that is neither the need nor an answer.
-// duringRun tells the panel the run goes on working after it.
-func noteEvent(id, text, msgID string, duringRun bool) Event {
+// stage is the stage open when it came, "" when none; duringRun tells the
+// panel a run goes on working after it.
+func noteEvent(id, text, msgID, stage string, duringRun bool) Event {
 	return Event{Kind: EventNote, BlueprintID: id, Payload: map[string]any{
-		"text": text, "message_id": msgID, "during_run": duringRun,
+		"text": text, "message_id": msgID, "stage": stage, "during_run": duringRun,
 	}}
 }
 
@@ -652,7 +732,8 @@ func (c *Controller) End(ctx context.Context, id string) error {
 
 	if r := c.runs[id]; r != nil {
 		r.answer = nil
-		r.cancel()
+		r.ended = true
+		r.cancel(errSessionEnded)
 	}
 
 	// The watcher leaves in the same section as the session, so a Start that
@@ -692,7 +773,7 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 	for _, r := range c.runs {
 		r.shutdown = true
 		r.answer = nil
-		r.cancel()
+		r.cancel(nil)
 
 		dones = append(dones, r.done)
 	}
@@ -757,11 +838,39 @@ func (c *Controller) claimLocked(id string) (*run, context.Context, bool) {
 		return nil, nil, false
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancelCause(context.Background())
 	r := &run{cancel: cancel, done: make(chan struct{})}
 	c.runs[id] = r
 
 	return r, ctx, true
+}
+
+// claimAfterEnd takes id's run slot for sess once prev, the ended session's
+// run, has left it, waiting at most endedRunWait. It fails when the wait runs
+// out, or when by then an abort has reached prev, Shutdown has begun, sess is
+// no longer attached or another caller took the slot; c.mu is not held while
+// it waits. prev's cancel cause stays End's, so only the flag tells an abort
+// during the wait.
+func (c *Controller) claimAfterEnd(ctx context.Context, id string, sess *session, prev *run) (*run, context.Context, bool) {
+	wait, cancel := context.WithTimeout(ctx, endedRunWait)
+	defer cancel()
+
+	select {
+	case <-prev.done:
+	case <-wait.Done():
+		c.opts.Logger.Warn("blueprint: the ended session's run still holds the slot", "blueprint", id, "error", wait.Err())
+
+		return nil, nil, false
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if prev.aborted || c.closing || c.sessions[id] != sess {
+		return nil, nil, false
+	}
+
+	return c.claimLocked(id)
 }
 
 // release frees id's run slot and wakes Wait.
@@ -775,7 +884,7 @@ func (c *Controller) release(id string, r *run) {
 	r.answer = nil
 	c.mu.Unlock()
 
-	r.cancel()
+	r.cancel(nil)
 	close(r.done)
 }
 

@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Project is what the checks know about a target project: whether CM
@@ -272,6 +274,10 @@ func checkBody(c Card, lists Lists) []Finding {
 		}
 	}
 
+	if phrase := DanglingReference(c.Body, lists); phrase != "" {
+		out = append(out, Finding{c.ID, "dangling_reference", fmt.Sprintf("%q points at text this card does not carry; write the fact into the card", phrase)})
+	}
+
 	for _, pat := range lists.ForbiddenReferences {
 		re, err := regexp.Compile(pat.Pattern)
 		if err != nil {
@@ -284,6 +290,49 @@ func checkBody(c Card, lists Lists) []Finding {
 	}
 
 	return out
+}
+
+// DanglingReference returns the first phrase of the dangling references
+// list in text, matched case-insensitively as whole words ("as above" is not
+// in "was above"); "" when there is none.
+func DanglingReference(text string, lists Lists) string {
+	lower := strings.ToLower(text)
+
+	for _, phrase := range lists.DanglingReferences {
+		if phrase != "" && containsWords(lower, strings.ToLower(phrase)) {
+			return phrase
+		}
+	}
+
+	return ""
+}
+
+// containsWords reports whether phrase is in text with no letter, digit,
+// hyphen or underscore just before or after it.
+func containsWords(text, phrase string) bool {
+	for from := 0; ; {
+		i := strings.Index(text[from:], phrase)
+		if i < 0 {
+			return false
+		}
+
+		start, end := from+i, from+i+len(phrase)
+
+		before, _ := utf8.DecodeLastRuneInString(text[:start])
+		after, _ := utf8.DecodeRuneInString(text[end:])
+
+		if (start == 0 || !isWordRune(before)) && (end == len(text) || !isWordRune(after)) {
+			return true
+		}
+
+		from = start + 1
+	}
+}
+
+// isWordRune counts a hyphen and an underscore as part of a word, so
+// "as above" is not found in "such as above-the-fold".
+func isWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_'
 }
 
 // checkCriteria requires the acceptance criteria to be numbered: at least

@@ -356,3 +356,30 @@ func TestRun_CapsToolOutput(t *testing.T) {
 	assert.True(t, strings.HasPrefix(result, "HEAD"), "the head is kept")
 	assert.True(t, strings.HasSuffix(result, "TAIL"), "the tail is kept")
 }
+
+func TestRun_CompactsALongConversationInsteadOfStopping(t *testing.T) {
+	ask := func(id string) llm.Response {
+		return llm.Response{ToolCalls: []llm.ToolCall{toolCall(id, "ask_human", `{"question":"more?"}`)}, FinishReason: "tool_calls"}
+	}
+
+	near := ask("c6")
+	near.Usage = llm.Usage{PromptTokens: 120000}
+
+	f := &fakeLLM{responses: []llm.Response{
+		ask("c1"), ask("c2"), ask("c3"), ask("c4"), ask("c5"),
+		near, // the prompt reached 85% of the window: the older turns are summarized
+		{Content: "the briefing", FinishReason: "stop"},
+		{ToolCalls: []llm.ToolCall{toolCall("c7", "submit_artifact", `{"body":"# Need"}`)}, FinishReason: "tool_calls"},
+	}}
+
+	var events bytes.Buffer
+
+	in := baseInput(&events)
+	in.MaxTurns = 20
+	in.Asker = &stubAsker{answer: "yes"}
+
+	out, err := runnerWith(f).Run(context.Background(), in)
+	require.NoError(t, err)
+	assert.Equal(t, "# Need", out.Artifact.Body)
+	assert.Contains(t, events.String(), `"phase":"compaction"`, "the summarize call is accounted as compaction")
+}

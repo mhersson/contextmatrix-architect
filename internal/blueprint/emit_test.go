@@ -17,7 +17,7 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-const needBody = "## Problem\nParsing is slow.\n## Value\nFaster builds.\n## Assumptions\n- The parser stays in Go.\n"
+const needBody = "## Problem\nParsing is slow.\n## Value\nFaster builds.\n"
 
 func cardBody(change string) string {
 	return "## Context\nwhy\n## Where\ninternal/x.go\n## Change\n" + change + "\n## Acceptance criteria\n1. go test ./... passes.\n## Tests expected\nTestThing.\n## Out of scope\nrest.\n"
@@ -53,8 +53,10 @@ func readinessFor(ready bool, ids ...string) map[string]any {
 
 func twoCardScript() stageScript {
 	return stageScript{
-		"intake":        returns(needBody, map[string]any{"slices": 1}),
-		"grounding":     returns("# Grounding", nil),
+		"intake": returns(needBody, map[string]any{"slices": 1, "assumptions": []any{"The parser stays in Go."}}),
+		"grounding": returns("# Grounding", map[string]any{"verdicts": []any{
+			map[string]any{"id": "A1", "status": "verified", "evidence": "[S1] the parser is Go"},
+		}}),
 		"decomposition": returns("# Cards", twoCards()),
 		"readiness":     returns("# Ready", readinessFor(true, "D1", "D2")),
 	}
@@ -99,6 +101,7 @@ func TestEmit_CreatesTheCardsThenThePlaybook(t *testing.T) {
 	}, books[0].Entries)
 	assert.Contains(t, books[0].Description, "Parsing is slow.")
 	assert.Contains(t, books[0].Description, "The parser stays in Go.")
+	assert.Contains(t, books[0].Description, alphaSourceLine, "a source tag in the description is mapped")
 
 	recs, err := st.ListEmissions(context.Background(), "BP1")
 	require.NoError(t, err)
@@ -211,7 +214,7 @@ func TestEmit_ASingleCardCarriesTheSummaryAndHasNoPlaybook(t *testing.T) {
 	data["order"] = []any{"D1", "M1"}
 
 	script := happyScript()
-	script["intake"] = returns(needBody, map[string]any{"slices": 1})
+	script["intake"] = returns(needBody, map[string]any{"slices": 1, "assumptions": []any{"The parser stays in Go."}})
 	script["decomposition"] = returns("# Cards", data)
 
 	c, st, _, rec, _ := newPipeline(t, script)

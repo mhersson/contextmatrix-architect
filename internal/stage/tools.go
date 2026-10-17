@@ -16,6 +16,9 @@ type Question struct {
 	Text    string
 	Options []string
 	Context string
+	// Recommended is the position, from 1, of the option the stage
+	// recommends; 0 for none.
+	Recommended int
 }
 
 // Asker answers a stage's question. The call blocks until the answer exists
@@ -48,6 +51,7 @@ func (askHumanTool) Schema() llm.Tool {
 			"properties": {
 				"question": {"type": "string", "description": "the question, one sentence"},
 				"options": {"type": "array", "items": {"type": "string"}, "description": "candidate answers, optional"},
+				"recommended": {"type": "integer", "description": "the position, from 1, of the option you recommend, optional"},
 				"context": {"type": "string", "description": "why it matters, optional"}
 			},
 			"required": ["question"]
@@ -61,12 +65,29 @@ func (t askHumanTool) Execute(ctx context.Context, args map[string]any) (tools.R
 		return tools.Result{}, errors.New("ask_human: question is required")
 	}
 
-	if opts, ok := args["options"].([]any); ok {
-		for _, o := range opts {
-			if s, ok := o.(string); ok && strings.TrimSpace(s) != "" {
-				q.Options = append(q.Options, s)
-			}
+	given, _ := args["options"].([]any)
+	// kept[i] is the 1-based position of given[i] among the kept options, 0
+	// for a blank one.
+	kept := make([]int, len(given))
+
+	for i, o := range given {
+		if s, ok := o.(string); ok && strings.TrimSpace(s) != "" {
+			q.Options = append(q.Options, s)
+			kept[i] = len(q.Options)
 		}
+	}
+
+	if v, ok := args["recommended"]; ok && v != nil {
+		if len(given) == 0 {
+			return tools.Result{}, errors.New("ask_human: recommended needs options")
+		}
+
+		n, isNumber := v.(float64)
+		if !isNumber || n != float64(int(n)) || int(n) < 1 || int(n) > len(given) || kept[int(n)-1] == 0 {
+			return tools.Result{}, fmt.Errorf("ask_human: recommended is the position of one of the options, from 1 to %d", len(given))
+		}
+
+		q.Recommended = kept[int(n)-1]
 	}
 
 	if t.asker == nil {

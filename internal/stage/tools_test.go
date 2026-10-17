@@ -93,3 +93,38 @@ func TestSubmitArtifactTool_ValidatesWithTheCallsContext(t *testing.T) {
 	_, err := tool.Execute(ctx, map[string]any{"body": "# Cards"})
 	require.ErrorIs(t, err, context.Canceled)
 }
+
+func TestAskHumanTool_TakesTheRecommendedOption(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    map[string]any
+		want    int
+		wantErr bool
+	}{
+		{name: "none", args: map[string]any{"question": "q?", "options": []any{"a", "b"}}},
+		{name: "the second", args: map[string]any{"question": "q?", "options": []any{"a", "b"}, "recommended": float64(2)}, want: 2},
+		{name: "past the options", args: map[string]any{"question": "q?", "options": []any{"a", "b"}, "recommended": float64(3)}, wantErr: true},
+		{name: "zero", args: map[string]any{"question": "q?", "options": []any{"a"}, "recommended": float64(0)}, wantErr: true},
+		{name: "not a whole number", args: map[string]any{"question": "q?", "options": []any{"a", "b"}, "recommended": 1.5}, wantErr: true},
+		{name: "without options", args: map[string]any{"question": "q?", "recommended": float64(1)}, wantErr: true},
+		{name: "a blank option before it", args: map[string]any{"question": "q?", "options": []any{"a", " ", "c"}, "recommended": float64(3)}, want: 2},
+		{name: "pointing at a blank option", args: map[string]any{"question": "q?", "options": []any{"a", " ", "c"}, "recommended": float64(2)}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			asker := &stubAsker{answer: "a"}
+
+			_, err := askHumanTool{asker: asker}.Execute(context.Background(), tt.args)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Empty(t, asker.got.Text, "the asker is not called")
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, asker.got.Recommended)
+		})
+	}
+}

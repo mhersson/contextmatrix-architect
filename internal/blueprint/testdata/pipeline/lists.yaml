@@ -38,3 +38,15 @@ forbidden_references:
     pattern: '(^|[\s"`(])(/(home|Users)/|C:\\Users\\)'
   - name: parent directory
     pattern: '(^|\s)\.\./'
+
+# Phrases that point at text the reader does not have. A card body and an
+# assumption stand alone once they leave the blueprint.
+dangling_references:
+  - "as noted above"
+  - "noted above"
+  - "see above"
+  - "as above"
+  - "mentioned above"
+  - "as mentioned"
+  - "as noted earlier"
+  - "described above"

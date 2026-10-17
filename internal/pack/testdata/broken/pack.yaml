@@ -4,4 +4,3 @@ stages:
   - id: intake
     persona: ghost
     produces: need
-    gate: questions

@@ -36,8 +36,18 @@ func (s *Store) AppendEvent(ctx context.Context, e Event) error {
 
 // ListEvents returns a blueprint's events oldest first.
 func (s *Store) ListEvents(ctx context.Context, blueprintID string) ([]Event, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, ts, blueprint_id, run_id, kind, payload
+	return s.listEvents(ctx, `SELECT id, ts, blueprint_id, run_id, kind, payload
 		FROM events WHERE blueprint_id = ? ORDER BY id`, blueprintID)
+}
+
+// ListEventsOfKind returns a blueprint's events of kind, oldest first.
+func (s *Store) ListEventsOfKind(ctx context.Context, blueprintID, kind string) ([]Event, error) {
+	return s.listEvents(ctx, `SELECT id, ts, blueprint_id, run_id, kind, payload
+		FROM events WHERE blueprint_id = ? AND kind = ? ORDER BY id`, blueprintID, kind)
+}
+
+func (s *Store) listEvents(ctx context.Context, query string, args ...any) ([]Event, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: list events: %w", err)
 	}
@@ -71,6 +81,17 @@ func (s *Store) ListEvents(ctx context.Context, blueprintID string) ([]Event, er
 	}
 
 	return out, nil
+}
+
+// CountEvents counts a blueprint's events of kind.
+func (s *Store) CountEvents(ctx context.Context, blueprintID, kind string) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE blueprint_id = ? AND kind = ?`,
+		blueprintID, kind).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: count events: %w", err)
+	}
+
+	return n, nil
 }
 
 // LatestEvent returns a blueprint's newest event of kind, or ErrNotFound.

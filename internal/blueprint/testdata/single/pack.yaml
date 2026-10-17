@@ -4,4 +4,4 @@ stages:
   - id: intake
     persona: product_owner
     produces: need
-    gate: questions
+    policy: human

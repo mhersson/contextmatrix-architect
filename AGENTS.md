@@ -17,7 +17,7 @@ specification and must stay true at HEAD.
   git-credentials token arrive in every session start from CM and live in
   memory only. There is no CM-less mode.
 - Every action is logged: full transcripts and an append-only event log.
-  The append-only tables (events, transcripts, artifacts, gates, emissions) are never updated
+  The append-only tables (events, transcripts, artifacts, gates, emissions, questions) are never updated
   or deleted.
 
 ## Package map
@@ -25,15 +25,15 @@ specification and must stay true at HEAD.
 - `cmd/contextmatrix-architect` - entrypoint; `serve` is the only server command.
 - `internal/cli` - cobra commands: serve, config defaults, config validate.
 - `internal/config` - koanf config: file, then `CONTEXTMATRIX_ARCHITECT_*` env.
-- `internal/webhook` - CM-facing chat-backend protocol on backendkit webhookcore and logbridge; parses the abort and export commands.
+- `internal/webhook` - CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export and gate commands that `internal/blueprint` recognises.
 - `internal/export` - renders a blueprint's stored record as a markdown bundle in the state directory.
-- `internal/blueprint` - controller: blueprint state machine, stage chaining, human-sourced stages, code stage preparation, the readiness loop, reply handling (answers, the need, notes), abort and export, questions, events, sign-off, emission and the run watch.
+- `internal/blueprint` - controller: blueprint state machine, stage chaining, human-sourced stages, responder policies and the gate reply, gates at any stage, code stage preparation, the readiness loop, reply handling (answers, the need, notes delivered to later runs), abort and export, numbered questions, assumptions, events, sign-off, emission and the run watch.
 - `internal/stage` - one harness run: persona + instructions + the ask_human and submit_artifact tools, plus per-run tool sets (the code tools and `repo_info`) and submit validation.
 - `internal/pack` - pipeline packs: stages, personas, instructions, lists.yaml and card.md; the default pack is embedded.
 - `internal/code` - read-only mirrors and per-blueprint trees for grounding; repo facts.
 - `internal/cm` - MCP client to ContextMatrix: list_projects, the read-only `cm_` tools stage runs get, and typed card, playbook and run calls.
 - `internal/contract` - the card contract: lists data and the mechanical checks.
-- `internal/store` - SQLite: blueprints, stage runs, artifacts, transcripts, events, sources, gates, emissions.
+- `internal/store` - SQLite: blueprints, stage runs, artifacts, transcripts, events, sources, gates, emissions, questions.
 
 ## Coding conventions
 

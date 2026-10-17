@@ -32,6 +32,7 @@ type stubController struct {
 	messages  []string
 	aborts    []string
 	exports   []string
+	policies  []string
 	ends      []string
 	startErr  error
 	msgErr    error
@@ -70,6 +71,16 @@ func (s *stubController) Abort(ctx context.Context, id, msgID string) error {
 	s.ctxErrs = append(s.ctxErrs, ctx.Err())
 
 	return s.abortErr
+}
+
+func (s *stubController) SetPolicy(ctx context.Context, id, stageID, policy, msgID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.policies = append(s.policies, id+"|"+stageID+"|"+policy+"|"+msgID)
+	s.ctxErrs = append(s.ctxErrs, ctx.Err())
+
+	return nil
 }
 
 func (s *stubController) Export(ctx context.Context, id, msgID string) error {
@@ -433,11 +444,14 @@ func TestMessage_CommandsAreRouted(t *testing.T) {
 		text         string
 		wantAborts   int
 		wantExports  int
+		wantPolicies []string
 		wantMessages int
 	}{
 		{text: "abort", wantAborts: 1},
 		{text: "  Export ", wantExports: 1},
+		{text: "Gate Grounding HUMAN", wantPolicies: []string{"BP1|grounding|human|m-Gate Grounding HUMAN"}},
 		{text: "please abort this", wantMessages: 1},
+		{text: "gate it behind a flag", wantMessages: 1},
 		{text: "the design", wantMessages: 1},
 	}
 
@@ -453,6 +467,7 @@ func TestMessage_CommandsAreRouted(t *testing.T) {
 
 			assert.Len(t, ctl.aborts, tt.wantAborts)
 			assert.Len(t, ctl.exports, tt.wantExports)
+			assert.Equal(t, tt.wantPolicies, ctl.policies)
 			assert.Len(t, ctl.messages, tt.wantMessages)
 		})
 	}

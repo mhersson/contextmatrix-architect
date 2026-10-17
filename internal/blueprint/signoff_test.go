@@ -128,6 +128,49 @@ func TestSignoff_OtherTextIsANoteWithTheHint(t *testing.T) {
 	note, ok := rec.first(EventNote)
 	require.True(t, ok)
 	assert.Contains(t, note.Payload["hint"], "approve")
+	assert.Equal(t, signoffStage, note.Payload["stage"])
+}
+
+func TestSignoff_ANoteWhileTheSignoffHoldsTheSlotRecordsTheSignoff(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    string
+		approve bool
+	}{
+		{name: "the emission an approve starts", mode: protocol.ArchitectModeDefault, approve: true},
+		{name: "the sign-off that follows readiness", mode: protocol.ArchitectModeAutoEmit},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _, _, rec, _ := newPipeline(t, happyScript())
+			hold := newHoldCM(t, newFakeCM())
+			hold.title = "Add the thing"
+			c.opts.ConnectCM = hold.connect
+			ctx := context.Background()
+
+			in := startInput("BP1")
+			in.Mode = tt.mode
+			require.NoError(t, c.Start(ctx, in))
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			c.Wait("BP1")
+			require.NoError(t, c.Message(ctx, "BP1", "the design", "m2"))
+
+			if tt.approve {
+				c.Wait("BP1")
+				require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+			}
+
+			receive(t, hold.entered, "the held card")
+			require.NoError(t, c.Message(ctx, "BP1", "keep the API stable", "m4"))
+			hold.free()
+			c.Wait("BP1")
+
+			note, ok := rec.first(EventNote)
+			require.True(t, ok)
+			assert.Equal(t, signoffStage, note.Payload["stage"])
+		})
+	}
 }
 
 func TestSignoff_ApproveIsTheDesignWhileTheDesignStageWaits(t *testing.T) {
@@ -198,6 +241,11 @@ func TestSignoff_AutoEmitStopsForAHumanOnAWarning(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, true, so.Payload["auto_stopped"])
 	assert.NotEmpty(t, so.Payload["warnings"])
+
+	actions := anyList(so.Payload["actions"])
+	require.Len(t, actions, 2)
+	assert.Equal(t, "Approve and override warnings", actions[0].(map[string]any)["label"])
+	assert.Equal(t, "approve", actions[0].(map[string]any)["reply"])
 }
 
 func TestSignoff_TheAutoModeStillWaitsForAHuman(t *testing.T) {
@@ -316,7 +364,7 @@ func TestSignoff_ApproveWhileAStageRunsIsANote(t *testing.T) {
 
 func TestSignoff_ShowsIntakesAssumptions(t *testing.T) {
 	script := happyScript()
-	script["intake"] = returns(needBody, nil)
+	script["intake"] = returns(needBody, map[string]any{"assumptions": []any{"The parser stays in Go."}})
 
 	c, _, _, rec, _ := newPipeline(t, script)
 
@@ -324,7 +372,9 @@ func TestSignoff_ShowsIntakesAssumptions(t *testing.T) {
 
 	so, ok := rec.first(EventSignOff)
 	require.True(t, ok)
-	assert.Equal(t, "- The parser stays in Go.", so.Payload["assumptions"])
+	assert.Equal(t, []any{
+		map[string]any{"id": "A1", "stage": "intake", "text": "The parser stays in Go.", "status": "unverified", "evidence": ""},
+	}, so.Payload["assumptions"])
 }
 
 func TestSignoff_ASecondApproveAfterEmissionIsANote(t *testing.T) {
@@ -373,29 +423,6 @@ func TestSignoff_AnAbortBeforeThePreflightStillShowsTheSignOff(t *testing.T) {
 	gates, err := st.ListGates(ctx, "BP1", signoffStage)
 	require.NoError(t, err)
 	assert.Empty(t, gates)
-}
-
-func TestParseReject(t *testing.T) {
-	cases := []struct {
-		name, text, feedback string
-		ok                   bool
-	}{
-		{"plain", "reject split it", "split it", true},
-		{"multi-line", "reject\n- split D1\n- add tests", "- split D1\n- add tests", true},
-		{"tab", "reject\tsplit it", "split it", true},
-		{"bare", "reject", "", true},
-		{"capitalised", "Reject split it", "split it", true},
-		{"longer word", "rejected foo", "", false},
-		{"other", "approve", "", false},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			feedback, ok := parseReject(tc.text)
-			assert.Equal(t, tc.ok, ok)
-			assert.Equal(t, tc.feedback, feedback)
-		})
-	}
 }
 
 // slowCM holds ListPlaybooks, the last call of the preflight, until release, so a test can abort while the

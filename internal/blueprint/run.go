@@ -65,6 +65,10 @@ func (c *Controller) launch(ctx context.Context, r *run, sess *session, bp store
 				return
 			}
 
+			if stageID == c.opts.Pack.Stages[0].ID {
+				c.postGatePlan(context.WithoutCancel(ctx), sess, bp)
+			}
+
 			if stageID == c.groundingStage() {
 				c.reportSetup(ctx, sess, bp)
 			}
@@ -76,6 +80,7 @@ func (c *Controller) launch(ctx context.Context, r *run, sess *session, bp store
 			stageID, end = c.advance(context.WithoutCancel(ctx), sess, bp, stageID)
 
 			if end.ready {
+				c.holdForSignoff(r)
 				c.signoff(ctx, sess, bp, end)
 			}
 		}
@@ -110,7 +115,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	}
 
 	runID, err := c.opts.Store.StartRun(bg, store.Run{
-		BlueprintID: id, Stage: stageID, Attempt: attempt, Round: 1,
+		BlueprintID: id, Stage: stageID, Kind: store.RunKindStage, Attempt: attempt, Round: 1,
 		Status: store.RunRunning, Model: m.name, StartedAt: c.opts.Now().UTC(),
 	})
 	if err != nil {
@@ -120,6 +125,11 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	}
 
 	c.setState(bg, id, StateRunning)
+
+	c.mu.Lock()
+	r.stage = stageID
+	c.mu.Unlock()
+
 	au.event(bg, Event{Kind: EventStageStarted, BlueprintID: id, RunID: runID, Payload: map[string]any{
 		"stage": stageID, "persona": st.Persona, "attempt": attempt, "model": m.name,
 		"pack": c.opts.Pack.Name, "pack_version": c.opts.Pack.Version,
@@ -133,7 +143,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		case c.shuttingDown(r):
 			// Crash-equivalent, as below: the next Start re-runs the stage.
 		case ctx.Err() != nil:
-			c.endRun(bg, runID, store.RunCanceled, "canceled", store.RunUsage{})
+			c.endRun(bg, runID, store.RunCanceled, cancelReason(ctx), store.RunUsage{})
 			c.setState(bg, id, StateIdle)
 			au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
 				"stage": stageID, "status": store.RunCanceled, "cost_usd": 0.0, "priced": m.price != nil,
@@ -166,7 +176,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	in.Endpoint = sess.endpoint
 	in.MaxCostUSD = runCap
 	in.MaxTurns = c.opts.MaxTurns
-	in.Asker = &asker{c: c, id: id, runID: runID, run: r, audit: au}
+	in.Asker = &asker{c: c, bp: bp, stage: stageID, max: st.MaxQuestions, runID: runID, run: r, audit: au}
 	in.Events = sink
 	in.Secrets = sess.secrets()
 
@@ -240,7 +250,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	case ctx.Err() != nil:
 		// The harness reports a cancelled run as an error; abort and End
 		// cancel, so this is a canceled run, not a failed one.
-		c.endRun(bg, runID, store.RunCanceled, "canceled", usage)
+		c.endRun(bg, runID, store.RunCanceled, cancelReason(ctx), usage)
 		c.setState(bg, id, StateIdle)
 		au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
 			"stage": stageID, "status": store.RunCanceled, "cost_usd": usage.CostUSD, "priced": isPriced,
@@ -318,17 +328,52 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		in.Task = fmt.Sprintf("ContextMatrix board reads (the %s tools) are source [%s]; cite it for anything read there.\n\n", cm.ToolPrefix+"*", src.Tag()) + in.Task
 	}
 
-	var checked *validatorState
+	var (
+		checked    *validatorState
+		validators []func(context.Context, stage.Artifact) error
+	)
+
+	if slices.Contains(st.Checks, pack.CheckAssumptions) {
+		validators = append(validators, c.assumptionsValidator())
+	}
 
 	if slices.Contains(st.Checks, pack.CheckCards) {
-		in.Validate, checked = c.cardsValidator(sess, bp)
+		var cards func(context.Context, stage.Artifact) error
+
+		cards, checked = c.cardsValidator(sess, bp)
+		validators = append(validators, cards)
 		in.Instructions += "\n\n# Card template\n\n" + c.opts.Pack.CardTemplate()
 	}
+
+	in.Validate = allOf(validators)
 
 	return in, checked, closeCM, nil
 }
 
-// nextAttempt numbers a new run of stageID after every earlier one.
+// allOf runs every validator on every submit and joins their refusals, nil
+// only when all accept: each validator counts the submits it sees, so one
+// that never ran would lose count of the third, the one that is accepted.
+// nil when there are no validators.
+func allOf(validators []func(context.Context, stage.Artifact) error) func(context.Context, stage.Artifact) error {
+	if len(validators) == 0 {
+		return nil
+	}
+
+	return func(ctx context.Context, a stage.Artifact) error {
+		var errs []error
+
+		for _, v := range validators {
+			if err := v(ctx, a); err != nil {
+				errs = append(errs, err)
+			}
+		}
+
+		return errors.Join(errs...)
+	}
+}
+
+// nextAttempt numbers a new run of stageID after every earlier stage run of
+// it; reviewer and responder runs are not attempts.
 func (c *Controller) nextAttempt(ctx context.Context, id, stageID string) (int, error) {
 	runs, err := c.opts.Store.ListRuns(ctx, id)
 	if err != nil {
@@ -338,7 +383,7 @@ func (c *Controller) nextAttempt(ctx context.Context, id, stageID string) (int, 
 	attempt := 1
 
 	for _, r := range runs {
-		if r.Stage == stageID && r.Attempt >= attempt {
+		if r.Kind == store.RunKindStage && r.Stage == stageID && r.Attempt >= attempt {
 			attempt = r.Attempt + 1
 		}
 	}
@@ -365,17 +410,85 @@ func (c *Controller) endRun(ctx context.Context, runID int64, status, reason str
 	}
 }
 
-// asker parks the run on its slot until a message answers the question.
+// cancelReason is how a canceled run is recorded: session_ended when End cut
+// it short, so a reopen runs its stage again, else canceled.
+func cancelReason(ctx context.Context) string {
+	if errors.Is(context.Cause(ctx), errSessionEnded) {
+		return reasonSessionEnded
+	}
+
+	return "canceled"
+}
+
+// asker puts a stage's questions to their responder, one at a time: it
+// numbers each, refuses one past the stage's cap or with an option the
+// webhook would take as a command, parks the run on its slot until a
+// message answers it and records the answer. Under the stage's auto policy
+// it tells the stage to decide itself.
 type asker struct {
 	c     *Controller
-	id    string
+	bp    store.Blueprint
+	stage string
+	// max caps the questions this run may ask; 0 is no cap.
+	max   int
 	runID int64
 	run   *run
 	audit audit
+
+	// mu keeps one question open at a time, so two asks of one tool batch
+	// never share a number or the run's answer channel.
+	mu    sync.Mutex
+	asked int
 }
 
 func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
-	ch := make(chan string, 1)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// Checked before anything is numbered or recorded: a cancelled run asks
+	// nothing.
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	if err := commandOption(q.Options); err != nil {
+		return "", err
+	}
+
+	if a.max > 0 && a.asked >= a.max {
+		return "", fmt.Errorf("this stage may ask %d question(s) per run and has asked them; decide the rest yourself and, where this stage records assumptions, record each decision as one", a.max)
+	}
+
+	bg := context.WithoutCancel(ctx)
+
+	// Read at every question, so a gate reply during the run applies from
+	// the next question on.
+	policy, err := a.c.policy(bg, a.bp, a.stage)
+	if err != nil {
+		return "", err
+	}
+
+	number, err := a.c.nextQuestion(bg, a.bp.ID)
+	if err != nil {
+		return "", err
+	}
+
+	a.asked++
+
+	payload := map[string]any{
+		"number": number, "stage": a.stage, "text": q.Text, "options": q.Options,
+		"context": q.Context, "recommended": q.Recommended,
+	}
+
+	if policy == pack.PolicyAuto {
+		payload["responder"] = store.ResponderAuto
+		a.audit.event(bg, Event{Kind: EventQuestion, BlueprintID: a.bp.ID, RunID: a.runID, Payload: payload})
+
+		return "", errNoResponder
+	}
+
+	payload["responder"] = store.ResponderHuman
+	ch := make(chan reply, 1)
 
 	// Checked under c.mu: abort and End cancel under it, so a cancelled run
 	// never opens a question.
@@ -389,20 +502,18 @@ func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
 
 	// Registered before the question is published, so an answer to it is
 	// never a lost wakeup.
-	a.run.answer = ch
+	a.run.answer, a.run.question, a.run.pending = ch, number, payload
 	a.c.mu.Unlock()
 
-	bg := context.WithoutCancel(ctx)
-	a.c.setState(bg, a.id, StateWaiting)
-	a.audit.event(bg, Event{Kind: EventQuestion, BlueprintID: a.id, RunID: a.runID, Payload: map[string]any{
-		"text": q.Text, "options": q.Options, "context": q.Context,
-	}})
+	a.c.setState(bg, a.bp.ID, StateWaiting)
+	a.audit.event(bg, Event{Kind: EventQuestion, BlueprintID: a.bp.ID, RunID: a.runID, Payload: payload})
 
 	select {
-	case answer := <-ch:
-		a.c.setState(bg, a.id, StateRunning)
+	case ans := <-ch:
+		a.c.setState(bg, a.bp.ID, StateRunning)
+		a.record(bg, q, number, ans)
 
-		return answer, nil
+		return ans.text, nil
 	case <-ctx.Done():
 		a.c.mu.Lock()
 
@@ -414,6 +525,31 @@ func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
 
 		return "", ctx.Err()
 	}
+}
+
+// record stores an answered question once. A failure is logged: the answer
+// already reached the stage, and the events keep it.
+func (a *asker) record(ctx context.Context, q stage.Question, number int, ans reply) {
+	if err := a.c.opts.Store.AddQuestion(ctx, store.Question{
+		BlueprintID: a.bp.ID, RunID: a.runID, Stage: a.stage, Number: number,
+		Text: a.audit.text(q.Text), Options: a.audit.texts(q.Options), Context: a.audit.text(q.Context),
+		Answer: a.audit.text(ans.text), Responder: store.ResponderHuman, MessageID: ans.msgID,
+		AnsweredAt: a.c.opts.Now().UTC(),
+	}); err != nil {
+		a.c.opts.Logger.Error("blueprint: record the answer", "blueprint", a.bp.ID, "question", number, "error", err)
+	}
+}
+
+// nextQuestion numbers a new question after every question the blueprint
+// has asked, answered or not. The caller holds the blueprint's run slot, so
+// no other question is numbered meanwhile.
+func (c *Controller) nextQuestion(ctx context.Context, id string) (int, error) {
+	n, err := c.opts.Store.CountEvents(ctx, id, EventQuestion)
+	if err != nil {
+		return 0, fmt.Errorf("blueprint: number the question: %w", err)
+	}
+
+	return n + 1, nil
 }
 
 // harnessSink stores each harness JSONL line as an event and forwards it.

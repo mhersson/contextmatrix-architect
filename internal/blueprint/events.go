@@ -45,6 +45,12 @@ const (
 	// lacks for an agent run: a verify command, an instruction file, any
 	// commit. None of it blocks; decomposition plans it as setup.
 	EventSetupGaps = "setup_gaps"
+	// EventPolicy records a gate <stage> human|auto reply: the stage's new
+	// policy, or why the reply changed nothing.
+	EventPolicy = "policy"
+	// EventGatePlan lists, once the first stage has completed, who answers
+	// each stage's questions and decides its gate.
+	EventGatePlan = "gate_plan"
 	// EventReport is the pipeline's end: the final artifact and whether the
 	// cards are ready.
 	EventReport = "report"
@@ -68,8 +74,15 @@ const (
 	// EventSignOff shows the ready cards, the preflight result and how to
 	// decide; the blueprint waits for approve or reject.
 	EventSignOff = "signoff"
-	// EventDecided records a sign-off decision, by a human or the emitting
-	// mode's automatic approval.
+	// EventGate shows a stage's gate: the stage, the version of its artifact
+	// that waits, and the replies that decide it.
+	EventGate = "gate"
+	// EventReshow publishes an open question again after a reply CM's panel
+	// took as its answer but the architect took as a command. The payload
+	// carries the original event's kind and payload.
+	EventReshow = "reshow"
+	// EventDecided records a decision at a stage's gate or the sign-off, by a
+	// human or the auto policy.
 	EventDecided = "decided"
 	// EventEnded records that CM ended the session; the blueprint persists.
 	EventEnded = "session_ended"
@@ -94,6 +107,20 @@ func (c *Controller) newAudit(secrets ...string) audit {
 // text masks the session's secrets in s.
 func (a audit) text(s string) string {
 	return a.red.Apply(s)
+}
+
+// texts masks the session's secrets in every string of ss.
+func (a audit) texts(ss []string) []string {
+	if ss == nil {
+		return nil
+	}
+
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = a.text(s)
+	}
+
+	return out
 }
 
 // event stores e, then hands it to the sink.
@@ -206,16 +233,7 @@ func (a audit) mask(v any) any {
 	case string:
 		return a.text(t)
 	case []string:
-		if t == nil {
-			return t
-		}
-
-		out := make([]string, len(t))
-		for i, s := range t {
-			out[i] = a.text(s)
-		}
-
-		return out
+		return a.texts(t)
 	case []any:
 		if t == nil {
 			return t

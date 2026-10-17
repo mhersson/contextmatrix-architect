@@ -28,6 +28,10 @@ type Lists struct {
 	// ForbiddenReferences are regular expressions no card body may match:
 	// local paths, parent directories, other checkouts.
 	ForbiddenReferences []Pattern `yaml:"forbidden_references"`
+	// DanglingReferences point at text the reader does not have, such as
+	// "as noted above": a card body or an assumption states the fact
+	// itself, since each stands alone once it leaves the blueprint.
+	DanglingReferences []string `yaml:"dangling_references"`
 }
 
 // Pattern is one named regular expression.

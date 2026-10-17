@@ -24,6 +24,10 @@ Use the cm_ tools to find open cards in the target projects that already
 cover part of the need, and list them in each project's section under
 `### Existing cards` with their ids and the ContextMatrix source tag.
 
+The task lists the blueprint's assumptions with their ids. For each one the
+code settles, add a verdict: verified or contradicted, with the source tag
+and what you found; leave the rest out.
+
 Produce markdown with one `## <project>` section per project, each with
 `### Verified`, `### Contradictions` and `### Verify command`. Submit with a
-data object `{"projects": {"<project>": {"sha": "<sha, empty for an empty repository>", "verify_command": "<declared in ContextMatrix, empty when none>", "verify_candidate": "<what the repository documents, when none is declared>", "instruction_file": "<AGENTS.md|CLAUDE.md|none>"}}}`.
+data object `{"projects": {"<project>": {"sha": "<sha, empty for an empty repository>", "verify_command": "<declared in ContextMatrix, empty when none>", "verify_candidate": "<what the repository documents, when none is declared>", "instruction_file": "<AGENTS.md|CLAUDE.md|none>"}}, "verdicts": [{"id": "A1", "status": "verified|contradicted", "evidence": "[S1] <what you found>"}]}`.

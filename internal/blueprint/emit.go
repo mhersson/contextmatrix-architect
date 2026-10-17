@@ -163,6 +163,7 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 		au.event(bg, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
 			"stage":   "emission",
 			"message": "Emission is blocked until this is fixed in ContextMatrix; then reply approve:\n- " + strings.Join(pf.Blocking, "\n- "),
+			"resume":  "emission", "version": c.signedOff(bg, bp.ID),
 		}})
 
 		return
@@ -180,6 +181,7 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 		au.event(bg, Event{Kind: EventAwaitInput, BlueprintID: bp.ID, Payload: map[string]any{
 			"stage":  signoffStage,
 			"prompt": emptyReposPrompt(pf.EmptyRepos),
+			"resume": "held", "version": c.signedOff(bg, bp.ID),
 		}})
 	} else if bp.Mode == protocol.ArchitectModeYolo {
 		err := c.startRun(ctx, au, bp, client, draft)
@@ -201,6 +203,7 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 			au.event(bg, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
 				"stage":   "run",
 				"message": "The cards are emitted, but " + stopped + " Reply approve to retry the start, or start it in ContextMatrix and reply approve.",
+				"resume":  "run", "version": c.signedOff(bg, bp.ID),
 			}})
 		}
 	}
@@ -337,6 +340,28 @@ func (c *Controller) startRun(ctx context.Context, au audit, bp store.Blueprint,
 	return nil
 }
 
+// signedOff is the version of the cards the latest sign-off approval
+// judged, which names the emission in the panel's prompt; 0 when none is
+// recorded or the record cannot be read, which is logged.
+func (c *Controller) signedOff(ctx context.Context, id string) int {
+	gates, err := c.opts.Store.ListGates(ctx, id, signoffStage)
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: read the sign-off approvals", "blueprint", id, "error", err)
+
+		return 0
+	}
+
+	v := 0
+
+	for _, g := range gates {
+		if g.Decision == store.GateApprove {
+			v = g.Version
+		}
+	}
+
+	return v
+}
+
 // emitError reports a stopped emission and leaves the blueprint idle. One
 // Shutdown cut short is only logged and stays emitting. ctx is the run's: a
 // cancel there is an abort or End, which the session is told plainly, the
@@ -361,6 +386,7 @@ func (c *Controller) emitError(ctx context.Context, au audit, id string, err err
 	au.event(bg, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{
 		"stage":   "emission",
 		"message": stopped + " Cards already created are kept; reply approve to resume.",
+		"resume":  "emission", "version": c.signedOff(bg, id),
 	}})
 }
 
@@ -500,9 +526,14 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 			}
 		}
 
+		var own []string
+		for _, card := range draft.Cards {
+			own = append(own, ownRepos(projects, card.Project)...)
+		}
+
 		wctx, cancel := writeContext(ctx)
 		id, err := client.CreatePlaybook(wctx, cm.PlaybookInput{
-			Title: draft.Title, Description: summary.description(bp.ID), Entries: entries, AgentID: c.opts.CallerIdentity,
+			Title: draft.Title, Description: withSources(summary.description(bp.ID), sources, own), Entries: entries, AgentID: c.opts.CallerIdentity,
 		})
 
 		cancel()
@@ -570,23 +601,39 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 }
 
 // blueprintSummary is what the cards and the playbook carry about the
-// blueprint: intake's problem and value, and its assumptions.
+// blueprint: intake's problem and value, and every assumption with its
+// latest status.
 type blueprintSummary struct {
-	problem, value, assumptions string
+	problem, value string
+	assumptions    []assumption
+	// prose is the text of intake's Assumptions section, read only when no
+	// stage stated assumptions as data.
+	prose string
 }
 
-// summary reads the first stage's latest artifact, the need.
+// summary reads the first stage's latest artifact, the need, and the
+// blueprint's assumptions.
 func (c *Controller) summary(ctx context.Context, id string) (blueprintSummary, error) {
 	art, err := c.opts.Store.LatestArtifact(ctx, id, c.opts.Pack.Stages[0].ID)
 	if err != nil {
 		return blueprintSummary{}, fmt.Errorf("load the need: %w", err)
 	}
 
-	return blueprintSummary{
-		problem:     sectionText(art.Body, "Problem"),
-		value:       sectionText(art.Body, "Value"),
-		assumptions: sectionText(art.Body, "Assumptions"),
-	}, nil
+	list, err := c.assumptions(ctx, id)
+	if err != nil {
+		return blueprintSummary{}, fmt.Errorf("load the assumptions: %w", err)
+	}
+
+	sum := blueprintSummary{problem: sectionText(art.Body, "Problem"), value: sectionText(art.Body, "Value"), assumptions: list}
+
+	// An intake stored before assumptions were data keeps them in its body's
+	// Assumptions section; without it, a blueprint in flight across that
+	// change would tell CM that none were recorded.
+	if len(list) == 0 {
+		sum.prose = sectionText(art.Body, "Assumptions")
+	}
+
+	return sum, nil
 }
 
 // description is the playbook's description.
@@ -599,10 +646,13 @@ func (s blueprintSummary) description(id string) string {
 		}
 	}
 
-	if s.assumptions == "" {
+	switch {
+	case len(s.assumptions) > 0:
+		fmt.Fprintf(&b, "Assumptions, each with what grounding found:\n%s\n\n", assumptionLines(s.assumptions))
+	case s.prose != "":
+		fmt.Fprintf(&b, "Assumptions:\n%s\n\n", s.prose)
+	default:
 		b.WriteString("Assumptions: none recorded.\n\n")
-	} else {
-		fmt.Fprintf(&b, "Assumptions:\n%s\n\n", s.assumptions)
 	}
 
 	fmt.Fprintf(&b, "Emitted by contextmatrix-architect from blueprint %s.", id)
@@ -618,10 +668,13 @@ func (s blueprintSummary) contextText() string {
 		fmt.Fprintf(&b, "Blueprint problem: %s\n\n", s.problem)
 	}
 
-	if s.assumptions == "" {
+	switch {
+	case len(s.assumptions) > 0:
+		fmt.Fprintf(&b, "Blueprint assumptions, each with what grounding found:\n%s", assumptionLines(s.assumptions))
+	case s.prose != "":
+		fmt.Fprintf(&b, "Blueprint assumptions:\n%s", s.prose)
+	default:
 		b.WriteString("Blueprint assumptions: none recorded.")
-	} else {
-		fmt.Fprintf(&b, "Blueprint assumptions:\n%s", s.assumptions)
 	}
 
 	return b.String()

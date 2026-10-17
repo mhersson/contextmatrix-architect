@@ -25,6 +25,15 @@ var ErrNoArtifact = errors.New("stage: run ended without an artifact")
 // matches the chat backend's.
 const ToolOutputMaxBytes = 128 << 10
 
+// A run whose prompt reaches 85% of a 128k window summarizes its older
+// turns and goes on, keeping the last six messages verbatim: the chat
+// backend's bounds. Dialog stages grow with a human's answers.
+const (
+	contextWindow       = 128000
+	compactionThreshold = 0.85
+	keepRecentMessages  = 6
+)
+
 // Input is everything one run needs.
 type Input struct {
 	Stage        string
@@ -97,6 +106,8 @@ func (r *Runner) Run(ctx context.Context, in Input) (Output, error) {
 		RedactToolOutput:   redact.New(in.Secrets).Apply,
 		History:            in.History,
 		ToolOutputMaxBytes: ToolOutputMaxBytes,
+		ContextWindow:      contextWindow,
+		Compaction:         &harness.Compaction{Threshold: compactionThreshold, KeepRecentTurns: keepRecentMessages},
 	}
 
 	res, err := harness.Run(ctx, r.NewLLM(in.Endpoint), reg, emit, in.Task, cfg)

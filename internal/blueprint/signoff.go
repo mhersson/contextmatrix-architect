@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
-	"unicode"
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
@@ -22,25 +20,6 @@ const signoffHint = "Reply approve to emit the cards, or reject <feedback> to re
 // emitsOnItsOwn reports whether a mode approves the sign-off itself.
 func emitsOnItsOwn(mode string) bool {
 	return mode == protocol.ArchitectModeAutoEmit || mode == protocol.ArchitectModeYolo
-}
-
-// decision returns the sign-off decision on the artifact version: approve,
-// reject, or "" when none was made.
-func (c *Controller) decision(ctx context.Context, id string, version int) (string, error) {
-	gates, err := c.opts.Store.ListGates(ctx, id, signoffStage)
-	if err != nil {
-		return "", fmt.Errorf("blueprint: list gates: %w", err)
-	}
-
-	d := ""
-
-	for _, g := range gates {
-		if g.Version == version {
-			d = g.Decision
-		}
-	}
-
-	return d, nil
 }
 
 // rejection reads the sign-off's rejections against a loop stage's verdict
@@ -71,32 +50,25 @@ func (c *Controller) rejection(ctx context.Context, id string, version int) (int
 	return base, rejected, nil
 }
 
-// rejectFeedback is every rejection's feedback, oldest first.
-func (c *Controller) rejectFeedback(ctx context.Context, id string) ([]string, error) {
-	gates, err := c.opts.Store.ListGates(ctx, id, signoffStage)
-	if err != nil {
-		return nil, fmt.Errorf("list gates: %w", err)
-	}
-
-	var out []string
-
-	for _, g := range gates {
-		if g.Decision == store.GateReject {
-			out = append(out, g.Feedback)
-		}
-	}
-
-	return out, nil
-}
-
 // launchEnd runs the sign-off of a ready end on the run slot r, which the
 // caller holds, and releases it.
 func (c *Controller) launchEnd(ctx context.Context, r *run, sess *session, bp store.Blueprint, out outcome) {
+	c.holdForSignoff(r)
+
 	go func() {
 		defer c.release(bp.ID, r)
 
 		c.signoff(ctx, sess, bp, out)
 	}()
+}
+
+// holdForSignoff marks the run slot r as held by the sign-off and the
+// emission that follows it, so a note that comes meanwhile records the
+// sign-off rather than the stage before it.
+func (c *Controller) holdForSignoff(r *run) {
+	c.mu.Lock()
+	r.stage = signoffStage
+	c.mu.Unlock()
 }
 
 // signoff acts on cards the pipeline ended ready with. Approved: emission,
@@ -107,7 +79,7 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	bg := context.WithoutCancel(ctx)
 	au := sess.audit
 
-	decision, err := c.decision(bg, bp.ID, out.art.Version)
+	decision, err := c.gateDecision(bg, bp.ID, signoffStage, out.art.Version)
 	if err != nil {
 		c.fail(bg, au, bp.ID, 0, "sign-off: "+err.Error())
 
@@ -149,7 +121,7 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	// Steps do not stop it: creating the cards does not need them, and they
 	// are shown again with the emitted cards.
 	if auto && ctx.Err() == nil && pfErr == nil && len(pf.Blocking) == 0 && len(pf.Warnings) == 0 {
-		if !c.decide(bg, au, bp.ID, out.art.Version, store.GateApprove, "", store.ResponderAuto, "") {
+		if !c.decide(bg, au, bp.ID, signoffStage, out.art.Version, store.GateApprove, "", store.ResponderAuto, "") {
 			return
 		}
 
@@ -163,13 +135,20 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 		return
 	}
 
-	// A need that cannot be read shows as no assumptions, and the log says why.
-	assumptions := ""
+	// Assumptions that cannot be read show as none, and the log says why. An
+	// intake from before assumptions were data gives its section's text,
+	// which the panel shows as it shows an older sign-off.
+	var assumptions any = []any{}
 
-	if sum, err := c.summary(bg, bp.ID); err != nil {
+	sum, err := c.summary(bg, bp.ID)
+
+	switch {
+	case err != nil:
 		c.opts.Logger.Warn("blueprint: sign-off assumptions", "blueprint", bp.ID, "error", au.text(err.Error()))
-	} else {
-		assumptions = sum.assumptions
+	case sum.prose != "":
+		assumptions = sum.prose
+	default:
+		assumptions = assumptionsPayload(signoffOrder(sum.assumptions))
 	}
 
 	cards := make([]any, 0, len(draft.Cards))
@@ -195,6 +174,7 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	payload := map[string]any{
 		"version": out.art.Version, "cards": cards, "order": draft.Order, "manual": manual, "title": draft.Title,
 		"blocking": pf.Blocking, "warnings": pf.Warnings, "steps": pf.Steps, "auto_stopped": auto, "assumptions": assumptions,
+		"actions": actionsPayload(signoffActions(len(pf.Warnings) > 0)),
 	}
 
 	if pfErr != nil {
@@ -205,52 +185,30 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	au.event(bg, Event{Kind: EventSignOff, BlueprintID: bp.ID, Payload: payload})
 }
 
-// decide records a sign-off decision and announces it; false when it could
-// not be stored, which fails the blueprint. An approve makes the blueprint
-// emitting, so a crash before emission ends leaves it for the restart.
-func (c *Controller) decide(ctx context.Context, au audit, id string, version int, decision, feedback, responder, msgID string) bool {
-	if _, err := c.opts.Store.AddGate(ctx, store.Gate{
-		BlueprintID: id, Stage: signoffStage, Version: version, Decision: decision,
-		Feedback: au.text(feedback), Responder: responder, DecidedAt: c.opts.Now().UTC(),
-	}); err != nil {
-		c.fail(ctx, au, id, 0, "sign-off: record the decision: "+err.Error())
-
-		return false
-	}
-
-	if decision == store.GateApprove {
-		c.setState(ctx, id, StateEmitting)
-	}
-
-	au.event(ctx, Event{Kind: EventDecided, BlueprintID: id, Payload: map[string]any{
-		"decision": decision, "feedback": feedback, "responder": responder, "version": version, "message_id": msgID,
-	}})
-
-	return true
-}
-
-// atReadyEnd handles a message after the pipeline ended ready. Undecided:
+// atReadyEnd handles a message after the pipeline ended ready, matching it to
+// the sign-off's replies as a stage's gate does. Undecided:
 // approve emits, reject with feedback re-runs the loop's target stage.
 // Approved with emission unfinished: approve resumes it, and other text is
 // a note with that hint, or without one when the record cannot be read.
 // Anything else is a note. The caller holds the run slot.
 func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, out outcome, text, msgID string) error {
-	decision, err := c.decision(ctx, bp.ID, out.art.Version)
+	decision, err := c.gateDecision(ctx, bp.ID, signoffStage, out.art.Version)
 	if err != nil {
 		c.release(bp.ID, r)
 
 		return err
 	}
 
-	approve := strings.EqualFold(strings.TrimSpace(text), "approve")
-	feedback, reject := parseReject(text)
-	note := noteEvent(bp.ID, text, msgID, false)
+	action, feedback, matched := matchAction(text, signoffActions(false))
+	approve := matched && action.Decision == store.GateApprove
+	reject := matched && action.Decision == store.GateReject
+	note := noteEvent(bp.ID, text, msgID, signoffStage, false)
 
 	switch decision {
 	case "":
 		switch {
 		case approve:
-			if c.decide(ctx, sess.audit, bp.ID, out.art.Version, store.GateApprove, "", store.ResponderHuman, msgID) {
+			if c.decide(ctx, sess.audit, bp.ID, signoffStage, out.art.Version, store.GateApprove, "", store.ResponderHuman, msgID) {
 				c.launchEnd(runCtx, r, sess, bp, out)
 
 				return nil
@@ -259,7 +217,7 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 			c.release(bp.ID, r)
 
 			return nil
-		case reject && feedback != "":
+		case reject:
 			st, _ := c.opts.Pack.Stage(out.art.Stage)
 			if st.LoopsTo == "" {
 				note.Payload["hint"] = "This pack's last stage loops to no stage, so a rejection cannot re-run it; start a new blueprint with a better design."
@@ -267,7 +225,7 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 				break
 			}
 
-			if c.decide(ctx, sess.audit, bp.ID, out.art.Version, store.GateReject, feedback, store.ResponderHuman, msgID) {
+			if c.decide(ctx, sess.audit, bp.ID, signoffStage, out.art.Version, store.GateReject, feedback, store.ResponderHuman, msgID) {
 				c.launch(runCtx, r, sess, bp, st.LoopsTo)
 
 				return nil
@@ -276,7 +234,7 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 			c.release(bp.ID, r)
 
 			return nil
-		case reject:
+		case rejectWithoutFeedback(text):
 			note.Payload["hint"] = "Say what to change: reply reject <feedback>."
 		default:
 			note.Payload["hint"] = signoffHint
@@ -308,23 +266,6 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 	return nil
 }
 
-// parseReject reads "reject <feedback>": ok when the first word, split at any
-// whitespace, is reject; feedback is the rest, trimmed.
-func parseReject(text string) (string, bool) {
-	s := strings.TrimSpace(text)
-
-	word, rest := s, ""
-	if i := strings.IndexFunc(s, unicode.IsSpace); i >= 0 {
-		word, rest = s[:i], s[i:]
-	}
-
-	if !strings.EqualFold(word, "reject") {
-		return "", false
-	}
-
-	return strings.TrimSpace(rest), true
-}
-
 // resumeEnd picks up a ready end on reopen. An undecided sign-off that was
 // shown is shown again as it was, without preflight or an automatic
 // approval, and one never shown runs. An approved emission still emitting
@@ -353,7 +294,7 @@ func (c *Controller) resumeEnd(ctx context.Context, r *run, sess *session, bp st
 		return
 	}
 
-	decision, err := c.decision(bg, bp.ID, out.art.Version)
+	decision, err := c.gateDecision(bg, bp.ID, signoffStage, out.art.Version)
 	if err != nil {
 		c.unreadable(bg, au, bp.ID, err)
 		c.release(bp.ID, r)
@@ -393,12 +334,14 @@ func (c *Controller) resumeEnd(ctx context.Context, r *run, sess *session, bp st
 
 			return
 		case cur.State != string(StateEmitting):
-			prompt := "Emission is stopped; reply approve to resume it."
+			prompt, resume := "Emission is stopped; reply approve to resume it.", "emission"
 			if cards {
-				prompt = "The run has not started; reply approve to start it."
+				prompt, resume = "The run has not started; reply approve to start it.", "held"
 			}
 
-			au.event(bg, Event{Kind: EventAwaitInput, BlueprintID: bp.ID, Payload: map[string]any{"stage": signoffStage, "prompt": prompt}})
+			au.event(bg, Event{Kind: EventAwaitInput, BlueprintID: bp.ID, Payload: map[string]any{
+				"stage": signoffStage, "prompt": prompt, "resume": resume, "version": out.art.Version,
+			}})
 			c.release(bp.ID, r)
 
 			return

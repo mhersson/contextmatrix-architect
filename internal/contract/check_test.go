@@ -577,3 +577,29 @@ func nilIfEmpty(s []string) []string {
 
 	return s
 }
+
+func TestCheck_DanglingReference(t *testing.T) {
+	lists := testLists()
+	lists.DanglingReferences = []string{"as noted above", "as above", "as mentioned"}
+	projects := map[string]Project{"alpha": {HasRepo: true, HasVerify: true}}
+
+	card := goodCard("D1")
+	assert.Empty(t, Check(Draft{Cards: []Card{card}}, lists, projects))
+
+	card.Body += "The limits stay As noted above.\n"
+	assert.Equal(t, []string{"D1:dangling_reference"}, checkNames(Check(Draft{Cards: []Card{card}}, lists, projects)))
+
+	for _, tc := range []struct{ name, text, want string }{
+		{"matches case-insensitively", "The limits stay As noted above.", "as noted above"},
+		{"no phrase", "The limits stay at 100.", ""},
+		{"inside another word", "p99 was above 300 ms", ""},
+		{"inside another word at its end", "it was mentioned in passing", ""},
+		{"at the start of a sentence", "As above, the API keeps its routes.", "as above"},
+		{"inside a hyphenated word", "such as above-the-fold", ""},
+		{"at the end of the text", "The routes stay as above", "as above"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, DanglingReference(tc.text, lists))
+		})
+	}
+}

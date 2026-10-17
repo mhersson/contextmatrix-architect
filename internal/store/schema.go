@@ -8,7 +8,7 @@ import (
 
 // schemaVersion stamps PRAGMA user_version. Bump it when the schema changes;
 // a newer database is refused.
-const schemaVersion = 3
+const schemaVersion = 4
 
 func ensureSchema(ctx context.Context, db *sql.DB) error {
 	var current int
@@ -48,7 +48,8 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 			prompt_tokens      INTEGER NOT NULL DEFAULT 0,
 			completion_tokens  INTEGER NOT NULL DEFAULT 0,
 			cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
-			cache_write_tokens INTEGER NOT NULL DEFAULT 0
+			cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+			kind TEXT NOT NULL DEFAULT 'stage'
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_stage_runs_blueprint ON stage_runs(blueprint_id, id)`,
 		`CREATE TABLE IF NOT EXISTS artifacts (
@@ -107,11 +108,28 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 			created_at   INTEGER NOT NULL,
 			UNIQUE(blueprint_id, kind, draft_id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS questions (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			blueprint_id TEXT NOT NULL,
+			run_id       INTEGER NOT NULL,
+			stage        TEXT NOT NULL,
+			number       INTEGER NOT NULL,
+			text         TEXT NOT NULL,
+			options      TEXT NOT NULL DEFAULT '[]',
+			context      TEXT NOT NULL DEFAULT '',
+			answer       TEXT NOT NULL,
+			responder    TEXT NOT NULL,
+			assumption   INTEGER NOT NULL DEFAULT 0,
+			grounded     INTEGER NOT NULL DEFAULT 0,
+			message_id   TEXT NOT NULL DEFAULT '',
+			answered_at  INTEGER NOT NULL,
+			UNIQUE(blueprint_id, number)
+		)`,
 	}
 
 	// Append-only: the audit record is never rewritten. Triggers make that
 	// true for every path, including a raw SQL console.
-	for _, table := range []string{"events", "transcripts", "artifacts", "gates", "emissions"} {
+	for _, table := range []string{"events", "transcripts", "artifacts", "gates", "emissions", "questions"} {
 		stmts = append(stmts,
 			fmt.Sprintf(`CREATE TRIGGER IF NOT EXISTS %s_no_update BEFORE UPDATE ON %s
 				BEGIN SELECT RAISE(ABORT, '%s is append-only'); END`, table, table, table),
@@ -131,6 +149,13 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 			`ALTER TABLE stage_runs ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0`,
 			`ALTER TABLE stage_runs ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0`,
 		)
+	}
+
+	// Files from v1 to v3 hold stage_runs without kind; every run they hold
+	// was a stage run, which the default records. A fresh file gets the
+	// column from its CREATE statement.
+	if current >= 1 && current < 4 {
+		stmts = append(stmts, `ALTER TABLE stage_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'stage'`)
 	}
 
 	// One transaction: a failed or interrupted migration leaves the file

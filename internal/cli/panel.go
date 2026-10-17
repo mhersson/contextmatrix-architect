@@ -45,9 +45,20 @@ func eventSink(hub *logbridge.Hub) func(blueprint.Event) {
 
 func waitsOnUser(e blueprint.Event) bool {
 	switch e.Kind {
-	case blueprint.EventQuestion, blueprint.EventError, blueprint.EventAborted,
-		blueprint.EventAwaitInput, blueprint.EventSignOff, blueprint.EventRunStarted, blueprint.EventWatchEnded:
+	case blueprint.EventError, blueprint.EventAborted,
+		blueprint.EventAwaitInput, blueprint.EventGate, blueprint.EventReshow, blueprint.EventSignOff, blueprint.EventRunStarted, blueprint.EventWatchEnded:
 		return true
+	case blueprint.EventQuestion:
+		// A question the stage decides itself leaves the run working.
+		responder, _ := e.Payload["responder"].(string)
+
+		return responder != store.ResponderAuto
+	case blueprint.EventPolicy:
+		// CM arms its working indicator on every message; a gate reply that
+		// leaves nothing running must clear it.
+		duringRun, _ := e.Payload["during_run"].(bool)
+
+		return !duringRun
 	case blueprint.EventReport:
 		// At a ready end the sign-off follows on the held run slot; the
 		// sign-off, error or emission that ends it is followed by the idle

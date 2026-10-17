@@ -9,11 +9,13 @@ import (
 
 	"github.com/mhersson/contextmatrix-architect/internal/blueprint"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
+	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-// logEntryFor renders a controller event as a panel entry. Until CM renders
-// typed entries, questions and artifacts are plain text and stage boundaries
-// are system lines. Answers are echoed by CM itself and harness events reach
+// logEntryFor renders a controller event as a panel entry. A question or gate
+// a human answers carries a prompt, whose actions the panel shows as buttons
+// and whose replies come back as ordinary messages; the markdown stays the
+// readable fallback. Answers are echoed by CM itself and harness events reach
 // the hub through the bridge, so both are skipped here.
 func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	entry := protocol.LogEntry{Timestamp: e.Time, SessionID: e.BlueprintID}
@@ -38,11 +40,23 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Type = "system"
 		entry.Content = fmt.Sprintf("Stage %s started as %s.", str(p["stage"]), strings.ReplaceAll(str(p["persona"]), "_", " "))
 	case blueprint.EventQuestion:
+		if str(p["responder"]) == store.ResponderAuto {
+			entry.Type = "system"
+			entry.Content = fmt.Sprintf("Stage %s asked Q%.0f: %s Its policy is auto, so it decides this itself; the question stays in the blueprint's event log.", str(p["stage"]), num(p["number"]), str(p["text"]))
+
+			break
+		}
+
 		entry.Type = "text"
 
 		var b strings.Builder
 
-		b.WriteString("**Question:** " + str(p["text"]) + "\n")
+		heading := "**Question:**"
+		if n := num(p["number"]); n > 0 {
+			heading = fmt.Sprintf("**Question Q%.0f:**", n)
+		}
+
+		b.WriteString(heading + " " + str(p["text"]) + "\n")
 
 		if ctxText := str(p["context"]); ctxText != "" {
 			b.WriteString("\n" + ctxText + "\n")
@@ -52,12 +66,17 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			b.WriteString("\nOptions:\n")
 
 			for i, o := range opts {
+				if i+1 == int(num(p["recommended"])) {
+					o += " (recommended)"
+				}
+
 				fmt.Fprintf(&b, "%d. %s\n", i+1, o)
 			}
 		}
 
 		b.WriteString("\nReply with your answer.")
 		entry.Content = b.String()
+		entry.Prompt = questionPrompt(p)
 	case blueprint.EventArtifact:
 		// CM already shows the message a human-sourced artifact came from.
 		if str(p["source"]) == pack.SourceHuman {
@@ -81,10 +100,18 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventNote:
 		entry.Type = "system"
 
-		if stage := str(p["retries"]); stage != "" {
-			entry.Content = fmt.Sprintf("Message recorded in the audit log. It is not delivered to a stage; stage %s runs again.", stage)
-		} else {
-			entry.Content = "Message recorded in the audit log. It is not delivered to a stage and starts none."
+		duringRun, _ := p["during_run"].(bool)
+		ended, _ := p["ended"].(bool)
+
+		switch stage := str(p["retries"]); {
+		case stage != "":
+			entry.Content = fmt.Sprintf("Noted. Stage %s runs again, and it and every stage after it get the note.", stage)
+		case ended:
+			entry.Content = "Noted. The pipeline has ended, so no stage starts to get it."
+		case duringRun:
+			entry.Content = "Noted. Every stage that starts after the running one gets it; the running stage does not."
+		default:
+			entry.Content = "Noted. Every stage that starts from now on gets it."
 		}
 
 		if hint := str(p["hint"]); hint != "" {
@@ -93,17 +120,19 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventSignOff:
 		entry.Type = "text"
 		entry.Content = signoffText(p)
+		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:signoff:v%.0f", num(p["version"])), p["actions"])
+	case blueprint.EventGate:
+		entry.Type = "text"
+		entry.Content = gateText(p)
+		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:%s:v%.0f", str(p["stage"]), num(p["version"])), p["actions"])
+	case blueprint.EventReshow:
+		// The open question again, rendered as it was first shown.
+		inner, _ := p["payload"].(map[string]any)
+
+		return logEntryFor(blueprint.Event{Kind: str(p["kind"]), BlueprintID: e.BlueprintID, Time: e.Time, Payload: inner})
 	case blueprint.EventDecided:
 		entry.Type = "system"
-
-		switch {
-		case str(p["decision"]) == "reject":
-			entry.Content = "Rejected. Decomposition runs again with your feedback."
-		case str(p["responder"]) == "auto":
-			entry.Content = "Preflight found nothing that needs a human first, so the mode approved the cards. Emission starts."
-		default:
-			entry.Content = "Approved. Emission starts."
-		}
+		entry.Content = decidedText(p)
 	case blueprint.EventAborted:
 		entry.Type = "system"
 		entry.Content = "Abort requested. Any running stage is canceled; the blueprint is kept and can be reopened."
@@ -114,6 +143,12 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventError:
 		entry.Type = "stderr"
 		entry.Content = str(p["message"])
+
+		// A prompt rides a text frame, so a stop that offers approve is one.
+		if prompt := resumePrompt(p); prompt != nil {
+			entry.Type = "text"
+			entry.Prompt = prompt
+		}
 	case blueprint.EventAwaitInput:
 		entry.Type = "text"
 		entry.Content = str(p["prompt"])
@@ -121,9 +156,17 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		if strings.TrimSpace(entry.Content) == "" {
 			entry.Content = fmt.Sprintf("Stage %s takes your next message.", str(p["stage"]))
 		}
+
+		entry.Prompt = resumePrompt(p)
 	case blueprint.EventSetupGaps:
 		entry.Type = "text"
 		entry.Content = setupGapsText(p)
+	case blueprint.EventPolicy:
+		entry.Type = "system"
+		entry.Content = policyText(p)
+	case blueprint.EventGatePlan:
+		entry.Type = "text"
+		entry.Content = gatePlanText(p)
 	case blueprint.EventGrounded:
 		entry.Type = "system"
 
@@ -411,9 +454,23 @@ func signoffText(p map[string]any) string {
 		b.WriteString("\nOne card, so no playbook.\n")
 	}
 
-	if a := str(p["assumptions"]); a != "" {
-		b.WriteString("\nAssumptions:\n" + a + "\n")
-	} else {
+	switch list := anyMaps(p["assumptions"]); {
+	case len(list) > 0:
+		b.WriteString("\nAssumptions, unverified first:\n")
+
+		for _, a := range list {
+			status := str(a["status"])
+			if evidence := str(a["evidence"]); evidence != "" {
+				status += ": " + evidence
+			}
+
+			fmt.Fprintf(&b, "- %s (%s) %s\n", str(a["id"]), status, str(a["text"]))
+		}
+	case str(p["assumptions"]) != "":
+		// Intake's section text: a sign-off stored before assumptions were
+		// data, or one whose intake predates them.
+		b.WriteString("\nAssumptions:\n" + str(p["assumptions"]) + "\n")
+	default:
 		b.WriteString("\nAssumptions: none recorded.\n")
 	}
 
@@ -460,6 +517,171 @@ func signoffText(p map[string]any) string {
 	b.WriteString(", or `reject <feedback>` to re-run decomposition with your feedback.")
 
 	return b.String()
+}
+
+// policyText renders a gate reply: the change it made and what it leaves
+// alone, or why it changed nothing.
+func policyText(p map[string]any) string {
+	if refused := str(p["refused"]); refused != "" {
+		return "Nothing changed. " + refused + " Reply `gate <stage> human` or `gate <stage> auto`."
+	}
+
+	text := fmt.Sprintf("Stage %s is now %s for this blueprint, from its next question or gate.", str(p["stage"]), str(p["policy"]))
+
+	if str(p["open"]) == "question" {
+		text += " Its open question stays with whoever it was put to."
+	}
+
+	if str(p["open"]) == "gate" {
+		text += " Its open gate stays as it is; decide it with approve or reject."
+	}
+
+	return text
+}
+
+// gatePlanText renders the gate plan: who answers each stage's questions
+// and decides its gate, and the replies that change it.
+func gatePlanText(p map[string]any) string {
+	var b strings.Builder
+
+	b.WriteString("**Gate plan.** Who answers each stage's questions and decides its gate:")
+
+	for _, s := range anyMaps(p["stages"]) {
+		fmt.Fprintf(&b, "\n- %s: %s", str(s["stage"]), str(s["policy"]))
+
+		if gate, _ := s["gate"].(bool); gate {
+			b.WriteString(", with a gate")
+		}
+	}
+
+	switch str(p["signoff"]) {
+	case "auto":
+		b.WriteString("\n- sign-off: auto when preflight finds nothing for a human")
+	case "human":
+		b.WriteString("\n- sign-off: human")
+	}
+
+	b.WriteString("\n\nReply `gate <stage> human` or `gate <stage> auto` to change a stage for this blueprint; it applies from the stage's next question or gate. The sign-off follows the mode.")
+
+	return b.String()
+}
+
+// gateText renders a stage's gate: which artifact waits and the replies
+// that decide it.
+func gateText(p map[string]any) string {
+	var replies []string
+
+	for _, a := range anyMaps(p["actions"]) {
+		reply := "`" + str(a["reply"])
+		if feedback, _ := a["feedback"].(bool); feedback {
+			reply += " <feedback>"
+		}
+
+		replies = append(replies, reply+"`")
+	}
+
+	return fmt.Sprintf("**Gate: %s, version %.0f.** The artifact above waits for your decision. Reply %s.",
+		str(p["stage"]), num(p["version"]), strings.Join(replies, " or "))
+}
+
+// decidedText renders a decision at a stage's gate or at the sign-off; a
+// decision without a stage is the sign-off's.
+func decidedText(p map[string]any) string {
+	reject, auto := str(p["decision"]) == "reject", str(p["responder"]) == "auto"
+
+	if stage := str(p["stage"]); stage != "" && stage != "signoff" {
+		switch {
+		case reject:
+			return fmt.Sprintf("Rejected %s; it runs again with your feedback.", stage)
+		case auto:
+			return fmt.Sprintf("%s passed its gate under the auto policy.", stage)
+		default:
+			return fmt.Sprintf("Approved %s.", stage)
+		}
+	}
+
+	switch {
+	case reject:
+		return "Rejected. Decomposition runs again with your feedback."
+	case auto:
+		return "Preflight found nothing that needs a human first, so the mode approved the cards. Emission starts."
+	default:
+		return "Approved. Emission starts."
+	}
+}
+
+// labelMax caps the option text of a button's label in runes; the reply keeps
+// the full text and " (recommended)" follows the cap.
+const labelMax = 60
+
+// questionPrompt makes a human's question answerable by a click: one action
+// per option, its reply the full option, which reaches the stage verbatim.
+// Any typed reply answers it too.
+func questionPrompt(p map[string]any) *protocol.LogPrompt {
+	recommended := int(num(p["recommended"]))
+
+	var actions []protocol.LogAction
+
+	for i, o := range stringsOf(p["options"]) {
+		label := capLabel(o)
+		if i+1 == recommended {
+			label += " (recommended)"
+		}
+
+		actions = append(actions, protocol.LogAction{Label: label, Reply: o})
+	}
+
+	return &protocol.LogPrompt{ID: fmt.Sprintf("Q%.0f", num(p["number"])), FreeText: true, Actions: actions}
+}
+
+// actionsPrompt makes a gate decidable by a click from the replies its
+// event carries; nil when it carries none, as an event stored before the
+// replies travelled with it.
+func actionsPrompt(id string, v any) *protocol.LogPrompt {
+	var actions []protocol.LogAction
+
+	for _, a := range anyMaps(v) {
+		feedback, _ := a["feedback"].(bool)
+		actions = append(actions, protocol.LogAction{Label: str(a["label"]), Reply: str(a["reply"]), Feedback: feedback})
+	}
+
+	if len(actions) == 0 {
+		return nil
+	}
+
+	return &protocol.LogPrompt{ID: id, Actions: actions}
+}
+
+// resumePrompt offers approve on a stopped emission or run start; nil on
+// any other error or wait.
+func resumePrompt(p map[string]any) *protocol.LogPrompt {
+	var label string
+
+	switch str(p["resume"]) {
+	case "emission":
+		label = "Resume emission"
+	case "run":
+		label = "Retry the run start"
+	case "held":
+		label = "Start the run"
+	default:
+		return nil
+	}
+
+	return &protocol.LogPrompt{
+		ID:      fmt.Sprintf("emission:v%.0f", num(p["version"])),
+		Actions: []protocol.LogAction{{Label: label, Reply: "approve"}},
+	}
+}
+
+// capLabel cuts a label to labelMax runes, ending in an ellipsis when cut.
+func capLabel(s string) string {
+	r := []rune(s)
+	if len(r) <= labelMax {
+		return s
+	}
+
+	return string(r[:labelMax-1]) + "…"
 }
 
 // setupGapsText renders what grounding found the target projects lack for

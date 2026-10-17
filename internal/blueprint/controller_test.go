@@ -10,9 +10,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -152,22 +152,36 @@ func (r *recorder) all(kind string) []Event {
 func (r *recorder) waitFor(t *testing.T, kind string) {
 	t.Helper()
 
+	r.waitForCount(t, kind, 1)
+}
+
+// waitForCount blocks until n events of kind have reached the sink.
+func (r *recorder) waitForCount(t *testing.T, kind string, n int) {
+	t.Helper()
+
 	timeout := time.After(5 * time.Second)
 
 	for {
 		r.mu.Lock()
 		changed := r.changed
-		found := slices.ContainsFunc(r.events, func(e Event) bool { return e.Kind == kind })
+		count := 0
+
+		for _, e := range r.events {
+			if e.Kind == kind {
+				count++
+			}
+		}
+
 		r.mu.Unlock()
 
-		if found {
+		if count >= n {
 			return
 		}
 
 		select {
 		case <-changed:
 		case <-timeout:
-			t.Fatalf("no %s event; saw %v", kind, r.kinds())
+			t.Fatalf("%d %s event(s) wanted; saw %v", n, kind, r.kinds())
 		}
 	}
 }
@@ -362,7 +376,7 @@ func TestMessage_FirstMessageIsTheNeedAndRunsIntake(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(tr), "containerise this project")
 
-	assert.Equal(t, []string{EventCreated, EventStageStarted, EventArtifact, EventStageEnded, EventReport}, rec.kinds(),
+	assert.Equal(t, []string{EventCreated, EventStageStarted, EventArtifact, EventStageEnded, EventGatePlan, EventReport}, rec.kinds(),
 		"nothing follows intake in a one-stage pack, so the pipeline reports")
 
 	started, ok := rec.first(EventStageStarted)
@@ -679,9 +693,21 @@ func TestEnd_CancelsTheRunAndKeepsTheBlueprint(t *testing.T) {
 	require.ErrorIs(t, c.Message(ctx, "BP1", "hello", "m2"), ErrNotFound, "no session after End")
 	require.ErrorIs(t, c.End(ctx, "nope"), ErrNotFound)
 
-	// Reopen while the canceled run is still ending: it is neither marked
-	// interrupted nor launched again.
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	// Reopen while the canceled run is still ending: it is not marked
+	// interrupted, and once it has recorded its end intake runs again on the
+	// stored need.
+	reopened := make(chan error, 1)
+
+	go func() { reopened <- c.Start(ctx, startInput("BP1")) }()
+
+	require.Eventually(t, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		_, attached := c.sessions["BP1"]
+
+		return attached
+	}, 5*time.Second, time.Millisecond)
 
 	runs, err := st.ListRuns(ctx, "BP1")
 	require.NoError(t, err)
@@ -689,13 +715,26 @@ func TestEnd_CancelsTheRunAndKeepsTheBlueprint(t *testing.T) {
 	assert.Equal(t, store.RunRunning, runs[0].Status)
 
 	close(finish)
-	c.Wait("BP1")
+
+	select {
+	case err := <-reopened:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "the reopen never returned")
+	}
+
+	receive(t, started, "intake again")
 
 	runs, err = st.ListRuns(ctx, "BP1")
 	require.NoError(t, err)
-	require.Len(t, runs, 1, "no second run")
+	require.Len(t, runs, 2)
 	assert.Equal(t, store.RunCanceled, runs[0].Status)
-	assert.Equal(t, 1, runner.calls())
+	assert.Equal(t, reasonSessionEnded, runs[0].Reason)
+	assert.Equal(t, 2, runner.calls())
+	assert.Contains(t, runner.input(1).Task, "the need")
+
+	require.NoError(t, c.Abort(ctx, "BP1", "m3"))
+	c.Wait("BP1")
 
 	bp, err := st.GetBlueprint(ctx, "BP1")
 	require.NoError(t, err, "the blueprint persists after End")
@@ -704,11 +743,11 @@ func TestEnd_CancelsTheRunAndKeepsTheBlueprint(t *testing.T) {
 	assert.True(t, rec.has(EventReopened))
 
 	// The canceled intake left no artifact, so the next message is the need.
-	require.NoError(t, c.Message(ctx, "BP1", "hello again", "m3"), "the reopened session is attached")
+	require.NoError(t, c.Message(ctx, "BP1", "hello again", "m4"), "the reopened session is attached")
 	receive(t, started, "a fresh intake run")
 	assert.False(t, rec.has(EventNote))
-	require.Equal(t, 2, runner.calls())
-	assert.Contains(t, runner.input(1).Task, "hello again")
+	require.Equal(t, 3, runner.calls())
+	assert.Contains(t, runner.input(2).Task, "hello again")
 
 	need, err := st.LatestArtifact(ctx, "BP1", "need")
 	require.NoError(t, err)
@@ -890,6 +929,48 @@ func TestStart_TransientRecoveryErrorLeavesTheRunRecoverable(t *testing.T) {
 	require.Len(t, runs, 2)
 	assert.Equal(t, store.RunInterrupted, runs[0].Status)
 	assert.Equal(t, store.RunDone, runs[1].Status)
+}
+
+func TestStart_PartialCloseOfCrashedRunsKeepsTheStageRecoverable(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "architect.db")
+	st, err := store.Open(ctx, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	c, _, runner, _ := newControllerOn(t, st, artifactRun("# Need"))
+	now := time.Now().UTC()
+
+	require.NoError(t, st.CreateBlueprint(ctx, store.Blueprint{
+		ID: "BP1", Projects: []string{"alpha"},
+		Model: "m", State: string(StateRunning), CreatedAt: now, UpdatedAt: now,
+	}))
+	_, err = st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: "need", Body: "the stored need"})
+	require.NoError(t, err)
+	_, err = st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+	_, err = st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Kind: store.RunKindResponder, Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+
+	// A second connection fails the close of the responder run.
+	raw, err := sql.Open("sqlite", "file:"+path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+
+	_, err = raw.ExecContext(ctx, `CREATE TRIGGER probe BEFORE UPDATE ON stage_runs WHEN OLD.kind = 'responder'
+		BEGIN SELECT RAISE(ABORT, 'transient'); END`)
+	require.NoError(t, err)
+
+	require.Error(t, c.Start(ctx, startInput("BP1")))
+	assert.Equal(t, 0, runner.calls())
+
+	_, err = raw.ExecContext(ctx, `DROP TRIGGER probe`)
+	require.NoError(t, err)
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	assert.Equal(t, 1, runner.calls(), "the stage still re-runs after the failed close")
 }
 
 func TestRunCapZero_DisablesThePerRunCap(t *testing.T) {
@@ -1806,6 +1887,8 @@ func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
 
 	_, err := st.AddGate(ctx, store.Gate{BlueprintID: "BP1", Stage: signoffStage, Version: 1, Decision: store.GateReject, Feedback: "split the card", Responder: store.ResponderHuman, DecidedAt: time.Now()})
 	require.NoError(t, err)
+	_, err = st.AddGate(ctx, store.Gate{BlueprintID: "BP1", Stage: "design", Version: 1, Decision: store.GateApprove, Responder: store.ResponderAuto, DecidedAt: time.Now()})
+	require.NoError(t, err)
 	require.NoError(t, st.AddEmission(ctx, store.Emission{BlueprintID: "BP1", Kind: store.EmitCard, DraftID: "D1", Project: "alpha", CMID: "ALPHA-042", CreatedAt: time.Now()}))
 
 	require.NoError(t, c.Export(ctx, "BP1", "m2"))
@@ -1843,6 +1926,8 @@ func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(summary), "split the card")
 	assert.Contains(t, string(summary), "ALPHA-042")
+	assert.Contains(t, string(summary), "| design | 1 | approve | auto |", "a stage's gate is listed beside the sign-off's")
+	assert.Contains(t, string(summary), "| signoff | 1 | reject | human |")
 }
 
 func TestExport_UnknownBlueprint(t *testing.T) {
@@ -1943,4 +2028,400 @@ func TestHarnessErrorLineIsForwardedWhenTheRunWasNotCancelled(t *testing.T) {
 	}
 
 	assert.True(t, forwarded, "an error line on a run that was not cancelled reaches the panel")
+}
+
+func TestStart_ClosesEveryRunACrashLeftAndRerunsTheStageOnce(t *testing.T) {
+	c, st, runner, _ := newController(t, artifactRun("# Need"))
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	require.NoError(t, st.CreateBlueprint(ctx, store.Blueprint{
+		ID: "BP1", Projects: []string{"alpha"}, Model: "m", State: string(StateRunning), CreatedAt: now, UpdatedAt: now,
+	}))
+	_, err := st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: "need", Body: "the stored need"})
+	require.NoError(t, err)
+
+	// The stage's run was parked in ask_human while a responder run answered.
+	stageRun, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+	responderRun, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Kind: store.RunKindResponder, Attempt: 7, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	assert.Equal(t, 1, runner.calls(), "the stage runs again, once")
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 3)
+	assert.Equal(t, stageRun, runs[0].ID)
+	assert.Equal(t, store.RunInterrupted, runs[0].Status)
+	assert.Equal(t, responderRun, runs[1].ID)
+	assert.Equal(t, store.RunInterrupted, runs[1].Status, "the responder run is closed too")
+	assert.Equal(t, store.RunKindStage, runs[2].Kind)
+	assert.Equal(t, 2, runs[2].Attempt, "a responder run is not an attempt of its stage")
+}
+
+func TestQuestions_AreNumberedAndRecordedAtTheAnswer(t *testing.T) {
+	c, st, _, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		first, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?", Options: []string{"helm", "kustomize"}, Recommended: 1})
+		if err != nil {
+			return stage.Output{}, err
+		}
+
+		second, err := in.Asker.Ask(ctx, stage.Question{Text: "Which cluster?", Context: "where it runs"})
+		if err != nil {
+			return stage.Output{}, err
+		}
+
+		return artifactOutput("# Need\n\n"+first+" on "+second, in), nil
+	})
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+
+	rec.waitForCount(t, EventQuestion, 1)
+	require.NoError(t, c.Message(ctx, "BP1", "helm", "m2"))
+	rec.waitForCount(t, EventQuestion, 2)
+	require.NoError(t, c.Message(ctx, "BP1", "dev", "m3"))
+	c.Wait("BP1")
+
+	questions := rec.all(EventQuestion)
+	require.Len(t, questions, 2)
+	assert.Equal(t, 1, questions[0].Payload["number"])
+	assert.Equal(t, 1, questions[0].Payload["recommended"])
+	assert.Equal(t, 2, questions[1].Payload["number"])
+
+	answers := rec.all(EventAnswer)
+	require.Len(t, answers, 2)
+	assert.Equal(t, 2, answers[1].Payload["number"])
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+
+	recorded, err := st.ListQuestions(ctx, "BP1")
+	require.NoError(t, err)
+
+	for i := range recorded {
+		assert.False(t, recorded[i].AnsweredAt.IsZero())
+		recorded[i].AnsweredAt = time.Time{}
+	}
+
+	assert.Equal(t, []store.Question{
+		{
+			BlueprintID: "BP1", RunID: runs[0].ID, Stage: "intake", Number: 1, Text: "Helm or kustomize?",
+			Options: []string{"helm", "kustomize"}, Answer: "helm", Responder: store.ResponderHuman, MessageID: "m2",
+		},
+		{
+			BlueprintID: "BP1", RunID: runs[0].ID, Stage: "intake", Number: 2, Text: "Which cluster?",
+			Context: "where it runs", Answer: "dev", Responder: store.ResponderHuman, MessageID: "m3",
+		},
+	}, recorded)
+}
+
+func TestQuestions_PastTheCapTheStageDecides(t *testing.T) {
+	refused := make(chan error, 1)
+
+	c, _, _, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"}); err != nil {
+			refused <- err
+
+			return stage.Output{}, err
+		}
+
+		_, err := in.Asker.Ask(ctx, stage.Question{Text: "Which cluster?"})
+		refused <- err
+
+		return artifactOutput("# Need", in), nil
+	})
+	c.opts.Pack.Stages[0].MaxQuestions = 1
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	rec.waitFor(t, EventQuestion)
+	require.NoError(t, c.Message(ctx, "BP1", "helm", "m2"))
+	c.Wait("BP1")
+
+	require.Error(t, <-refused, "the second question is past the cap")
+	assert.Equal(t, 1, rec.count(EventQuestion), "a refused question is never shown")
+}
+
+func TestQuestions_AnOptionTheWebhookTakesAsACommandIsRefused(t *testing.T) {
+	refused := make(chan error, 3)
+
+	c, _, _, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		for _, option := range []string{"Abort", "export", "gate intake auto"} {
+			_, err := in.Asker.Ask(ctx, stage.Question{Text: "What next?", Options: []string{"go on", option}})
+			refused <- err
+		}
+
+		return artifactOutput("# Need", in), nil
+	})
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	for range 3 {
+		require.Error(t, <-refused)
+	}
+
+	assert.False(t, rec.has(EventQuestion))
+}
+
+func TestQuestions_ARerunOfTheStageIsGivenItsAnswers(t *testing.T) {
+	var calls atomic.Int32
+
+	c, _, runner, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if calls.Add(1) > 1 {
+			return artifactOutput("# Need", in), nil
+		}
+
+		if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"}); err != nil {
+			return stage.Output{}, err
+		}
+
+		return stage.Output{Result: harness.Result{Reason: "error"}}, errors.New("provider down")
+	})
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	rec.waitFor(t, EventQuestion)
+	require.NoError(t, c.Message(ctx, "BP1", "helm", "m2"))
+	c.Wait("BP1")
+
+	// Intake failed without an artifact, so the next message is the need.
+	require.NoError(t, c.Message(ctx, "BP1", "the need, again", "m3"))
+	c.Wait("BP1")
+
+	require.Equal(t, 2, runner.calls())
+	assert.NotContains(t, runner.input(0).Task, "helm")
+	assert.Contains(t, runner.input(1).Task, "Helm or kustomize?")
+	assert.Contains(t, runner.input(1).Task, "helm", "the answer reaches the re-run")
+}
+
+func TestEnd_DuringAQuestionReRunsTheStageOnReopen(t *testing.T) {
+	var calls atomic.Int32
+
+	c, st, runner, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if calls.Add(1) > 1 {
+			return artifactOutput("# Need", in), nil
+		}
+
+		answer, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"})
+		if err != nil {
+			return stage.Output{}, err
+		}
+
+		return artifactOutput("# Need\n\n"+answer, in), nil
+	})
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	rec.waitFor(t, EventQuestion)
+
+	require.NoError(t, c.End(ctx, "BP1"))
+	c.Wait("BP1")
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, store.RunCanceled, runs[0].Status)
+	assert.Equal(t, reasonSessionEnded, runs[0].Reason)
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	assert.Equal(t, 2, runner.calls(), "the reopen runs the stage again")
+
+	_, err = st.LatestArtifact(ctx, "BP1", "intake")
+	require.NoError(t, err)
+}
+
+func TestEnd_AReopenWhileTheEndedRunWindsDownRunsTheStageAgain(t *testing.T) {
+	var calls atomic.Int32
+
+	windingDown := make(chan struct{}, 1)
+	finish := make(chan struct{})
+
+	c, _, runner, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if calls.Add(1) > 1 {
+			return artifactOutput("# Need", in), nil
+		}
+
+		_, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"})
+
+		signal(windingDown)
+		<-finish
+
+		return stage.Output{}, err
+	})
+	release := closer(t, finish)
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	rec.waitFor(t, EventQuestion)
+
+	require.NoError(t, c.End(ctx, "BP1"))
+	receive(t, windingDown, "the ended run")
+
+	started := make(chan error, 1)
+
+	go func() { started <- c.Start(ctx, startInput("BP1")) }()
+
+	// The reopen attaches in the section where it tries the slot, so once it
+	// is attached it has found the ended run still holding it.
+	require.Eventually(t, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		_, attached := c.sessions["BP1"]
+
+		return attached
+	}, 5*time.Second, time.Millisecond)
+
+	release()
+
+	select {
+	case err := <-started:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "the reopen never returned")
+	}
+
+	c.Wait("BP1")
+
+	assert.Equal(t, 2, runner.calls(), "the reopen runs the stage again")
+}
+
+func TestEnd_AnAbortWhileTheReopenWaitsWins(t *testing.T) {
+	var calls atomic.Int32
+
+	windingDown := make(chan struct{}, 1)
+	finish := make(chan struct{})
+
+	c, st, runner, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if calls.Add(1) > 1 {
+			return artifactOutput("# Need", in), nil
+		}
+
+		_, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"})
+
+		signal(windingDown)
+		<-finish
+
+		return stage.Output{}, err
+	})
+	release := closer(t, finish)
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	rec.waitFor(t, EventQuestion)
+
+	require.NoError(t, c.End(ctx, "BP1"))
+	receive(t, windingDown, "the ended run")
+
+	started := make(chan error, 1)
+
+	go func() { started <- c.Start(ctx, startInput("BP1")) }()
+
+	require.Eventually(t, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		_, attached := c.sessions["BP1"]
+
+		return attached
+	}, 5*time.Second, time.Millisecond)
+
+	require.NoError(t, c.Abort(ctx, "BP1", "m2"))
+	release()
+
+	select {
+	case err := <-started:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "the reopen never returned")
+	}
+
+	c.Wait("BP1")
+
+	assert.Equal(t, 1, runner.calls(), "the abort wins: the stage does not run again")
+	assert.True(t, rec.has(EventAborted))
+
+	// As after any abort of intake, which left no artifact, the next message
+	// is the need.
+	require.NoError(t, c.Message(ctx, "BP1", "the need, again", "m3"))
+	c.Wait("BP1")
+
+	require.Equal(t, 2, runner.calls())
+	assert.Contains(t, runner.input(1).Task, "the need, again")
+
+	need, err := st.LatestArtifact(ctx, "BP1", needStage)
+	require.NoError(t, err)
+	assert.Equal(t, 2, need.Version)
+}
+
+func TestAbort_DuringAQuestionStillWaitsAfterAReopen(t *testing.T) {
+	c, st, runner, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		_, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"})
+
+		return stage.Output{}, err
+	})
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	rec.waitFor(t, EventQuestion)
+
+	require.NoError(t, c.Abort(ctx, "BP1", "m2"))
+	c.Wait("BP1")
+	require.NoError(t, c.End(ctx, "BP1"))
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	assert.Equal(t, 1, runner.calls(), "an aborted stage waits for a message")
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, "canceled", runs[0].Reason)
+}
+
+func TestQuestions_OneAskerAsksOneQuestionAtATime(t *testing.T) {
+	c, _, _, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		var wg sync.WaitGroup
+
+		for _, text := range []string{"Helm or kustomize?", "Which cluster?"} {
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+
+				_, _ = in.Asker.Ask(ctx, stage.Question{Text: text})
+			}()
+		}
+
+		wg.Wait()
+
+		return artifactOutput("# Need", in), nil
+	})
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	rec.waitFor(t, EventQuestion)
+
+	require.Never(t, func() bool { return rec.count(EventQuestion) > 1 }, 200*time.Millisecond, 10*time.Millisecond,
+		"the second question waits for the first answer")
+
+	require.NoError(t, c.Message(ctx, "BP1", "one", "m2"))
+	rec.waitForCount(t, EventQuestion, 2)
+	require.NoError(t, c.Message(ctx, "BP1", "two", "m3"))
+	c.Wait("BP1")
+
+	questions := rec.all(EventQuestion)
+	require.Len(t, questions, 2)
+	assert.Equal(t, 1, questions[0].Payload["number"])
+	assert.Equal(t, 2, questions[1].Payload["number"])
 }
