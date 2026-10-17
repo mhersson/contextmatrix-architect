@@ -88,12 +88,30 @@ func TestSignoff_RejectRerunsDecompositionWithTheFeedbackAndAFreshBudget(t *test
 	require.Len(t, reports, 2, "the ready report, then the not-ready one")
 	assert.Equal(t, true, reports[0].Payload["signoff"], "the sign-off follows a ready end")
 	assert.Equal(t, false, reports[1].Payload["signoff"])
+	assert.Equal(t, 1, reports[0].Payload["rounds"])
+	assert.Equal(t, 3, reports[1].Payload["rounds"], "the rounds count again from the rejection")
 
 	gates, err := st.ListGates(ctx, "BP1", signoffStage)
 	require.NoError(t, err)
 	require.Len(t, gates, 1)
 	assert.Equal(t, store.GateReject, gates[0].Decision)
 	assert.Equal(t, "split the card in two", gates[0].Feedback)
+}
+
+func TestSignoff_AReadyRoundAfterARejectionCountsFromOne(t *testing.T) {
+	c, _, _, rec, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	require.True(t, rec.has(EventSignOff))
+
+	require.NoError(t, c.Message(ctx, "BP1", "reject split the card in two", "m3"))
+	c.Wait("BP1")
+
+	reports := rec.all(EventReport)
+	require.Len(t, reports, 2)
+	assert.Equal(t, 1, reports[1].Payload["rounds"], "the version is 2 but the round counts from the rejection")
+	assert.Equal(t, true, reports[1].Payload["ready"])
 }
 
 func TestSignoff_RejectWithoutFeedbackIsANote(t *testing.T) {

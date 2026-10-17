@@ -35,6 +35,9 @@ type outcome struct {
 	ready    bool
 	findings []string
 	art      store.Artifact
+	// round is a loop stage's round at the pipeline's end, counted from the
+	// sign-off's latest rejection.
+	round int
 }
 
 // after decides what follows completed from the stored artifacts; an empty
@@ -61,8 +64,8 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 		}
 
 		if st.LoopsTo != "" {
-			// The loop stage judges its target's cards; its artifact version
-			// is its round.
+			// The loop stage judges its target's cards; its round is its
+			// artifact version less the version the sign-off last rejected.
 			target, err := c.opts.Store.LatestArtifact(ctx, bp.ID, st.LoopsTo)
 			if err != nil {
 				return outcome{}, fmt.Errorf("blueprint: after %s: the judged %s: %w", completed, st.LoopsTo, err)
@@ -79,9 +82,9 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 			case ready && rejected:
 				return outcome{stage: st.LoopsTo}, nil
 			case ready:
-				return outcome{end: true, ready: true, art: art}, nil
+				return outcome{end: true, ready: true, art: art, round: art.Version - base}, nil
 			case art.Version-base >= st.MaxRounds:
-				return outcome{end: true, findings: findings, art: art}, nil
+				return outcome{end: true, findings: findings, art: art, round: art.Version - base}, nil
 			default:
 				return outcome{stage: st.LoopsTo}, nil
 			}
@@ -412,13 +415,19 @@ func (c *Controller) advance(ctx context.Context, sess *session, bp store.Bluepr
 }
 
 // report ends the pipeline: the panel gets the artifact it ended on and the
-// verdict, and the blueprint goes idle. rounds is that artifact's version,
-// which for a loop stage is its round. signoff tells the panel that the
-// sign-off of ready cards follows on the held run slot.
+// verdict, and the blueprint goes idle. rounds is the loop stage's round when
+// the end is one's, else the artifact's version. signoff tells the panel that
+// the sign-off of ready cards follows on the held run slot.
 func (c *Controller) report(ctx context.Context, sess *session, bp store.Blueprint, out outcome) {
 	c.setState(ctx, bp.ID, StateIdle)
+
+	rounds := out.round
+	if rounds == 0 {
+		rounds = out.art.Version
+	}
+
 	sess.audit.event(ctx, Event{Kind: EventReport, BlueprintID: bp.ID, Payload: map[string]any{
-		"stage": out.art.Stage, "body": out.art.Body, "ready": out.ready, "rounds": out.art.Version, "findings": out.findings,
+		"stage": out.art.Stage, "body": out.art.Body, "ready": out.ready, "rounds": rounds, "findings": out.findings,
 		"signoff": out.ready && c.cardsStage() != "",
 	}})
 }
