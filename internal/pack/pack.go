@@ -41,6 +41,13 @@ const (
 	PolicyAuto  = "auto"
 )
 
+// The instructions every reviewer or responder run reads, under stages/.
+// No stage may take these ids.
+const (
+	reviewInstructions    = "review"
+	responderInstructions = "responder"
+)
+
 // Fold lets a gate fold into the next gated stage's gate: when the stage's
 // data array Field holds at most Max entries, nothing is decided at it and
 // the next gate judges both artifacts.
@@ -72,8 +79,8 @@ type Stage struct {
 	Gate     bool      `yaml:"gate"`
 	Fold     *Fold     `yaml:"fold"`
 	Reviewer *Reviewer `yaml:"reviewer"`
-	// MaxQuestions caps the questions one run of the stage may ask; 0 is no
-	// cap.
+	// MaxQuestions caps the questions one attempt of the stage may ask, its
+	// builder rounds included; 0 is no cap.
 	MaxQuestions int `yaml:"max_questions"`
 	// Source is "model" (default) or "human": a human-sourced stage waits
 	// for the user's next message and stores it as the artifact.
@@ -109,6 +116,7 @@ type Pack struct {
 	instructions map[string]string
 	lists        contract.Lists
 	card         string
+	review       string
 }
 
 // LoadEmbedded loads the pack compiled into the binary.
@@ -228,7 +236,7 @@ func load(fsys fs.FS) (*Pack, error) {
 		}
 	}
 
-	raw, err = optionalFile(fsys, "lists.yaml", checker)
+	raw, err = optionalFile(fsys, "lists.yaml", checker, "checks cards")
 	if err != nil {
 		return nil, err
 	}
@@ -237,12 +245,29 @@ func load(fsys fs.FS) (*Pack, error) {
 		return nil, err
 	}
 
-	card, err := optionalFile(fsys, "card.md", checker)
+	card, err := optionalFile(fsys, "card.md", checker, "checks cards")
 	if err != nil {
 		return nil, err
 	}
 
 	p.card = string(card)
+
+	reviewed := ""
+
+	for _, s := range p.Stages {
+		if s.Reviewer != nil {
+			reviewed = s.ID
+
+			break
+		}
+	}
+
+	review, err := optionalFile(fsys, path.Join("stages", reviewInstructions+".md"), reviewed, "has a reviewer")
+	if err != nil {
+		return nil, err
+	}
+
+	p.review = string(review)
 
 	return p, nil
 }
@@ -264,8 +289,8 @@ func (p *Pack) loadPersona(fsys fs.FS, stageID, name string) error {
 }
 
 // optionalFile reads name from the pack; a missing file is empty unless
-// checker names a stage that checks cards, which needs it.
-func optionalFile(fsys fs.FS, name, checker string) ([]byte, error) {
+// stageID names a stage that needs it, for the reason why.
+func optionalFile(fsys fs.FS, name, stageID, why string) ([]byte, error) {
 	raw, err := fs.ReadFile(fsys, name)
 
 	switch {
@@ -273,8 +298,8 @@ func optionalFile(fsys fs.FS, name, checker string) ([]byte, error) {
 		return raw, nil
 	case !errors.Is(err, fs.ErrNotExist):
 		return nil, fmt.Errorf("pack: read %s: %w", name, err)
-	case checker != "":
-		return nil, fmt.Errorf("pack: stage %q checks cards, so the pack needs %s", checker, name)
+	case stageID != "":
+		return nil, fmt.Errorf("pack: stage %q %s, so the pack needs %s", stageID, why, name)
 	default:
 		return nil, nil
 	}
@@ -309,6 +334,15 @@ func parseLists(raw []byte) (contract.Lists, error) {
 func validateStage(s Stage, seen map[string]Stage) error {
 	if s.ID == "" {
 		return fmt.Errorf("pack: stage needs an id: %+v", s)
+	}
+
+	if s.ID == reviewInstructions || s.ID == responderInstructions {
+		return fmt.Errorf("pack: stage id %q is reserved for the %s instructions", s.ID, s.ID)
+	}
+
+	// A reviewer's verdicts are artifacts of <stage>.review.
+	if strings.Contains(s.ID, ".") {
+		return fmt.Errorf("pack: stage id %q has a dot, which names a stage's review", s.ID)
 	}
 
 	if _, dup := seen[s.ID]; dup {
@@ -457,3 +491,7 @@ func (p *Pack) Lists() contract.Lists { return p.lists }
 
 // CardTemplate returns the card body template handed to decomposition.
 func (p *Pack) CardTemplate() string { return p.card }
+
+// ReviewInstructions returns what every reviewer run reads; empty when no
+// stage declares a reviewer and the pack carries none.
+func (p *Pack) ReviewInstructions() string { return p.review }

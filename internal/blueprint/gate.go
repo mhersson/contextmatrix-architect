@@ -171,11 +171,14 @@ func (c *Controller) decide(ctx context.Context, au audit, id, stageID string, v
 	return true
 }
 
-// openGate acts on a gate outcome: under the human policy the gate is shown
-// and the chain stops; under auto it approves on its own, the stage's
-// reviewer not being run, and what follows the stage is returned as advance
-// returns it.
+// openGate acts on a gate whose artifact has its verdict: under the auto
+// policy a passing score approves and what follows the stage is returned as
+// advance returns it; otherwise, a human policy or a score still below the
+// threshold after the attempt's rounds, the gate is shown and the chain
+// stops.
 func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Blueprint, out outcome) (string, outcome) {
+	st, _ := c.opts.Pack.Stage(out.stage)
+
 	policy, err := c.policy(ctx, bp, out.stage)
 	if err != nil {
 		c.fail(ctx, sess.audit, bp.ID, 0, err.Error())
@@ -183,26 +186,55 @@ func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Bluep
 		return "", outcome{}
 	}
 
-	if policy == pack.PolicyHuman {
-		c.showGate(ctx, sess.audit, bp, out)
+	v, found, err := c.latestReview(ctx, bp.ID, out.stage, out.art.Version)
+	if err != nil {
+		c.fail(ctx, sess.audit, bp.ID, 0, err.Error())
 
 		return "", outcome{}
 	}
 
-	if !c.decide(ctx, sess.audit, bp.ID, out.stage, out.art.Version, store.GateApprove, "", store.ResponderAuto, "") {
-		return "", outcome{}
+	if policy == pack.PolicyAuto && found && st.Reviewer != nil && v.Score >= st.Reviewer.Threshold {
+		if !c.decide(ctx, sess.audit, bp.ID, out.stage, out.art.Version, store.GateApprove, "", store.ResponderAuto, "") {
+			return "", outcome{}
+		}
+
+		return c.advance(ctx, sess, bp, out.stage)
 	}
 
-	return c.advance(ctx, sess, bp, out.stage)
+	c.showGate(ctx, sess.audit, bp, out)
+
+	return "", outcome{}
 }
 
-// showGate shows a stage's gate and leaves the blueprint waiting for the
-// decision. The replies it takes travel with it, for the panel's prompt.
+// showGate shows a stage's gate with its reviewer's verdict and leaves the
+// blueprint waiting for the decision. The replies it takes travel with it,
+// for the panel's prompt.
 func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint, out outcome) {
-	c.setState(ctx, bp.ID, StateWaiting)
-	au.event(ctx, Event{Kind: EventGate, BlueprintID: bp.ID, Payload: map[string]any{
+	payload := map[string]any{
 		"stage": out.stage, "version": out.art.Version, "actions": actionsPayload(stageGateActions(out.stage)),
-	}})
+	}
+
+	st, _ := c.opts.Pack.Stage(out.stage)
+
+	v, found, err := c.latestReview(ctx, bp.ID, out.stage, out.art.Version)
+
+	switch {
+	case err != nil:
+		c.opts.Logger.Warn("blueprint: gate shown without its verdict", "blueprint", bp.ID, "stage", out.stage, "error", au.text(err.Error()))
+	case found && st.Reviewer != nil:
+		findings := v.Findings
+		if findings == nil {
+			findings = []string{}
+		}
+
+		payload["review"] = map[string]any{
+			"score": v.Score, "threshold": st.Reviewer.Threshold, "findings": findings, "round": v.Round,
+			"passed": v.Score >= st.Reviewer.Threshold,
+		}
+	}
+
+	c.setState(ctx, bp.ID, StateWaiting)
+	au.event(ctx, Event{Kind: EventGate, BlueprintID: bp.ID, Payload: payload})
 }
 
 // gateShown reports whether stageID's gate for version was shown. A shown
@@ -235,7 +267,9 @@ func (c *Controller) gateShown(ctx context.Context, id, stageID string, version 
 
 // resumeGate picks up an undecided gate on reopen: one that was shown is
 // shown again, and one never shown is opened under the policy now in
-// effect. The caller holds the run slot.
+// effect. A gate never shown whose artifact still needs its critique runs it
+// first; a shown gate stays with its human even without a verdict. The
+// caller holds the run slot.
 func (c *Controller) resumeGate(ctx context.Context, r *run, sess *session, bp store.Blueprint, out outcome) {
 	bg := context.WithoutCancel(ctx)
 
@@ -250,6 +284,12 @@ func (c *Controller) resumeGate(ctx context.Context, r *run, sess *session, bp s
 	if shown {
 		c.showGate(bg, sess.audit, bp, out)
 		c.release(bp.ID, r)
+
+		return
+	}
+
+	if out.critique {
+		c.launchCritique(ctx, r, sess, bp, out.stage)
 
 		return
 	}
@@ -303,11 +343,14 @@ func (c *Controller) proceed(ctx, runCtx context.Context, r *run, sess *session,
 }
 
 // continueWith hands the run slot r to what advance decided: the sign-off
-// of a ready end, the next stage, or nothing, which releases it.
+// of a ready end, the critique of a gated stage, the next stage, or nothing,
+// which releases it.
 func (c *Controller) continueWith(ctx context.Context, r *run, sess *session, bp store.Blueprint, next string, end outcome) {
 	switch {
 	case end.ready:
 		c.launchEnd(ctx, r, sess, bp, end)
+	case end.critique:
+		c.launchCritique(ctx, r, sess, bp, next)
 	case next != "":
 		c.launch(ctx, r, sess, bp, next)
 	default:

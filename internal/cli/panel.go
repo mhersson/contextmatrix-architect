@@ -73,11 +73,13 @@ func waitsOnUser(e blueprint.Event) bool {
 
 		return !runFollows
 	case blueprint.EventStageEnded:
-		// After a completed stage the next one may start at once; the await,
-		// report or error that ends the chain is followed by the idle frame.
+		// After a completed stage the next one may start at once, and a
+		// responder's end leaves its stage working; the await, gate, report
+		// or error that ends a chain is followed by the idle frame.
 		status, _ := e.Payload["status"].(string)
+		kind, _ := e.Payload["kind"].(string)
 
-		return status != store.RunDone
+		return status != store.RunDone && kind != store.RunKindResponder
 	case blueprint.EventExported:
 		// CM arms its working indicator on every message, so an export that
 		// leaves nothing running must clear it.

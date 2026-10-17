@@ -77,6 +77,9 @@ const (
 	// EventGate shows a stage's gate: the stage, the version of its artifact
 	// that waits, and the replies that decide it.
 	EventGate = "gate"
+	// EventReview is a reviewer's verdict on a stage's artifact: the score,
+	// the threshold that passes, the findings and the round.
+	EventReview = "review"
 	// EventReshow publishes an open question again after a reply CM's panel
 	// took as its answer but the architect took as a command. The payload
 	// carries the original event's kind and payload.

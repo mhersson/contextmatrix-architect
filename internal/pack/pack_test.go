@@ -43,6 +43,10 @@ func TestLoadEmbedded_ReferencesResolve(t *testing.T) {
 		}
 	}
 
+	if slices.ContainsFunc(p.Stages, func(s Stage) bool { return s.Reviewer != nil }) {
+		assert.NotEmpty(t, p.ReviewInstructions(), "a pack with reviewers carries their instructions")
+	}
+
 	lists := p.Lists()
 	assert.NotEmpty(t, lists.RequiredSections)
 	assert.NotEmpty(t, lists.StrippedHeadings)
@@ -232,6 +236,9 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "card checks without lists.yaml", stage: "    tools: [code]\n    checks: [cards]\n", files: map[string]string{"lists.yaml": ""}, want: "lists.yaml"},
 		{name: "card checks without card.md", stage: "    tools: [code]\n    checks: [cards]\n", files: map[string]string{"card.md": ""}, want: "card.md"},
 		{name: "card checks without code tools", stage: "    checks: [cards]\n", want: "tools: [code]"},
+		{name: "a reviewer without review instructions", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4}\n", want: "stages/review.md"},
+		{name: "a reserved stage id", stage: "  - id: review\n    persona: po\n", files: map[string]string{"stages/review.md": "x"}, want: "reserved"},
+		{name: "a dot in a stage id", stage: "  - id: s1.review\n    persona: po\n", files: map[string]string{"stages/s1.review.md": "x"}, want: "dot"},
 	}
 
 	for _, tt := range tests {
@@ -248,7 +255,7 @@ func TestLoad_DialogKeys(t *testing.T) {
 		"  - id: s2\n    persona: po\n    gate: true\n    reviewer: {persona: po, threshold: 3}\n" +
 		"  - id: s3\n    persona: po\n"
 
-	p, err := load(packFS(stages, map[string]string{"personas/rev.md": "the reviewer", "stages/s2.md": "x", "stages/s3.md": "x"}))
+	p, err := load(packFS(stages, map[string]string{"personas/rev.md": "the reviewer", "stages/s2.md": "x", "stages/s3.md": "x", "stages/review.md": "judge it"}))
 	require.NoError(t, err)
 
 	s1, _ := p.Stage("s1")
@@ -263,6 +270,8 @@ func TestLoad_DialogKeys(t *testing.T) {
 	assert.Equal(t, PolicyAuto, s3.Policy, "auto is the default policy")
 	assert.False(t, s3.Gate)
 	assert.Zero(t, s3.MaxQuestions)
+
+	assert.Equal(t, "judge it", p.ReviewInstructions())
 }
 
 func TestLoad_ListsAndCardAreOptionalWithoutCardChecks(t *testing.T) {

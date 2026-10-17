@@ -139,6 +139,22 @@ func TestLogEntryFor(t *testing.T) {
 			"text": "keep the API stable", "stage": "intake", "during_run": true,
 		}}, "system", []string{"Noted"}, false},
 		{"note with a hint", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "hm", "hint": "Reply approve or reject."}}, "system", []string{"Reply approve or reject."}, false},
+		{"a review started", blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "shape", "kind": "reviewer", "persona": "reviewer",
+		}}, "system", []string{"Review of shape"}, false},
+		{"a review ended", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "shape", "kind": "reviewer", "status": "done", "cost_usd": 0.02,
+		}}, "system", []string{"Review of shape", "0.02"}, false},
+		{"a verdict", blueprint.Event{Kind: blueprint.EventReview, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "shape", "version": 2, "score": 3, "threshold": 4, "findings": []any{"name the owner"}, "round": 1,
+		}}, "system", []string{"shape", "3", "4", "name the owner"}, false},
+		{"a gate with a verdict", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "shape", "version": 7, "actions": []any{},
+			"review": map[string]any{"score": 2, "threshold": 4, "findings": []any{"split it"}, "round": 3, "passed": false},
+		}}, "text", []string{"2", "- split it\n\n"}, false},
+		{"a note that runs a review again", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{
+			"text": "go on", "retries": "shape", "critique": true,
+		}}, "system", []string{"shape"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -403,4 +419,14 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 			assert.Equal(t, tt.want, entry.Prompt)
 		})
 	}
+}
+
+func TestLogEntryFor_ANoteThatRunsAReviewIsNotCalledAStageRun(t *testing.T) {
+	stage, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "go on", "retries": "shape"}})
+	require.True(t, ok)
+
+	review, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "go on", "retries": "shape", "critique": true}})
+	require.True(t, ok)
+
+	assert.NotEqual(t, stage.Content, review.Content)
 }

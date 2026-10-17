@@ -120,8 +120,9 @@ func (c *Controller) stageNamed(name string) (pack.Stage, bool) {
 }
 
 // gateOpenAt reports whether stageID's gate is open, the blueprint waiting
-// on its decision. A record that cannot be read reports no open gate and is
-// logged: it only drops a hint.
+// on its decision; a gate whose critique is pending was never shown. A
+// record that cannot be read reports no open gate and is logged: it only
+// drops a hint.
 func (c *Controller) gateOpenAt(ctx context.Context, id, stageID string) bool {
 	bp, err := c.opts.Store.GetBlueprint(ctx, id)
 	if err != nil {
@@ -137,7 +138,7 @@ func (c *Controller) gateOpenAt(ctx context.Context, id, stageID string) bool {
 		return false
 	}
 
-	return out.gate && out.stage == stageID
+	return out.gate && !out.critique && out.stage == stageID
 }
 
 // modelStages names the pack's model stages in order: the stages a gate

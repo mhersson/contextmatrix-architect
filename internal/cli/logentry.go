@@ -38,7 +38,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = fmt.Sprintf("Blueprint reopened (state %s).", str(p["state"]))
 	case blueprint.EventStageStarted:
 		entry.Type = "system"
-		entry.Content = fmt.Sprintf("Stage %s started as %s.", str(p["stage"]), strings.ReplaceAll(str(p["persona"]), "_", " "))
+		entry.Content = fmt.Sprintf("%s started as %s.", runLabel(p), strings.ReplaceAll(str(p["persona"]), "_", " "))
 	case blueprint.EventQuestion:
 		if str(p["responder"]) == store.ResponderAuto {
 			entry.Type = "system"
@@ -96,14 +96,17 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			label = "cost"
 		}
 
-		entry.Content = fmt.Sprintf("Stage %s %s (%s %.2f USD).", str(p["stage"]), str(p["status"]), label, num(p["cost_usd"]))
+		entry.Content = fmt.Sprintf("%s %s (%s %.2f USD).", runLabel(p), str(p["status"]), label, num(p["cost_usd"]))
 	case blueprint.EventNote:
 		entry.Type = "system"
 
 		duringRun, _ := p["during_run"].(bool)
 		ended, _ := p["ended"].(bool)
+		critique, _ := p["critique"].(bool)
 
 		switch stage := str(p["retries"]); {
+		case stage != "" && critique:
+			entry.Content = fmt.Sprintf("Noted. The review of %s, or its next builder round, runs again, and it and every run after it get the note.", stage)
 		case stage != "":
 			entry.Content = fmt.Sprintf("Noted. Stage %s runs again, and it and every stage after it get the note.", stage)
 		case ended:
@@ -125,6 +128,9 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Type = "text"
 		entry.Content = gateText(p)
 		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:%s:v%.0f", str(p["stage"]), num(p["version"])), p["actions"])
+	case blueprint.EventReview:
+		entry.Type = "system"
+		entry.Content = reviewText(p)
 	case blueprint.EventReshow:
 		// The open question again, rendered as it was first shown.
 		inner, _ := p["payload"].(map[string]any)
@@ -580,8 +586,29 @@ func gateText(p map[string]any) string {
 		replies = append(replies, reply+"`")
 	}
 
-	return fmt.Sprintf("**Gate: %s, version %.0f.** The artifact above waits for your decision. Reply %s.",
-		str(p["stage"]), num(p["version"]), strings.Join(replies, " or "))
+	text := fmt.Sprintf("**Gate: %s, version %.0f.** The artifact above waits for your decision.", str(p["stage"]), num(p["version"]))
+
+	// A blank line ends the findings list, so the reply line is not read as
+	// part of its last item.
+	sep := " "
+
+	if v, ok := p["review"].(map[string]any); ok {
+		if passed, _ := v["passed"].(bool); passed {
+			text += fmt.Sprintf(" The reviewer scored it %.0f of 5 (passes at %.0f).", num(v["score"]), num(v["threshold"]))
+		} else {
+			text += fmt.Sprintf(" The reviewer did not pass it after %.0f round(s): %.0f of 5 (passes at %.0f).", num(v["round"]), num(v["score"]), num(v["threshold"]))
+		}
+
+		if findings := stringsOf(v["findings"]); len(findings) > 0 {
+			for _, f := range findings {
+				text += "\n- " + f
+			}
+
+			sep = "\n\n"
+		}
+	}
+
+	return text + sep + fmt.Sprintf("Reply %s.", strings.Join(replies, " or "))
 }
 
 // decidedText renders a decision at a stage's gate or at the sign-off; a
@@ -608,6 +635,31 @@ func decidedText(p map[string]any) string {
 	default:
 		return "Approved. Emission starts."
 	}
+}
+
+// runLabel names a run in the panel: a stage, a stage's review, or the
+// responder answering for a stage.
+func runLabel(p map[string]any) string {
+	switch str(p["kind"]) {
+	case store.RunKindReviewer:
+		return "Review of " + str(p["stage"])
+	case store.RunKindResponder:
+		return "The responder for " + str(p["stage"])
+	default:
+		return "Stage " + str(p["stage"])
+	}
+}
+
+// reviewText renders a reviewer's verdict.
+func reviewText(p map[string]any) string {
+	text := fmt.Sprintf("The reviewer scored %s version %.0f %.0f of 5 (passes at %.0f), round %.0f.",
+		str(p["stage"]), num(p["version"]), num(p["score"]), num(p["threshold"]), num(p["round"]))
+
+	for _, f := range stringsOf(p["findings"]) {
+		text += "\n- " + f
+	}
+
+	return text
 }
 
 // labelMax caps the option text of a button's label in runes; the reply keeps
