@@ -370,16 +370,16 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 	}{
 		{"a question for a human", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
 			"number": 3, "text": "Helm or kustomize?", "options": []any{"helm", "kustomize"}, "recommended": 2, "responder": "human",
-		}}, "text", &protocol.LogPrompt{ID: "Q3", FreeText: true, Actions: []protocol.LogAction{
-			{Label: "helm", Reply: "helm"}, {Label: "kustomize (recommended)", Reply: "kustomize"},
+		}}, "text", &protocol.LogPrompt{ID: "Q3", Kind: "question", FreeText: true, Actions: []protocol.LogAction{
+			{Label: "helm", Reply: "helm"}, {Label: "kustomize", Reply: "kustomize", Recommended: true},
 		}}},
 		{"a question without options", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
 			"number": 1, "text": "Which cluster?", "responder": "human",
-		}}, "text", &protocol.LogPrompt{ID: "Q1", FreeText: true}},
-		{"a long option", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
+		}}, "text", &protocol.LogPrompt{ID: "Q1", Kind: "question", FreeText: true}},
+		{"a long option keeps its full label", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
 			"number": 2, "text": "Which?", "options": []any{long}, "responder": "human",
-		}}, "text", &protocol.LogPrompt{ID: "Q2", FreeText: true, Actions: []protocol.LogAction{
-			{Label: strings.Repeat("ø", 59) + "…", Reply: long},
+		}}, "text", &protocol.LogPrompt{ID: "Q2", Kind: "question", FreeText: true, Actions: []protocol.LogAction{
+			{Label: long, Reply: long},
 		}}},
 		{"a question the stage decides itself", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
 			"number": 4, "text": "Which port?", "responder": "auto",
@@ -417,7 +417,7 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Actions: []protocol.LogAction{{Label: "Resume emission", Reply: "approve"}}}},
 		{"a question shown again", blueprint.Event{Kind: blueprint.EventReshow, Payload: map[string]any{
 			"kind": "question", "payload": map[string]any{"number": 3, "text": "Helm or kustomize?", "options": []any{"helm"}, "responder": "human"},
-		}}, "text", &protocol.LogPrompt{ID: "Q3", FreeText: true, Actions: []protocol.LogAction{{Label: "helm", Reply: "helm"}}}},
+		}}, "text", &protocol.LogPrompt{ID: "Q3", Kind: "question", FreeText: true, Actions: []protocol.LogAction{{Label: "helm", Reply: "helm"}}}},
 		{"any other error", blueprint.Event{Kind: blueprint.EventError, Payload: map[string]any{"message": "cost cap"}}, "stderr", nil},
 	}
 
@@ -428,7 +428,67 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 			entry, ok := logEntryFor(tt.event)
 			require.True(t, ok)
 			assert.Equal(t, tt.wantType, entry.Type)
-			assert.Equal(t, tt.want, entry.Prompt)
+
+			// Text has its own tests; this compares the rest of the prompt.
+			got := entry.Prompt
+			if got != nil {
+				bare := *got
+				bare.Text = ""
+				got = &bare
+			}
+
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestLogEntryFor_AQuestionsTextLeavesOutItsOptions(t *testing.T) {
+	tests := []struct {
+		name       string
+		payload    map[string]any
+		wantNumber string
+		wantText   []string
+		options    []any
+	}{
+		{"numbered with context", map[string]any{
+			"number": 4, "text": "Which packaging?", "context": "The cluster runs Flux.",
+			"options": []any{"a Helm chart under deploy/chart", "kustomize overlays under deploy/"}, "recommended": 2, "responder": "human",
+		}, "Q4", []string{"Which packaging?", "The cluster runs Flux."}, []any{"a Helm chart under deploy/chart", "kustomize overlays under deploy/"}},
+		{"numbered without context", map[string]any{
+			"number": 5, "text": "Which registry?",
+			"options": []any{"the in-cluster registry", "a hosted registry"}, "recommended": 1, "responder": "human",
+		}, "Q5", []string{"Which registry?"}, []any{"the in-cluster registry", "a hosted registry"}},
+		{"unnumbered with context", map[string]any{
+			"text": "Which database?", "context": "Writes are rare.",
+			"options": []any{"SQLite on a volume", "a managed Postgres"}, "recommended": 1, "responder": "human",
+		}, "", []string{"Which database?", "Writes are rare."}, []any{"SQLite on a volume", "a managed Postgres"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			asked, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: tt.payload})
+			require.True(t, ok)
+			require.NotNil(t, asked.Prompt)
+
+			text := asked.Prompt.Text
+			if tt.wantNumber != "" {
+				assert.Contains(t, text, tt.wantNumber)
+			}
+
+			for _, w := range tt.wantText {
+				assert.Contains(t, text, w)
+			}
+
+			assert.True(t, strings.HasPrefix(asked.Content, text), "the fallback starts with the prompt's text")
+
+			for _, o := range tt.options {
+				assert.NotContains(t, text, o, "an option is a button, not text")
+				assert.Contains(t, asked.Content, o, "the fallback keeps the options")
+			}
+
+			reshown, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventReshow, BlueprintID: "S1", Payload: map[string]any{"kind": "question", "payload": tt.payload}})
+			require.True(t, ok)
+			assert.Equal(t, asked.Prompt, reshown.Prompt, "a question shown again keeps its text, kind and actions")
 		})
 	}
 }

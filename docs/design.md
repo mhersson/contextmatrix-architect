@@ -112,7 +112,10 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   calls. A question or gate a human answers is a text entry carrying a
   prompt (`LogEntry.Prompt`): actions, each a label and the exact reply
   text, which the panel shows as buttons, the markdown staying the readable
-  fallback. A click sends the reply as an ordinary message, so the
+  fallback. A question's prompt also carries its own text, the entry without
+  its option list and reply line, and the kind `question`; each option is an
+  action whose label and reply are the full option, the recommended one
+  flagged. A click sends the reply as an ordinary message, so the
   architect's reply parsing is the same for a click and a typed answer.
   Questions are `Q<n>`, gates `gate:<stage>:v<n>`, the sign-off
   `gate:signoff:v<n>`, and a stopped emission or run start `emission:v<n>`.
