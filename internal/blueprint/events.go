@@ -92,6 +92,10 @@ const (
 	EventEnded = "session_ended"
 	// EventHarness wraps one raw harness JSONL line; the payload is the line.
 	EventHarness = "harness"
+	// EventState records a change of the blueprint's state. It is stored,
+	// never sent to the panel: the view's sequence is the newest events row,
+	// so every change of what the view shows writes one.
+	EventState = "state"
 )
 
 var errNotJSON = errors.New("not a JSON document")

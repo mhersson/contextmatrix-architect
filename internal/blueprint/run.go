@@ -156,6 +156,12 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		return false
 	}
 
+	f := &flight{
+		runID: runID, stage: stageID, kind: store.RunKindStage, persona: st.Persona, model: m.name,
+		round: number, startedAt: c.opts.Now().UTC(), price: m.price, capUSD: runCap,
+	}
+	defer c.fly(id, f)()
+
 	c.setState(bg, id, StateRunning)
 
 	c.mu.Lock()
@@ -244,7 +250,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	sink := &harnessSink{
 		audit: au, id: id, runID: runID, canceled: runCtx.Done(),
-		price: m.price, capUSD: runCap, stop: stop,
+		price: m.price, capUSD: runCap, stop: stop, flight: f,
 	}
 
 	in.Model = m.name
@@ -539,9 +545,23 @@ func (c *Controller) fail(ctx context.Context, au audit, id string, runID int64,
 	au.event(ctx, Event{Kind: EventError, BlueprintID: id, RunID: runID, Payload: map[string]any{"message": msg}})
 }
 
+// setState records a blueprint's state and appends a state row: the view's
+// sequence is its newest events row, so every change must write one. The
+// row is stored, never sent to the panel, which learns of the state from
+// the events around it.
 func (c *Controller) setState(ctx context.Context, id string, s State) {
 	if err := c.opts.Store.SetBlueprintState(ctx, id, string(s)); err != nil {
 		c.opts.Logger.Error("blueprint: set state", "blueprint", id, "state", s, "error", err)
+
+		return
+	}
+
+	payload, _ := json.Marshal(map[string]string{"state": string(s)})
+
+	if err := c.opts.Store.AppendEvent(ctx, store.Event{
+		Time: c.opts.Now().UTC(), BlueprintID: id, Kind: EventState, Payload: payload,
+	}); err != nil {
+		c.opts.Logger.Error("blueprint: store the state row", "blueprint", id, "state", s, "error", err)
 	}
 }
 
@@ -744,6 +764,8 @@ type harnessSink struct {
 	price  *protocol.ModelPrice
 	capUSD float64
 	stop   context.CancelCauseFunc
+	// flight counts the run's lines for the view; nil counts nothing.
+	flight *flight
 
 	mu    sync.Mutex
 	spent float64
@@ -761,6 +783,7 @@ func (s *harnessSink) Write(p []byte) (int, error) {
 	// audited, but the panel shows the cancel as the stage's end instead.
 	forward := !s.isCanceled() || !isErrorLine(line)
 
+	s.flight.count(line)
 	s.audit.harness(context.Background(), s.id, s.runID, line, forward)
 	s.account(line)
 
@@ -822,6 +845,10 @@ func (s *harnessSink) left() (float64, bool) {
 // charge adds the cost of a run served on this run's behalf, and stops the
 // run once the cap is passed. A nil or uncapped sink ignores it.
 func (s *harnessSink) charge(usd float64) {
+	if s != nil {
+		s.flight.charge(usd)
+	}
+
 	if !s.capped() {
 		return
 	}

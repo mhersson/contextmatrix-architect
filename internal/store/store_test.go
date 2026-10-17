@@ -658,3 +658,23 @@ func TestCountEvents(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)
 }
+
+func TestLastEventID(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+
+	id, err := s.LastEventID(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Zero(t, id, "a blueprint with no events")
+
+	for _, bp := range []string{"BP1", "BP2", "BP1"} {
+		require.NoError(t, s.AppendEvent(ctx, Event{Time: time.Now(), BlueprintID: bp, Kind: "note"}))
+	}
+
+	all, err := s.ListEvents(ctx, "BP1")
+	require.NoError(t, err)
+
+	id, err = s.LastEventID(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, all[len(all)-1].ID, id, "the newest of its own events, not another blueprint's")
+}

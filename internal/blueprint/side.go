@@ -65,6 +65,12 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 		return stage.Output{}, fmt.Errorf("blueprint: start the %s run of %s: %w", s.kind, s.stage, err)
 	}
 
+	f := &flight{
+		runID: runID, stage: s.stage, kind: s.kind, persona: s.persona, model: m.name,
+		round: s.round, startedAt: c.opts.Now().UTC(), price: m.price, capUSD: runCap,
+	}
+	defer c.fly(bp.ID, f)()
+
 	c.setState(bg, bp.ID, StateRunning)
 
 	c.mu.Lock()
@@ -84,7 +90,7 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 	in.Secrets = sess.secrets()
 	in.Events = &harnessSink{
 		audit: au, id: bp.ID, runID: runID, canceled: runCtx.Done(),
-		price: m.price, capUSD: runCap, stop: stop,
+		price: m.price, capUSD: runCap, stop: stop, flight: f,
 	}
 
 	out, runErr := c.opts.Runner.Run(runCtx, in)

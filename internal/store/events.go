@@ -83,6 +83,18 @@ func (s *Store) listEvents(ctx context.Context, query string, args ...any) ([]Ev
 	return out, nil
 }
 
+// LastEventID returns the id of a blueprint's newest event, 0 when it has
+// none. Ids rise across restarts, so the view's sequence is this id.
+func (s *Store) LastEventID(ctx context.Context, blueprintID string) (int64, error) {
+	var id int64
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM events WHERE blueprint_id = ?`,
+		blueprintID).Scan(&id); err != nil {
+		return 0, fmt.Errorf("store: last event id: %w", err)
+	}
+
+	return id, nil
+}
+
 // CountEvents counts a blueprint's events of kind.
 func (s *Store) CountEvents(ctx context.Context, blueprintID, kind string) (int, error) {
 	var n int
