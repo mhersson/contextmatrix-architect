@@ -86,7 +86,7 @@ context window; never use film references.
 ```
 CM chat panel (the only client)
      |  internal/webhook (backendkit webhookcore + logbridge:
-     |  session start, /message, /logs SSE, end-session)
+     |  session start, /message, /logs SSE, end-session, the blueprint view, artifacts and live SSE)
      |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, outcomes, lesson decision
      |  events out: stage progress, tool calls, questions, gates, cost
 controller (internal/blueprint)     blueprint state machine, gates, responder policy, cost cap
@@ -801,6 +801,17 @@ frames on the session's chat stream.
   replaces it. Each subscriber's queue is bounded. One that falls behind
   loses its queued drafts and gets a snapshot next. Publishing never waits
   for a subscriber.
+- **Endpoints.** Signed `GET /blueprints/{id}`,
+  `GET /blueprints/{id}/artifacts/{stage}/{version}` and SSE
+  `GET /blueprints/{id}/live`, behind the same HMAC auth as `/logs` and
+  outside the drain gate. They ignore unknown query parameters: CM signs a
+  nonce into each read, so two reads of one URI never replay. A stage is
+  `[A-Za-z0-9_-]{1,64}`. The live stream opens with `: connected`, sends one
+  `data:` line per frame and a keepalive comment every 15 s, and ends at
+  drain. CM proxies the two reads for architect sessions only, checking the
+  session's owner, and relays the live stream: one upstream connection per
+  session while browsers are subscribed, its frames published on the
+  session's chat stream.
 
 ## Deployment
 
@@ -888,7 +899,7 @@ internal/cm          MCP client: the project list, the stage read tools, and the
 internal/outcomes    outcomes stage and lessons
 internal/export      markdown rendering into the state directory
 internal/config
-internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export and gate commands that internal/blueprint recognises
+internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export and gate commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
 ```
 
 ## Changes needed in CM
@@ -902,7 +913,8 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | The git-credentials endpoint treats an attached architect session as live | slice 1 |
 | CM re-sends the start to an architect session after the architect restarts: on a 404 `not_found` for a message (then re-sends the message once), and when the log stream ends | slice 2 |
 | Panel: question and gate prompts (`LogEntry.Prompt`, protocol v0.24.0, with their own text, kind and recommended option from v0.25.0) rendered as buttons; the gate plan stays text, and lesson prompts reuse the same shape | slice 3 (lessons slice 4) |
-| Panel: a gate inbox and a blueprint view (stages, assumptions, cards with readiness, cost), read from the architect through a signed endpoint | later |
+| Panel: the blueprint pane (scale bar, sheet, transcript markers), read through CM proxies of the architect's signed view and artifact endpoints, with its live stream relayed on the session's chat stream (protocol v0.26.0) | blueprint UI |
+| Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |
 | Endpoint returning a selection context for non-backend consumers                                     | later               |
@@ -933,7 +945,7 @@ Ordered so a real card comes out as early as possible.
 4. **Outcomes and lessons**, with pack overlays, and the per-project export
    opt-in that commits the bundle to a repository through an allowlist of
    target repositories.
-5. **Later**: a gate inbox and a blueprint view in CM's web UI;
+5. **Later**: a gate inbox in CM's web UI;
    seeding a blueprint from an existing CM card, in the same adapter shape as
    the Jira seed; Jira seed and mirror (decide REST against Atlassian MCP then,
    see open questions); search provider; composer; model selection via
