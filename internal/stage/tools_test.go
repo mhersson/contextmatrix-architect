@@ -128,3 +128,37 @@ func TestAskHumanTool_TakesTheRecommendedOption(t *testing.T) {
 		})
 	}
 }
+
+func TestAskHumanTool_CutsARecommendedMarkerFromAnOption(t *testing.T) {
+	tests := []struct {
+		name        string
+		options     []any
+		recommended any
+		wantOptions []string
+		wantRec     int
+	}{
+		{name: "a marker names its option", options: []any{"a", "b (recommended)"}, wantOptions: []string{"a", "b"}, wantRec: 2},
+		{name: "any case, with the whitespace around it", options: []any{"a  (Recommended)  ", "b"}, wantOptions: []string{"a", "b"}, wantRec: 1},
+		{name: "the position wins over a marker", options: []any{"a", "b (recommended)"}, recommended: float64(1), wantOptions: []string{"a", "b"}, wantRec: 1},
+		{name: "markers on two options name none", options: []any{"a (recommended)", "b (RECOMMENDED)"}, wantOptions: []string{"a", "b"}},
+		{name: "a marker alone is a blank option", options: []any{"a", "(recommended)"}, wantOptions: []string{"a"}},
+		{name: "text before the marker that is not ASCII", options: []any{"é (recommended)", "b"}, wantOptions: []string{"é", "b"}, wantRec: 1},
+		{name: "a marker before the end stays", options: []any{"(recommended) a", "a (recommended) b"}, wantOptions: []string{"(recommended) a", "a (recommended) b"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := map[string]any{"question": "q?", "options": tt.options}
+			if tt.recommended != nil {
+				args["recommended"] = tt.recommended
+			}
+
+			asker := &stubAsker{answer: "a"}
+
+			_, err := askHumanTool{asker: asker}.Execute(context.Background(), args)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantOptions, asker.got.Options)
+			assert.Equal(t, tt.wantRec, asker.got.Recommended)
+		})
+	}
+}

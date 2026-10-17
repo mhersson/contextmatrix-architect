@@ -163,6 +163,7 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 		au.event(bg, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
 			"stage":   "emission",
 			"message": "Emission is blocked until this is fixed in ContextMatrix; then reply approve:\n- " + strings.Join(pf.Blocking, "\n- "),
+			"text":    "Emission is blocked until this is fixed in ContextMatrix:\n- " + strings.Join(pf.Blocking, "\n- "),
 			"resume":  "emission", "version": c.signedOff(bg, bp.ID),
 		}})
 
@@ -178,9 +179,12 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 	if bp.Mode == protocol.ArchitectModeYolo && len(pf.EmptyRepos) > 0 {
 		// Nothing is recorded, so the blueprint stays incomplete: the watch
 		// starts once an approve records the run start.
+		text, prompt := emptyReposPrompt(pf.EmptyRepos)
+
 		au.event(bg, Event{Kind: EventAwaitInput, BlueprintID: bp.ID, Payload: map[string]any{
 			"stage":  signoffStage,
-			"prompt": emptyReposPrompt(pf.EmptyRepos),
+			"prompt": prompt,
+			"text":   text,
 			"resume": "held", "version": c.signedOff(bg, bp.ID),
 		}})
 	} else if bp.Mode == protocol.ArchitectModeYolo {
@@ -200,9 +204,12 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 				stopped = "the run start was stopped by abort."
 			}
 
+			text := "The cards are emitted, but " + stopped
+
 			au.event(bg, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
 				"stage":   "run",
-				"message": "The cards are emitted, but " + stopped + " Reply approve to retry the start, or start it in ContextMatrix and reply approve.",
+				"message": text + " Reply approve to retry the start, or start it in ContextMatrix and reply approve.",
+				"text":    text + " Starting it in ContextMatrix first works too; the retry then records that run.",
 				"resume":  "run", "version": c.signedOff(bg, bp.ID),
 			}})
 		}
@@ -386,6 +393,7 @@ func (c *Controller) emitError(ctx context.Context, au audit, id string, err err
 	au.event(bg, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{
 		"stage":   "emission",
 		"message": stopped + " Cards already created are kept; reply approve to resume.",
+		"text":    stopped + " Cards already created are kept.",
 		"resume":  "emission", "version": c.signedOff(bg, id),
 	}})
 }
@@ -847,12 +855,14 @@ func ownRepos(projects []cm.Project, name string) []string {
 }
 
 // emptyReposPrompt tells the session why yolo did not start the run and how
-// to go on. The approve is what records the run start, which starts the
-// watch.
-func emptyReposPrompt(repos []string) string {
+// to go on: the prompt's text, and the message with its reply instruction.
+// The approve is what records the run start, which starts the watch.
+func emptyReposPrompt(repos []string) (text, prompt string) {
 	if len(repos) == 1 {
-		return repos[0] + " has no commits, so the run was not started; push an initial commit, then reply approve to start it, or start it in ContextMatrix and reply approve."
+		return repos[0] + " has no commits, so the run was not started. Push an initial commit, or start the run in ContextMatrix, before starting it here.",
+			repos[0] + " has no commits, so the run was not started; push an initial commit, then reply approve to start it, or start it in ContextMatrix and reply approve."
 	}
 
-	return strings.Join(repos, ", ") + " have no commits, so the run was not started; push an initial commit to each, then reply approve to start it, or start it in ContextMatrix and reply approve."
+	return strings.Join(repos, ", ") + " have no commits, so the run was not started. Push an initial commit to each, or start the run in ContextMatrix, before starting it here.",
+		strings.Join(repos, ", ") + " have no commits, so the run was not started; push an initial commit to each, then reply approve to start it, or start it in ContextMatrix and reply approve."
 }

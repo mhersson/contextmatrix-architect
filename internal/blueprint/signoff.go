@@ -334,13 +334,13 @@ func (c *Controller) resumeEnd(ctx context.Context, r *run, sess *session, bp st
 
 			return
 		case cur.State != string(StateEmitting):
-			prompt, resume := "Emission is stopped; reply approve to resume it.", "emission"
+			prompt, text, resume := "Emission is stopped; reply approve to resume it.", "Emission is stopped.", "emission"
 			if cards {
-				prompt, resume = "The run has not started; reply approve to start it.", "held"
+				prompt, text, resume = "The run has not started; reply approve to start it.", "The run has not started.", "held"
 			}
 
 			au.event(bg, Event{Kind: EventAwaitInput, BlueprintID: bp.ID, Payload: map[string]any{
-				"stage": signoffStage, "prompt": prompt, "resume": resume, "version": out.art.Version,
+				"stage": signoffStage, "prompt": prompt, "text": text, "resume": resume, "version": out.art.Version,
 			}})
 			c.release(bp.ID, r)
 

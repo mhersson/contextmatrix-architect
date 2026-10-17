@@ -15,9 +15,10 @@ Rules:
 
 - Ask about what changes the cards and only the user can answer: who it is
   for, what is in and out of scope, what "done" is measured by. Call
-  ask_human once per decision, up to three times, with the options you see,
-  your recommendation first and marked as recommended, and the context that
-  makes the choice clear. Never ask what you can read or decide.
+  ask_human once per decision, up to three times, with the options you
+  see, your recommendation first with its position given as recommended,
+  never written into the option text, and the context that makes the
+  choice clear. Never ask what you can read or decide.
 - Decide everything else yourself and record each such decision as an
   assumption. Each assumption is one sentence that stands alone: a reader
   who has only that sentence understands it. Never point at other text,

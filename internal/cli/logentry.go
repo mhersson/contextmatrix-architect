@@ -14,9 +14,10 @@ import (
 // logEntryFor renders a controller event as a panel entry. A question or gate
 // a human answers carries a prompt, whose actions the panel shows as buttons
 // and whose replies come back as ordinary messages; the markdown stays the
-// readable fallback. A human's answer is echoed by CM itself and harness
-// events reach the hub through the bridge, so both are skipped here; the
-// responder's answer is shown.
+// readable fallback. A prompt also carries a kind and its own text, the entry
+// without its option list or reply instruction. A human's answer is echoed
+// by CM itself and harness events reach the hub through the bridge, so both
+// are skipped here; the responder's answer is shown.
 func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	entry := protocol.LogEntry{Timestamp: e.Time, SessionID: e.BlueprintID}
 	if entry.Timestamp.IsZero() {
@@ -56,11 +57,17 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			heading = fmt.Sprintf("**Question Q%.0f:**", n)
 		}
 
-		b.WriteString(heading + " " + str(p["text"]) + "\n")
+		b.WriteString(heading + " " + str(p["text"]))
 
 		if ctxText := str(p["context"]); ctxText != "" {
-			b.WriteString("\n" + ctxText + "\n")
+			b.WriteString("\n\n" + ctxText)
 		}
+
+		// The prompt's text is the question alone: a consumer that renders it
+		// shows the options only as buttons.
+		text := b.String()
+
+		b.WriteString("\n")
 
 		if opts := stringsOf(p["options"]); len(opts) > 0 {
 			b.WriteString("\nOptions:\n")
@@ -76,7 +83,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 
 		b.WriteString("\nReply with your answer.")
 		entry.Content = b.String()
-		entry.Prompt = questionPrompt(p)
+		entry.Prompt = questionPrompt(p, text)
 	case blueprint.EventArtifact:
 		entry.Type = "text"
 		entry.Content = str(p["body"])
@@ -114,12 +121,14 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		}
 	case blueprint.EventSignOff:
 		entry.Type = "text"
-		entry.Content = signoffText(p)
-		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:signoff:v%.0f", num(p["version"])), p["actions"])
+		body, reply := signoffText(p)
+		entry.Content = body + reply
+		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:signoff:v%.0f", num(p["version"])), body, p["actions"])
 	case blueprint.EventGate:
 		entry.Type = "text"
-		entry.Content = gateText(p)
-		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:%s:v%.0f", str(p["stage"]), num(p["version"])), p["actions"])
+		body, reply := gateText(p)
+		entry.Content = body + reply
+		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:%s:v%.0f", str(p["stage"]), num(p["version"])), body, p["actions"])
 	case blueprint.EventReview:
 		entry.Type = "system"
 		entry.Content = reviewText(p)
@@ -416,9 +425,10 @@ func stringsOf(v any) []string {
 	}
 }
 
-// signoffText renders the sign-off: the entries in playbook order, the
-// playbook, the preflight result and how to decide.
-func signoffText(p map[string]any) string {
+// signoffText renders the sign-off: the body (the entries in playbook order,
+// the playbook and the preflight result) and the reply line that decides it,
+// which starts with its separator.
+func signoffText(p map[string]any) (body, reply string) {
 	var b strings.Builder
 
 	if auto, _ := p["auto_stopped"].(bool); auto {
@@ -519,15 +529,16 @@ func signoffText(p map[string]any) string {
 		b.WriteString("\nPreflight found nothing for a human.\n")
 	}
 
-	b.WriteString("\nReply `approve` to emit the cards")
+	body = strings.TrimSuffix(b.String(), "\n")
+	reply = "\n\nReply `approve` to emit the cards"
 
 	if len(warnings) > 0 {
-		b.WriteString(" (this also overrides the warnings)")
+		reply += " (this also overrides the warnings)"
 	}
 
-	b.WriteString(", or `reject <feedback>` to re-run decomposition with your feedback.")
+	reply += ", or `reject <feedback>` to re-run decomposition with your feedback."
 
-	return b.String()
+	return body, reply
 }
 
 // policyText renders a gate reply: the change it made and what it leaves
@@ -577,19 +588,20 @@ func gatePlanText(p map[string]any) string {
 	return b.String()
 }
 
-// gateText renders a stage's gate: the artifact above waits, with the
+// gateText renders a stage's gate: the body (the artifact above waits, the
 // reviewer's score, the artifacts folded into it shown below, the problems
-// its checks accepted them with, and the replies that decide it.
-func gateText(p map[string]any) string {
+// its checks accepted them with) and the reply line that decides it, which
+// starts with its separator.
+func gateText(p map[string]any) (body, reply string) {
 	var replies []string
 
 	for _, a := range anyMaps(p["actions"]) {
-		reply := "`" + str(a["reply"])
+		quoted := "`" + str(a["reply"])
 		if feedback, _ := a["feedback"].(bool); feedback {
-			reply += " <feedback>"
+			quoted += " <feedback>"
 		}
 
-		replies = append(replies, reply+"`")
+		replies = append(replies, quoted+"`")
 	}
 
 	stage, version := str(p["stage"]), num(p["version"])
@@ -648,7 +660,7 @@ func gateText(p map[string]any) string {
 		sep = "\n\n"
 	}
 
-	return text + sep + fmt.Sprintf("Reply %s.", strings.Join(replies, " or "))
+	return text, sep + fmt.Sprintf("Reply %s.", strings.Join(replies, " or "))
 }
 
 // problemsList renders the problems an artifact's checks accepted it with;
@@ -724,34 +736,26 @@ func reviewText(p map[string]any) string {
 	return text
 }
 
-// labelMax caps the option text of a button's label in runes; the reply keeps
-// the full text and " (recommended)" follows the cap.
-const labelMax = 60
-
 // questionPrompt makes a human's question answerable by a click: one action
-// per option, its reply the full option, which reaches the stage verbatim.
-// Any typed reply answers it too.
-func questionPrompt(p map[string]any) *protocol.LogPrompt {
+// per option, its label and reply the full option, which reaches the stage
+// verbatim. Any typed reply answers it too.
+func questionPrompt(p map[string]any, text string) *protocol.LogPrompt {
 	recommended := int(num(p["recommended"]))
 
 	var actions []protocol.LogAction
 
 	for i, o := range stringsOf(p["options"]) {
-		label := capLabel(o)
-		if i+1 == recommended {
-			label += " (recommended)"
-		}
-
-		actions = append(actions, protocol.LogAction{Label: label, Reply: o})
+		actions = append(actions, protocol.LogAction{Label: o, Reply: o, Recommended: i+1 == recommended})
 	}
 
-	return &protocol.LogPrompt{ID: fmt.Sprintf("Q%.0f", num(p["number"])), FreeText: true, Actions: actions}
+	return &protocol.LogPrompt{ID: fmt.Sprintf("Q%.0f", num(p["number"])), Text: text, Kind: "question", FreeText: true, Actions: actions}
 }
 
 // actionsPrompt makes a gate decidable by a click from the replies its
 // event carries; nil when it carries none, as an event stored before the
-// replies travelled with it.
-func actionsPrompt(id string, v any) *protocol.LogPrompt {
+// replies travelled with it. The text is the gate's body without its reply
+// line.
+func actionsPrompt(id, text string, v any) *protocol.LogPrompt {
 	var actions []protocol.LogAction
 
 	for _, a := range anyMaps(v) {
@@ -763,11 +767,12 @@ func actionsPrompt(id string, v any) *protocol.LogPrompt {
 		return nil
 	}
 
-	return &protocol.LogPrompt{ID: id, Actions: actions}
+	return &protocol.LogPrompt{ID: id, Text: text, Kind: "gate", Actions: actions}
 }
 
 // resumePrompt offers approve on a stopped emission or run start; nil on
-// any other error or wait.
+// any other error or wait. The text is the stop without its reply
+// instruction, empty on an event stored before resume events carried one.
 func resumePrompt(p map[string]any) *protocol.LogPrompt {
 	var label string
 
@@ -784,18 +789,10 @@ func resumePrompt(p map[string]any) *protocol.LogPrompt {
 
 	return &protocol.LogPrompt{
 		ID:      fmt.Sprintf("emission:v%.0f", num(p["version"])),
+		Text:    str(p["text"]),
+		Kind:    "gate",
 		Actions: []protocol.LogAction{{Label: label, Reply: "approve"}},
 	}
-}
-
-// capLabel cuts a label to labelMax runes, ending in an ellipsis when cut.
-func capLabel(s string) string {
-	r := []rune(s)
-	if len(r) <= labelMax {
-		return s
-	}
-
-	return string(r[:labelMax-1]) + "…"
 }
 
 // setupGapsText renders what the checkout found the target projects lack for

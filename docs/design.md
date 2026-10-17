@@ -112,7 +112,12 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   calls. A question or gate a human answers is a text entry carrying a
   prompt (`LogEntry.Prompt`): actions, each a label and the exact reply
   text, which the panel shows as buttons, the markdown staying the readable
-  fallback. A click sends the reply as an ordinary message, so the
+  fallback. A question's prompt also carries its own text, the entry without
+  its option list and reply line, and the kind `question`; each option is an
+  action whose label and reply are the full option, the recommended one
+  flagged. A gate's, the sign-off's, a stopped emission's or a run start's
+  prompt carries the entry without its reply instruction as its text, and
+  the kind `gate`. A click sends the reply as an ordinary message, so the
   architect's reply parsing is the same for a click and a typed answer.
   Questions are `Q<n>`, gates `gate:<stage>:v<n>`, the sign-off
   `gate:signoff:v<n>`, and a stopped emission or run start `emission:v<n>`.
@@ -120,9 +125,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   open, and the gate plan is plain text. The panel takes any later message
   as a free-text prompt's answer, so after a reply the architect takes as a
   command while a question is open (`export` or a gate reply), the question
-  is published again with the same id and actions. A gate or the sign-off
-  stays open across a reply that matches none of its actions, so it is never
-  published again.
+  is published again with the same id, text, kind and actions. A gate or the
+  sign-off stays open across a reply that matches none of its actions, so it
+  is never published again.
 - **Every blueprint is a CM session, started by CM.** The start payload is the
   `ChatStartPayload` with its `architect` block: the architect takes its LLM
   endpoint (fail-closed, no local fallback), MCP key, model and
@@ -548,7 +553,7 @@ starts are bounded by CM's per-card guardrails, not by the architect.
 | code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock at the start of the first stage with the code tools (solution design), and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. A repository with no commits checks out as an empty tree with no sha. `repo_info` returns the sha, instruction file presence, the project's verify command, whether the repository is empty and, to the stage that fetched the tree, the default branch. |
 | research | `web_fetch`                                                                                             | Readable text, recorded as a source. A search provider is deferred.                                                                               |
 | cm       | `list_projects`, `list_cards`, `get_card`, `get_playbook` as `cm_`-prefixed reads | Offered to grounding and readiness over the session's MCP key, one MCP session per run, chat's bridge adapter on the architect's client with a `cm_` prefix and an allowlist that skips tools CM does not serve. No `agent_id` is sent, so CM keeps redacting unvetted imported text; `get_card` never attaches images; a credential embedded in a URL is removed from every result and error before the model or the record sees it, since CM returns project config as stored; every result carries the blueprint's ContextMatrix source tag. Creating cards and playbooks and starting runs are controller calls with the configured caller identity, never model tools. |
-| control  | `ask_human`, `submit_artifact`                                                                          | `ask_human` blocks: question, options, the recommended option's position and context in; the answer out as the tool result, starting with the question's number (`Q<n>: <answer>`) so a design can cite it as a basis. Questions are numbered `Q<n>` per blueprint. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
+| control  | `ask_human`, `submit_artifact`                                                                          | `ask_human` blocks: question, options, the recommended option's position and context in; a trailing "(recommended)" a model writes into an option is cut, and marks that option when no position is given and no other option carries one; the answer out as the tool result, starting with the question's number (`Q<n>: <answer>`) so a design can cite it as a basis. Questions are numbered `Q<n>` per blueprint. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
 
 Every tool result passes the harness redactor for every secret the process
 holds.
@@ -802,7 +807,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Panel: a new-session dialog for blueprints with a multi-project picker, mode and cost cap | slice 0 |
 | The git-credentials endpoint treats an attached architect session as live | slice 1 |
 | CM re-sends the start to an architect session after the architect restarts: on a 404 `not_found` for a message (then re-sends the message once), and when the log stream ends | slice 2 |
-| Panel: question and gate prompts (`LogEntry.Prompt`, protocol v0.24.0) rendered as buttons; the gate plan stays text, and lesson prompts reuse the same shape | slice 3 (lessons slice 4) |
+| Panel: question and gate prompts (`LogEntry.Prompt`, protocol v0.24.0, with their own text, kind and recommended option from v0.25.0) rendered as buttons; the gate plan stays text, and lesson prompts reuse the same shape | slice 3 (lessons slice 4) |
 | Panel: a gate inbox and a blueprint view (stages, assumptions, cards with readiness, cost), read from the architect through a signed endpoint | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

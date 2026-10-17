@@ -35,6 +35,23 @@ type Artifact struct {
 
 var errNoAsker = errors.New("ask_human: no responder is attached to this run")
 
+// recommendedMarker is what a model sometimes writes at the end of an option
+// instead of giving its position as recommended. The panel marks the
+// recommended option itself, so a marker left in the text shows twice and
+// reaches the stage as part of the answer.
+const recommendedMarker = "(recommended)"
+
+// cutRecommended removes a trailing recommendedMarker, case ignored, with the
+// whitespace around it, and reports whether there was one.
+func cutRecommended(s string) (string, bool) {
+	t := strings.TrimSpace(s)
+	if len(t) < len(recommendedMarker) || !strings.EqualFold(t[len(t)-len(recommendedMarker):], recommendedMarker) {
+		return s, false
+	}
+
+	return strings.TrimSpace(t[:len(t)-len(recommendedMarker)]), true
+}
+
 type askHumanTool struct {
 	asker Asker
 }
@@ -50,8 +67,8 @@ func (askHumanTool) Schema() llm.Tool {
 			"type": "object",
 			"properties": {
 				"question": {"type": "string", "description": "the question, one sentence"},
-				"options": {"type": "array", "items": {"type": "string"}, "description": "candidate answers, optional"},
-				"recommended": {"type": "integer", "description": "the position, from 1, of the option you recommend, optional"},
+				"options": {"type": "array", "items": {"type": "string"}, "description": "candidate answers as plain text, optional; never write (recommended) into one"},
+				"recommended": {"type": "integer", "description": "the position, from 1, of the option you recommend, optional; the panel marks it"},
 				"context": {"type": "string", "description": "why it matters, optional"}
 			},
 			"required": ["question"]
@@ -67,13 +84,28 @@ func (t askHumanTool) Execute(ctx context.Context, args map[string]any) (tools.R
 
 	given, _ := args["options"].([]any)
 	// kept[i] is the 1-based position of given[i] among the kept options, 0
-	// for a blank one.
+	// for a blank one; marked holds the kept positions of options whose text
+	// carried the marker.
 	kept := make([]int, len(given))
 
+	var marked []int
+
 	for i, o := range given {
-		if s, ok := o.(string); ok && strings.TrimSpace(s) != "" {
-			q.Options = append(q.Options, s)
-			kept[i] = len(q.Options)
+		s, ok := o.(string)
+		if !ok {
+			continue
+		}
+
+		s, isMarked := cutRecommended(s)
+		if strings.TrimSpace(s) == "" {
+			continue
+		}
+
+		q.Options = append(q.Options, s)
+		kept[i] = len(q.Options)
+
+		if isMarked {
+			marked = append(marked, kept[i])
 		}
 	}
 
@@ -88,6 +120,10 @@ func (t askHumanTool) Execute(ctx context.Context, args map[string]any) (tools.R
 		}
 
 		q.Recommended = kept[int(n)-1]
+	} else if len(marked) == 1 {
+		// The position wins over a marker, and markers on several options
+		// name none.
+		q.Recommended = marked[0]
 	}
 
 	if t.asker == nil {

@@ -370,16 +370,16 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 	}{
 		{"a question for a human", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
 			"number": 3, "text": "Helm or kustomize?", "options": []any{"helm", "kustomize"}, "recommended": 2, "responder": "human",
-		}}, "text", &protocol.LogPrompt{ID: "Q3", FreeText: true, Actions: []protocol.LogAction{
-			{Label: "helm", Reply: "helm"}, {Label: "kustomize (recommended)", Reply: "kustomize"},
+		}}, "text", &protocol.LogPrompt{ID: "Q3", Kind: "question", FreeText: true, Actions: []protocol.LogAction{
+			{Label: "helm", Reply: "helm"}, {Label: "kustomize", Reply: "kustomize", Recommended: true},
 		}}},
 		{"a question without options", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
 			"number": 1, "text": "Which cluster?", "responder": "human",
-		}}, "text", &protocol.LogPrompt{ID: "Q1", FreeText: true}},
-		{"a long option", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
+		}}, "text", &protocol.LogPrompt{ID: "Q1", Kind: "question", FreeText: true}},
+		{"a long option keeps its full label", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
 			"number": 2, "text": "Which?", "options": []any{long}, "responder": "human",
-		}}, "text", &protocol.LogPrompt{ID: "Q2", FreeText: true, Actions: []protocol.LogAction{
-			{Label: strings.Repeat("ø", 59) + "…", Reply: long},
+		}}, "text", &protocol.LogPrompt{ID: "Q2", Kind: "question", FreeText: true, Actions: []protocol.LogAction{
+			{Label: long, Reply: long},
 		}}},
 		{"a question the stage decides itself", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
 			"number": 4, "text": "Which port?", "responder": "auto",
@@ -389,7 +389,7 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 				map[string]any{"label": "Approve", "reply": "approve", "feedback": false},
 				map[string]any{"label": "Reject", "reply": "reject", "feedback": true},
 			},
-		}}, "text", &protocol.LogPrompt{ID: "gate:shape:v2", Actions: []protocol.LogAction{
+		}}, "text", &protocol.LogPrompt{ID: "gate:shape:v2", Kind: "gate", Actions: []protocol.LogAction{
 			{Label: "Approve", Reply: "approve"}, {Label: "Reject", Reply: "reject", Feedback: true},
 		}}},
 		{"the sign-off", blueprint.Event{Kind: blueprint.EventSignOff, Payload: map[string]any{
@@ -397,7 +397,7 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 				map[string]any{"label": "Approve and override warnings", "reply": "approve", "feedback": false},
 				map[string]any{"label": "Reject", "reply": "reject", "feedback": true},
 			},
-		}}, "text", &protocol.LogPrompt{ID: "gate:signoff:v4", Actions: []protocol.LogAction{
+		}}, "text", &protocol.LogPrompt{ID: "gate:signoff:v4", Kind: "gate", Actions: []protocol.LogAction{
 			{Label: "Approve and override warnings", Reply: "approve"}, {Label: "Reject", Reply: "reject", Feedback: true},
 		}}},
 		{"a sign-off stored before replies travelled with it", blueprint.Event{Kind: blueprint.EventSignOff, Payload: map[string]any{
@@ -405,19 +405,19 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 		}}, "text", nil},
 		{"a stopped emission", blueprint.Event{Kind: blueprint.EventError, Payload: map[string]any{
 			"stage": "emission", "message": "Emission stopped.", "resume": "emission", "version": 3,
-		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Actions: []protocol.LogAction{{Label: "Resume emission", Reply: "approve"}}}},
+		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Kind: "gate", Actions: []protocol.LogAction{{Label: "Resume emission", Reply: "approve"}}}},
 		{"a refused run start", blueprint.Event{Kind: blueprint.EventError, Payload: map[string]any{
 			"stage": "run", "message": "The run did not start.", "resume": "run", "version": 3,
-		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Actions: []protocol.LogAction{{Label: "Retry the run start", Reply: "approve"}}}},
+		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Kind: "gate", Actions: []protocol.LogAction{{Label: "Retry the run start", Reply: "approve"}}}},
 		{"a run held for a first commit", blueprint.Event{Kind: blueprint.EventAwaitInput, Payload: map[string]any{
 			"stage": "signoff", "prompt": "https://example.com/alpha.git has no commits, so the run was not started.", "resume": "held", "version": 3,
-		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Actions: []protocol.LogAction{{Label: "Start the run", Reply: "approve"}}}},
+		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Kind: "gate", Actions: []protocol.LogAction{{Label: "Start the run", Reply: "approve"}}}},
 		{"a stopped emission shown on reopen", blueprint.Event{Kind: blueprint.EventAwaitInput, Payload: map[string]any{
 			"stage": "signoff", "prompt": "Emission is stopped; reply approve to resume it.", "resume": "emission", "version": 3,
-		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Actions: []protocol.LogAction{{Label: "Resume emission", Reply: "approve"}}}},
+		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Kind: "gate", Actions: []protocol.LogAction{{Label: "Resume emission", Reply: "approve"}}}},
 		{"a question shown again", blueprint.Event{Kind: blueprint.EventReshow, Payload: map[string]any{
 			"kind": "question", "payload": map[string]any{"number": 3, "text": "Helm or kustomize?", "options": []any{"helm"}, "responder": "human"},
-		}}, "text", &protocol.LogPrompt{ID: "Q3", FreeText: true, Actions: []protocol.LogAction{{Label: "helm", Reply: "helm"}}}},
+		}}, "text", &protocol.LogPrompt{ID: "Q3", Kind: "question", FreeText: true, Actions: []protocol.LogAction{{Label: "helm", Reply: "helm"}}}},
 		{"any other error", blueprint.Event{Kind: blueprint.EventError, Payload: map[string]any{"message": "cost cap"}}, "stderr", nil},
 	}
 
@@ -428,7 +428,158 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 			entry, ok := logEntryFor(tt.event)
 			require.True(t, ok)
 			assert.Equal(t, tt.wantType, entry.Type)
-			assert.Equal(t, tt.want, entry.Prompt)
+
+			// Text has its own tests; this compares the rest of the prompt.
+			got := entry.Prompt
+			if got != nil {
+				bare := *got
+				bare.Text = ""
+				got = &bare
+			}
+
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestLogEntryFor_AQuestionsTextLeavesOutItsOptions(t *testing.T) {
+	tests := []struct {
+		name       string
+		payload    map[string]any
+		wantNumber string
+		wantText   []string
+		options    []any
+	}{
+		{"numbered with context", map[string]any{
+			"number": 4, "text": "Which packaging?", "context": "The cluster runs Flux.",
+			"options": []any{"a Helm chart under deploy/chart", "kustomize overlays under deploy/"}, "recommended": 2, "responder": "human",
+		}, "Q4", []string{"Which packaging?", "The cluster runs Flux."}, []any{"a Helm chart under deploy/chart", "kustomize overlays under deploy/"}},
+		{"numbered without context", map[string]any{
+			"number": 5, "text": "Which registry?",
+			"options": []any{"the in-cluster registry", "a hosted registry"}, "recommended": 1, "responder": "human",
+		}, "Q5", []string{"Which registry?"}, []any{"the in-cluster registry", "a hosted registry"}},
+		{"unnumbered with context", map[string]any{
+			"text": "Which database?", "context": "Writes are rare.",
+			"options": []any{"SQLite on a volume", "a managed Postgres"}, "recommended": 1, "responder": "human",
+		}, "", []string{"Which database?", "Writes are rare."}, []any{"SQLite on a volume", "a managed Postgres"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			asked, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: tt.payload})
+			require.True(t, ok)
+			require.NotNil(t, asked.Prompt)
+
+			text := asked.Prompt.Text
+			if tt.wantNumber != "" {
+				assert.Contains(t, text, tt.wantNumber)
+			}
+
+			for _, w := range tt.wantText {
+				assert.Contains(t, text, w)
+			}
+
+			assert.True(t, strings.HasPrefix(asked.Content, text), "the fallback starts with the prompt's text")
+
+			for _, o := range tt.options {
+				assert.NotContains(t, text, o, "an option is a button, not text")
+				assert.Contains(t, asked.Content, o, "the fallback keeps the options")
+			}
+
+			reshown, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventReshow, BlueprintID: "S1", Payload: map[string]any{"kind": "question", "payload": tt.payload}})
+			require.True(t, ok)
+			assert.Equal(t, asked.Prompt, reshown.Prompt, "a question shown again keeps its text, kind and actions")
+		})
+	}
+}
+
+func TestLogEntryFor_AGatesTextLeavesOutItsReplies(t *testing.T) {
+	actions := []any{
+		map[string]any{"label": "Approve", "reply": "approve", "feedback": false},
+		map[string]any{"label": "Reject", "reply": "reject", "feedback": true},
+	}
+
+	tests := []struct {
+		name      string
+		kind      string
+		wants     map[string]any
+		notInText []string
+	}{
+		{"a plain stage gate", blueprint.EventGate, map[string]any{"stage": "shape", "version": 2}, nil},
+		{"a gate with a failing review and findings", blueprint.EventGate, map[string]any{
+			"stage": "shape", "version": 2,
+			"review": map[string]any{"passed": false, "round": 2, "score": 2, "threshold": 4, "findings": []any{"thin", "vague"}},
+		}, []string{"thin", "vague"}},
+		{"a gate with problems and a folded artifact with its own", blueprint.EventGate, map[string]any{
+			"stage": "solution_design", "version": 3, "problems": []any{"p1"},
+			"folded": []any{map[string]any{"stage": "slicing", "version": 1, "body": "# Slices", "problems": []any{"p2"}}},
+		}, nil},
+		{"a sign-off with warnings and steps", blueprint.EventSignOff, map[string]any{
+			"version": 2, "title": "T", "warnings": []any{"w"}, "steps": []any{"s"},
+			"cards": []any{
+				map[string]any{"id": "D1", "project": "p", "title": "t", "type": "feature", "priority": "high", "depends_on": []any{"D0"}},
+				map[string]any{"id": "D0", "project": "p", "title": "u", "type": "task", "priority": "low"},
+			},
+			"order": []any{"D0", "D1"},
+		}, nil},
+		{"a sign-off where preflight found nothing", blueprint.EventSignOff, map[string]any{
+			"version": 1, "cards": []any{}, "order": []any{},
+		}, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.wants["actions"] = actions
+
+			entry, ok := logEntryFor(blueprint.Event{Kind: tt.kind, BlueprintID: "S1", Payload: tt.wants})
+			require.True(t, ok)
+			require.NotNil(t, entry.Prompt)
+
+			text := entry.Prompt.Text
+			assert.NotEmpty(t, text)
+			assert.Equal(t, "gate", entry.Prompt.Kind)
+			require.True(t, strings.HasPrefix(entry.Content, text), "the fallback starts with the prompt's text")
+
+			for _, f := range tt.notInText {
+				assert.NotContains(t, text, f, "the review's findings are in the review entry, not the gate")
+			}
+
+			for _, a := range entry.Prompt.Actions {
+				assert.NotContains(t, text, a.Reply, "a reply is a button, not text")
+				assert.Contains(t, entry.Content[len(text):], a.Reply, "the fallback keeps the reply line")
+			}
+		})
+	}
+}
+
+func TestLogEntryFor_AResumePromptsTextIsItsStop(t *testing.T) {
+	tests := []struct {
+		name        string
+		event       blueprint.Event
+		wantText    string
+		wantContent string
+	}{
+		{"a stopped emission", blueprint.Event{Kind: blueprint.EventError, Payload: map[string]any{
+			"stage": "emission", "message": "Stopped; then go on.", "text": "Stopped.", "resume": "emission", "version": 3,
+		}}, "Stopped.", "Stopped; then go on."},
+		{"a held run", blueprint.Event{Kind: blueprint.EventAwaitInput, Payload: map[string]any{
+			"stage": "signoff", "prompt": "Held; then go on.", "text": "Held.", "resume": "held", "version": 3,
+		}}, "Held.", "Held; then go on."},
+		{"a stop stored before resume events carried a text", blueprint.Event{Kind: blueprint.EventError, Payload: map[string]any{
+			"stage": "emission", "message": "Stopped; then go on.", "resume": "emission", "version": 3,
+		}}, "", "Stopped; then go on."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.event.BlueprintID = "S1"
+
+			entry, ok := logEntryFor(tt.event)
+			require.True(t, ok)
+			require.NotNil(t, entry.Prompt)
+			assert.Equal(t, tt.wantText, entry.Prompt.Text)
+			assert.Equal(t, "gate", entry.Prompt.Kind)
+			assert.Equal(t, tt.wantContent, entry.Content)
 		})
 	}
 }

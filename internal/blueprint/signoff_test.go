@@ -262,6 +262,9 @@ func TestSignoff_ShowsBlockingProblemsAndApproveIsRefused(t *testing.T) {
 	for _, e := range rec.all(EventError) {
 		if strings.Contains(e.Payload["message"].(string), "blocked") {
 			blocked = true
+			text, _ := e.Payload["text"].(string)
+			assert.NotEmpty(t, text)
+			assert.NotContains(t, text, store.GateApprove)
 		}
 	}
 
@@ -711,6 +714,10 @@ func TestReopen_AStoppedEmissionWaitsForApprove(t *testing.T) {
 			assert.Equal(t, signoffStage, reminder.Payload["stage"])
 			assert.Contains(t, reminder.Payload["prompt"], "reply approve to resume")
 
+			text, _ := reminder.Payload["text"].(string)
+			assert.NotEmpty(t, text)
+			assert.NotContains(t, text, store.GateApprove)
+
 			require.NoError(t, c2.Message(ctx, "BP1", "approve", "m5"))
 			c2.Wait("BP1")
 
@@ -1007,6 +1014,10 @@ func TestReopen_ARefusedYoloStartWaitsForApprove(t *testing.T) {
 	require.True(t, ok, "the reminder is posted")
 	assert.Equal(t, signoffStage, reminder.Payload["stage"])
 	assert.Contains(t, reminder.Payload["prompt"], "start it")
+
+	text, _ := reminder.Payload["text"].(string)
+	assert.NotEmpty(t, text)
+	assert.NotContains(t, text, store.GateApprove)
 
 	require.NoError(t, c2.Message(ctx, "BP1", "approve", "m3"))
 	c2.Wait("BP1")
