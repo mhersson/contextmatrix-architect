@@ -33,15 +33,46 @@ const (
 	CheckCards = "cards"
 )
 
+// Responder policies: who answers a stage's questions and decides its gate.
+const (
+	PolicyHuman = "human"
+	PolicyAuto  = "auto"
+)
+
+// Fold lets a gate fold into the next gated stage's gate: when the stage's
+// data array Field holds at most Max entries, nothing is decided at it and
+// the next gate judges both artifacts.
+type Fold struct {
+	Field string `yaml:"field"`
+	Max   int    `yaml:"max"`
+}
+
+// Reviewer is the run that judges a gated stage's artifact before its gate:
+// Persona plays it, and a score below Threshold, 1 to 5, sends the stage
+// back for another round.
+type Reviewer struct {
+	Persona   string `yaml:"persona"`
+	Threshold int    `yaml:"threshold"`
+}
+
 // Stage is one unit of work in the pipeline: a model run, or an artifact a
 // human pastes.
 type Stage struct {
 	ID       string `yaml:"id"`
 	Persona  string `yaml:"persona"`
 	Produces string `yaml:"produces"`
-	// Gate is the default responder policy after the stage: "questions"
-	// (no gate, questions only), "human", "auto" or "none".
-	Gate string `yaml:"gate"`
+	// Policy is who answers the stage's questions and decides its gate,
+	// "human" or "auto"; a model stage without one is auto. The mode and the
+	// blueprint's gate replies override it.
+	Policy string `yaml:"policy"`
+	// Gate stops the pipeline after the stage for approve or reject. A gated
+	// stage declares a Reviewer and may fold into the next gate.
+	Gate     bool      `yaml:"gate"`
+	Fold     *Fold     `yaml:"fold"`
+	Reviewer *Reviewer `yaml:"reviewer"`
+	// MaxQuestions caps the questions one run of the stage may ask; 0 is no
+	// cap.
+	MaxQuestions int `yaml:"max_questions"`
 	// Source is "model" (default) or "human": a human-sourced stage waits
 	// for the user's next message and stores it as the artifact.
 	Source string `yaml:"source"`
@@ -137,6 +168,10 @@ func load(fsys fs.FS) (*Pack, error) {
 			return nil, fmt.Errorf("pack: stage %q: the first stage cannot be human-sourced", s.ID)
 		}
 
+		if s.Source == SourceModel && s.Policy == "" {
+			s.Policy = PolicyAuto
+		}
+
 		seen[s.ID] = *s
 
 		if s.Source == SourceHuman {
@@ -152,13 +187,14 @@ func load(fsys fs.FS) (*Pack, error) {
 			continue
 		}
 
-		if _, ok := p.personas[s.Persona]; !ok {
-			text, err := fs.ReadFile(fsys, path.Join("personas", s.Persona+".md"))
-			if err != nil {
-				return nil, fmt.Errorf("pack: stage %q: persona %q: %w", s.ID, s.Persona, err)
-			}
+		if err := p.loadPersona(fsys, s.ID, s.Persona); err != nil {
+			return nil, err
+		}
 
-			p.personas[s.Persona] = string(text)
+		if s.Reviewer != nil {
+			if err := p.loadPersona(fsys, s.ID, s.Reviewer.Persona); err != nil {
+				return nil, err
+			}
 		}
 
 		text, err := fs.ReadFile(fsys, path.Join("stages", s.ID+".md"))
@@ -170,6 +206,12 @@ func load(fsys fs.FS) (*Pack, error) {
 	}
 
 	p.Stages = m.Stages
+
+	for i, s := range p.Stages {
+		if s.Fold != nil && !slices.ContainsFunc(p.Stages[i+1:], func(t Stage) bool { return t.Gate }) {
+			return nil, fmt.Errorf("pack: stage %q folds, but no later stage has a gate to fold into", s.ID)
+		}
+	}
 
 	// A stage that checks cards needs the data the checks read and the
 	// template the cards follow; without them the contract would silently
@@ -201,6 +243,22 @@ func load(fsys fs.FS) (*Pack, error) {
 	p.card = string(card)
 
 	return p, nil
+}
+
+// loadPersona reads a persona's text once, for the stage that names it.
+func (p *Pack) loadPersona(fsys fs.FS, stageID, name string) error {
+	if _, ok := p.personas[name]; ok {
+		return nil
+	}
+
+	text, err := fs.ReadFile(fsys, path.Join("personas", name+".md"))
+	if err != nil {
+		return fmt.Errorf("pack: stage %q: persona %q: %w", stageID, name, err)
+	}
+
+	p.personas[name] = string(text)
+
+	return nil
 }
 
 // optionalFile reads name from the pack; a missing file is empty unless
@@ -257,17 +315,28 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	case SourceHuman:
 		// The panel waits for the user at a human-sourced stage, so nothing
 		// a model run would use applies; refuse rather than ignore it.
-		if len(s.Tools) > 0 || len(s.Checks) > 0 || s.LoopsTo != "" {
-			return fmt.Errorf("pack: stage %q is human-sourced, so it takes no tools, checks or loops_to", s.ID)
+		var set []string
+
+		for key, present := range map[string]bool{
+			"tools": len(s.Tools) > 0, "checks": len(s.Checks) > 0, "loops_to": s.LoopsTo != "",
+			"policy": s.Policy != "", "gate": s.Gate, "max_questions": s.MaxQuestions != 0,
+		} {
+			if present {
+				set = append(set, key)
+			}
+		}
+
+		if len(set) > 0 {
+			slices.Sort(set)
+
+			return fmt.Errorf("pack: stage %q is human-sourced, so it takes no %s", s.ID, strings.Join(set, ", "))
 		}
 	default:
 		return fmt.Errorf("pack: stage %q: unknown source %q", s.ID, s.Source)
 	}
 
-	switch s.Gate {
-	case "", "questions", "human", "auto", "none":
-	default:
-		return fmt.Errorf("pack: stage %q: unknown gate %q", s.ID, s.Gate)
+	if err := validateDialog(s); err != nil {
+		return err
 	}
 
 	for _, c := range s.Consumes {
@@ -306,6 +375,52 @@ func validateStage(s Stage, seen map[string]Stage) error {
 
 		if s.MaxRounds <= 0 {
 			return fmt.Errorf("pack: stage %q: loops_to needs a positive max_rounds", s.ID)
+		}
+	}
+
+	return nil
+}
+
+// validateDialog checks the keys that decide who answers a stage and how its
+// gate is decided.
+func validateDialog(s Stage) error {
+	switch s.Policy {
+	case "", PolicyHuman, PolicyAuto:
+	default:
+		return fmt.Errorf("pack: stage %q: unknown policy %q", s.ID, s.Policy)
+	}
+
+	if s.MaxQuestions < 0 {
+		return fmt.Errorf("pack: stage %q: max_questions cannot be negative", s.ID)
+	}
+
+	if s.Gate && s.LoopsTo != "" {
+		return fmt.Errorf("pack: stage %q loops to %q, so its verdict decides what follows and it takes no gate", s.ID, s.LoopsTo)
+	}
+
+	if s.Gate && s.Reviewer == nil {
+		return fmt.Errorf("pack: stage %q has a gate, so it needs a reviewer to decide it under the auto policy", s.ID)
+	}
+
+	if r := s.Reviewer; r != nil {
+		switch {
+		case !s.Gate:
+			return fmt.Errorf("pack: stage %q has a reviewer but no gate for it to judge", s.ID)
+		case r.Persona == "":
+			return fmt.Errorf("pack: stage %q: the reviewer needs a persona", s.ID)
+		case r.Threshold < 1 || r.Threshold > 5:
+			return fmt.Errorf("pack: stage %q: the reviewer's threshold must be 1 to 5", s.ID)
+		}
+	}
+
+	if f := s.Fold; f != nil {
+		switch {
+		case !s.Gate:
+			return fmt.Errorf("pack: stage %q folds a gate it does not have", s.ID)
+		case strings.TrimSpace(f.Field) == "":
+			return fmt.Errorf("pack: stage %q: fold needs the data field it counts", s.ID)
+		case f.Max < 1:
+			return fmt.Errorf("pack: stage %q: fold max must be at least 1", s.ID)
 		}
 	}
 

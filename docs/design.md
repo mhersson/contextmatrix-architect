@@ -205,7 +205,7 @@ developer (DEV), reviewer (REV).
 | -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   |
 
 The embedded pack holds intake, a human-sourced design stage, grounding, decomposition and readiness; slicing and acceptance arrive with the dialog stages. Sign-off is the controller's step after readiness (see Emission).
-The design stage is human-sourced until the dialog stages arrive: the message after intake's artifact is stored as the design. The loader refuses a human-sourced first stage, a human-sourced stage with tools, checks or loops_to, and a loops_to naming a human-sourced stage.
+The design stage is human-sourced until the dialog stages arrive: the message after intake's artifact is stored as the design. The loader refuses a human-sourced first stage, a human-sourced stage with tools, checks, loops_to, a policy, a gate or a question cap, and a loops_to naming a human-sourced stage.
 
 - Intake ends by stating the shape it expects (slices, projects involved) and
   the gate plan in effect, so the operator can change the overrides before
@@ -219,8 +219,8 @@ The design stage is human-sourced until the dialog stages arrive: the message af
   gate folds into the solution design gate when there is exactly one slice.
   Folding is decided by the artifact, never by an estimate of size.
 - Reviewer runs are declared per stage in the pack. The default pack runs them
-  for solution design, acceptance and readiness only, so a small need costs
-  about eight runs.
+  for solution design and acceptance only, so a small need costs about eight
+  runs. Readiness, a loop stage, takes no gate and so no reviewer.
 - A small need therefore touches the human twice, at solution design and
   sign-off, plus at most a question or two. A need that slices into three gets
   every gate without anyone classifying it.
@@ -238,8 +238,10 @@ A pack is a directory:
 
 ```
 pack.yaml          stage order; per stage: persona, source (model or human), consumes,
-                   produces, tools, checks, default gate policy, gate fold condition,
-                   reviewer on or off and its threshold, loop target and rounds
+                   produces, tools, checks, the responder policy for its questions and
+                   gate (human, or auto by default), the gate, its fold condition, the
+                   reviewer's persona and threshold, the question cap, loop target
+                   and rounds
 personas/*.md      role text, one file per persona
 stages/*.md        instructions, one file per stage
 card.md            the card body template
@@ -253,6 +255,11 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
 - A stage that checks cards must have the code tools, and its pack must
   carry `lists.yaml` and `card.md`; the loader refuses it otherwise, so an
   override pack cannot silently disable the card contract.
+- A gated stage declares a reviewer, so an auto gate has a decider once
+  reviewer runs exist. A reviewer or a fold needs a gate, a fold needs a
+  later gate to fold into, and a loop stage takes no gate. The loader
+  refuses a pack that breaks one of these, and one whose `gate` is not true
+  or false, such as a pack from before version 0.5 with `gate: questions`.
 - No include mechanism. Each file stands alone; shared text is duplicated. If
   that hurts, build-time expansion comes later.
 - Gate and question policies come from the pack, overridable per blueprint.

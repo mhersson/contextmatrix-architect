@@ -29,6 +29,10 @@ func TestLoadEmbedded_ReferencesResolve(t *testing.T) {
 			assert.NotEmpty(t, p.Instructions(s.ID), "instructions of stage %q", s.ID)
 		}
 
+		if s.Reviewer != nil {
+			assert.NotEmpty(t, p.Persona(s.Reviewer.Persona), "reviewer persona %q of stage %q", s.Reviewer.Persona, s.ID)
+		}
+
 		for _, c := range s.Consumes {
 			assert.True(t, ids[c], "stage %q consumes %q, which must come earlier", s.ID, c)
 		}
@@ -66,6 +70,13 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 
 	design, _ := p.Stage("design")
 	assert.Equal(t, SourceHuman, design.Source)
+
+	intake, _ := p.Stage("intake")
+	assert.Equal(t, PolicyHuman, intake.Policy)
+	assert.Equal(t, 3, intake.MaxQuestions)
+
+	grounding, _ := p.Stage("grounding")
+	assert.Equal(t, PolicyAuto, grounding.Policy)
 
 	readiness, _ := p.Stage("readiness")
 	assert.Equal(t, "decomposition", readiness.LoopsTo)
@@ -192,15 +203,29 @@ func TestLoad_Invalid(t *testing.T) {
 		want  string
 	}{
 		{name: "unknown source", stage: "    source: robot\n", want: "unknown source"},
-		{name: "unknown gate", stage: "    gate: sometimes\n", want: "unknown gate"},
+		{name: "an old gate value", stage: "    gate: questions\n", want: "cannot unmarshal"},
+		{name: "unknown policy", stage: "    policy: sometimes\n", want: "unknown policy"},
+		{name: "negative max_questions", stage: "    max_questions: -1\n", want: "max_questions"},
+		{name: "gate without a reviewer", stage: "    gate: true\n", want: "needs a reviewer"},
+		{name: "reviewer without a gate", stage: "    reviewer: {persona: po, threshold: 4}\n", want: "no gate"},
+		{name: "reviewer without a persona", stage: "    gate: true\n    reviewer: {threshold: 4}\n", want: "needs a persona"},
+		{name: "reviewer persona file missing", stage: "    gate: true\n    reviewer: {persona: ghost, threshold: 4}\n", want: `persona "ghost"`},
+		{name: "reviewer threshold out of range", stage: "    gate: true\n    reviewer: {persona: po, threshold: 6}\n", want: "threshold"},
+		{name: "fold without a gate", stage: "    fold: {field: slices, max: 1}\n", want: "does not have"},
+		{name: "fold without a field", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4}\n    fold: {max: 1}\n", want: "field"},
+		{name: "fold with no later gate", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4}\n    fold: {field: slices, max: 1}\n", want: "no later stage"},
+		{name: "gate on a loop stage", stage: "  - id: s2\n    persona: po\n    loops_to: s1\n    max_rounds: 2\n    gate: true\n    reviewer: {persona: po, threshold: 4}\n", files: map[string]string{"stages/s2.md": "x"}, want: "takes no gate"},
+		{name: "human stage with a gate", stage: "  - id: s2\n    source: human\n    gate: true\n", want: "takes no gate"},
+		{name: "human stage with max_questions", stage: "  - id: s2\n    source: human\n    max_questions: 2\n", want: "takes no max_questions"},
+		{name: "human stage with a policy", stage: "  - id: s2\n    source: human\n    policy: human\n", want: "takes no policy"},
 		{name: "unknown tool", stage: "    tools: [shell]\n", want: "unknown tool group"},
 		{name: "unknown check", stage: "    checks: [style]\n", want: "unknown check"},
 		{name: "loops_to without max_rounds", stage: "  - id: s2\n    persona: po\n    loops_to: s1\n", files: map[string]string{"stages/s2.md": "x"}, want: "max_rounds"},
 		{name: "human first stage", stage: "    source: human\n", want: "first stage"},
-		{name: "human stage with tools", stage: "  - id: s2\n    source: human\n    tools: [code]\n", want: "human"},
-		{name: "human stage with checks", stage: "  - id: s2\n    source: human\n    checks: [cards]\n", want: "human"},
-		{name: "human stage with loops_to", stage: "  - id: s2\n    source: human\n    loops_to: s1\n    max_rounds: 2\n", want: "human"},
-		{name: "loops_to a human stage", stage: "  - id: s2\n    source: human\n  - id: s3\n    persona: po\n    loops_to: s2\n    max_rounds: 2\n", files: map[string]string{"stages/s3.md": "x"}, want: "human"},
+		{name: "human stage with tools", stage: "  - id: s2\n    source: human\n    tools: [code]\n", want: "takes no tools"},
+		{name: "human stage with checks", stage: "  - id: s2\n    source: human\n    checks: [cards]\n", want: "takes no checks"},
+		{name: "human stage with loops_to", stage: "  - id: s2\n    source: human\n    loops_to: s1\n    max_rounds: 2\n", want: "takes no loops_to"},
+		{name: "loops_to a human stage", stage: "  - id: s2\n    source: human\n  - id: s3\n    persona: po\n    loops_to: s2\n    max_rounds: 2\n", files: map[string]string{"stages/s3.md": "x"}, want: "which is human-sourced"},
 		{name: "bad regex", files: map[string]string{"lists.yaml": "forbidden_references:\n  - name: broken\n    pattern: '(['\n"}, want: "forbidden reference"},
 		{name: "unknown lists.yaml key", files: map[string]string{"lists.yaml": "required_section: [Context]\n"}, want: "lists.yaml"},
 		{name: "card checks without lists.yaml", stage: "    tools: [code]\n    checks: [cards]\n", files: map[string]string{"lists.yaml": ""}, want: "lists.yaml"},
@@ -215,6 +240,28 @@ func TestLoad_Invalid(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.want)
 		})
 	}
+}
+
+func TestLoad_DialogKeys(t *testing.T) {
+	stages := "    policy: human\n    max_questions: 2\n    gate: true\n    reviewer: {persona: rev, threshold: 4}\n    fold: {field: slices, max: 1}\n" +
+		"  - id: s2\n    persona: po\n    gate: true\n    reviewer: {persona: po, threshold: 3}\n" +
+		"  - id: s3\n    persona: po\n"
+
+	p, err := load(packFS(stages, map[string]string{"personas/rev.md": "the reviewer", "stages/s2.md": "x", "stages/s3.md": "x"}))
+	require.NoError(t, err)
+
+	s1, _ := p.Stage("s1")
+	assert.Equal(t, PolicyHuman, s1.Policy)
+	assert.Equal(t, 2, s1.MaxQuestions)
+	assert.True(t, s1.Gate)
+	assert.Equal(t, &Reviewer{Persona: "rev", Threshold: 4}, s1.Reviewer)
+	assert.Equal(t, &Fold{Field: "slices", Max: 1}, s1.Fold)
+	assert.Equal(t, "the reviewer", p.Persona("rev"), "a reviewer's persona is loaded")
+
+	s3, _ := p.Stage("s3")
+	assert.Equal(t, PolicyAuto, s3.Policy, "auto is the default policy")
+	assert.False(t, s3.Gate)
+	assert.Zero(t, s3.MaxQuestions)
 }
 
 func TestLoad_ListsAndCardAreOptionalWithoutCardChecks(t *testing.T) {
