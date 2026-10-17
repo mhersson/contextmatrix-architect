@@ -39,10 +39,12 @@ type roundState struct {
 	// the one that posted the round, or the last that answered its chat.
 	RunID int64 `json:"run_id"`
 	// Seen counts the chat entries that conversation has seen.
-	Seen      int               `json:"seen,omitempty"`
-	Change    string            `json:"change"`
-	MessageID string            `json:"message_id,omitempty"`
-	Frame     protocol.LogRound `json:"frame"`
+	Seen      int    `json:"seen,omitempty"`
+	Change    string `json:"change"`
+	MessageID string `json:"message_id,omitempty"`
+	// Dropped counts the entries the reply that made this snapshot dropped.
+	Dropped int               `json:"dropped,omitempty"`
+	Frame   protocol.LogRound `json:"frame"`
 }
 
 func roundPromptID(n int) string { return fmt.Sprintf("round:%d", n) }

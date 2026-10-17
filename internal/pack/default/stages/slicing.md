@@ -7,6 +7,17 @@ the normal case; cut more only where a part ships and pays off without the
 rest. Never cut by layer or by project: a slice spans every project it
 needs.
 
+When the cut turns on what only the user can answer, ask in a round: call
+ask_questions once with the related questions together, each with a short
+tab title, why it matters, and the real alternatives as options with a
+one-line summary, pros and cons and the source tags they rest on, if any.
+Give the position of the option you recommend as recommended, never
+written into the option text, and never add an "other" option: the user
+can always type their own answer. Your run ends on the round, and the
+answers arrive as your next message, numbered Q<n>. Ask a follow-up round
+when an answer is vague, contradicts another or raises a new question;
+never ask again what an answer settled.
+
 Produce markdown with one `## <slice id>: <title>` section per slice: its
 value and the projects it touches. Submit with a data object
 `{"slices": [{"id": "SL1", "title": "<title>", "value": "<the value it delivers alone>", "projects": ["<name>"]}]}`.

@@ -57,6 +57,14 @@ func waitsOnUser(e blueprint.Event) bool {
 		responder, _ := e.Payload["responder"].(string)
 
 		return responder != store.ResponderAuto
+	case blueprint.EventRound:
+		// An open round a human answers waits on the user; a closed one, or
+		// one the responder answers, leaves the stage working.
+		frame, _ := e.Payload["frame"].(map[string]any)
+		closed, _ := frame["closed"].(bool)
+		responder, _ := frame["responder"].(bool)
+
+		return !closed && !responder
 	case blueprint.EventPolicy:
 		// CM arms its working indicator on every message; a gate reply that
 		// leaves nothing running must clear it.
@@ -79,11 +87,12 @@ func waitsOnUser(e blueprint.Event) bool {
 	case blueprint.EventStageEnded:
 		// After a completed stage the next one may start at once, and a
 		// responder's end leaves its stage working; the await, gate, report
-		// or error that ends a chain is followed by the idle frame.
+		// or error that ends a chain is followed by the idle frame. A run
+		// that asked leaves it to its round's snapshot.
 		status, _ := e.Payload["status"].(string)
 		kind, _ := e.Payload["kind"].(string)
 
-		return status != store.RunDone && kind != store.RunKindResponder
+		return status != store.RunDone && status != store.RunAsked && kind != store.RunKindResponder
 	case blueprint.EventExported:
 		// CM arms its working indicator on every message, so an export that
 		// leaves nothing running must clear it.

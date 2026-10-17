@@ -83,6 +83,10 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		{"ended", blueprint.EventEnded, nil, false},
 		{"verdict", blueprint.EventReview, nil, false},
 		{"responder failed, the stage runs on", blueprint.EventStageEnded, map[string]any{"status": "failed", "kind": "responder"}, false},
+		{"an open round a human answers", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{"questions": []any{}}}, true},
+		{"a closed round, its stage goes on", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{"closed": true}}, false},
+		{"a round the responder answers", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{"responder": true}}, false},
+		{"a run that asked, its round decides", blueprint.EventStageEnded, map[string]any{"status": "asked", "kind": "stage"}, false},
 	}
 
 	for _, tc := range cases {

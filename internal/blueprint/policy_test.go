@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
 	"github.com/stretchr/testify/assert"
@@ -148,47 +147,30 @@ func TestAsk_ACancelledRunRecordsNoQuestion(t *testing.T) {
 	assert.False(t, rec.has(EventQuestion))
 }
 
-func TestSetPolicy_AnOpenQuestionKeepsItsResponder(t *testing.T) {
-	second := make(chan error, 1)
-
-	c, _, _, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		first, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"})
-		if err != nil {
-			return stage.Output{}, err
-		}
-
-		_, err = in.Asker.Ask(ctx, stage.Question{Text: "Which cluster?"})
-		second <- err
-
-		return artifactOutput("# Need\n\n"+first, in), nil
-	})
+func TestSetPolicy_AnOpenRoundKeepsItsResponder(t *testing.T) {
+	c, st, runner, rec := newController(t, asks("# Need", roundQ("Deploy", "Helm or Kustomize?", "Helm", "Kustomize")))
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
+	c.Wait("BP1")
 
 	require.NoError(t, c.SetPolicy(ctx, "BP1", "intake", "auto", "m2"))
 
 	change, ok := rec.first(EventPolicy)
 	require.True(t, ok)
-	assert.Equal(t, "question", change.Payload["open"])
-	assert.Equal(t, true, change.Payload["during_run"])
+	assert.Equal(t, "round", change.Payload["open"])
+	assert.Equal(t, false, change.Payload["during_run"])
 
-	require.NoError(t, c.Message(ctx, "BP1", "helm", "m3"))
-
-	select {
-	case err := <-second:
-		require.ErrorIs(t, err, errNoResponder, "the next question follows the new policy")
-	case <-time.After(5 * time.Second):
-		require.FailNow(t, "the stage never asked its second question")
-	}
-
+	answerRound(t, c, "BP1", 1, true, pick(1, 1))
 	c.Wait("BP1")
 
-	questions := rec.all(EventQuestion)
-	require.Len(t, questions, 2)
-	assert.Equal(t, store.ResponderHuman, questions[0].Payload["responder"])
-	assert.Equal(t, store.ResponderAuto, questions[1].Payload["responder"])
+	require.Equal(t, 2, runner.calls(), "the round closes and its stage goes on")
+	assert.True(t, latestRound(t, c, "BP1", 1).Frame.Closed)
+
+	qs, err := st.ListQuestions(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, qs, 1)
+	assert.Equal(t, store.ResponderHuman, qs[0].Responder, "the human the round was put to answered it")
 }
 
 func TestAsk_AnAutoPolicyTellsTheStageToDecide(t *testing.T) {

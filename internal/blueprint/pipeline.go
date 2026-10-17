@@ -271,15 +271,29 @@ func (c *Controller) unreadable(ctx context.Context, au audit, id string, err er
 	}})
 }
 
-// input handles a message that arrives while no run is in flight: the need
-// while the first stage has no artifact, a decision at an open gate or the
-// sign-off, else a note. The caller holds the run slot.
+// input handles a message that arrives while no run is in flight: a note
+// while a round waits, the need while the first stage has no artifact, a
+// decision at an open gate or the sign-off, else a note. The caller holds
+// the run slot.
 func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, id, text, msgID string) error {
 	bp, err := c.opts.Store.GetBlueprint(ctx, id)
 	if err != nil {
 		c.release(id, r)
 
 		return fmt.Errorf("blueprint: message: %w", err)
+	}
+
+	// A round takes the message first: the stage that asked it may have no
+	// artifact yet, and the message must not read as the need.
+	place, atRound, err := c.roundAt(ctx, id)
+	if err != nil {
+		c.release(id, r)
+
+		return fmt.Errorf("blueprint: message: %w", err)
+	}
+
+	if atRound {
+		return c.atRound(ctx, runCtx, r, sess, bp, place, text, msgID)
 	}
 
 	_, err = c.opts.Store.LatestArtifact(ctx, id, c.opts.Pack.Stages[0].ID)

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -873,4 +874,34 @@ func TestLogEntryFor_AReportWithoutARoundNamesNone(t *testing.T) {
 
 	assert.Contains(t, report(map[string]any{"ready": true, "rounds": 2}).Content, "round 2",
 		"the number is shown when a round applies")
+}
+
+func TestLogEntry_RoundFrame(t *testing.T) {
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRound, BlueprintID: "BP1", Payload: roundPayloadForTest()})
+	require.True(t, ok)
+	require.NotNil(t, entry.Prompt)
+	assert.Equal(t, "round:3", entry.Prompt.ID)
+	assert.Equal(t, "round", entry.Prompt.Kind)
+	require.NotNil(t, entry.Prompt.Round)
+	assert.Equal(t, 7, entry.Prompt.Round.Questions[0].Number)
+	assert.Equal(t, "text", entry.Type)
+}
+
+func roundPayloadForTest() map[string]any {
+	raw := []byte(`{"round":3,"change":"posted","frame":{"persona":"system designer","stage":"solution_design",
+		"questions":[{"number":7,"title":"Deploy","text":"Helm or Kustomize?","options":[{"title":"Helm"}]}]}}`)
+
+	var p map[string]any
+
+	_ = json.Unmarshal(raw, &p)
+
+	return p
+}
+
+func TestLogEntry_ASegmentStartIsNoDivider(t *testing.T) {
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "BP1", Payload: map[string]any{
+		"stage": "intake", "kind": "stage", "round": 1.0, "segment": blueprint.SegmentAnswers, "question_round": 2.0,
+	}})
+	require.True(t, ok)
+	assert.Nil(t, entry.Marker)
 }

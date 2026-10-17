@@ -14,11 +14,19 @@ Produce the need as markdown with these sections:
 Rules:
 
 - Ask about what changes the cards and only the user can answer: who it is
-  for, what is in and out of scope, what "done" is measured by. Call
-  ask_human once per decision, up to three times, with the options you
-  see, your recommendation first with its position given as recommended,
-  never written into the option text, and the context that makes the
-  choice clear. Never ask what you can read or decide.
+  for, what is in and out of scope, what "done" is measured by. Never ask
+  what you can read or decide.
+- Ask in a round: call ask_questions once with the related questions
+  together. Each question has a short tab title, the question, why it
+  matters, and the real alternatives as options, each with a one-line
+  summary, its pros and cons and the source tags it rests on, if any. Give
+  the position of the option you recommend as recommended, never written
+  into the option text. Never add an "other" option: the user can always
+  type their own answer.
+- Your run ends on the round, and the answers arrive as your next message,
+  numbered Q<n>. When an answer is vague, contradicts another or raises a
+  new question, ask a follow-up round. Never ask again what an answer
+  settled.
 - Decide everything else yourself and record each such decision as an
   assumption. Each assumption is one sentence that stands alone: a reader
   who has only that sentence understands it. Never point at other text,

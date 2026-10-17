@@ -57,10 +57,10 @@ func commandOption(options []string) error {
 }
 
 // SetPolicy records a stage's responder policy for this blueprint, for its
-// questions and its gate, from the next one on: a question or gate already
-// open keeps the responder it was put to. The sign-off follows the mode and an
-// unknown stage is refused; each is reported and never stored as a policy.
-// Like export, it works while a stage runs.
+// questions and its gate, from the next one on: a question, round or gate
+// already open keeps the responder it was put to. The sign-off follows the
+// mode and an unknown stage is refused; each is reported and never stored as
+// a policy. Like export, it works while a stage runs.
 func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID string) error {
 	c.mu.Lock()
 	sess, ok := c.sessions[id]
@@ -94,6 +94,8 @@ func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID s
 		switch {
 		case openStage == st.ID:
 			payload["open"] = "question"
+		case c.roundOpenAt(ctx, id, st.ID):
+			payload["open"] = "round"
 		case !running && c.gateOpenAt(ctx, id, st.ID):
 			payload["open"] = "gate"
 		}
@@ -137,6 +139,20 @@ func (c *Controller) gateOpenAt(ctx context.Context, id, stageID string) bool {
 	}
 
 	return out.gate && !out.critique && out.stage == stageID
+}
+
+// roundOpenAt reports whether stageID's round waits for answers; an open
+// round keeps the responder it was put to. A record that cannot be read
+// reports none and is logged: it only drops a hint.
+func (c *Controller) roundOpenAt(ctx context.Context, id, stageID string) bool {
+	place, found, err := c.roundAt(ctx, id)
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: read the round for a gate reply", "blueprint", id, "stage", stageID, "error", err)
+
+		return false
+	}
+
+	return found && !place.state.Frame.Closed && place.state.Frame.Stage == stageID
 }
 
 // stageIDs names the pack's stages in order: the stages a gate reply may name.

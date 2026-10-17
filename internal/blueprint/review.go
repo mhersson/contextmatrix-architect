@@ -216,8 +216,8 @@ func (c *Controller) latestStageRun(ctx context.Context, id, stageID string) (st
 // exists, and runs the builder's next round with the findings when the
 // score is below the threshold with a round left in the attempt, or its
 // revision when the score passed with findings. A revision is never
-// reviewed. false when a run did not complete, which has been reported.
-func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string) bool {
+// reviewed. A run that did not complete has been reported and stops.
+func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string) stageEnd {
 	bg := context.Background()
 	au := sess.audit
 
@@ -225,21 +225,21 @@ func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp sto
 	if !ok || st.Reviewer == nil {
 		c.fail(bg, au, bp.ID, 0, fmt.Sprintf("review %s: the pack has no reviewer for it", stageID))
 
-		return false
+		return stageStopped
 	}
 
 	art, err := c.opts.Store.LatestArtifact(bg, bp.ID, stageID)
 	if err != nil {
 		c.fail(bg, au, bp.ID, 0, fmt.Sprintf("review %s: %v", stageID, err))
 
-		return false
+		return stageStopped
 	}
 
 	built, err := c.latestStageRun(bg, bp.ID, stageID)
 	if err != nil {
 		c.fail(bg, au, bp.ID, 0, err.Error())
 
-		return false
+		return stageStopped
 	}
 
 	v, found, revised, err := c.gateReview(bg, bp.ID, st, art)
@@ -248,25 +248,25 @@ func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp sto
 	case err != nil:
 		c.fail(bg, au, bp.ID, 0, err.Error())
 
-		return false
+		return stageStopped
 	case revised:
-		return true
+		return stageStored
 	case !found:
 		var ok bool
 		if v, ok = c.runReviewer(ctx, r, sess, bp, st, art, built.Attempt); !ok {
-			return false
+			return stageStopped
 		}
 	}
 
 	if settled(st, v) {
-		return true
+		return stageStored
 	}
 
 	rd, err := c.builderRound(bg, bp, st, built, art, v)
 	if err != nil {
 		c.fail(bg, au, bp.ID, 0, err.Error())
 
-		return false
+		return stageStopped
 	}
 
 	return c.runStage(ctx, r, sess, bp, stageID, rd)

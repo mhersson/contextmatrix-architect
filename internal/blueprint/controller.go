@@ -1,5 +1,5 @@
 // Package blueprint is the controller: one blueprint per CM session, a state
-// machine over stages, questions that block the run, and the event stream.
+// machine over stages, stored question rounds, and the event stream.
 package blueprint
 
 import (
@@ -225,6 +225,10 @@ type run struct {
 	// stage is the stage the run in flight runs, or the sign-off while it and
 	// its emission hold the slot; set under Controller.mu.
 	stage string
+	// recheck is set under Controller.mu when a reply or a chat message
+	// changed a round while the slot was held; the release acts on the round
+	// again.
+	recheck bool
 }
 
 // Controller owns every attached blueprint.
@@ -238,8 +242,12 @@ type Controller struct {
 	// flights are each blueprint's runs in flight, outermost first, for the view.
 	flights map[string][]*flight
 	// live streams each blueprint's view and drafts to its subscribers.
-	live    *liveHub
-	closing bool
+	live *liveHub
+	// roundLocks serialize each blueprint's round changes: a post, a reply
+	// and a close. Per blueprint, not per session: a reopen attaches a new
+	// session while the ended one's run may still post.
+	roundLocks map[string]*sync.Mutex
+	closing    bool
 }
 
 // New builds a Controller.
@@ -256,7 +264,10 @@ func New(opts Options) *Controller {
 		opts.WatchInterval = time.Minute
 	}
 
-	c := &Controller{opts: opts, sessions: map[string]*session{}, runs: map[string]*run{}, watches: map[string]*watcher{}, flights: map[string][]*flight{}}
+	c := &Controller{
+		opts: opts, sessions: map[string]*session{}, runs: map[string]*run{}, watches: map[string]*watcher{},
+		flights: map[string][]*flight{}, roundLocks: map[string]*sync.Mutex{},
+	}
 	c.live = newLiveHub(c.View, opts.Logger)
 
 	return c
@@ -909,7 +920,8 @@ func (c *Controller) claimAfterEnd(ctx context.Context, id string, sess *session
 	return c.claimLocked(id)
 }
 
-// release frees id's run slot and wakes Wait.
+// release frees id's run slot and wakes Wait. When a round changed while r
+// held the slot, the slot is taken again at once to act on it.
 func (c *Controller) release(id string, r *run) {
 	c.mu.Lock()
 
@@ -918,10 +930,40 @@ func (c *Controller) release(id string, r *run) {
 	}
 
 	r.answer = nil
+
+	var (
+		next    *run
+		nextCtx context.Context
+	)
+
+	// Claimed before r's done closes, so Wait never sees the slot free while
+	// a round still has to be acted on.
+	if r.recheck && !c.closing && c.sessions[id] != nil {
+		next, nextCtx, _ = c.claimLocked(id)
+	}
+
 	c.mu.Unlock()
 
 	r.cancel(nil)
 	close(r.done)
+
+	if next != nil {
+		c.settleOn(nextCtx, next, id)
+	}
+}
+
+// roundLock is blueprint id's round lock.
+func (c *Controller) roundLock(id string) *sync.Mutex {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	l := c.roundLocks[id]
+	if l == nil {
+		l = &sync.Mutex{}
+		c.roundLocks[id] = l
+	}
+
+	return l
 }
 
 // detach removes sess unless another session replaced it.

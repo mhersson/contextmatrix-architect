@@ -96,26 +96,36 @@ func decisionOf(d map[string]any, i int) map[string]any {
 }
 
 func TestSolutionDesign_AConversationThenItsGate(t *testing.T) {
-	type result struct{ asked, refusal string }
+	type result struct{ task, refusal string }
 
 	seen := make(chan result, 1)
+
+	const choice = "Postgres, but managed"
 
 	script := dialogScript()
 	// Intake asks first, so solution design's question is Q2, not Q1.
 	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Who runs it?"}); err != nil {
-			return stage.Output{}, err
+		if in.History == nil {
+			if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Operator", "Who runs it?")}}); err != nil {
+				return stage.Output{}, err
+			}
+
+			return askedOutput(in), nil
 		}
 
 		return done("# Need", nil), nil
 	}
 	script["solution_design"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		asked, err := in.Asker.Ask(ctx, stage.Question{Text: "Where does the data live?", Options: []string{"Postgres", "SQLite"}, Recommended: 1})
-		if err != nil {
-			return stage.Output{}, err
-		}
+		if in.History == nil {
+			q := roundQ("Data", "Where does the data live?", "Postgres", "SQLite")
+			q.Recommended = 1
 
-		tag, choice, _ := strings.Cut(asked, ": ")
+			if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{q}}); err != nil {
+				return stage.Output{}, err
+			}
+
+			return askedOutput(in), nil
+		}
 
 		// The answer is not the basis of any decision yet.
 		d := goodDesign("assumption")
@@ -126,14 +136,14 @@ func TestSolutionDesign_AConversationThenItsGate(t *testing.T) {
 			return stage.Output{}, errors.New("a design that drops an answer was accepted")
 		}
 
-		d = goodDesign(tag)
+		d = goodDesign("Q2")
 		decisionOf(d, 0)["chosen"] = choice
 
 		if err := in.Validate(ctx, stage.Artifact{Body: "# Design", Data: d}); err != nil {
 			return stage.Output{}, err
 		}
 
-		seen <- result{asked: asked, refusal: refusal.Error()}
+		seen <- result{task: in.Task, refusal: refusal.Error()}
 
 		return done("# Design", d), nil
 	}
@@ -142,10 +152,10 @@ func TestSolutionDesign_AConversationThenItsGate(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitForCount(t, EventQuestion, 1)
-	require.NoError(t, c.Message(ctx, "BP1", "ops", "m2"))
-	rec.waitForCount(t, EventQuestion, 2)
-	require.NoError(t, c.Message(ctx, "BP1", "Postgres, but managed", "m3"))
+	c.Wait("BP1")
+	answerRound(t, c, "BP1", 1, true, own(1, "ops"))
+	c.Wait("BP1")
+	answerRound(t, c, "BP1", 2, true, own(2, choice))
 	c.Wait("BP1")
 
 	var got result
@@ -156,7 +166,8 @@ func TestSolutionDesign_AConversationThenItsGate(t *testing.T) {
 		require.Fail(t, "solution design did not submit")
 	}
 
-	assert.Equal(t, "Q2: Postgres, but managed", got.asked, "the result carries the question's number with the answer")
+	assert.Contains(t, got.task, "[Q2]", "the continuation carries the question's number with the answer")
+	assert.Contains(t, got.task, choice)
 	assert.Contains(t, got.refusal, ": unused_answer: ", "the decisions check refuses a dropped answer")
 
 	gate, ok := rec.first(EventGate)
@@ -164,8 +175,8 @@ func TestSolutionDesign_AConversationThenItsGate(t *testing.T) {
 	assert.Equal(t, "solution_design", gate.Payload["stage"])
 
 	designs := inputsOf(runner, "solution_design")
-	require.Len(t, designs, 1)
-	assert.NotEmpty(t, designs[0].Tools, "solution design reads the code")
+	require.Len(t, designs, 2, "the run that asked and its continuation")
+	assert.NotEmpty(t, designs[1].Tools, "solution design reads the code")
 
 	grounded, ok := rec.first(EventGrounded)
 	require.True(t, ok)
@@ -174,7 +185,7 @@ func TestSolutionDesign_AConversationThenItsGate(t *testing.T) {
 	require.NoError(t, c.Message(ctx, "BP1", "approve", "m4"))
 	c.Wait("BP1")
 
-	assert.Equal(t, []string{"intake", "slicing", "solution_design", "grounding", "acceptance", "decomposition", "readiness"}, stagesRun(runner))
+	assert.Equal(t, []string{"intake", "intake", "slicing", "solution_design", "solution_design", "grounding", "acceptance", "decomposition", "readiness"}, stagesRun(runner))
 	assert.Equal(t, 1, ws.checkouts(), "grounding reads the tree solution design checked out")
 	assert.True(t, rec.has(EventSignOff))
 }
@@ -301,8 +312,12 @@ func TestDecisionsValidator(t *testing.T) {
 func TestSolutionDesign_AThirdFailingSubmitKeepsItsProblems(t *testing.T) {
 	script := dialogScript()
 	script["solution_design"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Where does the data live?"}); err != nil {
-			return stage.Output{}, err
+		if in.History == nil {
+			if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Data", "Where does the data live?")}}); err != nil {
+				return stage.Output{}, err
+			}
+
+			return askedOutput(in), nil
 		}
 
 		// Every submit drops the answer; the third is accepted as it is.
@@ -325,8 +340,8 @@ func TestSolutionDesign_AThirdFailingSubmitKeepsItsProblems(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
-	require.NoError(t, c.Message(ctx, "BP1", "Postgres", "m2"))
+	c.Wait("BP1")
+	answerRound(t, c, "BP1", 1, true, own(1, "Postgres"))
 	c.Wait("BP1")
 
 	design, err := st.LatestArtifact(ctx, "BP1", "solution_design")

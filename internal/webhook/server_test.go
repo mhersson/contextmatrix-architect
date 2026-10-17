@@ -32,6 +32,7 @@ type stubController struct {
 	mu        sync.Mutex
 	starts    []blueprint.StartInput
 	messages  []string
+	replies   []protocol.RoundReply
 	aborts    []string
 	exports   []string
 	policies  []string
@@ -67,6 +68,16 @@ func (s *stubController) Message(ctx context.Context, id, text, msgID string) er
 	defer s.mu.Unlock()
 
 	s.messages = append(s.messages, id+"|"+text+"|"+msgID)
+	s.ctxErrs = append(s.ctxErrs, ctx.Err())
+
+	return s.msgErr
+}
+
+func (s *stubController) Reply(ctx context.Context, _ string, rr protocol.RoundReply, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.replies = append(s.replies, rr)
 	s.ctxErrs = append(s.ctxErrs, ctx.Err())
 
 	return s.msgErr
@@ -614,6 +625,23 @@ func TestMessage_CommandsAreRouted(t *testing.T) {
 			assert.Len(t, ctl.messages, tt.wantMessages)
 		})
 	}
+}
+
+func TestMessage_ARoundReplyIsNeverACommand(t *testing.T) {
+	ctl := &stubController{}
+	srv, _ := newTestServer(t, ctl)
+
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, signed(t, http.MethodPost, "/message", protocol.MessagePayload{
+		SessionID: "BP1", Content: "abort", MessageID: "m1",
+		Round: &protocol.RoundReply{PromptID: "round:1", Answers: []protocol.RoundAnswer{{Number: 1, Option: 1}}},
+	}, nextTS()))
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+	require.Len(t, ctl.replies, 1)
+	assert.Equal(t, "round:1", ctl.replies[0].PromptID)
+	assert.Empty(t, ctl.aborts)
+	assert.Empty(t, ctl.messages)
 }
 
 func TestStart_RefusedWhileDraining(t *testing.T) {

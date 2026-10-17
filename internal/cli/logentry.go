@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -13,7 +14,8 @@ import (
 
 // logEntryFor renders a controller event as a panel entry. A question or gate
 // a human answers carries a prompt, whose actions the panel shows as buttons
-// and whose replies come back as ordinary messages; the markdown stays the
+// and whose replies come back as ordinary messages; a round's prompt carries
+// the round, whose answers come back structured. The markdown stays the
 // readable fallback. A prompt also carries a kind and its own text, the entry
 // without its option list or reply instruction. A human's answer is echoed
 // by CM itself and harness events reach the hub through the bridge, so both
@@ -39,13 +41,31 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = fmt.Sprintf("Blueprint reopened (state %s).", str(p["state"]))
 	case blueprint.EventStageStarted:
 		entry.Type = "system"
-		entry.Content = fmt.Sprintf("%s started as %s.", runLabel(p), strings.ReplaceAll(str(p["persona"]), "_", " "))
 
-		// A stage run's first round is a divider; its builder rounds, its
-		// reviews and its responders are not.
-		if kind := str(p["kind"]); (kind == "" || kind == store.RunKindStage) && num(p["round"]) <= 1 {
-			entry.Marker = &protocol.LogMarker{Kind: "stage", Stage: str(p["stage"]), Persona: str(p["persona"])}
+		// A run that goes on from a round is no new start, so no divider.
+		switch str(p["segment"]) {
+		case blueprint.SegmentAnswers:
+			entry.Content = fmt.Sprintf("%s resumes with the answers to round %.0f.", runLabel(p), num(p["question_round"]))
+		case blueprint.SegmentChat:
+			entry.Content = fmt.Sprintf("%s answers the chat about round %.0f.", runLabel(p), num(p["question_round"]))
+		default:
+			entry.Content = fmt.Sprintf("%s started as %s.", runLabel(p), strings.ReplaceAll(str(p["persona"]), "_", " "))
+
+			// A stage run's first round is a divider; its builder rounds, its
+			// reviews and its responders are not.
+			if kind := str(p["kind"]); (kind == "" || kind == store.RunKindStage) && num(p["round"]) <= 1 {
+				entry.Marker = &protocol.LogMarker{Kind: "stage", Stage: str(p["stage"]), Persona: str(p["persona"])}
+			}
 		}
+	case blueprint.EventRound:
+		n, frame, ok := roundFrame(p)
+		if !ok {
+			return protocol.LogEntry{}, false
+		}
+
+		entry.Type = "text"
+		entry.Content = roundText(n, frame)
+		entry.Prompt = &protocol.LogPrompt{ID: fmt.Sprintf("round:%d", n), Kind: "round", Text: roundHeading(n, frame), Round: &frame}
 	case blueprint.EventQuestion:
 		if str(p["responder"]) == store.ResponderAuto {
 			entry.Type = "system"
@@ -106,6 +126,17 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			label = "cost"
 		}
 
+		if str(p["status"]) == store.RunAsked {
+			what := fmt.Sprintf("%s waits for the answers to round %.0f", runLabel(p), num(p["question_round"]))
+			if chat, _ := p["chat"].(bool); chat {
+				what = fmt.Sprintf("%s replied in round %.0f's chat", runLabel(p), num(p["question_round"]))
+			}
+
+			entry.Content = fmt.Sprintf("%s (%s %.2f USD).", what, label, num(p["cost_usd"]))
+
+			break
+		}
+
 		entry.Content = fmt.Sprintf("%s %s (%s %.2f USD).", runLabel(p), str(p["status"]), label, num(p["cost_usd"]))
 	case blueprint.EventNote:
 		entry.Type = "system"
@@ -115,6 +146,8 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		critique, _ := p["critique"].(bool)
 
 		switch stage := str(p["retries"]); {
+		case num(p["round"]) > 0 && stage == "":
+			entry.Content = fmt.Sprintf("Noted. Round %.0f still waits for its answers in the question block; the stage's next run gets the note.", num(p["round"]))
 		case stage != "" && critique:
 			entry.Content = fmt.Sprintf("Noted. The review of %s, or its next builder round, runs again, and it and every run after it get the note.", stage)
 		case stage != "":
@@ -402,6 +435,78 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	return entry, true
 }
 
+// roundFrame reads a round snapshot's number and frame; ok is false for a
+// payload that does not decode.
+func roundFrame(p map[string]any) (int, protocol.LogRound, bool) {
+	var f protocol.LogRound
+
+	raw, err := json.Marshal(p["frame"])
+	if err != nil || json.Unmarshal(raw, &f) != nil {
+		return 0, f, false
+	}
+
+	n := int(num(p["round"]))
+
+	return n, f, n > 0
+}
+
+func roundHeading(n int, f protocol.LogRound) string {
+	switch {
+	case f.Closed:
+		return fmt.Sprintf("Round %d, answered", n)
+	case f.Responder:
+		return fmt.Sprintf("Round %d: %d question(s) from the %s, answered by the responder", n, len(f.Questions), f.Persona)
+	default:
+		return fmt.Sprintf("Round %d: %d question(s) from the %s", n, len(f.Questions), f.Persona)
+	}
+}
+
+// roundText is the round as plain markdown, for a panel without the block:
+// each question with its answer, or its options while it has none.
+func roundText(n int, f protocol.LogRound) string {
+	var b strings.Builder
+
+	b.WriteString("**" + roundHeading(n, f) + ".**")
+
+	answers := map[int]protocol.RoundAnswer{}
+	for _, a := range f.Answers {
+		answers[a.Number] = a
+	}
+
+	for _, q := range f.Questions {
+		fmt.Fprintf(&b, "\n\n**Q%d. %s**", q.Number, q.Text)
+
+		if a, ok := answers[q.Number]; ok {
+			b.WriteString("\nAnswer: " + blueprint.AnswerText(q, a))
+
+			continue
+		}
+
+		if q.Why != "" {
+			b.WriteString("\n" + q.Why)
+		}
+
+		for i, o := range q.Options {
+			line := fmt.Sprintf("\n%d. %s", i+1, o.Title)
+			if i+1 == q.Recommended {
+				line += " (recommended)"
+			}
+
+			if o.Summary != "" {
+				line += ": " + o.Summary
+			}
+
+			b.WriteString(line)
+		}
+	}
+
+	if !f.Closed && !f.Responder {
+		b.WriteString("\n\nAnswer in the question block.")
+	}
+
+	return b.String()
+}
+
 // artifactNote is a stored artifact's sheet reference note, finished prose
 // of what is known at store time: cards accepted with contract findings, a
 // loop stage's round, a revision for its reviewer's findings, or the
@@ -648,6 +753,10 @@ func policyText(p map[string]any) string {
 
 	if str(p["open"]) == "question" {
 		text += " Its open question stays with whoever it was put to."
+	}
+
+	if str(p["open"]) == "round" {
+		text += " Its open round of questions stays with whoever it was put to."
 	}
 
 	if str(p["open"]) == "gate" {

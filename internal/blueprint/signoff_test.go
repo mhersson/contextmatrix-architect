@@ -289,37 +289,33 @@ func TestSignoff_ShowsBlockingProblemsAndApproveIsRefused(t *testing.T) {
 	assert.True(t, blocked)
 }
 
-func TestSignoff_ApproveAnswersAPendingQuestion(t *testing.T) {
-	asked := make(chan struct{}, 1)
-
+func TestSignoff_ApproveWhileARoundIsOpenDecidesNothing(t *testing.T) {
 	script := happyScript()
 	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		signal(asked)
-
-		answer, err := in.Asker.Ask(ctx, stage.Question{Text: "Go ahead?"})
-		if err != nil {
+		if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Go", "Go ahead?")}}); err != nil {
 			return stage.Output{}, err
 		}
 
-		return done("# Need\n\n"+answer, nil), nil
+		return askedOutput(in), nil
 	}
 
-	c, st, _, rec, _ := newPipeline(t, script)
+	c, st, runner, rec, _ := newPipeline(t, script)
 	ctx := context.Background()
 
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	receive(t, asked, "the question")
-	rec.waitFor(t, EventQuestion)
+	c.Wait("BP1")
 
 	require.NoError(t, c.Message(ctx, "BP1", "approve", "m2"))
 	c.Wait("BP1")
 
-	assert.True(t, rec.has(EventAnswer))
+	assert.True(t, rec.has(EventNote), "approve is a note")
+	assert.False(t, rec.has(EventDecided))
+	assert.Equal(t, 1, runner.calls(), "nothing runs")
 
-	art, err := st.LatestArtifact(ctx, "BP1", "intake")
-	require.NoError(t, err)
-	assert.Equal(t, "# Need\n\nQ1: approve", art.Body)
+	open := latestRound(t, c, "BP1", 1)
+	assert.False(t, open.Frame.Closed, "the round stays open")
+	assert.Empty(t, open.Frame.Answers)
 
 	gates, err := st.ListGates(ctx, "BP1", signoffStage)
 	require.NoError(t, err)
