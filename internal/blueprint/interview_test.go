@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mhersson/contextmatrix-harness/harness"
 	"github.com/mhersson/contextmatrix-harness/llm"
@@ -252,15 +253,21 @@ func TestReply_StaleAndMismatchedEntries(t *testing.T) {
 	var continuations atomic.Int32
 
 	c, _, runner, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		switch {
-		case in.History == nil:
+		if in.History == nil {
 			qs := []stage.RoundQuestion{roundQ("Deploy", "Helm or Kustomize?", "Helm", "Kustomize"), roundQ("Users", "Who?")}
 			if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: qs}); err != nil {
 				return stage.Output{}, err
 			}
 
 			return askedOutput(in), nil
-		case continuations.Add(1) == 1:
+		}
+
+		// The first continuation fails, the second asks round 2, and the
+		// third submits.
+		switch continuations.Add(1) {
+		case 1:
+			return stage.Output{Result: harness.Result{Reason: "error"}}, errors.New("provider down")
+		case 2:
 			if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Logs", "Own logging stack?", "Yes", "No")}}); err != nil {
 				return stage.Output{}, err
 			}
@@ -293,6 +300,7 @@ func TestReply_StaleAndMismatchedEntries(t *testing.T) {
 		require.NotEmpty(t, errs)
 		assert.Equal(t, "stale_reply", errs[len(errs)-1].Payload["reason"])
 		assert.Equal(t, msgID, errs[len(errs)-1].Payload["message_id"])
+		assert.Equal(t, false, errs[len(errs)-1].Payload["during_run"], "nothing runs after it")
 	}
 
 	// A reply naming another round stores nothing and says so.
@@ -311,7 +319,8 @@ func TestReply_StaleAndMismatchedEntries(t *testing.T) {
 	assert.Equal(t, 1, runner.calls(), "an incomplete round never resumes")
 
 	// A reply mixing entries the round lacks with valid ones keeps the valid
-	// ones, which answer every question: the round closes and goes on.
+	// ones, which answer every question: the round closes and goes on, and
+	// its continuation fails.
 	answerRound(t, c, "BP1", 1, true, pick(5, 1), pick(2, 1), own(2, "the ops team"), pick(1, 2))
 	c.Wait("BP1")
 
@@ -319,19 +328,29 @@ func TestReply_StaleAndMismatchedEntries(t *testing.T) {
 	assert.True(t, s.Frame.Closed)
 	assert.Equal(t, []protocol.RoundAnswer{{Number: 1, Option: 2}, {Number: 2, Text: "the ops team"}}, s.Frame.Answers)
 	assert.Equal(t, 2, s.Dropped)
-	require.Equal(t, 2, runner.calls(), "the continuation asked round 2")
+	require.Equal(t, 2, runner.calls(), "the continuation ran and failed")
 
-	// A reply to round 1, closed, while round 2 is open.
+	// A second device's reply to round 1, closed but still the round the
+	// pipeline stands at: it neither reopens the round nor runs the
+	// continuation again.
 	stale(t, "round:1", "m3")
+
+	// A message runs the continuation again, which asks round 2.
+	require.NoError(t, c.Message(ctx, "BP1", "go on", "m4"))
+	c.Wait("BP1")
+	require.Equal(t, 3, runner.calls(), "the continuation asked round 2")
+
+	// A reply to round 1 while round 2 is open.
+	stale(t, "round:1", "m5")
 	assert.Empty(t, latestRound(t, c, "BP1", 2).Frame.Answers, "nothing reached the open round")
 
-	// A second device's reply to round 2 after it closed and its stage went on.
+	// A reply to round 2 after it closed and its stage went on.
 	answerRound(t, c, "BP1", 2, true, pick(3, 1))
 	c.Wait("BP1")
 	require.True(t, latestRound(t, c, "BP1", 2).Frame.Closed)
-	require.Equal(t, 3, runner.calls())
+	require.Equal(t, 4, runner.calls())
 
-	stale(t, "round:2", "m4")
+	stale(t, "round:2", "m6")
 }
 
 func TestReply_ConcurrentRepliesKeepEveryAnswer(t *testing.T) {
@@ -474,4 +493,75 @@ func TestRelease_AnAbortedHolderLeavesARoundChangeToTheNextMessage(t *testing.T)
 	c.Wait("BP1")
 	assert.Equal(t, 2, runner.calls(), "the next message closes the round and goes on")
 	assert.True(t, latestRound(t, c, "BP1", 1).Frame.Closed)
+}
+
+func TestRelease_ARoundChangeTheHolderNeverReadIsActedOn(t *testing.T) {
+	c, _, runner, _ := newController(t, asks("# Need", roundQ("Deploy", "Helm or Kustomize?", "Helm", "Kustomize")))
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	// A holder that never reads the round is marked by a completing reply.
+	c.mu.Lock()
+	r, _, ok := c.claimLocked("BP1")
+	c.mu.Unlock()
+	require.True(t, ok)
+
+	answerRound(t, c, "BP1", 1, true, pick(1, 1))
+	assert.False(t, latestRound(t, c, "BP1", 1).Frame.Closed, "the held slot defers the close")
+
+	c.release("BP1", r)
+	c.Wait("BP1")
+
+	assert.True(t, latestRound(t, c, "BP1", 1).Frame.Closed)
+	assert.Equal(t, 2, runner.calls(), "the release closes the round and goes on")
+}
+
+func TestRelease_AHolderTheSessionEndCutShortLeavesARoundChangeToTheReopen(t *testing.T) {
+	c, _, runner, _ := newController(t, asks("# Need", roundQ("Deploy", "Helm or Kustomize?", "Helm", "Kustomize")))
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	// A holder that never reads the round is marked by a completing reply,
+	// then the session ends and is reopened while the holder still has the
+	// slot.
+	c.mu.Lock()
+	r, _, ok := c.claimLocked("BP1")
+	c.mu.Unlock()
+	require.True(t, ok)
+
+	answerRound(t, c, "BP1", 1, true, pick(1, 1))
+	require.NoError(t, c.End(ctx, "BP1"))
+
+	reopened := make(chan error, 1)
+
+	go func() { reopened <- c.Start(ctx, startInput("BP1")) }()
+
+	require.Eventually(t, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		_, attached := c.sessions["BP1"]
+
+		return attached
+	}, 5*time.Second, time.Millisecond)
+
+	c.release("BP1", r)
+
+	select {
+	case err := <-reopened:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "the reopen never returned")
+	}
+
+	c.Wait("BP1")
+
+	assert.Equal(t, 1, runner.calls(), "the ended holder's release runs nothing; the reopen owns the slot")
+	assert.False(t, latestRound(t, c, "BP1", 1).Frame.Closed)
 }
