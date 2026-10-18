@@ -2,7 +2,9 @@
 
 Input: the need, the slices, the shared decisions, and for the slice the
 task names its design, grounding and acceptance; the earlier slices'
-design, acceptance and cards; a read-only checkout of each target project.
+design, acceptance and cards as digests, with every card's id, title, project,
+Where paths and dependencies and each project's setup (`read_artifact` returns
+the whole); a read-only checkout of each target project.
 
 Write the cards an autonomous agent will complete, one deliverable each,
 sized for one pull request and at most two planner subtasks. Follow the card

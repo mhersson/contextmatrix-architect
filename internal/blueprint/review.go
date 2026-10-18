@@ -816,6 +816,15 @@ func (c *Controller) reviewerTools(ctx context.Context, sess *session, bp store.
 		lead = checkoutLines(facts)
 	}
 
+	steps, pieces, err := c.steps(ctx, bp.ID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if readsDigests(steps, pieces, st) {
+		ts = append(ts, artifactReader{c: c, id: bp.ID, st: st})
+	}
+
 	if slices.Contains(st.Reviewer.Tools, pack.ToolResearch) {
 		if sess.searcher == nil || c.opts.Fetch == nil {
 			return ts, reviewerResearchOffTask + lead, nil

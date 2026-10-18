@@ -16,7 +16,7 @@ specification and must stay true at HEAD.
 - Holds no secret but the backend HMAC key. The LLM endpoint, MCP key,
   git-credentials token and search key arrive in every session start from CM
   and live in memory only. There is no CM-less mode.
-- Every action is logged: full transcripts (less web search result lists) and an append-only event log.
+- Every action is logged: full transcripts (less web search result lists and artifact reads) and an append-only event log.
   The append-only tables (events, transcripts, artifacts, gates, emissions, questions) are never updated
   or deleted.
 
@@ -27,7 +27,7 @@ specification and must stay true at HEAD.
 - `internal/config` - koanf config: file, then `CONTEXTMATRIX_ARCHITECT_*` env.
 - `internal/webhook` - CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, resume and continue commands and round replies that `internal/blueprint` recognises; serves the blueprint view, artifacts and live stream.
 - `internal/export` - renders a blueprint's stored record as a markdown bundle in the state directory.
-- `internal/blueprint` - controller: blueprint state machine, the step list that repeats per-slice stages once per slice, stage chaining, responder policies and the gate reply, the auto responder, gates at any stage and their folding, reviewer rounds and their findings ledger, code stage preparation, the readiness loop, reply handling (answers, the need, notes delivered to later runs), abort and export, question rounds (posting, replies, continuation, chat), assumptions, events, sign-off, emission and the run watch, the blueprint view and the runs in flight, the live stream of views and drafts, the research tools for research stages and reviewers, their ledger and the guard's terms, and the research-off notice.
+- `internal/blueprint` - controller: blueprint state machine, the step list that repeats per-slice stages once per slice, the digests of other slices' artifacts and `read_artifact`, stage chaining, responder policies and the gate reply, the auto responder, gates at any stage and their folding, reviewer rounds and their findings ledger, code stage preparation, the readiness loop, reply handling (answers, the need, notes delivered to later runs), abort and export, question rounds (posting, replies, continuation, chat), assumptions, events, sign-off, emission and the run watch, the blueprint view and the runs in flight, the live stream of views and drafts, the research tools for research stages and reviewers, their ledger and the guard's terms, and the research-off notice.
 - `internal/stage` - one harness run: persona + instructions + the round tools (ask_questions, answer_chat) and submit_artifact, plus per-run tool sets (the code tools and `repo_info`), submit validation, the pre-flight size check against the model's window, the final-reply mark on the reply a run ends on, the draft of the artifact body as it streams, and transient tool results kept out of the record.
 - `internal/pack` - pipeline packs: stages, personas, instructions, lists.yaml and card.md; the default pack is embedded.
 - `internal/code` - read-only mirrors and per-blueprint trees for the code stages; repo facts; the names a checkout declares, for the leak guard.

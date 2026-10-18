@@ -494,6 +494,15 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		Instructions: c.opts.Pack.Instructions(st.Stage.ID), Task: task,
 	}
 
+	steps, pieces, err := c.steps(context.WithoutCancel(ctx), bp.ID)
+	if err != nil {
+		return stage.Input{}, stageChecks{}, nil, err
+	}
+
+	if readsDigests(steps, pieces, st) {
+		in.Tools = append(in.Tools, artifactReader{c: c, id: bp.ID, st: st})
+	}
+
 	// Checked before any checkout, so a server without the tool source fails
 	// the stage without a fetch.
 	useCM := slices.Contains(st.Tools, pack.ToolCM)
@@ -508,7 +517,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 			return stage.Input{}, stageChecks{}, nil, err
 		}
 
-		in.Tools = stage.CodeTools(facts.root, facts.repos)
+		in.Tools = append(in.Tools, stage.CodeTools(facts.root, facts.repos)...)
 		in.Task = checkoutLines(facts) + in.Task
 	}
 

@@ -1,7 +1,8 @@
 # Solution design
 
 Input: the need, slicing's slices in their order, the shared decisions every
-slice holds to, every earlier slice's design, acceptance and cards, and a
+slice holds to, every earlier slice's design, acceptance and cards as digests (ids,
+contracts and one line each; `read_artifact` returns the whole), and a
 read-only checkout of each target project. Design the slice the task names,
 under its id, and only that slice. Build on the shared decisions and on the
 earlier slices: never decide again what they settled, and line your

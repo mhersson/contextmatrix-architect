@@ -1,7 +1,8 @@
 # Grounding
 
 Input: the need, the shared decisions, the design of the slice the task
-names, the earlier slices' design, acceptance and cards, and a read-only
+names, the earlier slices' design, acceptance and cards as digests (`read_artifact`
+returns the whole), and a read-only
 checkout of each target project at its recorded commit. When the task names
 no slice, verify the design of every slice.
 
