@@ -902,12 +902,13 @@ func (rec record) reviewOf(st pipelineStep, version int) *protocol.ArtifactRevie
 	out := &protocol.ArtifactReview{
 		Reviewer: st.Reviewer.Persona, Score: v.Score, Threshold: threshold,
 		Passed: v.passes(threshold), Round: cmp.Or(v.Round, 1),
+		MaxRounds: maxReviewRounds, Summary: v.Summary,
 		Findings: make([]protocol.ReviewFinding, 0, len(v.Findings)),
 	}
 
 	for _, f := range v.Findings {
 		out.Findings = append(out.Findings, protocol.ReviewFinding{
-			ID: f.ID, Severity: f.Severity, Text: f.Text, Status: f.Status, VerifiedIn: f.VerifiedIn,
+			ID: f.ID, Severity: f.Severity, Text: f.Text, Status: f.Status, VerifiedIn: f.VerifiedIn, ReviewerNote: f.Note,
 		})
 	}
 

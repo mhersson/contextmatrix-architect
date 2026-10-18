@@ -146,8 +146,10 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   known when it is stored: the persona that drew it, the findings a
   revision was given, a loop stage's round, or that its checks refused it
   until round 3. A marker and a round's frame carry a per-slice step's
-  stage and its slice apart. Reviewer verdicts and gate decisions stay
-  prose entries.
+  stage and its slice apart. A reviewer's verdict is a review marker (kind
+  `review`, a text entry) naming the reviewed stage, its slice, the version
+  and the reviewer, rendered from the view's review of that version. Gate
+  decisions stay prose entries.
   Each marker keeps a plain fallback line in `Content`, which a CM without
   markers shows instead.
   The reply a run ends on, one that calls `submit_artifact` or calls no
@@ -229,7 +231,7 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   the builder's transcript, and the tool groups the pack gives it: the code
   tools over the blueprint's checkouts, and with research on `web_fetch`
   alone, behind the same leak guard, to open what the artifact cites; it has
-  no web search. It scores the artifact 1-5 and
+  no web search. It scores the artifact 1-5, sums up what it read and checked, and
   keeps a findings ledger: each finding has an id stable within the stage
   attempt (R1, R2, ...) and a severity (critical, major or minor). A later
   round of the attempt is given every earlier finding, with the claim the
@@ -281,7 +283,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price and context window as CM sent them                                      |
 | stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets |
-| artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, whether it passed, its findings ledger with ids, severities, statuses and the reviewer's notes, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
+| artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, whether it passed, its summary when it gave one, its findings ledger with ids, severities, statuses and the reviewer's notes, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes, or at the responder's answer under auto, or at the answer for one asked alone before rounds; an assumption a human accepted on a tab is recorded on its round, not here |
 | gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded; a fold at version 0 records a stage that collapsed), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted, each web search result list replaced by its query and result count, and each `read_artifact` result by its first line |
@@ -1061,8 +1063,10 @@ frames on the session's chat stream.
   its reviewer's verdict, or a sign-off an emitting mode approved) and when,
   and its reviewer's verdict: the score, the threshold, whether it passed
   (derived from the score and the ledger), the round (1 for a verdict
-  stored without one), and the ledger, each finding with its id, severity,
-  text and status and, for a re-checked one, the version it was verified in.
+  stored without one), the most rounds an attempt runs, the reviewer's
+  summary, and the ledger, each finding with its id, severity, text and
+  status and, for a re-checked one, the version it was verified in and the
+  reviewer's note.
   Each review lists every finding its round judged, and an earlier
   version's review is never rewritten. A rejected version
   stays rejected; any other is superseded once a newer one exists, or once
