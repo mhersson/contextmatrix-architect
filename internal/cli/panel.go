@@ -70,6 +70,14 @@ func waitsOnUser(e blueprint.Event) bool {
 		duringRun, _ := e.Payload["during_run"].(bool)
 
 		return !duringRun
+	case blueprint.EventCap:
+		// CM arms its working indicator on every message; a cap reply that
+		// leaves nothing running must clear it, and one that resumes a stage
+		// starts it.
+		duringRun, _ := e.Payload["during_run"].(bool)
+		resumes, _ := e.Payload["resumes"].(string)
+
+		return !duringRun && resumes == ""
 	case blueprint.EventReport:
 		// At a ready end the sign-off follows on the held run slot; the
 		// sign-off, error or emission that ends it is followed by the idle

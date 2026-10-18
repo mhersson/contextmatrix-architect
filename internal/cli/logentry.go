@@ -172,6 +172,9 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventPolicy:
 		entry.Type = "system"
 		entry.Content = policyText(p)
+	case blueprint.EventCap:
+		entry.Type = "system"
+		entry.Content = capText(p)
 	case blueprint.EventGatePlan:
 		entry.Type = "text"
 		entry.Content = gatePlanText(p)
@@ -769,6 +772,37 @@ func policyText(p map[string]any) string {
 	}
 
 	return text
+}
+
+// capText renders a cap reply: the change it made and the stage it
+// resumes, or why it changed nothing.
+func capText(p map[string]any) string {
+	if refused := str(p["refused"]); refused != "" {
+		return "Nothing changed: " + refused + ", or reply `cap off`."
+	}
+
+	from, to := num(p["from"]), num(p["to"])
+
+	var text string
+
+	switch {
+	case to == 0 && from == 0:
+		text = "The blueprint has no cost cap"
+	case to == 0:
+		text = fmt.Sprintf("Cost cap removed (it was $%.2f)", from)
+	case from == 0 || from == to:
+		text = fmt.Sprintf("Cost cap set to $%.2f", to)
+	case to > from:
+		text = fmt.Sprintf("Cost cap raised from $%.2f to $%.2f", from, to)
+	default:
+		text = fmt.Sprintf("Cost cap lowered from $%.2f to $%.2f", from, to)
+	}
+
+	if resumes := str(p["resumes"]); resumes != "" {
+		return text + "; resuming " + pack.StageName(resumes) + "."
+	}
+
+	return text + "."
 }
 
 // gatePlanText renders the gate plan: who answers each stage's questions

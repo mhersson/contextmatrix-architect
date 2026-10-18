@@ -10,6 +10,10 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
+// reasonStaleReply is the reason of the error a reply for a round that takes
+// no answers gets; it reports the reply and stops nothing.
+const reasonStaleReply = "stale_reply"
+
 // segmentStep is what runs next on a run slot: a stage run, a critique, or
 // a run that goes on from a round (seg). The zero step runs nothing.
 type segmentStep struct {
@@ -63,7 +67,7 @@ func (c *Controller) storeReply(ctx context.Context, sess *session, id string, r
 
 		// during_run tells the panel whether a run goes on working after it.
 		sess.audit.event(ctx, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{
-			"reason": "stale_reply", "prompt_id": rr.PromptID, "message_id": msgID, "during_run": running,
+			"reason": reasonStaleReply, "prompt_id": rr.PromptID, "message_id": msgID, "during_run": running,
 			"message": fmt.Sprintf("That reply answers %s, which takes no answers now; nothing was stored.", rr.PromptID),
 		}})
 

@@ -110,3 +110,19 @@ func (s *Store) SetBlueprintState(ctx context.Context, id, state string) error {
 
 	return nil
 }
+
+// SetBlueprintCostCap records a new cost cap, 0 for none, and bumps
+// updated_at.
+func (s *Store) SetBlueprintCostCap(ctx context.Context, id string, capUSD float64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE blueprints SET cost_cap_usd = ?, updated_at = ? WHERE id = ?`,
+		capUSD, time.Now().UTC().Unix(), id)
+	if err != nil {
+		return fmt.Errorf("store: set the cost cap of %s: %w", id, err)
+	}
+
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}

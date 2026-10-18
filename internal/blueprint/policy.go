@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
@@ -19,7 +21,15 @@ const (
 	CommandAbort  = "abort"
 	CommandExport = "export"
 	CommandGate   = "gate"
+	CommandCap    = "cap"
 )
+
+// capOff is the cap reply that removes the cap.
+const capOff = "off"
+
+// capAmount is a cap reply's amount: one plain decimal number, so neither an
+// exponent nor a word such as "inf" reads as one.
+var capAmount = regexp.MustCompile(`^-?(\d+(\.\d+)?|\.\d+)$`)
 
 // errNoResponder tells a stage whose policy is auto, in a pack without
 // stages/responder.md, to decide a question itself; ask_questions returns it
@@ -27,10 +37,11 @@ const (
 var errNoResponder = errors.New("nobody answers this stage's questions under its auto policy; decide yourself and, where this stage records assumptions, record the decision as one")
 
 // ParseCommand recognises a reply that is a command rather than text for
-// the blueprint: abort and export are the whole message, and a gate reply
-// is exactly gate, a stage and human or auto, so an answer that starts with
-// one of these words stays an answer. Case is ignored; the gate arguments
-// come back lowercased. Any other text returns "".
+// the blueprint: abort and export are the whole message, a gate reply is
+// exactly gate, a stage and human or auto, and a cap reply is exactly cap
+// and an amount or off, so an answer that starts with one of these words
+// stays an answer. Case is ignored; the arguments come back lowercased. Any
+// other text returns "".
 func ParseCommand(text string) (string, []string) {
 	fields := strings.Fields(strings.ToLower(text))
 
@@ -39,6 +50,8 @@ func ParseCommand(text string) (string, []string) {
 		return fields[0], nil
 	case len(fields) == 3 && fields[0] == CommandGate && (fields[2] == pack.PolicyHuman || fields[2] == pack.PolicyAuto):
 		return CommandGate, fields[1:]
+	case len(fields) == 2 && fields[0] == CommandCap && (fields[1] == capOff || capAmount.MatchString(fields[1])):
+		return CommandCap, fields[1:]
 	default:
 		return "", nil
 	}
@@ -84,6 +97,115 @@ func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID s
 	sess.audit.event(ctx, Event{Kind: EventPolicy, BlueprintID: id, Payload: payload})
 
 	return nil
+}
+
+// SetCap records the blueprint's cost cap: value is an amount in USD or
+// off, as ParseCommand returns it, and off stores 0, no cap. An amount not
+// above what the blueprint has spent is refused and changes nothing. Like
+// a gate reply it works while a stage runs, and the cap applies from the
+// next run. With nothing in flight, a raise or a removal runs again the
+// stage the blueprint cap stopped, once, as a retry message would but
+// without a note; nothing else starts.
+func (c *Controller) SetCap(ctx context.Context, id, value, msgID string) error {
+	to := 0.0
+
+	if value != capOff {
+		v, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return fmt.Errorf("blueprint: cap %q: %w", value, err)
+		}
+
+		to = v
+	}
+
+	c.mu.Lock()
+	sess, ok := c.sessions[id]
+	c.mu.Unlock()
+
+	if !ok {
+		return ErrNotFound
+	}
+
+	bp, err := c.opts.Store.GetBlueprint(ctx, id)
+	if err != nil {
+		return fmt.Errorf("blueprint: cap: %w", err)
+	}
+
+	spent, err := c.opts.Store.BlueprintCost(ctx, id)
+	if err != nil {
+		return fmt.Errorf("blueprint: cap: %w", err)
+	}
+
+	payload := map[string]any{"from": bp.CostCapUSD, "to": to, "message_id": msgID}
+
+	if value != capOff && to <= spent {
+		payload["refused"] = fmt.Sprintf("the blueprint has spent $%.2f; a cap must be above that", spent)
+		payload["during_run"] = c.running(id)
+		sess.audit.event(ctx, Event{Kind: EventCap, BlueprintID: id, Payload: payload})
+
+		return nil
+	}
+
+	if err := c.opts.Store.SetBlueprintCostCap(ctx, id, to); err != nil {
+		return fmt.Errorf("blueprint: cap: %w", err)
+	}
+
+	// A lowering never lifts a cap stop, so only a raise or a removal
+	// resumes one.
+	lifts := to == 0 || to > bp.CostCapUSD
+	bp.CostCapUSD = to
+
+	// The slot is held while the stop is read, so nothing starts between
+	// the read and the resume.
+	c.mu.Lock()
+
+	var (
+		r       *run
+		runCtx  context.Context
+		claimed bool
+	)
+
+	if !c.closing && c.sessions[id] == sess {
+		r, runCtx, claimed = c.claimLocked(id)
+	}
+
+	payload["during_run"] = c.runs[id] != nil && !claimed
+	c.mu.Unlock()
+
+	var at stopPoint
+
+	if claimed && lifts {
+		p, found, err := c.stoppedAt(ctx, bp)
+		if err != nil {
+			// The cap is stored; only the resume is lost, and a message
+			// retries the stage.
+			c.opts.Logger.Warn("blueprint: read the stop a cap change resumes", "blueprint", id, "error", sess.audit.text(err.Error()))
+		}
+
+		if found && p.byCap {
+			at = p
+			payload["resumes"] = p.stage
+		}
+	}
+
+	sess.audit.event(ctx, Event{Kind: EventCap, BlueprintID: id, Payload: payload})
+
+	switch {
+	case at.stage != "":
+		c.resume(ctx, runCtx, r, sess, bp, at)
+	case claimed:
+		c.release(id, r)
+	}
+
+	return nil
+}
+
+// running reports whether id's run slot is held.
+func (c *Controller) running(id string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.runs[id] != nil
 }
 
 // stageNamed finds a pack stage by id, ignoring case: a gate reply arrives

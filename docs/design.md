@@ -89,7 +89,7 @@ context window; never use film references.
 CM chat panel (the only client)
      |  internal/webhook (backendkit webhookcore + logbridge:
      |  session start, /message, /logs SSE, end-session, the blueprint view, artifacts and live SSE)
-     |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, outcomes, lesson decision
+     |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, cap <usd>|off, outcomes, lesson decision
      |  events out: stage progress, tool calls, questions, gates, cost
 controller (internal/blueprint)     blueprint state machine, gates, responder policy, cost cap
      |
@@ -789,6 +789,7 @@ Replies the server understands, besides a round's structured answers:
 | ----------------------------- | ---------------------------------------------------------------------- |
 | `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition with the feedback. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
 | `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round or gate keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
+| `cap <usd>`, `cap off`        | Sets the blueprint's cost cap (see below); CM sends it when the person clicks the cost in the sheet header. Exactly two words, the amount one plain decimal number, so an answer that starts with "cap" stays an answer. Works while a stage runs. |
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
 | `lessons`                     | Lists lessons and their state.                                          |
@@ -810,6 +811,23 @@ Replies the server understands, besides a round's structured answers:
   price keeps its own refusal. A run that reaches the per-run cap is an
   ordinary failed run, and a responder below its floor is refused inside the
   asking run, which decides the question itself.
+- The cap is set when the blueprint is created and changed only by the `cap`
+  reply: a reopen keeps the stored cap whatever the start payload carries.
+  `cap <usd>` stores a new cap and `cap off` removes it; an amount not above
+  what the blueprint has spent is refused and changes nothing ("Nothing
+  changed: the blueprint has spent $2.14; a cap must be above that, or reply
+  `cap off`."). Each reply is a `cap` event with the cap it changed `from`
+  and `to`, or why it was refused, and the view's cost shows the new cap at
+  once. The cap applies from the next run, a later run of the same chain
+  included; a run in flight keeps the cap it started with. With nothing in
+  flight, a raise or a removal at a cap stop runs the stopped stage again
+  once, as a retry message would but storing no note: a stage, a review,
+  builder round or revision, a round's continuation or chat run, or an
+  intake with a need stored, which runs on that need. The newest start, end
+  or refusal of the stage's runs must be that cap stop, and the event
+  records the stage it resumes ("Cost cap raised from $2.00 to $4.00;
+  resuming Readiness."). A lowering never lifts a cap stop, so it resumes
+  nothing, and any other stop waits for a message.
 - Reopening a session makes CM send a start for it; a stage interrupted by a
   server restart is re-run from its inputs, or from its stored conversation
   when it went on from a round (below), and a stage whose inputs were stored
@@ -1000,16 +1018,17 @@ frames on the session's chat stream.
   head and tail kept, as in the chat backend.
 - Cost: every run's token buckets are priced at the model price CM sends in
   the start payload; the ledger sums runs per blueprint. A run's cap is the
-  per-run cap (off at zero), or what the blueprint cap has left when that is
-  smaller, and under a blueprint cap a run needs its floor left to start (see
-  Sessions). The run cap stops a run within one model call of passing it, on
-  a priced model a responder run spends from the asking run's cap, and a
-  capped blueprint whose model has no price does not run. An unpriced model
-  on an uncapped blueprint counts only the cost the endpoint reports, and
-  max_turns still bounds every run. CM prices only the session model, so a
-  run on a per-persona override is unpriced: a capped blueprint refuses it,
-  an uncapped one counts the reported cost. A critique round re-bills the
-  conversation so far, and so does a revision round; the ledger counts both.
+  per-run cap (off at zero), or what the blueprint cap, as stored when the
+  run starts, has left when that is smaller, and under a blueprint cap a run
+  needs its floor left to start (see Sessions). The run cap stops a run
+  within one model call of passing it, on a priced model a responder run
+  spends from the asking run's cap, and a capped blueprint whose model has
+  no price does not run. An unpriced model on an uncapped blueprint counts
+  only the cost the endpoint reports, and max_turns still bounds every run.
+  CM prices only the session model, so a run on a per-persona override is
+  unpriced: a capped blueprint refuses it, an uncapped one counts the
+  reported cost. A critique round re-bills the conversation so far, and so
+  does a revision round; the ledger counts both.
 - Every stage run compacts in its window: once a prompt reaches 85% of a
   128000-token window, the harness summarizes the older turns, keeps the
   last six messages and goes on. A model with a smaller window fails on the
@@ -1041,7 +1060,7 @@ internal/cm          MCP client: the project list, the stage read tools, and the
 internal/outcomes    outcomes stage and lessons
 internal/export      markdown rendering into the state directory
 internal/config
-internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export and gate commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
+internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate and cap commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
 ```
 
 ## Changes needed in CM
@@ -1057,6 +1076,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Panel: question and gate prompts (`LogEntry.Prompt`, protocol v0.24.0, with their own text, kind and recommended option from v0.25.0) rendered as buttons; the gate plan stays text, and lesson prompts reuse the same shape | slice 3 (lessons slice 4) |
 | Panel: the blueprint pane (scale bar, sheet, transcript markers), read through CM proxies of the architect's signed view and artifact endpoints, with its live stream relayed on the session's chat stream (protocol v0.26.0) | blueprint UI |
 | A research setting (`off` or `search`, off by default) with the search provider and its key in CM's configuration, sent as `ArchitectStart.Research` (protocol v0.27.0) | research |
+| Panel: clicking the cost in the sheet header asks for a new cap and sends `cap <usd>` or `cap off` as a chat message hidden from the transcript | cost cap |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

@@ -47,6 +47,10 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 	}{
 		{"gate reply on an idle blueprint", blueprint.EventPolicy, map[string]any{"during_run": false}, true},
 		{"gate reply while a stage runs", blueprint.EventPolicy, map[string]any{"during_run": true}, false},
+		{"cap change on an idle blueprint", blueprint.EventCap, map[string]any{"from": 2.0, "to": 4.0, "during_run": false}, true},
+		{"cap change while a stage runs", blueprint.EventCap, map[string]any{"from": 2.0, "to": 4.0, "during_run": true}, false},
+		{"cap change that resumes a stage", blueprint.EventCap, map[string]any{"from": 2.0, "to": 4.0, "during_run": false, "resumes": "readiness"}, false},
+		{"refused cap on an idle blueprint", blueprint.EventCap, map[string]any{"from": 2.0, "to": 1.0, "during_run": false, "refused": "spent"}, true},
 		{"gate plan", blueprint.EventGatePlan, nil, false},
 		{"stage canceled", blueprint.EventStageEnded, map[string]any{"status": "canceled"}, true},
 		{"stage done, what follows decides", blueprint.EventStageEnded, map[string]any{"status": "done"}, false},

@@ -28,6 +28,9 @@ func TestLogEntryFor(t *testing.T) {
 		{"refused gate reply", blueprint.Event{Kind: blueprint.EventPolicy, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "nosuch", "policy": "auto", "refused": "There is no stage nosuch.",
 		}}, "system", []string{"There is no stage nosuch.", "gate <stage> human"}, false},
+		{"a cap raise that resumes a stage", blueprint.Event{Kind: blueprint.EventCap, BlueprintID: "S1", Payload: map[string]any{
+			"from": 2.0, "to": 4.0, "resumes": "solution_design",
+		}}, "system", []string{"$2.00", "$4.00", "Solution design"}, false},
 		{"gate plan", blueprint.Event{Kind: blueprint.EventGatePlan, BlueprintID: "S1", Payload: map[string]any{
 			"stages": []any{
 				map[string]any{"stage": "intake", "policy": "human", "gate": false},

@@ -699,11 +699,13 @@ const capBlueprint = "blueprint"
 // runBudget is what the blueprint cap allows a run: the cap it must stay
 // under (0 means none), or refused, why it may not start. bound says capUSD
 // is what the blueprint cap has left, being below the per-run cap or there
-// being none, so the run reaching it is a cap stop.
+// being none, so the run reaching it is a cap stop. blueprintCapUSD is the
+// blueprint cap it was read under.
 type runBudget struct {
-	capUSD  float64
-	bound   bool
-	refused *capStop
+	capUSD          float64
+	bound           bool
+	refused         *capStop
+	blueprintCapUSD float64
 }
 
 // capStop is a stage the blueprint cost cap stopped: a run of it refused, or
@@ -777,9 +779,17 @@ func capStopOf(e store.Event) (string, bool) {
 // unpriced, since the cap could not bind, a spent cap, and less left than
 // the run's floor. It reports nothing.
 func (c *Controller) runCap(ctx context.Context, bp store.Blueprint, kind, stageID string, m runModel) (runBudget, error) {
-	b := runBudget{capUSD: c.opts.MaxRunCostUSD}
+	// The stored cap, not bp's: a chain of runs holds bp from its start, and
+	// a cap command applies from the next run.
+	cur, err := c.opts.Store.GetBlueprint(ctx, bp.ID)
+	if err != nil {
+		return runBudget{}, fmt.Errorf("cost lookup failed: %w", err)
+	}
 
-	if bp.CostCapUSD <= 0 {
+	capUSD := cur.CostCapUSD
+	b := runBudget{capUSD: c.opts.MaxRunCostUSD, blueprintCapUSD: capUSD}
+
+	if capUSD <= 0 {
 		return b, nil
 	}
 
@@ -788,18 +798,18 @@ func (c *Controller) runCap(ctx context.Context, bp store.Blueprint, kind, stage
 		return runBudget{}, fmt.Errorf("cost lookup failed: %w", err)
 	}
 
-	stop := &capStop{stage: stageID, capUSD: bp.CostCapUSD, spent: spent}
+	stop := &capStop{stage: stageID, capUSD: capUSD, spent: spent}
 
 	if m.price == nil {
-		stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q has no price, so the cap cannot bind; pick a priced model, or start a new blueprint without a cap", bp.CostCapUSD, m.name)
+		stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q has no price, so the cap cannot bind; pick a priced model, or start a new blueprint without a cap", capUSD, m.name)
 		if m.override {
-			stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q, the configured override for stage %s, has no price (CM prices only the session model), so the cap cannot bind; drop the override, or start a new blueprint without a cap", bp.CostCapUSD, m.name, pack.StageName(stageID))
+			stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q, the configured override for stage %s, has no price (CM prices only the session model), so the cap cannot bind; drop the override, or start a new blueprint without a cap", capUSD, m.name, pack.StageName(stageID))
 		}
 
 		return runBudget{refused: stop}, nil
 	}
 
-	left := bp.CostCapUSD - spent
+	left := capUSD - spent
 	if left <= 0 {
 		return runBudget{refused: stop}, nil
 	}
@@ -858,17 +868,18 @@ func (c *Controller) runFloor(ctx context.Context, id, kind, stageID string) (fl
 }
 
 // capStopAfter is the cap stop of a run of kind on stageID cut short at what
-// the blueprint had left, as the ledger stands once the run has ended.
-func (c *Controller) capStopAfter(ctx context.Context, bp store.Blueprint, kind, stageID string) (*capStop, error) {
-	spent, err := c.opts.Store.BlueprintCost(ctx, bp.ID)
+// the blueprint cap capUSD it started under had left, as the ledger stands
+// once the run has ended.
+func (c *Controller) capStopAfter(ctx context.Context, id string, capUSD float64, kind, stageID string) (*capStop, error) {
+	spent, err := c.opts.Store.BlueprintCost(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("cost lookup failed: %w", err)
 	}
 
-	stop := &capStop{stage: stageID, capUSD: bp.CostCapUSD, spent: spent}
+	stop := &capStop{stage: stageID, capUSD: capUSD, spent: spent}
 
-	if spent < bp.CostCapUSD {
-		if stop.floor, err = c.runFloor(ctx, bp.ID, kind, stageID); err != nil {
+	if spent < capUSD {
+		if stop.floor, err = c.runFloor(ctx, id, kind, stageID); err != nil {
 			return nil, err
 		}
 	}

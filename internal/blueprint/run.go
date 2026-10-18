@@ -434,7 +434,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		}
 
 		if budget.bound {
-			if stop, err := c.capStopAfter(bg, bp, store.RunKindStage, stageID); err != nil {
+			if stop, err := c.capStopAfter(bg, id, budget.blueprintCapUSD, store.RunKindStage, stageID); err != nil {
 				c.opts.Logger.Error("blueprint: read the cap stop", "blueprint", id, "run", runID, "error", err)
 			} else {
 				maps.Copy(payload, stop.payload())

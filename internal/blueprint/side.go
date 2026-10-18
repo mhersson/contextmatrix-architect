@@ -154,7 +154,7 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 	}
 
 	if endReason == "max_cost" && b.bound && stopsStage {
-		stop, err := c.capStopAfter(bg, bp, s.kind, s.stage)
+		stop, err := c.capStopAfter(bg, bp.ID, b.blueprintCapUSD, s.kind, s.stage)
 		if err == nil {
 			return out, stop
 		}

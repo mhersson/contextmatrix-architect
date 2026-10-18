@@ -63,6 +63,9 @@ const (
 	// EventPolicy records a gate <stage> human|auto reply: the stage's new
 	// policy, or why the reply changed nothing.
 	EventPolicy = "policy"
+	// EventCap records a cap <usd>|off reply: the cap it changed from and to
+	// and the stage it resumes, or why it changed nothing.
+	EventCap = "cap"
 	// EventGatePlan lists, once the first stage has completed, who answers
 	// each stage's questions and decides its gate.
 	EventGatePlan = "gate_plan"

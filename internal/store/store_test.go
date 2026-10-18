@@ -50,6 +50,27 @@ func TestBlueprintRoundTrip(t *testing.T) {
 	require.Error(t, s.CreateBlueprint(ctx, bp), "duplicate id must fail")
 }
 
+func TestSetBlueprintCostCap(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	created := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+
+	bp := Blueprint{ID: "BP1", Mode: "default", CostCapUSD: 2, State: "idle", CreatedAt: created, UpdatedAt: created}
+	require.NoError(t, s.CreateBlueprint(ctx, bp))
+
+	require.NoError(t, s.SetBlueprintCostCap(ctx, "BP1", 4.5))
+
+	got, err := s.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+	assert.InDelta(t, 4.5, got.CostCapUSD, 1e-9)
+	assert.True(t, got.UpdatedAt.After(created), "the change bumps updated_at")
+
+	got.CostCapUSD, got.UpdatedAt = bp.CostCapUSD, bp.UpdatedAt
+	assert.Equal(t, bp, got, "nothing else changes")
+
+	require.ErrorIs(t, s.SetBlueprintCostCap(ctx, "missing", 1), ErrNotFound)
+}
+
 func TestBlueprintPriceRoundTrip(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
