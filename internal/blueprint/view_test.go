@@ -343,7 +343,7 @@ func TestView_States(t *testing.T) {
 
 				revised := refOf(t, v, "slicing", 2)
 				assert.Equal(t, artAtGate, revised.Status)
-				assert.Nil(t, revised.Review, "a revision is never reviewed")
+				assert.Nil(t, revised.Review, "the revision has no verdict yet")
 				assert.Equal(t, 2, stepOf(t, v, "slicing").LatestVersion)
 			},
 		},

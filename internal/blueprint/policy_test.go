@@ -904,12 +904,12 @@ func TestResume_RunsAFailedOrAbortedStopOnceWithoutANote(t *testing.T) {
 		{
 			name: "a revision", stage: "shape", runs: "shape",
 			stop: gatedStop(func(s stageScript, started chan struct{}) {
-				s["shape.review"] = verdicts(scored(4, "name the owner"))
+				s["shape.review"] = verdicts(scored(4, "name the owner"), fixed(4, "R1"))
 				s["shape"] = stopsFirst(nth(2), started, s["shape"])
 			}),
 			check: func(t *testing.T, _ *store.Store, runner *fakeRunner) {
 				t.Helper()
-				assert.Len(t, inputsOf(runner, "shape.review"), 1, "the revision goes to its gate unreviewed")
+				assert.Len(t, inputsOf(runner, "shape.review"), 2, "the revision is reviewed again")
 			},
 		},
 		{

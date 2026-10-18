@@ -932,13 +932,9 @@ func gateText(p map[string]any) (body, reply string) {
 			findings = "; its findings are in the review above"
 		}
 
-		revised, _ := v["revised"].(bool)
 		passed, _ := v["passed"].(bool)
 
 		switch {
-		case revised:
-			text += fmt.Sprintf(" The reviewer scored %s version %.0f at %.0f of 5 (passes at %.0f); its findings, in the review above, went back for one revision, and the version on the sheet is the revision, not reviewed again.",
-				pack.StageName(stage), num(v["judged"]), num(v["score"]), num(v["threshold"]))
 		case passed:
 			text += fmt.Sprintf(" The reviewer scored it %.0f of 5 (passes at %.0f)%s.", num(v["score"]), num(v["threshold"]), findings)
 		default:

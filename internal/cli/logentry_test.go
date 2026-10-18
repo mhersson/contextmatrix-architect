@@ -672,38 +672,6 @@ func TestLogEntryFor_AFoldedGateShowsTheFoldedSheetAndNeverTheDesignBody(t *test
 	assert.Equal(t, "gate:solution_design:v2", gate.Prompt.ID, "the prompt is the design gate's")
 }
 
-func TestLogEntryFor_ARevisedGateNamesTheVersionTheReviewerScored(t *testing.T) {
-	gate := func(review map[string]any) protocol.LogEntry {
-		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
-			"stage": "shape", "version": 7, "actions": []any{map[string]any{"label": "Approve", "reply": "approve", "feedback": false}},
-			"review": review,
-		}})
-		require.True(t, ok)
-		require.NotNil(t, entry.Prompt)
-
-		return entry
-	}
-
-	base := func() map[string]any {
-		return map[string]any{"passed": true, "round": 1, "score": 4, "threshold": 4, "findings": []any{map[string]any{"id": "R1", "severity": "minor", "text": "thin", "status": "open"}}}
-	}
-
-	plain := gate(base())
-
-	notRevised := base()
-	notRevised["revised"], notRevised["judged"] = false, 7
-	assert.Equal(t, plain.Content, gate(notRevised).Content, "an unrevised gate reads as one stored before revisions were recorded")
-
-	revised := base()
-	revised["revised"], revised["judged"] = true, 6
-	got := gate(revised)
-
-	assert.NotEqual(t, plain.Content, got.Content)
-	assert.Contains(t, got.Content, "version 6")
-	assert.Contains(t, got.Prompt.Text, "version 6", "the prompt's text carries the revision too")
-	assert.NotContains(t, got.Content, "thin", "findings stay in the review above")
-}
-
 func TestLogEntryFor_SignoffShowsEachAssumptionsSourceInPayloadOrder(t *testing.T) {
 	payload := map[string]any{
 		"version": 1, "cards": []any{}, "order": []any{}, "actions": []any{map[string]any{"label": "Approve", "reply": "approve", "feedback": false}},

@@ -456,7 +456,7 @@ func TestFold_AnAutoGateHandsSlicingToTheDesignReviewer(t *testing.T) {
 	assert.Equal(t, []string{"slicing@1:fold", "slicing@1:approve", "solution_design@1:approve", "acceptance@1:approve"}, gateRows(t, st))
 }
 
-func TestFold_AnAutoFoldedGateApprovesTheRevisedDesign(t *testing.T) {
+func TestFold_AnAutoFoldedGateApprovesTheVerifiedDesign(t *testing.T) {
 	script := dialogScript()
 	script["solution_design.review"] = verdicts(scored(4, "name the owner"), fixed(4, "R1"))
 
@@ -467,7 +467,7 @@ func TestFold_AnAutoFoldedGateApprovesTheRevisedDesign(t *testing.T) {
 	driveIn(t, c, in)
 
 	assert.Len(t, inputsOf(runner, "solution_design"), 2, "the design is revised once")
-	assert.Len(t, inputsOf(runner, "solution_design.review"), 1, "the revision is not reviewed")
+	assert.Len(t, inputsOf(runner, "solution_design.review"), 2, "and the revision is reviewed")
 	assert.False(t, rec.has(EventGate))
 	assert.Equal(t, []string{"slicing@1:fold", "slicing@1:approve", "solution_design@2:approve", "acceptance@1:approve"}, gateRows(t, st))
 
@@ -477,7 +477,7 @@ func TestFold_AnAutoFoldedGateApprovesTheRevisedDesign(t *testing.T) {
 	assert.Equal(t, store.ResponderAuto, gates[0].Responder)
 }
 
-func TestFold_TheFoldedGateShowsTheRevisedDesign(t *testing.T) {
+func TestFold_TheFoldedGateShowsTheVerifiedDesign(t *testing.T) {
 	script := dialogScript()
 	script["solution_design.review"] = verdicts(scored(4, "name the owner"), fixed(4, "R1"))
 
@@ -488,7 +488,7 @@ func TestFold_TheFoldedGateShowsTheRevisedDesign(t *testing.T) {
 	designs := inputsOf(runner, "solution_design")
 	require.Len(t, designs, 2, "the design is revised")
 	assert.Contains(t, designs[1].Task, "name the owner")
-	assert.Len(t, inputsOf(runner, "solution_design.review"), 1, "the revision is not reviewed")
+	assert.Len(t, inputsOf(runner, "solution_design.review"), 2, "the revision is reviewed")
 	assert.Empty(t, inputsOf(runner, "slicing.review"))
 	assert.Equal(t, []string{"slicing@1:fold"}, gateRows(t, st))
 
@@ -499,8 +499,8 @@ func TestFold_TheFoldedGateShowsTheRevisedDesign(t *testing.T) {
 	assert.Equal(t, []any{map[string]any{"stage": "slicing", "version": 1, "body": "# Slices"}}, gate.Payload["folded"])
 
 	verdict := reviewOf(t, gate)
-	assert.Equal(t, true, verdict["revised"])
-	assert.Equal(t, 1, verdict["judged"])
+	assert.NotContains(t, verdict, "revised")
+	assert.Equal(t, 2, verdict["judged"])
 }
 
 func TestFold_ARevisionThatCutsToOneSliceDoesNotFold(t *testing.T) {
@@ -521,7 +521,7 @@ func TestFold_ARevisionThatCutsToOneSliceDoesNotFold(t *testing.T) {
 	drive(t, c, "BP1")
 
 	assert.Len(t, inputsOf(runner, "slicing"), 2, "slicing is revised")
-	assert.Len(t, inputsOf(runner, "slicing.review"), 1)
+	assert.Len(t, inputsOf(runner, "slicing.review"), 2, "slicing's own reviewer verifies the revision")
 	assert.Empty(t, inputsOf(runner, "solution_design"), "its gate waits")
 	assert.Empty(t, gateRows(t, st), "the revision has its own gate")
 
@@ -529,7 +529,7 @@ func TestFold_ARevisionThatCutsToOneSliceDoesNotFold(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "slicing", gate.Payload["stage"])
 	assert.Equal(t, 2, gate.Payload["version"])
-	assert.Equal(t, true, reviewOf(t, gate)["revised"])
+	assert.Equal(t, 2, reviewOf(t, gate)["judged"])
 }
 
 func TestSlicesValidator(t *testing.T) {
