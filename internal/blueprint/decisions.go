@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -13,10 +14,11 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-// design is a solution design's structured block, as far as its checks
-// read it.
+// design is a design's structured block, as far as its checks read it: a
+// slice design's decisions per slice, or a shared stage's one list.
 type design struct {
-	Slices []struct {
+	Decisions []decision `json:"decisions"`
+	Slices    []struct {
 		ID        string     `json:"id"`
 		Decisions []decision `json:"decisions"`
 	} `json:"slices"`
@@ -44,14 +46,14 @@ func (c *Controller) decisionsValidator(bp store.Blueprint, stageID string) (fun
 	})
 }
 
-// decisionProblems checks a design: it has slices; every decision has a
-// chosen option, a rejected option and a basis the blueprint knows (an
-// answered question, an accepted assumption, a recorded source or
-// "assumption"); every slice of a consumed slicing is designed; and every
-// question the stage got answered and every assumption the user accepted on
-// its tabs since that slicing was built, in any attempt, is the basis of
-// some decision or stated assumption, so none is dropped. One from before a
-// re-slice stays citable.
+// decisionProblems checks a design: it has slices and covers the slices
+// sliceCoverage asks for; a shared stage's is one decisions list with at
+// least one decision. Every decision has a chosen option, a rejected option
+// and a basis the blueprint knows (an answered question, an accepted
+// assumption, a recorded source or "assumption"). Every question the stage
+// got answered and every assumption the user accepted on its tabs since the
+// slicing was built, in any attempt, is the basis of some decision or stated
+// assumption, so none is dropped. One from before a re-slice stays citable.
 func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, stageID string, data map[string]any) ([]string, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
@@ -62,6 +64,10 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 	if err := json.Unmarshal(raw, &d); err != nil {
 		return []string{problem("design", "shape", "the data is not slices of decisions: "+err.Error())}, nil
 	}
+
+	// A shared stage never has a slices key, whether empty or not.
+	_, hasSlices := data["slices"]
+	st, _ := c.stepAt(stageID)
 
 	questions, err := c.opts.Store.ListQuestions(ctx, bp.ID)
 	if err != nil {
@@ -117,8 +123,36 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 
 	var out []string
 
-	if len(d.Slices) == 0 {
-		out = append(out, problem("design", "no_slices", "the design has no slices"))
+	// group is a list of decisions and where it sits, a slice id or shared.
+	type group struct {
+		where     string
+		decisions []decision
+	}
+
+	var groups []group
+
+	if st.Shared {
+		if hasSlices {
+			out = append(out, problem("design", "shape", "shared decisions are one decisions list for every slice, not slices"))
+		}
+
+		if len(d.Decisions) == 0 {
+			out = append(out, problem("design", "no_decisions", "the shared decisions name none"))
+		}
+
+		if bad := contractsProblem(data); bad != "" {
+			out = append(out, bad)
+		}
+
+		groups = append(groups, group{"shared", d.Decisions})
+	} else {
+		if len(d.Slices) == 0 {
+			out = append(out, problem("design", "no_slices", "the design has no slices"))
+		}
+
+		for _, s := range d.Slices {
+			groups = append(groups, group{strings.TrimSpace(s.ID), s.Decisions})
+		}
 	}
 
 	used := map[string]bool{}
@@ -127,9 +161,9 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 		used[a.Basis] = true
 	}
 
-	for _, s := range d.Slices {
-		for _, dec := range s.Decisions {
-			where := strings.TrimSpace(s.ID + " " + dec.ID)
+	for _, g := range groups {
+		for _, dec := range g.decisions {
+			where := strings.TrimSpace(g.where + " " + dec.ID)
 
 			if strings.TrimSpace(dec.Chosen) == "" {
 				out = append(out, problem(where, "chosen", "the decision names no chosen option"))
@@ -149,17 +183,19 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 		}
 	}
 
-	designed := map[string]bool{}
-	for _, s := range d.Slices {
-		designed[strings.TrimSpace(s.ID)] = true
-	}
+	if !st.Shared {
+		designed := map[string]bool{}
+		for _, s := range d.Slices {
+			designed[strings.TrimSpace(s.ID)] = true
+		}
 
-	missing, err := c.missingSlices(ctx, bp, stageID, designed)
-	if err != nil {
-		return nil, err
-	}
+		missing, err := c.sliceCoverage(ctx, bp, stageID, designed)
+		if err != nil {
+			return nil, err
+		}
 
-	out = append(out, missing...)
+		out = append(out, missing...)
+	}
 
 	for _, o := range own {
 		if !used[o.tag] {
@@ -203,4 +239,50 @@ func (c *Controller) missingSlices(ctx context.Context, bp store.Blueprint, stag
 	}
 
 	return out, nil
+}
+
+// sliceCoverage reports what a design's or acceptance's slices leave out or
+// add: a per-slice step covers its own slice and no other; any other step
+// covers every slice of the slicing it consumes (missingSlices).
+func (c *Controller) sliceCoverage(ctx context.Context, bp store.Blueprint, key string, present map[string]bool) ([]string, error) {
+	st, ok := c.stepAt(key)
+	if !ok || st.Slice == "" {
+		return c.missingSlices(ctx, bp, key, present)
+	}
+
+	var out []string
+
+	if !present[st.Slice] {
+		out = append(out, problem(st.Slice, "slice_missing", "this step's slice is missing here"))
+	}
+
+	for _, id := range slices.Sorted(maps.Keys(present)) {
+		if id != st.Slice {
+			out = append(out, problem(id, "slice_extra", fmt.Sprintf("this step covers %s alone; leave %s out", st.Slice, id)))
+		}
+	}
+
+	return out, nil
+}
+
+// contractsProblem refuses a shared stage's contracts that are not a list of
+// non-empty strings; "" when absent or well formed.
+func contractsProblem(data map[string]any) string {
+	v, ok := data["contracts"]
+	if !ok {
+		return ""
+	}
+
+	list, isList := v.([]any)
+	if !isList {
+		return problem("design", "contracts", "contracts are a list of strings")
+	}
+
+	for _, item := range list {
+		if text, isText := item.(string); !isText || strings.TrimSpace(text) == "" {
+			return problem("design", "contracts", "every contract is a non-empty string")
+		}
+	}
+
+	return ""
 }

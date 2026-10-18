@@ -373,16 +373,21 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   one-slice need still has one design gate. No fold lands on a shared
   stage's gate, and a blueprint from before slices never runs one.
 - Solution design's submit is checked: it has slices, every slice of slicing
-  among them; every decision has a chosen option, a rejected option and a
+  among them, or a per-slice design's own slice alone (`slice_missing`,
+  `slice_extra`); every decision has a chosen option, a rejected option and a
   basis (`Q<n>`, `round<n>.A<k>`, `S<n>` or `assumption`); and every
   question it got answered and every assumption the user accepted on its tabs
   since the slicing it consumes was built is the basis of a decision or of a
   stated assumption; one from before a re-slice stays a basis it may cite.
+  A shared stage's submit is one top-level `decisions` list of the same
+  decision objects, with at least one decision and no `slices`, and an
+  optional `contracts` list, held to the same rules for each decision.
 - Acceptance's submit is checked: it has slices, every slice of slicing
-  among them and each with at least one criterion; every criterion has an
-  id of its own, a target project and its text, and every manual check an
-  id of its own and its text. At decomposition, acceptance data that does
-  not decode (`criteria_unreadable`) or defines no criterion
+  among them, or a per-slice acceptance's own slice alone, and each with at
+  least one criterion; every criterion has an id of its own, never one an
+  earlier slice's acceptance holds, a target project and its text, and every
+  manual check such an id and its text. At decomposition, acceptance data
+  that does not decode (`criteria_unreadable`) or defines no criterion
   (`criteria_empty`) is a contract finding, not a stalled run.
 - A gate folds when the pack's condition on its artifact holds and the gate
   it folds into has the same gate policy: the slicing gate folds into the
@@ -682,15 +687,15 @@ a sentence that points at other text (the `dangling_references` list) or
 names an answered question or an accepted assumption (the basis carries it
 and the sentence states the fact, so no model prose says who answered), and
 a basis that is neither; the third failing submit is accepted with its
-problems kept in its data, and such a basis then reads as none. The controller numbers them
-A1, A2, ... across those stages in pack order and gives every later stage
-that consumes a stating stage the list with the ids. An assumption starts
-with its basis's status: `confirmed` when a human answered the question or
-accepted the assumption, `assumed` when the responder answered it,
-`verified` with the responder's evidence when that answer was verified, and
-`unverified` without a basis. An auto
-answer's own `Q<n>` entry is listed only while no stated assumption in the
-latest stating artifacts rests on it; otherwise those that do carry its
+problems kept in its data, and such a basis then reads as none. The
+controller numbers them A1, A2, ... across those stages in pipeline order,
+slice by slice, and gives every later stage that consumes a stating stage
+the list with the ids. An assumption starts with its basis's status:
+`confirmed` when a human answered the question or accepted the assumption,
+`assumed` when the responder answered it, `verified` with the responder's
+evidence when that answer was verified, and `unverified` without a basis. An
+auto answer's own `Q<n>` entry is listed only while no stated assumption in
+the latest stating artifacts rests on it; otherwise those that do carry its
 status, so an answer and its restatement are one entry. Every stated
 assumption resting on an answered question carries its answer too, a human's
 included, so a merged entry still shows the answer the responder gave. A later

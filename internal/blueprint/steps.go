@@ -184,6 +184,29 @@ func stepIndex(steps []pipelineStep, key string) int {
 	return slices.IndexFunc(steps, func(s pipelineStep) bool { return s.ID == key })
 }
 
+// earlierSteps lists the steps of st's stage for every slice before st's,
+// in slice order; none for a step that is no slice's.
+func earlierSteps(steps []pipelineStep, st pipelineStep) []pipelineStep {
+	if st.Slice == "" {
+		return nil
+	}
+
+	var out []pipelineStep
+
+	// Steps run in slice order, so the earlier slices' come first; stop at st's own.
+	for _, s := range steps {
+		if s.Slice == st.Slice {
+			break
+		}
+
+		if s.Stage.ID == st.Stage.ID {
+			out = append(out, s)
+		}
+	}
+
+	return out
+}
+
 // consumedSteps lists the steps whose latest artifacts st reads, in the
 // order its pack entry consumes them: a whole-blueprint stage's one step; a
 // per-slice stage's step for st's own slice, or for every slice in order

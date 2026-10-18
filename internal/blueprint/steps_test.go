@@ -85,11 +85,13 @@ func slicedScript() stageScript {
 		"intake":                  returns("# Need", nil),
 		"slicing":                 returns("# Slices", twoSlices()),
 		"slicing.review":          passing(),
-		"shared_decisions":        returns("# Shared decisions", nil),
+		"shared_decisions":        returns("# Shared decisions", sharedDecisions()),
 		"shared_decisions.review": passing(),
 		"solution_design":         bySlice("# Design"),
 		"solution_design.review":  passing(),
 		"grounding":               bySlice("# Grounding"),
+		"acceptance":              bySlice("# Acceptance"),
+		"acceptance.review":       passing(),
 	}
 }
 
@@ -214,6 +216,27 @@ func TestConsumedSteps(t *testing.T) {
 	whole := pipelineStep{Stage: pack.Stage{ID: "check", Consumes: []string{"slicing", "grounding"}}, ID: "check"}
 	assert.Equal(t, []string{"slicing", "grounding@SL1", "grounding@SL2", "grounding@SL3"}, keys(whole),
 		"a whole-blueprint step reads every slice's, in slicing order")
+}
+
+func TestEarlierSteps(t *testing.T) {
+	steps := stepsOf(slicedPack(t), []piece{{id: "SL1"}, {id: "SL2"}, {id: "SL3"}}, false)
+	at := func(key string) pipelineStep { return steps[stepIndex(steps, key)] }
+
+	tests := []struct {
+		name string
+		st   pipelineStep
+		want []string
+	}{
+		{name: "the last slice's step", st: at("grounding@SL3"), want: []string{"grounding@SL1", "grounding@SL2"}},
+		{name: "the first slice has no earlier one", st: at("solution_design@SL1")},
+		{name: "a whole-blueprint step is no slice's", st: at("slicing")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, keysIn(earlierSteps(steps, tt.st), "intake", "slicing", "solution_design", "grounding"))
+		})
+	}
 }
 
 func TestStepName_NamesTheSliceOnlyWithTwoOrMore(t *testing.T) {

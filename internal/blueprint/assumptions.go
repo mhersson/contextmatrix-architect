@@ -57,15 +57,16 @@ type verdict struct {
 
 // assumptions lists the blueprint's assumptions with the latest status of
 // each. The stated ones come from the latest artifact of every stage that
-// checks assumptions, numbered A1, A2, ... in pack order and then submit
-// order, so a number stays put while those artifacts do. Every auto answer
-// follows as Q<n>, resting on itself, unless a stated one rests on it and so
-// carries its status and the answer. Each starts with its basis's status
-// (basisStatus). Verdicts come from every stage's latest artifact, a later
-// stage's winning; one naming no listed assumption is ignored. A verdict
-// applies only when its artifact was stored after the latest artifact of
-// every stating stage up to the assumption's own: ids are positional, so an
-// older verdict would judge whatever sentence holds the id now.
+// checks assumptions, numbered A1, A2, ... in pipeline order, slice by
+// slice, and then submit order, so a number stays put while those artifacts
+// do. Every auto answer follows as Q<n>, resting on itself, unless a stated
+// one rests on it and so carries its status and the answer. Each starts with
+// its basis's status (basisStatus). Verdicts come from every stage's latest
+// artifact, a later stage's winning; one naming no listed assumption is
+// ignored. A verdict applies only when its artifact was stored after the
+// latest artifact of every stating stage up to the assumption's own: ids are
+// positional, so an older verdict would judge whatever sentence holds the id
+// now.
 func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, error) {
 	all, err := c.opts.Store.ListArtifacts(ctx, id)
 	if err != nil {
@@ -73,6 +74,11 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 	}
 
 	questions, err := c.opts.Store.ListQuestions(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("blueprint: assumptions: %w", err)
+	}
+
+	steps, _, err := c.steps(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("blueprint: assumptions: %w", err)
 	}
@@ -113,9 +119,9 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 		named  = map[string]bool{}
 	)
 
-	for _, st := range c.opts.Pack.Stages {
+	for _, st := range steps {
 		i, ok := latest[st.ID]
-		if !ok || !slices.Contains(st.Checks, pack.CheckAssumptions) {
+		if st.Collapsed || !ok || !slices.Contains(st.Checks, pack.CheckAssumptions) {
 			continue
 		}
 
@@ -164,9 +170,9 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 		source = append(source, -1)
 	}
 
-	for _, st := range c.opts.Pack.Stages {
+	for _, st := range steps {
 		i, ok := latest[st.ID]
-		if !ok {
+		if st.Collapsed || !ok {
 			continue
 		}
 

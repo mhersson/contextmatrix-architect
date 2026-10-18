@@ -21,6 +21,7 @@ stages:
     policy: human
     gate: true
     shared: true
+    checks: [assumptions, decisions]
     reviewer: {persona: senior_developer, threshold: 4}
   - id: solution_design
     persona: system_designer
@@ -29,6 +30,7 @@ stages:
     policy: human
     gate: true
     reviewer: {persona: senior_developer, threshold: 4}
+    checks: [assumptions, decisions]
     per_slice: true
     earlier_slices: [solution_design]
   - id: grounding
@@ -37,3 +39,13 @@ stages:
     consumes: [intake, slicing, shared_decisions, solution_design]
     per_slice: true
     earlier_slices: [solution_design]
+  - id: acceptance
+    persona: senior_developer
+    produces: acceptance
+    consumes: [intake, slicing, shared_decisions, solution_design, grounding]
+    checks: [criteria]
+    policy: auto
+    gate: true
+    reviewer: {persona: senior_developer, threshold: 4}
+    per_slice: true
+    earlier_slices: [solution_design, acceptance]
