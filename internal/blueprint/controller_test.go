@@ -1881,8 +1881,8 @@ func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(summary), "split the card")
 	assert.Contains(t, string(summary), "ALPHA-042")
-	assert.Contains(t, string(summary), "| solution_design | 1 | approve | auto |", "a stage's gate is listed beside the sign-off's")
-	assert.Contains(t, string(summary), "| signoff | 1 | reject | human |")
+	assert.Contains(t, string(summary), "| Solution design | 1 | approve | auto |", "a stage's gate is listed beside the sign-off's")
+	assert.Contains(t, string(summary), "| Signoff | 1 | reject | human |")
 }
 
 func TestExport_UnknownBlueprint(t *testing.T) {

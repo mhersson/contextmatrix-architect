@@ -114,7 +114,10 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   adapter: `internal/webhook`, CM's chat-backend protocol. CM starts a session
   with a payload, the user's messages arrive on `/message`, events stream back
   as log entries over SSE and the panel renders them as messages and tool
-  calls. A gate a human answers is a text entry carrying a prompt
+  calls. Text a person reads names a stage by its display name, its id with
+  underscores as spaces and the first letter upper case (`Solution design`);
+  prompt ids, event payloads, markers and the `gate <stage> human` command
+  keep the raw id. A gate a human answers is a text entry carrying a prompt
   (`LogEntry.Prompt`): actions, each a label and the exact reply text, which
   the panel shows as buttons, the markdown staying the readable fallback. A
   gate's, the sign-off's, a stopped emission's or a run start's prompt
@@ -627,8 +630,8 @@ playbook description and a single card's Context list every assumption with
 its latest status; each adds, for an assumed or confirmed one, who answered
 the question it rests on and its tag, and the answer, for every entry that
 carries one. A confirmed one resting on an accepted assumption reads
-"accepted at" the stage of the tab it was accepted on instead, with no tag
-and no answer. When no stage stated any as data,
+"accepted at" the display name of the stage of the tab it was accepted on
+(`Intake`) instead, with no tag and no answer. When no stage stated any as data,
 as with an intake stored before assumptions were data, they show the text of
 intake's Assumptions section instead, without ids or statuses.
 

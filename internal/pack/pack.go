@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 
@@ -464,3 +466,17 @@ func (p *Pack) ReviewInstructions() string { return p.review }
 // ResponderInstructions returns what every responder run reads; empty when
 // the pack has none, and then an auto question returns to its stage.
 func (p *Pack) ResponderInstructions() string { return p.responder }
+
+// StageName is how a stage id reads to a person: underscores become spaces
+// and the first letter is upper case. A pack has no title field, and a raw id
+// is what a typed command and the record keep.
+func StageName(id string) string {
+	words := strings.ReplaceAll(id, "_", " ")
+	if words == "" {
+		return ""
+	}
+
+	r, size := utf8.DecodeRuneInString(words)
+
+	return string(unicode.ToUpper(r)) + words[size:]
+}

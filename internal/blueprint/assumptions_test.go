@@ -641,7 +641,7 @@ func TestAssumptions_AnAcceptedAssumptionReadsAsAcceptedAtItsStage(t *testing.T)
 
 	lines := assumptionLines(list)
 
-	for text, stage := range map[string]string{"One region.": "intake", "Two zones.": "solution design"} {
+	for text, stage := range map[string]string{"One region.": "Intake", "Two zones.": "Solution design"} {
 		status, _, _ := strings.Cut(lineWith(lines, text), text)
 		assert.Contains(t, status, "accepted at "+stage)
 

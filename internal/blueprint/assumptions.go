@@ -349,7 +349,7 @@ func assumptionLines(list []assumption) string {
 		status := a.Status
 
 		if a.Status == assumptionConfirmed && a.AcceptedAt != "" {
-			status += " by the user, accepted at " + stageWords(a.AcceptedAt)
+			status += " by the user, accepted at " + pack.StageName(a.AcceptedAt)
 		} else if who, ok := backer[a.Status]; ok {
 			status += " by " + who
 			if a.Basis != a.ID {
@@ -374,9 +374,6 @@ func assumptionLines(list []assumption) string {
 
 	return strings.Join(lines, "\n")
 }
-
-// stageWords is how a stage id reads in text shown to a person.
-func stageWords(id string) string { return strings.ReplaceAll(id, "_", " ") }
 
 // assumptionsPayload carries assumptions in an event.
 func assumptionsPayload(list []assumption) []any {

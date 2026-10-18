@@ -156,7 +156,7 @@ func (c *Controller) decide(ctx context.Context, au audit, id, stageID string, v
 		BlueprintID: id, Stage: stageID, Version: version, Decision: decision,
 		Feedback: au.text(feedback), Responder: responder, DecidedAt: c.opts.Now().UTC(),
 	}); err != nil {
-		c.fail(ctx, au, id, 0, fmt.Sprintf("gate %s: record the decision: %v", stageID, err))
+		c.fail(ctx, au, id, 0, fmt.Sprintf("gate %s: record the decision: %v", pack.StageName(stageID), err))
 
 		return false
 	}
@@ -256,7 +256,7 @@ func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint,
 		c.opts.Logger.Error("blueprint: read the gate's replies", "blueprint", bp.ID, "stage", out.stage, "error", au.text(err.Error()))
 		c.setState(ctx, bp.ID, StateIdle)
 		au.event(ctx, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
-			"stage": out.stage, "message": fmt.Sprintf("The replies %s's gate takes cannot be read from the record, so the gate is not shown: %v", out.stage, err),
+			"stage": out.stage, "message": fmt.Sprintf("The replies %s's gate takes cannot be read from the record, so the gate is not shown: %v", pack.StageName(out.stage), err),
 		}})
 
 		return
@@ -381,11 +381,11 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 
 	action, feedback, ok := matchAction(text, actions)
 	if !ok {
-		hint := fmt.Sprintf("Reply approve to go on, or reject <feedback> to run %s again with your feedback.", out.stage)
+		hint := fmt.Sprintf("Reply approve to go on, or reject <feedback> to run %s again with your feedback.", pack.StageName(out.stage))
 
 		for _, a := range actions {
 			if a.Target != "" && a.Target != out.stage {
-				hint += fmt.Sprintf(" Reply %s <feedback> to run %s and everything after it again.", a.Reply, a.Target)
+				hint += fmt.Sprintf(" Reply %s <feedback> to run %s and everything after it again.", a.Reply, pack.StageName(a.Target))
 			}
 		}
 

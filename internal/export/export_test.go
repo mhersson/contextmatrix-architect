@@ -62,7 +62,7 @@ func TestWrite_RendersEveryPart(t *testing.T) {
 	assert.Contains(t, string(summary), `keep a\\\|b`, "a backslash cannot unescape the pipe after it")
 	assert.Contains(t, string(summary), "ALPHA-007")
 	assert.Contains(t, string(summary), "ship-it")
-	assert.Contains(t, string(summary), "| 7 | intake | "+store.RunKindResponder+" |", "the runs table shows the kind")
+	assert.Contains(t, string(summary), "| 7 | Intake | "+store.RunKindResponder+" |", "the runs table shows the kind")
 
 	info, err := os.Stat(filepath.Join(dir, "blueprint.md"))
 	require.NoError(t, err)

@@ -703,7 +703,7 @@ func (c *Controller) runCap(ctx context.Context, bp store.Blueprint, stageID str
 
 	if m.price == nil {
 		if m.override {
-			return 0, fmt.Sprintf("cost cap %.2f USD is set but model %q, the configured override for stage %s, has no price (CM prices only the session model), so the cap cannot bind; drop the override, or start a new blueprint without a cap", bp.CostCapUSD, m.name, stageID), nil
+			return 0, fmt.Sprintf("cost cap %.2f USD is set but model %q, the configured override for stage %s, has no price (CM prices only the session model), so the cap cannot bind; drop the override, or start a new blueprint without a cap", bp.CostCapUSD, m.name, pack.StageName(stageID)), nil
 		}
 
 		return 0, fmt.Sprintf("cost cap %.2f USD is set but model %q has no price, so the cap cannot bind; pick a priced model, or start a new blueprint without a cap", bp.CostCapUSD, m.name), nil

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
@@ -62,7 +63,7 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 		Status: store.RunRunning, Model: m.name, StartedAt: c.opts.Now().UTC(),
 	})
 	if err != nil {
-		return stage.Output{}, fmt.Errorf("blueprint: start the %s run of %s: %w", s.kind, s.stage, err)
+		return stage.Output{}, fmt.Errorf("blueprint: start the %s run of %s: %w", s.kind, pack.StageName(s.stage), err)
 	}
 
 	f := &flight{
@@ -132,7 +133,7 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 	}})
 
 	if runErr != nil {
-		return out, fmt.Errorf("blueprint: the %s run of %s: %w", s.kind, s.stage, runErr)
+		return out, fmt.Errorf("blueprint: the %s run of %s: %w", s.kind, pack.StageName(s.stage), runErr)
 	}
 
 	return out, nil
