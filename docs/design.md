@@ -102,6 +102,7 @@ stage runner (internal/stage)       one harness.Run per round: persona + stage p
      |-- cm tools        read-only MCP reads for grounding and readiness:
      |                   cm_list_projects, cm_list_cards, cm_get_card, cm_get_playbook
      |-- control tools   ask_questions (posts a round, ends the run),
+     |                   answer_chat (replies in a round's chat, ends the run),
      |                   submit_artifact (terminal)
      |
 store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions, gates,
@@ -151,11 +152,12 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   endpoint (fail-closed, no local fallback), MCP key, model and
   git-credentials token, and ignores `resume` and the worker image. It reopens
   the blueprint by id and runs no container. An end-session call detaches the
-  client; the blueprint persists. A message that arrives after the need and
-  that decides no open gate is logged as a note,
-  never dropped. Every model run that starts later, reviewer runs included,
-  gets every note so far in its task, with the stage that was open when it
-  came, except a bare `approve` or `reject`; a builder round that resumes a
+  client; the blueprint persists. A message that arrives after the need,
+  while no human's round waits (then it is chat about the round), and that
+  decides no open gate is logged as a note, never dropped. Every model run
+  that starts later, reviewer runs included, gets every note so far in its
+  task, with the stage that was open when it came, except a bare `approve`
+  or `reject`; a builder round that resumes a
   conversation gets the notes that conversation has not seen. Entries
   published before CM's consumer connects, or while it is reconnecting, are
   retained on the server and replayed to it once, ahead of live entries.
@@ -165,11 +167,23 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   Answers sent in batches are stored as they come. Once every question has
   an answer the round closes, each answer is recorded in `questions`, and a
   continuation runs: a stage run of the same attempt and builder round that
-  resumes the stored conversation of the run that asked, with the answers
-  and the notes that conversation has not seen as its next message. It may
-  ask a follow-up round. Without that conversation a first build starts
-  over in its attempt, given every answered question, and a builder round
-  is run again by its critique. A message while a round waits is a note.
+  resumes the stored conversation of the run that asked, or of the chat run
+  that replied last, with the answers, the chat it has not answered and the
+  notes that conversation has not seen as its next message. It may ask a
+  follow-up round. Without that conversation a first build starts over in
+  its attempt, given every answered question, and a builder round is run
+  again by its critique. A message while a human's round waits is chat
+  about it: it is stored on the round, and a chat run, a stage run of the
+  same attempt and builder round, resumes the stored conversation with the
+  messages it has not seen and replies with `answer_chat`. It may revise a
+  question or add one; a question whose options change loses its answer,
+  and the others keep theirs. Messages written while a chat run runs are
+  answered by the next, and a round whose last answer arrived meanwhile
+  closes once it ends. The reply reaches the panel only in the round's
+  chat; the chat run's text and its `answer_chat` call stay in the record.
+  A chat run that fails or is aborted leaves its messages until the user
+  writes or answers again: the chat runs again, or the continuation of the
+  answered round gets them.
   Under `auto` a responder run answers each question inside the asking run
   (see Interaction), the round is shown answered and read-only, and the stage
   continues at once.
@@ -325,7 +339,8 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   none. A one-slice need costs nine runs: intake, slicing, solution design
   and its review, grounding, acceptance and its review, decomposition and
   readiness; up to eleven when both reviews pass with findings, each adding
-  a revision round, plus one continuation run per question round.
+  a revision round, plus one continuation run per question round and one
+  chat run per chat reply.
 - In default mode a one-slice need touches the human at the rounds of
   intake, slicing and solution design (no limit when a human answers), the
   solution design gate with slicing folded into it, and the sign-off. A
@@ -624,7 +639,7 @@ starts are bounded by CM's per-card guardrails, not by the architect.
 | code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock the first time a run needs the trees: at the start of the first stage with the code tools (solution design), or earlier, at a research stage's first leak-guard check that needs them, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. A repository with no commits checks out as an empty tree with no sha. `repo_info` returns the sha, instruction file presence, the project's verify command, whether the repository is empty and, to the stage that fetched the tree, the default branch. |
 | research | `web_search`, `web_fetch` | Offered to the stages whose pack names the group (intake, slicing and solution design in the default pack) when the session's research settings name a provider the architect can build; otherwise the group is absent and the session says once, at the first such stage, that research is off. `web_search` asks the provider (Brave Search) for ten results: titles, URLs and snippets the model reads in that run only, since a run's stored messages keep only the query and the result count. `web_fetch` reads an http or https page from a public address: every connection's address is checked after the name resolves, redirects included (five at most), and no proxy is used; it reads at most 5 MiB in 20 seconds, keeps 48 KiB of text, turns HTML into readable text (the main or article element, without scripts, navigation or footers), takes text types as they are and refuses the rest. A page read is recorded as a `url` source and its result starts with the tag; a page with no readable text is a tool error, not a source. A leak guard checks every query and every URL's host labels, path and query and refuses, as a tool error naming the rule: a token with a path separator (acronym pairs like CI/CD and HTTP/1.1 pass) or a file extension (a `<name>.js` library passes), code punctuation (a URL path segment may carry a name's `(` or `=`, as in `Raft_(algorithm)`), a compound identifier the blueprint's checkouts declare (not a name of a package they depend on, and nothing in a lockfile), the root module path's owner or name (a nested module's compound name is a declared identifier), a target project's name or its repositories' owner or name, a ContextMatrix card id, and a query, or a URL path segment, query key or query value, over 160 characters; plain words and technology names pass. A URL's host labels get the name, module, identifier and card-id rules but not the shape rules, since a page can ask for a host that carries data; its path segments skip the path and file-name rules, which a URL's own syntax breaks; its query keys and values get every query rule. It reads the checkouts once per run, at the first check that needs them, checking them out first in a stage without the code tools, and refuses everything while it cannot read them. The responder shares its stage's tools. Every query and page read is a `research` event. |
 | cm       | `list_projects`, `list_cards`, `get_card`, `get_playbook` as `cm_`-prefixed reads | Offered to grounding and readiness over the session's MCP key, one MCP session per run, chat's bridge adapter on the architect's client with a `cm_` prefix and an allowlist that skips tools CM does not serve. No `agent_id` is sent, so CM keeps redacting unvetted imported text; `get_card` never attaches images; a credential embedded in a URL is removed from every result and error before the model or the record sees it, since CM returns project config as stored; every result carries the blueprint's ContextMatrix source tag. Creating cards and playbooks and starting runs are controller calls with the configured caller identity, never model tools. |
-| control  | `ask_questions`, `submit_artifact`                                                         | `ask_questions` posts a round and ends the run: per question a tab title, the question, why it matters, options with a summary, pros, cons and source tags (only tags a tool result of this blueprint returned, which the panel shows as links), and the recommended position; a trailing "(recommended)" a model writes into an option title is cut and marks it. A round asks at most 10 questions of at most 6 options, 96 KiB in all. A question already answered with the same options is refused; a changed option set makes a new question. Under `auto` its responder answers before the run ends. Questions are numbered `Q<n>` per blueprint. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
+| control  | `ask_questions`, `answer_chat`, `submit_artifact`                                          | `ask_questions` posts a round and ends the run: per question a tab title, the question, why it matters, options with a summary, pros, cons and source tags (only tags a tool result of this blueprint returned, which the panel shows as links), and the recommended position; a trailing "(recommended)" a model writes into an option title is cut and marks it. A round asks at most 10 questions of at most 6 options, 96 KiB in all. A question already answered with the same options is refused; a changed option set makes a new question. Under `auto` its responder answers before the run ends. Questions are numbered `Q<n>` per blueprint. `answer_chat` replies in an open round's chat, at most 4000 characters, revising or adding questions under the same limits, and ends the run. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
 
 Every tool result passes the harness redactor for every secret the process
 holds.
@@ -736,7 +751,7 @@ Replies the server understands, besides a round's structured answers:
 
 | Reply                         | Effect                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
-| `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition with the feedback. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is a note its stage's next run gets. |
+| `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition with the feedback. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
 | `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round or gate keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
@@ -761,8 +776,10 @@ Replies the server understands, besides a round's structured answers:
   its earlier runs got and who gave each; a reopen that comes while that run
   still winds down waits for it first. A round outlives End, a restart and
   days away: its stored answers stay, a reopen shows it again with them, and
-  it waits. A continuation that the session's end or a restart cut short
-  runs again on reopen from the same stored conversation, and a round that
+  it waits; a chat message that a chat run cut short by the session's end
+  or a restart left unanswered is answered first. A continuation that the
+  session's end or a restart cut short runs again on reopen from the same
+  stored conversation, and a round that
   closed but never continued continues; a close cut short finishes, and no
   answer is recorded twice. An abort ends a run in flight, never a round. A
   round the pipeline went past without its answers, as when the run that
@@ -781,7 +798,8 @@ Replies the server understands, besides a round's structured answers:
 - From slice 4, a project may opt into automatic export in config: a target
   repo, branch and directory; the bundle is committed there at each gate or at
   sign-off. Off by default.
-- A message that arrives after the need and that decides no open gate is a
+- A message that arrives after the need, while no human's round waits
+  (then it is chat about the round), and that decides no open gate is a
   note: it is logged and given to every model run that starts later, in
   arrival order. A note never reaches a run already in
   flight, and a note at an open gate leaves the gate open. A note that is only
@@ -810,8 +828,10 @@ frames on the session's chat stream.
   stopped emission or run start), and the cost: the ledger plus the runs in
   flight, the blueprint and per-run caps, and whether every run was priced.
   While a round waits, its stage's step is waiting and no run is in
-  flight. Every artifact version is listed with its status (current,
-  reviewing, at_gate, approved, rejected, superseded, folded), who decided
+  flight; while a chat run answers its chat, the step is running and the
+  round stays the open prompt. Every artifact version is listed with its
+  status (current, reviewing, at_gate, approved, rejected, superseded,
+  folded), who decided
   its gate (you, the responder, or automatically for a sign-off an emitting
   mode approved) and when, and its reviewer's verdict. A rejected version
   stays rejected; any other is superseded once a newer one exists, or once

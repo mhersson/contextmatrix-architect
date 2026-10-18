@@ -168,6 +168,26 @@ func TestRun_AnswerChatNeedsAReply(t *testing.T) {
 	assert.Equal(t, "Yes.", iv.answers[0].Reply)
 }
 
+func TestRun_AnswerChatCapsTheReplyInCharacters(t *testing.T) {
+	// Two-byte runes: the cap counts characters, so 4000 of them pass.
+	tooLong, longest := strings.Repeat("é", 4001), strings.Repeat("é", 4000)
+
+	f := &fakeLLM{responses: []llm.Response{
+		{ToolCalls: []llm.ToolCall{toolCall("c1", "answer_chat", `{"reply":"`+tooLong+`"}`)}, FinishReason: "tool_calls"},
+		{ToolCalls: []llm.ToolCall{toolCall("c2", "answer_chat", `{"reply":"`+longest+`"}`)}, FinishReason: "tool_calls"},
+	}}
+	iv := &stubInterviewer{}
+
+	in := baseInput(&bytes.Buffer{})
+	in.Interviewer, in.Chat = iv, true
+
+	out, err := runnerWith(f).Run(context.Background(), in)
+	require.NoError(t, err)
+	assert.True(t, out.Asked)
+	require.Len(t, iv.answers, 1, "the long reply never reaches the round")
+	assert.Equal(t, longest, iv.answers[0].Reply)
+}
+
 func TestRun_AChatRunNeedsAnInterviewer(t *testing.T) {
 	in := baseInput(&bytes.Buffer{})
 	in.Chat = true

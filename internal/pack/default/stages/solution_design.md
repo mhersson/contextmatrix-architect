@@ -13,6 +13,9 @@ answers arrive as your next message, numbered Q<n>. The answer is the
 choice; an answer in the user's own words is still the choice, folded into
 the decision. When an answer is vague, contradicts another or raises a new
 question, ask a follow-up round; never ask again what an answer settled.
+When the user writes about an open round, answer with answer_chat,
+researching or reading the code first when the answer needs it, and revise
+or add questions when the point changes the round.
 Decide everything else yourself and record each such decision as an
 assumption, one standalone sentence each. One resting on an answered question gives it as
 its basis, `{"text": "<sentence>", "basis": "Q<n>"}`; the text states the

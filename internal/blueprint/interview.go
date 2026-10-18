@@ -3,7 +3,6 @@ package blueprint
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -43,6 +42,9 @@ type interviewer struct {
 	// qround is the round a chat run answers; posted the round the run
 	// posted or answered, for its end event.
 	qround, posted int
+	// seen is how many chat entries a chat run was given; its reply follows
+	// them.
+	seen int
 }
 
 func (iv *interviewer) Ask(ctx context.Context, rd stage.Round) (string, error) {
@@ -169,9 +171,77 @@ func (iv *interviewer) respondAll(ctx context.Context, s roundState) (string, er
 	return postedText(s), nil
 }
 
-// Answer is the chat reply; no run answers a chat yet.
-func (iv *interviewer) Answer(context.Context, stage.ChatAnswer) (string, error) {
-	return "", errors.New("this run answers no round's chat")
+// Answer is a chat run's reply in its round's chat, with the questions it
+// revises or adds. The round then names this run, whose conversation the
+// next segment resumes and which ends asked, so the pipeline still stands
+// at the round.
+func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	c, bg := iv.c, context.WithoutCancel(ctx)
+
+	var added []stage.RoundQuestion
+
+	for _, q := range a.Questions {
+		if q.Number == 0 {
+			added = append(added, q)
+		}
+	}
+
+	if err := c.repeated(bg, iv.bp.ID, added); err != nil {
+		return "", err
+	}
+
+	sources, err := c.roundSources(bg, iv.bp.ID, a.Questions)
+	if err != nil {
+		return "", err
+	}
+
+	lock := c.roundLock(iv.bp.ID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	place, found, err := c.roundAt(bg, iv.bp.ID)
+	if err != nil {
+		return "", err
+	}
+
+	if !found || place.state.Number != iv.qround || place.state.Frame.Closed {
+		return "", fmt.Errorf("round %d takes no changes now", iv.qround)
+	}
+
+	first, err := c.nextQuestionNumber(bg, iv.bp.ID)
+	if err != nil {
+		return "", err
+	}
+
+	next, err := revised(place.state, a.Questions, first, sources)
+	if err != nil {
+		return "", err
+	}
+
+	if len(next.Frame.Questions) > stage.MaxRoundQuestions {
+		return "", fmt.Errorf("a round asks at most %d questions and round %d has %d; revise one of them instead of adding more",
+			stage.MaxRoundQuestions, next.Number, len(place.state.Frame.Questions))
+	}
+
+	// The reply follows the entries this run was given; any the user wrote
+	// meanwhile come after it, for the next chat run.
+	seen := min(iv.seen, len(next.Frame.Chat))
+	chat := append(slices.Clone(next.Frame.Chat[:seen]), protocol.RoundChat{From: iv.st.Persona, Text: a.Reply})
+	next.Frame.Chat = append(chat, next.Frame.Chat[seen:]...)
+	next.Seen, next.RunID, next.Change, next.MessageID, next.Dropped = seen+1, iv.runID, changeReply, "", 0
+
+	if err := fits(next); err != nil {
+		return "", err
+	}
+
+	c.putRound(bg, iv.sess.audit, iv.bp.ID, iv.runID, next)
+	iv.posted = next.Number
+
+	return fmt.Sprintf("Your reply is in round %d's chat. Your run ends here; the user answers in the block or writes again.", next.Number), nil
 }
 
 // fits refuses a round whose questions would not fit the panel's frame.

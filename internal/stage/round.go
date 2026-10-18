@@ -15,15 +15,19 @@ import (
 
 const (
 	askQuestionsName = "ask_questions"
-	answerChatName   = "answer_chat"
+	// AnswerChatName is the tool a chat run replies with.
+	AnswerChatName = "answer_chat"
 )
 
 // A round's frame must stay well under what ContextMatrix stores per round
-// (256 KiB) and reads per log line (1 MiB); a title is the tab label.
+// (256 KiB, chat included) and reads per log line (1 MiB); a title is the
+// tab label.
 const (
-	maxRoundQuestions = 10
+	// MaxRoundQuestions bounds a round, the questions its chat adds included.
+	MaxRoundQuestions = 10
 	maxOptions        = 6
 	maxTitleRunes     = 48
+	maxReplyRunes     = 4000
 )
 
 // RoundOption is one candidate answer to a round's question. Sources are
@@ -137,12 +141,12 @@ type answerChatTool struct {
 	mark *terminalMark
 }
 
-func (answerChatTool) Name() string   { return answerChatName }
+func (answerChatTool) Name() string   { return AnswerChatName }
 func (answerChatTool) Terminal() bool { return true }
 
 func (answerChatTool) Schema() llm.Tool {
 	return llm.Tool{Type: "function", Function: llm.ToolFunction{
-		Name: answerChatName,
+		Name: AnswerChatName,
 		Description: "Reply in the open round's chat. Revise a question (give its number) or add one when the person's point changes the round; " +
 			"a question whose options you change loses its answer, and the others keep theirs. Your run ends with the reply.",
 		Parameters: json.RawMessage(`{"type":"object","properties":{
@@ -153,18 +157,22 @@ func (answerChatTool) Schema() llm.Tool {
 
 func (t answerChatTool) Execute(ctx context.Context, args map[string]any) (tools.Result, error) {
 	reply := strings.TrimSpace(stringArg(args, "reply"))
-	if reply == "" {
-		return tools.Result{}, fmt.Errorf("%s: reply is required", answerChatName)
+
+	switch {
+	case reply == "":
+		return tools.Result{}, fmt.Errorf("%s: reply is required", AnswerChatName)
+	case utf8.RuneCountInString(reply) > maxReplyRunes:
+		return tools.Result{}, fmt.Errorf("%s: a reply is at most %d characters", AnswerChatName, maxReplyRunes)
 	}
 
 	qs, err := parseQuestions(args["questions"], true)
 	if err != nil {
-		return tools.Result{}, fmt.Errorf("%s: %w", answerChatName, err)
+		return tools.Result{}, fmt.Errorf("%s: %w", AnswerChatName, err)
 	}
 
 	text, err := t.iv.Answer(ctx, ChatAnswer{Reply: reply, Questions: qs})
 	if err != nil {
-		return tools.Result{}, fmt.Errorf("%s: %w", answerChatName, err)
+		return tools.Result{}, fmt.Errorf("%s: %w", AnswerChatName, err)
 	}
 
 	t.mark.asked = true
@@ -182,8 +190,8 @@ func parseQuestions(v any, revise bool) ([]RoundQuestion, error) {
 		return nil, errors.New("questions must be a list")
 	}
 
-	if len(items) > maxRoundQuestions {
-		return nil, fmt.Errorf("a round asks at most %d questions; ask the rest in a later round", maxRoundQuestions)
+	if len(items) > MaxRoundQuestions {
+		return nil, fmt.Errorf("a round asks at most %d questions; ask the rest in a later round", MaxRoundQuestions)
 	}
 
 	out := make([]RoundQuestion, 0, len(items))

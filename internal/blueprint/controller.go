@@ -489,17 +489,36 @@ func (c *Controller) leftRunning(ctx context.Context, id string) ([]store.Run, e
 	return out, nil
 }
 
-// Message handles one user message: the need while the first stage has no
-// artifact, the sign-off decision (approve or reject <feedback>) at a ready
-// end, or a note. The abort and export
+// Message handles one user message: chat about the round a human answers
+// while it waits, the need while the first stage has no artifact, the
+// sign-off decision (approve or reject <feedback>) at a ready end, or a
+// note. The abort and export
 // commands are parsed by the webhook and reach Abort and Export instead.
 func (c *Controller) Message(ctx context.Context, id, text, msgID string) error {
 	trimmed := strings.TrimSpace(text)
 
 	c.mu.Lock()
-
 	sess, ok := c.sessions[id]
+	c.mu.Unlock()
+
 	if !ok {
+		return ErrNotFound
+	}
+
+	// A message while a human's round waits is chat about it, whether or not
+	// a chat run holds the slot.
+	chatted, err := c.chatAbout(ctx, sess, id, trimmed, msgID)
+	if err != nil {
+		return fmt.Errorf("blueprint: message: %w", err)
+	}
+
+	if chatted {
+		return nil
+	}
+
+	c.mu.Lock()
+
+	if sess, ok = c.sessions[id]; !ok {
 		c.mu.Unlock()
 
 		return ErrNotFound

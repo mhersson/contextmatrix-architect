@@ -27,6 +27,9 @@ const (
 	changeClosed  = "closed"
 	// changeShown: a reopen shows an open round again.
 	changeShown = "shown"
+	// changeChat: a user's chat message; changeReply: a chat run's reply.
+	changeChat  = "chat"
+	changeReply = "reply"
 	// ChangeLeft marks a round the pipeline went past without its answers;
 	// the panel collapses it like a closed one.
 	ChangeLeft = "left"
@@ -306,6 +309,68 @@ func mergeReply(s roundState, answers []protocol.RoundAnswer, decisions []protoc
 	return out, dropped
 }
 
+// revised applies a chat run's revisions to round s: a question with a
+// number replaces that question and keeps its answer unless its options
+// changed, since answers are option positions; one without is added under
+// the next number.
+func revised(s roundState, qs []stage.RoundQuestion, first int, sources map[string]protocol.RoundSource) (roundState, error) {
+	out := s.clone()
+
+	for _, q := range qs {
+		if q.Number == 0 {
+			out.Frame.Questions = append(out.Frame.Questions, frameQuestion(q, first, sources))
+			first++
+
+			continue
+		}
+
+		i := slices.IndexFunc(out.Frame.Questions, func(x protocol.RoundQuestion) bool { return x.Number == q.Number })
+		if i < 0 {
+			return roundState{}, fmt.Errorf("round %d has no Q%d; revise one of its questions or add a new one", s.Number, q.Number)
+		}
+
+		fq := frameQuestion(q, q.Number, sources)
+		if !sameOptions(out.Frame.Questions[i], fq) {
+			out.Frame.Answers = slices.DeleteFunc(out.Frame.Answers, func(a protocol.RoundAnswer) bool { return a.Number == q.Number })
+		}
+
+		out.Frame.Questions[i] = fq
+	}
+
+	return out, nil
+}
+
+// sameOptions reports whether two versions of a question offer the same
+// options in the same order.
+func sameOptions(a, b protocol.RoundQuestion) bool {
+	return slices.EqualFunc(a.Options, b.Options, func(x, y protocol.RoundOption) bool { return x.Title == y.Title })
+}
+
+// writeOpenRound gives a run without the conversation the round as it
+// stands: each question, its options and its answer so far.
+func writeOpenRound(b *strings.Builder, s roundState) {
+	answers := map[int]protocol.RoundAnswer{}
+	for _, a := range s.Frame.Answers {
+		answers[a.Number] = a
+	}
+
+	fmt.Fprintf(b, "## Your round %d as it stands\n\n", s.Number)
+
+	for _, q := range s.Frame.Questions {
+		fmt.Fprintf(b, "- [Q%d] %s\n", q.Number, q.Text)
+
+		for i, o := range q.Options {
+			fmt.Fprintf(b, "  %d. %s\n", i+1, o.Title)
+		}
+
+		if a, ok := answers[q.Number]; ok {
+			fmt.Fprintf(b, "  Answer so far: %s\n", AnswerText(q, a))
+		}
+	}
+
+	b.WriteString("\n")
+}
+
 // AnswerText is an answer as a model and a reader see it: the chosen
 // option's title, or the person's own words.
 func AnswerText(q protocol.RoundQuestion, a protocol.RoundAnswer) string {
@@ -340,6 +405,11 @@ func (c *Controller) closeRound(ctx context.Context, au audit, bp store.Blueprin
 		responder = store.ResponderAuto
 	}
 
+	msgID, err := c.answeringMessage(ctx, bp.ID, s)
+	if err != nil {
+		return roundState{}, fmt.Errorf("blueprint: close round %d: %w", s.Number, err)
+	}
+
 	for _, q := range s.Frame.Questions {
 		if have[q.Number] {
 			continue
@@ -354,7 +424,7 @@ func (c *Controller) closeRound(ctx context.Context, au audit, bp store.Blueprin
 			BlueprintID: bp.ID, RunID: s.PostedBy, Stage: s.Frame.Stage, Number: q.Number,
 			Text: au.text(q.Text), Options: au.texts(options), Context: au.text(q.Why),
 			Answer: au.text(AnswerText(q, answers[q.Number])), Responder: responder,
-			Assumption: responder == store.ResponderAuto, MessageID: s.MessageID, AnsweredAt: c.opts.Now().UTC(),
+			Assumption: responder == store.ResponderAuto, MessageID: msgID, AnsweredAt: c.opts.Now().UTC(),
 		}); err != nil {
 			return roundState{}, fmt.Errorf("blueprint: close round %d: record Q%d: %w", s.Number, q.Number, err)
 		}
@@ -365,6 +435,35 @@ func (c *Controller) closeRound(ctx context.Context, au audit, bp store.Blueprin
 	c.putRound(ctx, au, bp.ID, 0, closed)
 
 	return closed, nil
+}
+
+// answeringMessage is the message whose reply last stored answers in round
+// s, which a chat message or a chat run's reply may follow; s's own when no
+// stored answers snapshot names one.
+func (c *Controller) answeringMessage(ctx context.Context, id string, s roundState) (string, error) {
+	if s.Change == changeAnswers {
+		return s.MessageID, nil
+	}
+
+	events, err := c.opts.Store.ListEventsOfKind(ctx, id, EventRound)
+	if err != nil {
+		return "", fmt.Errorf("read the rounds: %w", err)
+	}
+
+	msgID := s.MessageID
+
+	for _, e := range events {
+		var snap roundState
+		if err := json.Unmarshal(e.Payload, &snap); err != nil {
+			return "", fmt.Errorf("decode round event %d: %w", e.ID, err)
+		}
+
+		if snap.Number == s.Number && snap.Change == changeAnswers {
+			msgID = snap.MessageID
+		}
+	}
+
+	return msgID, nil
 }
 
 // roundNext is what the round the pipeline stands at waits for.

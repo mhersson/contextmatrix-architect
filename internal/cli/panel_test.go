@@ -89,6 +89,22 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		}}, false},
 		{"a stale reply while a run works", blueprint.EventError, map[string]any{"reason": "stale_reply", "during_run": true}, false},
 		{"a stale reply on an idle blueprint", blueprint.EventError, map[string]any{"reason": "stale_reply", "during_run": false}, true},
+		{"chat the stage has not seen, a chat run answers it", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{
+			"questions": []any{map[string]any{"number": 1.0, "title": "Deploy", "text": "Helm?", "options": []any{}}},
+			"chat":      []any{map[string]any{"from": "user", "text": "why?"}},
+		}}, false},
+		{"a chat reply, the round waits again", blueprint.EventRound, map[string]any{"round": 1.0, "seen": 2.0, "frame": map[string]any{
+			"questions": []any{map[string]any{"number": 1.0, "title": "Deploy", "text": "Helm?", "options": []any{}}},
+			"chat":      []any{map[string]any{"from": "user", "text": "why?"}, map[string]any{"from": "product_owner", "text": "because"}},
+		}}, true},
+		{"a chat reply with a message written meanwhile, the next chat run follows", blueprint.EventRound, map[string]any{"round": 1.0, "seen": 2.0, "frame": map[string]any{
+			"questions": []any{map[string]any{"number": 1.0, "title": "Deploy", "text": "Helm?", "options": []any{}}},
+			"chat": []any{
+				map[string]any{"from": "user", "text": "why?"},
+				map[string]any{"from": "product_owner", "text": "because"},
+				map[string]any{"from": "user", "text": "and?"},
+			},
+		}}, false},
 		{"a closed round, its stage goes on", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{"closed": true}}, false},
 		{"a round the responder answers", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{"responder": true}}, false},
 		{"a run that asked, its round decides", blueprint.EventStageEnded, map[string]any{"status": "asked", "kind": "stage"}, false},

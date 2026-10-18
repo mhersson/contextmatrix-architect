@@ -27,6 +27,9 @@ Rules:
   numbered Q<n>. When an answer is vague, contradicts another or raises a
   new question, ask a follow-up round. Never ask again what an answer
   settled.
+- When the user writes about an open round, answer with answer_chat,
+  researching or reading the code first when the answer needs it, and
+  revise or add questions when the point changes the round.
 - Decide everything else yourself and record each such decision as an
   assumption. Each assumption is one sentence that stands alone: a reader
   who has only that sentence understands it. Never point at other text,

@@ -255,6 +255,8 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			in.Task += rd.task
 		}
 
+		in.Chat = rd.segment == SegmentChat
+
 		if rd.findings > 0 {
 			check, state := addressedValidator(rd.findings)
 
@@ -278,7 +280,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	sink := &harnessSink{
 		audit: au, id: id, runID: runID, canceled: runCtx.Done(),
-		price: m.price, capUSD: runCap, stop: stop, flight: f,
+		price: m.price, capUSD: runCap, stop: stop, flight: f, chat: in.Chat,
 	}
 
 	in.Model = m.name
@@ -291,7 +293,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		tools: in.Tools, sink: sink, max: st.MaxQuestions, asked: asked,
 	}
 	if rd != nil {
-		iv.revisedFor, iv.qround = rd.findings, rd.qround
+		iv.revisedFor, iv.qround, iv.seen = rd.findings, rd.qround, rd.seen
 	}
 
 	in.Interviewer = iv
@@ -711,6 +713,9 @@ type harnessSink struct {
 	stop   context.CancelCauseFunc
 	// flight counts the run's lines for the view; nil counts nothing.
 	flight *flight
+	// chat keeps a chat run's text and its answer_chat call off the panel:
+	// the reply reaches it only in the round's chat.
+	chat bool
 
 	mu    sync.Mutex
 	spent float64
@@ -726,7 +731,7 @@ func (s *harnessSink) Write(p []byte) (int, error) {
 
 	// A canceled run's harness reports the cancel as an error. It is
 	// audited, but the panel shows the cancel as the stage's end instead.
-	forward := !s.isCanceled() || !isErrorLine(line)
+	forward := (!s.isCanceled() || !isErrorLine(line)) && (!s.chat || !isChatEcho(line))
 
 	s.flight.count(line)
 	s.audit.harness(context.Background(), s.id, s.runID, line, forward)
@@ -833,4 +838,21 @@ func isErrorLine(line []byte) bool {
 	}
 
 	return json.Unmarshal(line, &ev) == nil && ev.Kind == "error"
+}
+
+// isChatEcho reports a line that would show a chat run's reply a second
+// time beside the round: the model's text, or its answer_chat call.
+func isChatEcho(line []byte) bool {
+	var ev struct {
+		Kind string `json:"kind"`
+		Data struct {
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+
+	if json.Unmarshal(line, &ev) != nil {
+		return false
+	}
+
+	return ev.Kind == "model_response" || (ev.Kind == "tool_call" && ev.Data.Name == stage.AnswerChatName)
 }

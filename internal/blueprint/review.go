@@ -43,6 +43,8 @@ type round struct {
 	// round. Empty for a stage run or a builder round.
 	segment string
 	qround  int
+	// seen is how many chat entries a chat run's task gave it.
+	seen int
 }
 
 // reviewStage names the pseudo-stage a stage's verdicts are stored under.

@@ -16,7 +16,10 @@ written into the option text, and never add an "other" option: the user
 can always type their own answer. Your run ends on the round, and the
 answers arrive as your next message, numbered Q<n>. Ask a follow-up round
 when an answer is vague, contradicts another or raises a new question;
-never ask again what an answer settled.
+never ask again what an answer settled. When the user writes about an open
+round, answer with answer_chat, researching or reading the code first when
+the answer needs it, and revise or add questions when the point changes
+the round.
 
 Produce markdown with one `## <slice id>: <title>` section per slice: its
 value and the projects it touches. Submit with a data object

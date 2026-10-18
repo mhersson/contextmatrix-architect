@@ -381,25 +381,6 @@ func TestReply_ConcurrentRepliesKeepEveryAnswer(t *testing.T) {
 	assert.Equal(t, 2, runner.calls(), "one continuation, however the replies interleave")
 }
 
-func TestMessage_WhileARoundIsOpenIsANoteItsContinuationGets(t *testing.T) {
-	c, _, runner, rec := newController(t, asks("# Need", roundQ("Deploy", "Helm or Kustomize?", "Helm", "Kustomize")))
-	ctx := context.Background()
-
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	c.Wait("BP1")
-
-	require.NoError(t, c.Message(ctx, "BP1", "we deploy twice a week", "m2"))
-	c.Wait("BP1")
-	assert.Equal(t, 1, runner.calls(), "a note never re-runs the stage or reads as the need")
-	assert.True(t, rec.has(EventNote))
-
-	answerRound(t, c, "BP1", 1, true, pick(1, 1))
-	c.Wait("BP1")
-	require.Equal(t, 2, runner.calls())
-	assert.Contains(t, runner.input(1).Task, "we deploy twice a week")
-}
-
 func TestReply_CompletingARoundWhileTheSlotIsHeldSettlesItOnce(t *testing.T) {
 	for _, ending := range []string{"fails", "aborted"} {
 		t.Run(ending, func(t *testing.T) {
@@ -408,7 +389,12 @@ func TestReply_CompletingARoundWhileTheSlotIsHeldSettlesItOnce(t *testing.T) {
 			started := make(chan struct{}, 4)
 
 			c, _, runner, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
-				if in.History == nil {
+				switch {
+				case in.Chat:
+					_, err := in.Interviewer.Answer(ctx, stage.ChatAnswer{Reply: "Noted."})
+
+					return askedOutput(in), err
+				case in.History == nil:
 					if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Deploy", "Helm or Kustomize?", "Helm", "Kustomize")}}); err != nil {
 						return stage.Output{}, err
 					}
@@ -435,20 +421,20 @@ func TestReply_CompletingARoundWhileTheSlotIsHeldSettlesItOnce(t *testing.T) {
 			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
 			c.Wait("BP1")
 
-			// The completing reply lands while a message holds the slot, before
-			// the holder reads the round: the message's note reaches the sink
-			// first.
+			// The completing reply lands while a chat run holds the slot, before
+			// the holder reads the round again: the chat run's start reaches
+			// the sink first.
 			var once sync.Once
 
 			c.opts.Sink = func(e Event) {
 				rec.sink(e)
 
-				if e.Kind == EventNote {
+				if e.Kind == EventStageStarted && e.Payload["segment"] == SegmentChat {
 					once.Do(func() { answerRound(t, c, "BP1", 1, true, pick(1, 2)) })
 				}
 			}
 
-			require.NoError(t, c.Message(ctx, "BP1", "a note", "m2"))
+			require.NoError(t, c.Message(ctx, "BP1", "a question", "m2"))
 
 			if ending == "aborted" {
 				receive(t, started, "the continuation")
@@ -457,11 +443,11 @@ func TestReply_CompletingARoundWhileTheSlotIsHeldSettlesItOnce(t *testing.T) {
 
 			c.Wait("BP1")
 			assert.True(t, latestRound(t, c, "BP1", 1).Frame.Closed)
-			assert.Equal(t, 2, runner.calls(), "the continuation ran once and waits for the next message")
+			assert.Equal(t, 3, runner.calls(), "after the chat run, the continuation ran once and waits for the next message")
 
 			require.NoError(t, c.Message(ctx, "BP1", "go on", "m4"))
 			c.Wait("BP1")
-			assert.Equal(t, 3, runner.calls(), "the next message runs it again")
+			assert.Equal(t, 4, runner.calls(), "the next message runs it again")
 		})
 	}
 }

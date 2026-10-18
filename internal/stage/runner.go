@@ -178,7 +178,7 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 	// The registry keeps the last tool under a name, so a clash would silently
 	// replace a built-in.
 	for _, t := range in.Tools {
-		if name := t.Name(); name == askQuestionsName || name == answerChatName || name == submitArtifactName {
+		if name := t.Name(); name == askQuestionsName || name == AnswerChatName || name == submitArtifactName {
 			return Output{}, fmt.Errorf("stage %s: tool %q clashes with a built-in tool", in.Stage, name)
 		}
 	}

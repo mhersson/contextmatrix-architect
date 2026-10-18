@@ -292,6 +292,12 @@ func TestSignoff_ShowsBlockingProblemsAndApproveIsRefused(t *testing.T) {
 func TestSignoff_ApproveWhileARoundIsOpenDecidesNothing(t *testing.T) {
 	script := happyScript()
 	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if in.Chat {
+			_, err := in.Interviewer.Answer(ctx, stage.ChatAnswer{Reply: "Answer the question first."})
+
+			return askedOutput(in), err
+		}
+
 		if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Go", "Go ahead?")}}); err != nil {
 			return stage.Output{}, err
 		}
@@ -309,13 +315,15 @@ func TestSignoff_ApproveWhileARoundIsOpenDecidesNothing(t *testing.T) {
 	require.NoError(t, c.Message(ctx, "BP1", "approve", "m2"))
 	c.Wait("BP1")
 
-	assert.True(t, rec.has(EventNote), "approve is a note")
 	assert.False(t, rec.has(EventDecided))
-	assert.Equal(t, 1, runner.calls(), "nothing runs")
+	require.Equal(t, 2, runner.calls(), "only a chat run answers it")
+	assert.True(t, runner.input(1).Chat)
 
 	open := latestRound(t, c, "BP1", 1)
 	assert.False(t, open.Frame.Closed, "the round stays open")
 	assert.Empty(t, open.Frame.Answers)
+	require.NotEmpty(t, open.Frame.Chat)
+	assert.Equal(t, "approve", open.Frame.Chat[0].Text, "approve is chat about the round")
 
 	gates, err := st.ListGates(ctx, "BP1", signoffStage)
 	require.NoError(t, err)
