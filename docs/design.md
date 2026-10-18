@@ -594,7 +594,7 @@ accepts each or turns it into a question: an accepted one is recorded on its
 round, whose closed snapshot is the record, and cited as `round<n>.A<k>`, the
 round's number and the label (`round2.A1` for A1 on round 2's tab); the stage
 states it with that tag as its basis, so it reads `confirmed`. It takes no
-question number: `Q<n>` counts only questions a round asked. One a
+question number: `Q<n>` counts only asked questions. One a
 blueprint holds as a `questions` row stays cited by that row's `Q<n>`, whose
 number stays taken. After one is turned into a question, a later round of
 the attempt must be posted before the stage may submit. Under the human policy
@@ -799,7 +799,7 @@ Replies the server understands, besides a round's structured answers:
 - Under a blueprint cost cap a run starts only with its floor left: the
   median cost of the blueprint's done runs of its kind (stage, reviewer or
   responder) and stage, never less than $0.10. The floor bounds what the
-  blueprint cap has left, never the per-run cap. A stage or reviewer run the
+  blueprint cap has left, compared in whole cents, never the per-run cap. A stage or reviewer run the
   blueprint cap refuses (spent, below the floor, or on a model without a
   price), or one cut short at what the blueprint had left because that was
   below the per-run cap or there is none, is a cap stop: the blueprint is
@@ -827,7 +827,7 @@ Replies the server understands, besides a round's structured answers:
   continuation or chat run, or an intake with a need stored, which runs on
   that need. The stored cap may be above it already, raised while the
   stopped run went on; sending that cap again then resumes. The newest
-  start, end or refusal of the stage's runs must be that cap stop, and the
+  start, end or refusal of the blueprint's runs must be that cap stop, and the
   event records the stage it resumes ("Cost cap raised from $2.00 to
   $4.00; resuming Readiness."). A cap at or below the stop's resumes
   nothing, nor does any change at another stop, which waits for a message
