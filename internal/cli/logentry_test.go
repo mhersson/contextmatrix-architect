@@ -35,6 +35,32 @@ func TestLogEntryFor_AnAbortNamesContinueOnlyWhenItCutAStage(t *testing.T) {
 	}
 }
 
+func TestLogEntryFor_AnErrorNamesContinueOnlyWhenItStoppedAStageRun(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload map[string]any
+		want    bool
+	}{
+		{"a stage failure", map[string]any{"stage": "solution_design", "reason": "error", "message": "stage failed."}, true},
+		{"a stage run's own cap", map[string]any{"stage": "solution_design", "reason": "max_cost", "message": "run cost cap reached."}, true},
+		{"a reviewer run's own cap", map[string]any{"stage": "solution_design", "reason": "max_cost", "message": "run cost cap reached."}, true},
+		{"a bound blueprint cap stop", map[string]any{"stage": "solution_design", "reason": "max_cost", "cap": "blueprint", "message": "cap used up."}, false},
+		{"a refusal cap stop", map[string]any{"stage": "solution_design", "cap": "blueprint", "message": "cap used up."}, false},
+		{"a refused responder", map[string]any{"stage": "solution_design", "reason": "responder_refused", "message": "refused."}, false},
+		{"a stage error that gave no reason", map[string]any{"stage": "solution_design", "message": "stopped."}, false},
+		{"a stale reply", map[string]any{"reason": "stale_reply", "message": "answers nothing."}, false},
+		{"a failure with no stage", map[string]any{"message": "boom."}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventError, BlueprintID: "S1", Payload: tc.payload})
+			require.True(t, ok)
+			assert.Equal(t, tc.want, strings.Contains(entry.Content, "`continue`"))
+		})
+	}
+}
+
 func TestLogEntryFor(t *testing.T) {
 	cases := []struct {
 		name     string

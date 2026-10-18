@@ -1028,6 +1028,7 @@ func TestReview_TheBlueprintCapStopsTheReview(t *testing.T) {
 
 			if !tt.capStop {
 				assert.Empty(t, capStops(t, st), "a per-run cap stop is an ordinary failed run")
+				assert.Equal(t, "max_cost", ev.Payload["reason"], "reported as a stage run's per-run cap is")
 
 				return
 			}

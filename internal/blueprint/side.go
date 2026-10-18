@@ -180,7 +180,7 @@ func (c *Controller) sideFailed(ctx context.Context, r *run, au audit, id, stage
 		au.event(bg, Event{Kind: EventError, BlueprintID: id, Payload: stop.payload()})
 		c.setState(bg, id, StateIdle)
 	case errors.Is(err, errCostCap):
-		au.event(bg, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{"stage": stageID, "message": err.Error()}})
+		au.event(bg, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{"stage": stageID, "reason": "max_cost", "message": err.Error()}})
 		c.setState(bg, id, StateIdle)
 	case ctx.Err() != nil:
 		c.setState(bg, id, StateIdle)
