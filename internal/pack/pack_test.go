@@ -331,3 +331,16 @@ func TestLoad_ResponderInstructionsAreOptional(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "answer it", p.ResponderInstructions())
 }
+
+func TestStageName(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ id, want string }{
+		{"solution_design", "Solution design"},
+		{"intake", "Intake"},
+		{"a_b_c_d", "A b c d"},
+		{"", ""},
+	} {
+		assert.Equal(t, tc.want, StageName(tc.id), tc.id)
+	}
+}

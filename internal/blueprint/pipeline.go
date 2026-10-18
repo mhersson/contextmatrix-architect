@@ -2,6 +2,7 @@ package blueprint
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -415,6 +416,140 @@ func (c *Controller) need(ctx, runCtx context.Context, r *run, sess *session, bp
 	return nil
 }
 
+// stopPoint is where a pipeline with no run in flight stands stopped: a
+// pending model stage, a gated stage whose critique (its review, builder
+// round or revision) is pending, a round whose continuation or chat run is
+// pending (round.stalled when that run failed or was aborted), or the first
+// stage, before its first artifact, with a need stored. fold is the fold to
+// record before the stage runs. byCap says the blueprint cap stopped it (see
+// stoppedByCap), and capUSD is the cap it stopped under.
+type stopPoint struct {
+	stage    string
+	critique bool
+	round    *roundPlace
+	need     bool
+	fold     *folding
+	byCap    bool
+	capUSD   float64
+}
+
+// stoppedAt reads where bp stands stopped, as input reads it for a message;
+// false when it stands at no stop: a round waits for answers, a gate or the
+// sign-off is open, the pipeline has ended, or there is no need yet. The
+// caller holds the run slot.
+func (c *Controller) stoppedAt(ctx context.Context, bp store.Blueprint) (stopPoint, bool, error) {
+	place, atRound, err := c.roundAt(ctx, bp.ID)
+	if err != nil {
+		return stopPoint{}, false, err
+	}
+
+	var p stopPoint
+
+	if atRound {
+		if place.next == roundWait {
+			return stopPoint{}, false, nil
+		}
+
+		p = stopPoint{stage: place.state.Frame.Stage, round: &place}
+	} else {
+		first := c.opts.Pack.Stages[0].ID
+
+		_, err := c.opts.Store.LatestArtifact(ctx, bp.ID, first)
+
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			_, err := c.opts.Store.LatestArtifact(ctx, bp.ID, needStage)
+			if errors.Is(err, store.ErrNotFound) {
+				return stopPoint{}, false, nil
+			}
+
+			if err != nil {
+				return stopPoint{}, false, fmt.Errorf("blueprint: read the need: %w", err)
+			}
+
+			p = stopPoint{stage: first, need: true}
+		case err != nil:
+			return stopPoint{}, false, fmt.Errorf("blueprint: read %s's artifact: %w", pack.StageName(first), err)
+		default:
+			out, _, err := c.position(ctx, bp)
+			if err != nil {
+				return stopPoint{}, false, err
+			}
+
+			if out.stage == "" || (out.gate && !out.critique) {
+				return stopPoint{}, false, nil
+			}
+
+			p = stopPoint{stage: out.stage, critique: out.gate, fold: out.fold}
+		}
+	}
+
+	if p.byCap, p.capUSD, err = c.stoppedByCap(ctx, bp.ID, p.stage); err != nil {
+		return stopPoint{}, false, err
+	}
+
+	return p, true, nil
+}
+
+// stoppedByCap reports whether the newest start, end or refusal of a run is
+// a cap stop of stageID, and the cap it stopped under. A run of stageID
+// since says no, and so does a run of another stage, which places the
+// pipeline past an older stop, or an error that names no stage, a failure.
+// A stale reply's error stops nothing and is passed over.
+func (c *Controller) stoppedByCap(ctx context.Context, id, stageID string) (bool, float64, error) {
+	var events []store.Event
+
+	for _, kind := range []string{EventStageStarted, EventStageEnded, EventError} {
+		of, err := c.opts.Store.ListEventsOfKind(ctx, id, kind)
+		if err != nil {
+			return false, 0, fmt.Errorf("blueprint: read the %s events: %w", kind, err)
+		}
+
+		events = append(events, of...)
+	}
+
+	slices.SortFunc(events, func(a, b store.Event) int { return cmp.Compare(b.ID, a.ID) })
+
+	for _, e := range events {
+		var p struct {
+			Stage  string  `json:"stage"`
+			Reason string  `json:"reason"`
+			CapUSD float64 `json:"cap_usd"`
+		}
+
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			return false, 0, fmt.Errorf("blueprint: read event %d: %w", e.ID, err)
+		}
+
+		if e.Kind == EventError && p.Reason == reasonStaleReply {
+			continue
+		}
+
+		if _, byCap := capStopOf(e); !byCap || p.Stage != stageID {
+			return false, 0, nil
+		}
+
+		return true, p.CapUSD, nil
+	}
+
+	return false, 0, nil
+}
+
+// resume runs p again on slot r, which the caller holds, as a retry message
+// would, but stores no note.
+func (c *Controller) resume(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, p stopPoint) {
+	switch {
+	case p.round != nil:
+		c.follow(context.WithoutCancel(ctx), runCtx, r, sess, bp, true)
+	case p.critique:
+		c.launchCritique(runCtx, r, sess, bp, p.stage)
+	case p.fold != nil && !c.recordFold(ctx, sess.audit, bp.ID, p.fold):
+		c.release(bp.ID, r)
+	default:
+		c.launch(runCtx, r, sess, bp, p.stage)
+	}
+}
+
 // advance acts on what follows completed: it reports an end, and returns
 // the stage to run next, or the ready end the caller hands to the sign-off
 // when the pack has a stage that checks cards. A gate whose artifact still
@@ -584,35 +719,62 @@ func (c *Controller) writeNotesAfter(ctx context.Context, b *strings.Builder, id
 }
 
 // writeAnswered gives a run the questions earlier runs of its stage asked
-// and got answered, so a stage run again after a crash, an End or a
-// rejection does not ask them again.
+// and got answered and the assumptions the user accepted on their tabs, so
+// a stage run again after a crash, an End or a rejection neither asks them
+// again nor drops an acceptance.
 func (c *Controller) writeAnswered(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pack.Stage) error {
 	return c.writeAnsweredAfter(ctx, b, bp, st, 0)
 }
 
-// writeAnsweredAfter is writeAnswered for the questions of the runs after
-// run after.
+// writeAnsweredAfter is writeAnswered for the questions and acceptances of
+// the runs after run after.
 func (c *Controller) writeAnsweredAfter(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pack.Stage, after int64) error {
 	questions, err := c.opts.Store.ListQuestions(ctx, bp.ID)
 	if err != nil {
 		return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
 	}
 
+	accepted, err := c.acceptedAssumptions(ctx, bp.ID)
+	if err != nil {
+		return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
+	}
+
 	var own []store.Question
 
+	rows := map[string]bool{}
+
 	for _, q := range questions {
+		rows[q.Tag()] = true
+
 		if q.Stage == st.ID && q.RunID > after {
 			own = append(own, q)
 		}
 	}
 
-	if len(own) == 0 {
-		return nil
+	var ownAccepted []acceptedAssumption
+
+	for _, a := range accepted {
+		// A row an older close wrote is listed with the questions.
+		if a.Stage == st.ID && a.RunID > after && !rows[a.Tag] {
+			ownAccepted = append(ownAccepted, a)
+		}
 	}
 
-	b.WriteString("## Questions this stage already asked\n\nThey are answered; use the answers and do not ask them again:\n\n")
+	if len(own) > 0 {
+		b.WriteString("## Questions this stage already asked\n\nThey are answered; use the answers and do not ask them again:\n\n")
 
-	writeQuestions(b, own)
+		writeQuestions(b, own)
+	}
+
+	if len(ownAccepted) > 0 {
+		b.WriteString("## Assumptions the user accepted at this stage\n\nState each with its tag as the basis:\n\n")
+
+		for _, a := range ownAccepted {
+			fmt.Fprintf(b, "- [%s] %s\n", a.Tag, a.Text)
+		}
+
+		b.WriteString("\n")
+	}
 
 	return nil
 }

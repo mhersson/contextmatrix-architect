@@ -38,6 +38,9 @@ type assumption struct {
 	Answer   string
 	Status   string
 	Evidence string
+	// AcceptedAt is the stage whose round tab the user accepted this on,
+	// when the basis is an acceptance; Answer is then empty.
+	AcceptedAt string
 }
 
 // stated is one assumption as a stage submitted it.
@@ -79,6 +82,18 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 		return nil, err
 	}
 
+	acceptances, err := c.acceptedAssumptions(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	accepted := acceptedTags(acceptances)
+
+	acceptedAt := map[string]string{}
+	for _, a := range acceptances {
+		acceptedAt[a.Tag] = a.Stage
+	}
+
 	answered := map[string]store.Question{}
 	for _, q := range questions {
 		answered[q.Tag()] = q
@@ -110,19 +125,27 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 		newest = max(newest, i)
 
 		for _, s := range statedAssumptions(all[i]) {
-			// The submit check keeps a basis naming no answered question
-			// on its last round; it reads as none.
-			if _, ok := answered[s.Basis]; ok {
+			// The submit check keeps a basis naming no answered question or
+			// accepted assumption on its last round; it reads as none.
+			switch _, ok := answered[s.Basis]; {
+			case ok:
 				named[s.Basis] = true
-			} else {
+			case !accepted[s.Basis]:
 				s.Basis = ""
 			}
 
-			status, proof := basisStatus(answered, evidence, s.Basis)
-			out = append(out, assumption{
+			status, proof := basisStatus(answered, accepted, evidence, s.Basis)
+			a := assumption{
 				ID: fmt.Sprintf("A%d", len(out)+1), Stage: st.ID, Text: s.Text, Basis: s.Basis, Answer: answered[s.Basis].Answer,
 				Status: status, Evidence: proof,
-			})
+			}
+
+			// An older acceptance's row answers "Accepted", which says nothing.
+			if accepted[s.Basis] {
+				a.Answer, a.AcceptedAt = "", acceptedAt[s.Basis]
+			}
+
+			out = append(out, a)
 			source = append(source, newest)
 		}
 	}
@@ -132,7 +155,7 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 			continue
 		}
 
-		status, proof := basisStatus(answered, evidence, q.Tag())
+		status, proof := basisStatus(answered, accepted, evidence, q.Tag())
 		out = append(out, assumption{
 			ID: q.Tag(), Stage: q.Stage, Basis: q.Tag(), Status: status, Evidence: proof,
 			Text: fmt.Sprintf("%s The responder answered: %s", q.Text, q.Answer),
@@ -161,7 +184,7 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 				// Not finding it in the code never hides what an answer
 				// settled, such as a human's confirmation.
 				if v.Status == assumptionUnverified {
-					out[j].Status, out[j].Evidence = basisStatus(answered, evidence, out[j].Basis)
+					out[j].Status, out[j].Evidence = basisStatus(answered, accepted, evidence, out[j].Basis)
 				} else {
 					out[j].Status, out[j].Evidence = v.Status, v.Evidence
 				}
@@ -173,12 +196,14 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 }
 
 // basisStatus is the status and evidence an assumption resting on basis, an
-// answered question's tag or "", starts with and returns to on an
-// unverified verdict. evidence is answerEvidence's.
-func basisStatus(answered map[string]store.Question, evidence map[int]string, basis string) (string, string) {
+// answered question's or an accepted assumption's tag or "", starts with and
+// returns to on an unverified verdict. evidence is answerEvidence's.
+func basisStatus(answered map[string]store.Question, accepted map[string]bool, evidence map[int]string, basis string) (string, string) {
 	q, ok := answered[basis]
 
 	switch {
+	case accepted[basis]:
+		return assumptionConfirmed, ""
 	case !ok:
 		return assumptionUnverified, ""
 	case !q.Assumption:
@@ -190,10 +215,29 @@ func basisStatus(answered map[string]store.Question, evidence map[int]string, ba
 	}
 }
 
-// normalTag reads a tag a model wrote, such as "[q1]", as the controller
-// prints it, "Q1": tags are printed to the model bracketed.
+// acceptedTags is the set of accepted's tags.
+func acceptedTags(accepted []acceptedAssumption) map[string]bool {
+	out := map[string]bool{}
+	for _, a := range accepted {
+		out[a.Tag] = true
+	}
+
+	return out
+}
+
+var acceptanceTagForm = regexp.MustCompile(`^ROUND(\d+)\.A(\d+)$`)
+
+// normalTag reads a tag a model wrote, such as "[q1]" or "[Round2.a1]", as
+// the controller prints it, "Q1" or "round2.A1": tags are printed to the
+// model bracketed.
 func normalTag(s string) string {
-	return strings.ToUpper(strings.TrimSpace(strings.Trim(strings.TrimSpace(s), "[]")))
+	tag := strings.ToUpper(strings.TrimSpace(strings.Trim(strings.TrimSpace(s), "[]")))
+
+	if m := acceptanceTagForm.FindStringSubmatch(tag); m != nil {
+		return "round" + m[1] + ".A" + m[2]
+	}
+
+	return tag
 }
 
 // statedAssumptions reads an artifact's assumptions, its data's list of
@@ -304,7 +348,9 @@ func assumptionLines(list []assumption) string {
 	for _, a := range list {
 		status := a.Status
 
-		if who, ok := backer[a.Status]; ok {
+		if a.Status == assumptionConfirmed && a.AcceptedAt != "" {
+			status += " by the user, accepted at " + pack.StageName(a.AcceptedAt)
+		} else if who, ok := backer[a.Status]; ok {
 			status += " by " + who
 			if a.Basis != a.ID {
 				status += ", " + a.Basis
@@ -334,17 +380,23 @@ func assumptionsPayload(list []assumption) []any {
 	out := make([]any, 0, len(list))
 
 	for _, a := range list {
-		out = append(out, map[string]any{
+		entry := map[string]any{
 			"id": a.ID, "stage": a.Stage, "text": a.Text, "basis": a.Basis, "answer": a.Answer, "status": a.Status, "evidence": a.Evidence,
-		})
+		}
+
+		if a.AcceptedAt != "" {
+			entry["accepted"] = a.AcceptedAt
+		}
+
+		out = append(out, entry)
 	}
 
 	return out
 }
 
 // assumptionsValidator refuses a submit whose assumptions are not
-// standalone sentences resting on the blueprint's answered questions, as
-// boundedValidator bounds it.
+// standalone sentences resting on the blueprint's answered questions and
+// accepted assumptions, as boundedValidator bounds it.
 func (c *Controller) assumptionsValidator(bp store.Blueprint) (func(context.Context, stage.Artifact) error, *validatorState) {
 	lists := c.opts.Pack.Lists()
 
@@ -354,12 +406,17 @@ func (c *Controller) assumptionsValidator(bp store.Blueprint) (func(context.Cont
 			return nil, fmt.Errorf("read the questions: %w", err)
 		}
 
-		answered := map[string]bool{}
-		for _, q := range questions {
-			answered[q.Tag()] = true
+		accepted, err := c.acceptedAssumptions(ctx, bp.ID)
+		if err != nil {
+			return nil, err
 		}
 
-		return assumptionProblems(a.Data, lists, answered), nil
+		bases := acceptedTags(accepted)
+		for _, q := range questions {
+			bases[q.Tag()] = true
+		}
+
+		return assumptionProblems(a.Data, lists, bases), nil
 	})
 }
 
@@ -410,7 +467,7 @@ func unbasedAssumptions(data map[string]any) []string {
 		}
 
 		if strings.TrimSpace(text) != "" && normalTag(basis) == "" {
-			out = append(out, fmt.Sprintf("assumption %d has no basis: show it on a round's assumptions tab first; state an accepted one with the basis Q<n> its acceptance recorded", i+1))
+			out = append(out, fmt.Sprintf("assumption %d has no basis: show it on a round's assumptions tab first; state an accepted one with its tag (round<n>.A<k>) and one resting on an answered question with its Q<n>", i+1))
 		}
 	}
 
@@ -470,14 +527,14 @@ func (c *Controller) unaskedConversions(ctx context.Context, id, stageID string,
 	return out, nil
 }
 
-var questionTags = regexp.MustCompile(`\bQ\d+\b`)
+var basisTags = regexp.MustCompile(`\b(?:Q\d+|(?i:round\d+\.a\d+))\b`)
 
 // assumptionProblems checks a submit's assumptions: a list of entries, each
 // a sentence or {text, basis}; every sentence non-empty, pointing at no text
-// a card will not carry and naming no answered question, which belongs in
-// the basis so that no prose says who answered; every basis an answered
-// question.
-func assumptionProblems(data map[string]any, lists contract.Lists, answered map[string]bool) []string {
+// a card will not carry and naming none of bases, the tags of the answered
+// questions and accepted assumptions, which belong in the basis so that no
+// prose says who answered; every basis one of bases.
+func assumptionProblems(data map[string]any, lists contract.Lists, bases map[string]bool) []string {
 	raw, ok := data["assumptions"]
 	if !ok || raw == nil {
 		return nil
@@ -485,7 +542,7 @@ func assumptionProblems(data map[string]any, lists contract.Lists, answered map[
 
 	items, ok := raw.([]any)
 	if !ok {
-		return []string{`assumptions must be a list of sentences or {"text": "<sentence>", "basis": "Q<n>"} entries`}
+		return []string{`assumptions must be a list of sentences or {"text": "<sentence>", "basis": "<tag>"} entries, the tag an answered question's (Q<n>) or an accepted assumption's (round<n>.A<k>)`}
 	}
 
 	var out []string
@@ -501,9 +558,9 @@ func assumptionProblems(data map[string]any, lists contract.Lists, answered map[
 
 				switch {
 				case !ok:
-					out = append(out, fmt.Sprintf("assumption %d's basis must be an answered question's tag (Q<n>)", i+1))
-				case normalTag(tag) != "" && !answered[normalTag(tag)]:
-					out = append(out, fmt.Sprintf("assumption %d's basis %q is no answered question (Q<n>); give one or no basis", i+1, tag))
+					out = append(out, fmt.Sprintf("assumption %d's basis must be an answered question's tag (Q<n>) or an accepted assumption's (round<n>.A<k>)", i+1))
+				case normalTag(tag) != "" && !bases[normalTag(tag)]:
+					out = append(out, fmt.Sprintf("assumption %d's basis %q is no answered question (Q<n>) or accepted assumption (round<n>.A<k>); give one or no basis", i+1, tag))
 				}
 			}
 		}
@@ -518,9 +575,9 @@ func assumptionProblems(data map[string]any, lists contract.Lists, answered map[
 			out = append(out, fmt.Sprintf("assumption %d says %q, which points at text a card will not carry; state the fact itself", i+1, ref))
 		}
 
-		for _, tag := range questionTags.FindAllString(text, -1) {
-			if answered[tag] {
-				out = append(out, fmt.Sprintf(`assumption %d names %s; give it as the basis ({"text": "<sentence>", "basis": %q}) and state the fact itself`, i+1, tag, tag))
+		for _, named := range basisTags.FindAllString(text, -1) {
+			if tag := normalTag(named); bases[tag] {
+				out = append(out, fmt.Sprintf(`assumption %d names %s; give it as the basis ({"text": "<sentence>", "basis": %q}) and state the fact itself`, i+1, named, tag))
 
 				break
 			}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
@@ -24,7 +25,8 @@ type sideRun struct {
 	parent *harnessSink
 }
 
-// refusal is why the cost cap refused a side run; nothing was written.
+// refusal is why a cost cap refused a responder run inside the asking run;
+// nothing was written.
 type refusal struct{ reason string }
 
 func (r refusal) Error() string { return r.reason }
@@ -33,25 +35,41 @@ func (r refusal) Error() string { return r.reason }
 // a stage run is: a row of its kind, stage_started and stage_ended events
 // that name the kind, its transcript and its cost; meanwhile the blueprint
 // is running and a note names s's stage. The cost cap is checked
-// first; a refusal reports nothing. A run Shutdown cut short writes no
-// results, as a stage run's, so the row stays running for the restart.
+// first; a refusal reports nothing. A reviewer the blueprint cap refuses, or
+// cuts short at what the blueprint had left, returns a *capStop; a refused
+// responder returns a refusal, since its stage decides the question itself.
+// A run Shutdown cut short writes no results, as a stage run's, so the row
+// stays running for the restart.
 func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp store.Blueprint, s sideRun) (stage.Output, error) {
 	bg := context.Background()
 	au := sess.audit
 	m := c.modelFor(sess, s.persona)
+	stopsStage := s.kind != store.RunKindResponder
 
-	runCap, reason, err := c.runCap(bg, bp, s.stage, m)
+	b, err := c.runCap(bg, bp, s.kind, s.stage, m)
 	if err != nil {
 		return stage.Output{}, err
+	}
+
+	reason := ""
+
+	if b.refused != nil {
+		if stopsStage {
+			return stage.Output{}, b.refused
+		}
+
+		reason = b.refused.reason()
 	}
 
 	if left, capped := s.parent.left(); capped {
 		if left <= 0 {
 			reason = fmt.Sprintf("the asking run's cost cap of %.2f USD is spent", s.parent.capUSD)
-		} else if runCap <= 0 || left < runCap {
-			runCap = left
+		} else if b.capUSD <= 0 || left < b.capUSD {
+			b.capUSD, b.bound = left, false
 		}
 	}
+
+	runCap := b.capUSD
 
 	if reason != "" {
 		return stage.Output{}, refusal{reason: reason}
@@ -62,7 +80,7 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 		Status: store.RunRunning, Model: m.name, StartedAt: c.opts.Now().UTC(),
 	})
 	if err != nil {
-		return stage.Output{}, fmt.Errorf("blueprint: start the %s run of %s: %w", s.kind, s.stage, err)
+		return stage.Output{}, fmt.Errorf("blueprint: start the %s run of %s: %w", s.kind, pack.StageName(s.stage), err)
 	}
 
 	f := &flight{
@@ -131,26 +149,38 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 		"stage": s.stage, "kind": s.kind, "status": status, "cost_usd": usage.CostUSD, "priced": m.price != nil,
 	}})
 
-	if runErr != nil {
-		return out, fmt.Errorf("blueprint: the %s run of %s: %w", s.kind, s.stage, runErr)
+	if runErr == nil {
+		return out, nil
 	}
 
-	return out, nil
+	if endReason == "max_cost" && b.bound && stopsStage {
+		stop, err := c.capStopAfter(bg, bp.ID, b.blueprintCapUSD, s.kind, s.stage)
+		if err == nil {
+			return out, stop
+		}
+
+		c.opts.Logger.Error("blueprint: read the cap stop", "blueprint", bp.ID, "run", runID, "error", err)
+	}
+
+	return out, fmt.Errorf("blueprint: the %s run of %s: %w", s.kind, pack.StageName(s.stage), runErr)
 }
 
 // sideFailed reports a reviewer run that did not complete, as a stage run's
-// end is reported: a refusal or a run cap reached leaves the blueprint idle
-// with an error, a cancel leaves it idle, and anything else fails it. A run
-// Shutdown cut short reports nothing.
+// end is reported: a cap stop or the per-run cap reached leaves the
+// blueprint idle with an error, a cancel leaves it idle, and anything else
+// fails it. A run Shutdown cut short reports nothing.
 func (c *Controller) sideFailed(ctx context.Context, r *run, au audit, id, stageID string, err error) {
 	bg := context.Background()
 
-	var refused refusal
+	var stop *capStop
 
 	switch {
 	case c.shuttingDown(r):
-	case errors.As(err, &refused), errors.Is(err, errCostCap):
-		au.event(bg, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{"stage": stageID, "message": err.Error()}})
+	case errors.As(err, &stop):
+		au.event(bg, Event{Kind: EventError, BlueprintID: id, Payload: stop.payload()})
+		c.setState(bg, id, StateIdle)
+	case errors.Is(err, errCostCap):
+		au.event(bg, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{"stage": stageID, "reason": "max_cost", "message": err.Error()}})
 		c.setState(bg, id, StateIdle)
 	case ctx.Err() != nil:
 		c.setState(bg, id, StateIdle)

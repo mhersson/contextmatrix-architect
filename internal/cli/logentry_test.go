@@ -13,6 +13,54 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/blueprint"
 )
 
+func TestLogEntryFor_AnAbortNamesContinueOnlyWhenItCutAStage(t *testing.T) {
+	cases := []struct {
+		name  string
+		stage string
+		want  bool
+	}{
+		{"a stage's run", "solution_design", true},
+		{"nothing in flight", "", false},
+		{"the sign-off's emission or run start", "signoff", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventAborted, BlueprintID: "S1", Payload: map[string]any{
+				"stage": tc.stage, "message_id": "m1",
+			}})
+			require.True(t, ok)
+			assert.Equal(t, tc.want, strings.Contains(entry.Content, "`continue`"))
+		})
+	}
+}
+
+func TestLogEntryFor_AnErrorNamesContinueOnlyWhenItStoppedAStageRun(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload map[string]any
+		want    bool
+	}{
+		{"a stage failure", map[string]any{"stage": "solution_design", "reason": "error", "message": "stage failed."}, true},
+		{"a stage run's own cap", map[string]any{"stage": "solution_design", "reason": "max_cost", "message": "run cost cap reached."}, true},
+		{"a reviewer run's own cap", map[string]any{"stage": "solution_design", "reason": "max_cost", "message": "run cost cap reached."}, true},
+		{"a bound blueprint cap stop", map[string]any{"stage": "solution_design", "reason": "max_cost", "cap": "blueprint", "message": "cap used up."}, false},
+		{"a refusal cap stop", map[string]any{"stage": "solution_design", "cap": "blueprint", "message": "cap used up."}, false},
+		{"a refused responder", map[string]any{"stage": "solution_design", "reason": "responder_refused", "message": "refused."}, false},
+		{"a stage error that gave no reason", map[string]any{"stage": "solution_design", "message": "stopped."}, false},
+		{"a stale reply", map[string]any{"reason": "stale_reply", "message": "answers nothing."}, false},
+		{"a failure with no stage", map[string]any{"message": "boom."}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventError, BlueprintID: "S1", Payload: tc.payload})
+			require.True(t, ok)
+			assert.Equal(t, tc.want, strings.Contains(entry.Content, "`continue`"))
+		})
+	}
+}
+
 func TestLogEntryFor(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -24,17 +72,23 @@ func TestLogEntryFor(t *testing.T) {
 		{"an automatic sign-off's record is for the sheet", blueprint.Event{Kind: blueprint.EventSignOffAuto, BlueprintID: "S1", Payload: map[string]any{"version": 1}}, "", nil, true},
 		{"gate reply", blueprint.Event{Kind: blueprint.EventPolicy, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "intake", "policy": "auto", "open": "round",
-		}}, "system", []string{"intake", "auto"}, false},
+		}}, "system", []string{"Intake", "auto"}, false},
 		{"refused gate reply", blueprint.Event{Kind: blueprint.EventPolicy, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "nosuch", "policy": "auto", "refused": "There is no stage nosuch.",
 		}}, "system", []string{"There is no stage nosuch.", "gate <stage> human"}, false},
+		{"a cap raise that resumes a stage", blueprint.Event{Kind: blueprint.EventCap, BlueprintID: "S1", Payload: map[string]any{
+			"from": 2.0, "to": 4.0, "resumes": "solution_design",
+		}}, "system", []string{"$2.00", "$4.00", "Solution design"}, false},
+		{"a resume that runs a stopped stage", blueprint.Event{Kind: blueprint.EventResume, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "solution_design", "message_id": "m1",
+		}}, "system", []string{"Solution design"}, false},
 		{"gate plan", blueprint.Event{Kind: blueprint.EventGatePlan, BlueprintID: "S1", Payload: map[string]any{
 			"stages": []any{
 				map[string]any{"stage": "intake", "policy": "human", "gate": false},
 				map[string]any{"stage": "shape", "policy": "auto", "gate": true, "folds_into": "solution_design", "fold_field": "slices", "fold_max": 1},
 			},
 			"signoff": "human",
-		}}, "text", []string{"intake: human", "shape: auto", "solution_design", "gate <stage> human", "gate <stage> auto"}, false},
+		}}, "text", []string{"Intake: human", "Shape: auto", "Solution design", "gate <stage> human", "gate <stage> auto"}, false},
 		{"setup gaps", blueprint.Event{Kind: blueprint.EventSetupGaps, BlueprintID: "S1", Payload: map[string]any{"projects": []any{
 			map[string]any{"project": "alpha", "has_verify": false, "has_instruction_file": false, "empty": true},
 			map[string]any{"project": "beta", "has_verify": true, "has_instruction_file": false, "empty": false},
@@ -45,9 +99,9 @@ func TestLogEntryFor(t *testing.T) {
 			"beta has no AGENTS.md or CLAUDE.md",
 		}, false},
 		{"created", blueprint.Event{Kind: blueprint.EventCreated, BlueprintID: "S1", Payload: map[string]any{"projects": []string{"alpha", "beta"}, "mode": "yolo"}}, "system", []string{"alpha", "beta", "yolo"}, false},
-		{"stage started", blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "persona": "product_owner", "pack": "default", "pack_version": "1"}}, "system", []string{"intake"}, false},
-		{"artifact", blueprint.Event{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "version": 1, "body": "# Need\n\nk8s", "persona": "product_owner"}}, "text", []string{"intake rev 1"}, false},
-		{"stage ended", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "status": "done", "cost_usd": 0.25}}, "system", []string{"intake", "done", "0.25"}, false},
+		{"stage started", blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "persona": "product_owner", "pack": "default", "pack_version": "1"}}, "system", []string{"Intake"}, false},
+		{"artifact", blueprint.Event{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "version": 1, "body": "# Need\n\nk8s", "persona": "product_owner"}}, "text", []string{"Intake rev 1"}, false},
+		{"stage ended", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "status": "done", "cost_usd": 0.25}}, "system", []string{"Intake", "done", "0.25"}, false},
 		{"stage ended priced", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "status": "done", "cost_usd": 0.2, "priced": true}}, "system", []string{"0.20"}, false},
 		{"stage ended unpriced", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "status": "done", "cost_usd": 0.2, "priced": false}}, "system", []string{"0.20"}, false},
 		{"note", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "use helm"}}, "system", nil, false},
@@ -63,8 +117,8 @@ func TestLogEntryFor(t *testing.T) {
 		{"the watch's state is internal", blueprint.Event{Kind: blueprint.EventWatchState, BlueprintID: "S1", Payload: map[string]any{"cards": []any{}}}, "", nil, true},
 		{"reopened", blueprint.Event{Kind: blueprint.EventReopened, BlueprintID: "S1", Payload: map[string]any{"state": "idle"}}, "system", []string{"idle"}, false},
 		{"a stopped emission awaited", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "signoff", "prompt": "Emission is stopped; reply approve to resume it."}}, "text", []string{"reply approve to resume it"}, false},
-		{"awaited without a prompt", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "signoff", "prompt": ""}}, "text", []string{"signoff"}, false},
-		{"note that re-runs a stage", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "go on", "retries": "grounding"}}, "system", []string{"grounding"}, false},
+		{"awaited without a prompt", blueprint.Event{Kind: blueprint.EventAwaitInput, BlueprintID: "S1", Payload: map[string]any{"stage": "signoff", "prompt": ""}}, "text", []string{"Signoff"}, false},
+		{"note that re-runs a stage", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "go on", "retries": "grounding"}}, "system", []string{"Grounding"}, false},
 		{"research off", blueprint.Event{Kind: blueprint.EventResearchOff, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "intake", "reason": "ContextMatrix has research off",
 		}}, "system", []string{"Research is off", "ContextMatrix has research off"}, false},
@@ -139,13 +193,13 @@ func TestLogEntryFor(t *testing.T) {
 				map[string]any{"label": "Approve", "reply": "approve", "feedback": false},
 				map[string]any{"label": "Reject", "reply": "reject", "feedback": true},
 			},
-		}}, "text", []string{"shape", "`approve`", "`reject <feedback>`"}, false},
+		}}, "text", []string{"Shape", "`approve`", "`reject <feedback>`"}, false},
 		{"decided at a stage's gate", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "shape", "decision": "approve", "responder": "human",
-		}}, "system", []string{"shape"}, false},
+		}}, "system", []string{"Shape"}, false},
 		{"rejected at a stage's gate", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "shape", "decision": "reject", "responder": "human", "feedback": "smaller",
-		}}, "system", []string{"shape"}, false},
+		}}, "system", []string{"Shape"}, false},
 		{"gate reply at an open gate", blueprint.Event{Kind: blueprint.EventPolicy, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "shape", "policy": "auto", "open": "gate",
 		}}, "system", []string{"approve or reject"}, false},
@@ -155,13 +209,13 @@ func TestLogEntryFor(t *testing.T) {
 		{"note with a hint", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "hm", "hint": "Reply approve or reject."}}, "system", []string{"Reply approve or reject."}, false},
 		{"a review started", blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "shape", "kind": "reviewer", "persona": "reviewer",
-		}}, "system", []string{"Review of shape"}, false},
+		}}, "system", []string{"Review of Shape"}, false},
 		{"a review ended", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "shape", "kind": "reviewer", "status": "done", "cost_usd": 0.02,
-		}}, "system", []string{"Review of shape", "0.02"}, false},
+		}}, "system", []string{"Review of Shape", "0.02"}, false},
 		{"a verdict", blueprint.Event{Kind: blueprint.EventReview, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "shape", "version": 2, "score": 3, "threshold": 4, "findings": []any{"name the owner"}, "round": 1,
-		}}, "system", []string{"shape", "3", "4", "name the owner"}, false},
+		}}, "system", []string{"Shape", "3", "4", "name the owner"}, false},
 		{"a gate with a verdict", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "shape", "version": 7, "actions": []any{map[string]any{"label": "Approve", "reply": "approve", "feedback": false}},
 			"review": map[string]any{"score": 2, "threshold": 4, "findings": []any{"split it"}, "round": 3, "passed": false},
@@ -173,20 +227,20 @@ func TestLogEntryFor(t *testing.T) {
 		}}, "text", []string{"- Q1: unused_answer: the question was answered, but no decision rests on it\n\n"}, false},
 		{"a note that runs a review again", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{
 			"text": "go on", "retries": "shape", "critique": true,
-		}}, "system", []string{"shape"}, false},
+		}}, "system", []string{"Shape"}, false},
 		{"a fold", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "slicing", "decision": "fold", "feedback": "solution_design", "responder": "auto",
-		}}, "system", []string{"slicing", "solution_design"}, false},
+		}}, "system", []string{"Slicing", "Solution design"}, false},
 		{"a design superseded by a rejected slicing", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "solution_design", "decision": "superseded", "feedback": "slicing", "responder": "human",
-		}}, "system", []string{"solution_design", "slicing"}, false},
+		}}, "system", []string{"Solution design", "Slicing"}, false},
 		{"a folded gate", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "solution_design", "version": 1, "folded": []any{map[string]any{"stage": "slicing", "version": 1}},
 			"actions": []any{map[string]any{"label": "Reject slicing", "reply": "reject slicing", "feedback": true}},
-		}}, "text", []string{"slicing", "`reject slicing <feedback>`"}, false},
+		}}, "text", []string{"Slicing", "`reject slicing <feedback>`"}, false},
 		{"a folded gate names what it also judges", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "solution_design", "version": 1, "folded": []any{map[string]any{"stage": "slicing", "version": 3}}, "actions": []any{},
-		}}, "text", []string{"slicing", "3"}, false},
+		}}, "text", []string{"Slicing", "3"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -212,12 +266,14 @@ func TestLogEntryFor(t *testing.T) {
 }
 
 func TestLogEntryFor_RefusedNeedShowsOnlyTheMessage(t *testing.T) {
+	const message = "The blueprint's $1.00 cap is used up ($1.00 spent); Intake stopped."
+
 	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventError, BlueprintID: "S1", Payload: map[string]any{
-		"stage": "intake", "message": "cost cap 1.00 USD would be breached (spent 1.00)",
+		"stage": "intake", "message": message, "cap": "blueprint", "cap_usd": 1.0, "blueprint_spent_usd": 1.0,
 		"message_id": "m1", "need": "containerise this project",
 	}})
 	require.True(t, ok)
-	assert.Equal(t, "cost cap 1.00 USD would be breached (spent 1.00)", entry.Content, "the need stays in the audit log, not the panel")
+	assert.Equal(t, message, entry.Content, "the need stays in the audit log, not the panel")
 }
 
 func TestLogEntryFor_ANoteAtAnEndedPipelineIsToldApart(t *testing.T) {
@@ -722,34 +778,34 @@ func TestLogEntryFor_Markers(t *testing.T) {
 		{
 			"a stage run's start is a stage divider",
 			ev(blueprint.EventStageStarted, map[string]any{"stage": "solution_design", "kind": "stage", "persona": "system_designer", "round": 1}),
-			"system", &protocol.LogMarker{Kind: "stage", Stage: "solution_design", Persona: "system_designer"}, "solution_design",
+			"system", &protocol.LogMarker{Kind: "stage", Stage: "solution_design", Persona: "system_designer"}, "Solution design",
 		},
-		{"a builder round's start is no divider", ev(blueprint.EventStageStarted, map[string]any{"stage": "solution_design", "kind": "stage", "persona": "system_designer", "round": 2}), "system", nil, "solution_design"},
-		{"a review's start is no divider", ev(blueprint.EventStageStarted, map[string]any{"stage": "solution_design", "kind": "reviewer", "persona": "senior_developer", "round": 1}), "system", nil, "Review of solution_design"},
+		{"a builder round's start is no divider", ev(blueprint.EventStageStarted, map[string]any{"stage": "solution_design", "kind": "stage", "persona": "system_designer", "round": 2}), "system", nil, "Solution design"},
+		{"a review's start is no divider", ev(blueprint.EventStageStarted, map[string]any{"stage": "solution_design", "kind": "reviewer", "persona": "senior_developer", "round": 1}), "system", nil, "Review of Solution design"},
 		{
 			"a first version is drawn by its persona",
 			ev(blueprint.EventArtifact, map[string]any{"stage": "solution_design", "version": 1, "body": "# Design", "persona": "system_designer", "round": 1, "revised_for": 0}),
-			"text", sheet("solution_design", 1, "system_designer", "Drawn by system designer"), "solution_design rev 1: Drawn by system designer.",
+			"text", sheet("solution_design", 1, "system_designer", "Drawn by system designer"), "Solution design rev 1: Drawn by system designer.",
 		},
 		{
 			"a revision says what it was revised for",
 			ev(blueprint.EventArtifact, map[string]any{"stage": "solution_design", "version": 2, "body": "# Design", "persona": "system_designer", "round": 2, "revised_for": 3}),
-			"text", sheet("solution_design", 2, "system_designer", "Revised for the 3 findings"), "solution_design rev 2",
+			"text", sheet("solution_design", 2, "system_designer", "Revised for the 3 findings"), "Solution design rev 2",
 		},
 		{
 			"a revision for one finding",
 			ev(blueprint.EventArtifact, map[string]any{"stage": "slicing", "version": 2, "body": "# Slices", "persona": "product_owner", "round": 2, "revised_for": 1}),
-			"text", sheet("slicing", 2, "product_owner", "Revised for the 1 finding"), "slicing rev 2",
+			"text", sheet("slicing", 2, "product_owner", "Revised for the 1 finding"), "Slicing rev 2",
 		},
 		{
 			"a loop stage says its round",
 			ev(blueprint.EventArtifact, map[string]any{"stage": "readiness", "version": 2, "body": "# Ready", "persona": "reviewer", "round": 1, "revised_for": 0, "loop_round": 2, "max_rounds": 3}),
-			"text", sheet("readiness", 2, "reviewer", "Round 2 of 3"), "readiness rev 2",
+			"text", sheet("readiness", 2, "reviewer", "Round 2 of 3"), "Readiness rev 2",
 		},
 		{
 			"cards accepted with findings say so",
 			ev(blueprint.EventArtifact, map[string]any{"stage": "decomposition", "version": 1, "body": "# Cards", "persona": "senior_developer", "findings": []string{"D1: a"}, "accepted_round": 3}),
-			"text", sheet("decomposition", 1, "senior_developer", "Refused by checks, accepted on round 3"), "decomposition rev 1",
+			"text", sheet("decomposition", 1, "senior_developer", "Refused by checks, accepted on round 3"), "Decomposition rev 1",
 		},
 		{
 			"a review stays a prose row",
@@ -759,7 +815,7 @@ func TestLogEntryFor_Markers(t *testing.T) {
 		{
 			"a gate decision stays a prose row",
 			ev(blueprint.EventDecided, map[string]any{"stage": "solution_design", "decision": "approve", "responder": "human", "version": 2}),
-			"system", nil, "Approved solution_design",
+			"system", nil, "Approved Solution design",
 		},
 	}
 
@@ -929,4 +985,47 @@ func TestLogEntry_ASegmentStartIsNoDivider(t *testing.T) {
 	}})
 	require.True(t, ok)
 	assert.Nil(t, entry.Marker)
+}
+
+func TestAssumptionStatus_AnAcceptedAssumptionNamesItsStageNotATag(t *testing.T) {
+	for _, basis := range []string{"round2.A1", "Q5"} {
+		got := assumptionStatus(map[string]any{"id": "A1", "status": "confirmed", "basis": basis, "accepted": "solution_design"})
+
+		assert.Contains(t, got, "accepted at Solution design")
+		assert.NotContains(t, got, basis)
+		assert.NotContains(t, got, "Accepted")
+	}
+
+	answered := assumptionStatus(map[string]any{"id": "A1", "status": "confirmed", "basis": "Q1", "answer": "ops"})
+	assert.Contains(t, answered, "Q1")
+	assert.Contains(t, answered, "ops")
+	assert.NotContains(t, answered, "accepted at")
+}
+
+func TestLogEntryFor_AGateAndItsReviewNameTheStageNotItsID(t *testing.T) {
+	const id, name = "solution_design", "Solution design"
+
+	gate, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
+		"stage": id, "version": 2, "actions": []any{map[string]any{"label": "Approve", "reply": "approve", "feedback": false}},
+		"review": map[string]any{"revised": true, "judged": 1, "score": 4, "threshold": 4, "findings": []any{"f"}},
+		"folded": []any{map[string]any{"stage": "slicing_plan", "version": 1, "body": "# Slices"}},
+	}})
+	require.True(t, ok)
+
+	review, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventReview, BlueprintID: "S1", Payload: map[string]any{
+		"stage": id, "version": 1, "score": 4, "threshold": 4, "findings": []any{}, "round": 1,
+	}})
+	require.True(t, ok)
+
+	require.NotNil(t, gate.Prompt)
+	assert.Equal(t, "gate:solution_design:v2", gate.Prompt.ID, "the prompt id keeps the raw id")
+
+	for what, text := range map[string]string{"gate content": gate.Content, "gate prompt": gate.Prompt.Text, "review": review.Content} {
+		assert.NotContains(t, text, id, what)
+		assert.NotContains(t, text, "slicing_plan", what)
+	}
+
+	assert.Contains(t, gate.Content, name)
+	assert.Contains(t, gate.Prompt.Text, name)
+	assert.Contains(t, review.Content, name)
 }

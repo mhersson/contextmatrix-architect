@@ -89,7 +89,7 @@ context window; never use film references.
 CM chat panel (the only client)
      |  internal/webhook (backendkit webhookcore + logbridge:
      |  session start, /message, /logs SSE, end-session, the blueprint view, artifacts and live SSE)
-     |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, outcomes, lesson decision
+     |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, cap <usd>|off, resume|continue, outcomes, lesson decision
      |  events out: stage progress, tool calls, questions, gates, cost
 controller (internal/blueprint)     blueprint state machine, gates, responder policy, cost cap
      |
@@ -114,7 +114,10 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   adapter: `internal/webhook`, CM's chat-backend protocol. CM starts a session
   with a payload, the user's messages arrive on `/message`, events stream back
   as log entries over SSE and the panel renders them as messages and tool
-  calls. A gate a human answers is a text entry carrying a prompt
+  calls. Text a person reads names a stage by its display name, its id with
+  underscores as spaces and the first letter upper case (`Solution design`);
+  prompt ids, event payloads, markers and the `gate <stage> human` command
+  keep the raw id. A gate a human answers is a text entry carrying a prompt
   (`LogEntry.Prompt`): actions, each a label and the exact reply text, which
   the panel shows as buttons, the markdown staying the readable fallback. A
   gate's, the sign-off's, a stopped emission's or a run start's prompt
@@ -166,8 +169,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   `round:<n>` and its questions `Q<n>` after every question so far, shows it,
   and ends the harness run with the status `asked`. No model runs and nothing waits in memory while a human thinks.
   Answers sent in batches are stored as they come. Once every question has
-  an answer and every assumption on its tab a decision the round closes,
-  each answer and each accepted assumption is recorded in `questions`, and a
+  an answer and every assumption on its tab a decision the round closes:
+  each answer is recorded in `questions`, each accepted assumption on the
+  round itself (see Interaction), and a
   continuation runs: a stage run of the same attempt and builder round that
   resumes the stored conversation of the run that asked, or of the chat run
   that replied last, with the answers, the chat it has not answered and the
@@ -187,8 +191,8 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   last answer arrived meanwhile closes once it ends. The reply reaches the panel only in the round's
   chat; the chat run's text and its `answer_chat` call stay in the record.
   A chat run that fails or is aborted leaves its messages until the user
-  writes or answers again: the chat runs again, or the continuation of the
-  answered round gets them.
+  writes, answers again or replies `continue`: the chat runs again, or the
+  continuation of the answered round gets them.
   Under `auto` a responder run answers each question inside the asking run
   (see Interaction), every assumption on the tab is accepted, the round is
   shown answered and read-only, and the stage continues at once.
@@ -235,7 +239,8 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
 - **Crash recovery.** Artifacts are stored per stage, so after a dead process
   reopening the blueprint's session re-runs the open stage from its inputs. A
   re-run is given the questions its stage already asked, their answers and who
-  answered each (the user or the responder), so it does not ask them again. A
+  answered each (the user or the responder), so it does not ask them again,
+  and the assumptions the user accepted on its tabs, each with its tag. A
   stage run is resumed from the store only as a continuation after a round;
   a builder round after a review, a low one's next round or a passing one's
   revision, resumes the transcript of the run that built the artifact.
@@ -249,7 +254,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price as CM sent it                                        |
 | stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, findings, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
-| questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes (an assumption a human accepted on its tab included), or at the responder's answer under auto, or at the answer for one asked alone before rounds |
+| questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes, or at the responder's answer under auto, or at the answer for one asked alone before rounds; an assumption a human accepted on a tab is recorded on its round, not here |
 | gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted, each web search result list replaced by its query and result count |
 | events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning; every change of the blueprint's state is a `state` row, stored and never sent to the panel; every web search and page read is a `research` event (the query and result count, the URL and source tag, or the rule that refused it), and a session that runs a research stage without research says so once in a `research_off` event; a round is its `round` snapshots, the newest per round number winning |
@@ -316,10 +321,10 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   own, a title, and only the blueprint's target projects.
 - Solution design's submit is checked: it has slices, every slice of slicing
   among them; every decision has a chosen option, a rejected option and a
-  basis (`Q<n>`, `S<n>` or `assumption`); and every question it got answered
+  basis (`Q<n>`, `round<n>.A<k>`, `S<n>` or `assumption`); and every
+  question it got answered and every assumption the user accepted on its tabs
   since the slicing it consumes was built is the basis of a decision or of a
-  stated assumption, an assumption accepted on a round's tab included; an
-  answer from before a re-slice stays a basis it may cite.
+  stated assumption; one from before a re-slice stays a basis it may cite.
 - Acceptance's submit is checked: it has slices, every slice of slicing
   among them and each with at least one criterion; every criterion has an
   id of its own, a target project and its text, and every manual check an
@@ -575,7 +580,9 @@ decisions the AI made. A responder that fails leaves its question to the
 stage, which decides it and records an assumption where it can; under a pack
 without `stages/responder.md` an auto round is refused and the stage decides
 every question. On a priced model a responder spends
-from the asking run's cost cap.
+from the asking run's cost cap; one a cap refuses (the asking run's spent,
+or less than its floor left of the blueprint's) leaves its question to the
+stage too.
 
 **Assumptions are data.** Before it submits, a stage that declares the
 `assumptions` check (intake and solution design) posts its assumptions as
@@ -583,29 +590,35 @@ the last tab of a round, labelled A1, A2, ... within the round; a chat that
 replaces the tab keeps an unchanged assumption's label and gives a new one
 a label the round never issued, so a decision the user made on a dropped
 assumption never lands on another. A human
-accepts each or turns it into a question: an accepted one is recorded as an
-answered question, `Q<n>`, which the stage states it with as its basis, so
-it reads `confirmed`; after one is turned into a question, a later round of
+accepts each or turns it into a question: an accepted one is recorded on its
+round, whose closed snapshot is the record, and cited as `round<n>.A<k>`, the
+round's number and the label (`round2.A1` for A1 on round 2's tab); the stage
+states it with that tag as its basis, so it reads `confirmed`. It takes no
+question number: `Q<n>` counts only asked questions. One a
+blueprint holds as a `questions` row stays cited by that row's `Q<n>`, whose
+number stays taken. After one is turned into a question, a later round of
 the attempt must be posted before the stage may submit. Under the human policy
 every stated assumption must have a basis. Under `auto` each assumption is
 accepted automatically, logged on the round, and keeps the status its basis
-gives it, never `confirmed`. The stage submits each assumption as a
-standalone sentence, or as `{"text": "<sentence>", "basis": "Q<n>"}` when it
-rests on an answered question. The check refuses a sentence that points at
-other text (the `dangling_references` list) or names an answered question
-(the basis carries the question and the sentence states the fact, so no
-model prose says who answered), and a basis that is no answered question;
-the third failing submit is accepted with its problems kept in its data,
-and a basis naming no answered question then reads as none. The controller numbers them
+gives it, never `confirmed`; no auto round records an acceptance. The stage
+submits each assumption as a standalone sentence, or as
+`{"text": "<sentence>", "basis": "<tag>"}` when it rests on an answered
+question (`Q<n>`) or an accepted assumption (`round<n>.A<k>`). The check refuses
+a sentence that points at other text (the `dangling_references` list) or
+names an answered question or an accepted assumption (the basis carries it
+and the sentence states the fact, so no model prose says who answered), and
+a basis that is neither; the third failing submit is accepted with its
+problems kept in its data, and such a basis then reads as none. The controller numbers them
 A1, A2, ... across those stages in pack order and gives every later stage
 that consumes a stating stage the list with the ids. An assumption starts
-with its basis's status: `confirmed` when a human answered the question,
-`assumed` when the responder did, `verified` with the responder's evidence
-when that answer was verified, and `unverified` without a basis. An auto
+with its basis's status: `confirmed` when a human answered the question or
+accepted the assumption, `assumed` when the responder answered it,
+`verified` with the responder's evidence when that answer was verified, and
+`unverified` without a basis. An auto
 answer's own `Q<n>` entry is listed only while no stated assumption in the
 latest stating artifacts rests on it; otherwise those that do carry its
 status, so an answer and its restatement are one entry. Every stated
-assumption with a basis carries that question's answer too, a human's
+assumption resting on an answered question carries its answer too, a human's
 included, so a merged entry still shows the answer the responder gave. A later
 stage (grounding) submits verdicts, verified or contradicted with evidence, as
 new artifact data, never an update; a verdict sets the status and evidence. An
@@ -618,9 +631,11 @@ sign-off (unverified, contradicted, assumed, confirmed, then verified), the
 playbook description and a single card's Context list every assumption with
 its latest status; each adds, for an assumed or confirmed one, who answered
 the question it rests on and its tag, and the answer, for every entry that
-carries one. When no stage stated any as data, as with an intake stored before
-assumptions were data, they show the text of intake's Assumptions section
-instead, without ids or statuses.
+carries one. A confirmed one resting on an accepted assumption reads
+"accepted at" the display name of the stage of the tab it was accepted on
+(`Intake`) instead, with no tag and no answer. When no stage stated any as data,
+as with an intake stored before assumptions were data, they show the text of
+intake's Assumptions section instead, without ids or statuses.
 
 Later policy: `jira` (question posted as a comment; after two reminders
 without a reply it falls through to `auto`, logged as such).
@@ -774,12 +789,49 @@ Replies the server understands, besides a round's structured answers:
 | ----------------------------- | ---------------------------------------------------------------------- |
 | `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition with the feedback. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
 | `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round or gate keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
+| `cap <usd>`, `cap off`        | Sets the blueprint's cost cap (see below); CM sends it when the person clicks the cost in the sheet header. Exactly two words, the amount one plain decimal number, so an answer that starts with "cap" stays an answer. Works while a stage runs. |
+| `resume`, `continue`          | Runs the stopped stage again once, as a retry message would but storing no note (see below); a stage the cap stopped runs too and meets the cap again. The whole message, case ignored, so an answer that starts with either word stays an answer. While a run is in flight, or where nothing is stopped (an open gate, a round waiting for answers, the sign-off, an ended pipeline, no need yet), nothing starts and the panel says so. Each reply is a `resume` event with the stage it runs again, or with `nothing` and the stage `running`, if any. |
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
 | `lessons`                     | Lists lessons and their state.                                          |
 | `abort`                       | Ends the open run; the blueprint stays and can be reopened, and an open round stays open. |
 
-- A run does not start if it would breach the blueprint's cost cap.
+- Under a blueprint cost cap a run starts only with its floor left: the
+  median cost of the blueprint's done runs of its kind (stage, reviewer or
+  responder) and stage, never less than $0.10. The floor bounds what the
+  blueprint cap has left, compared in whole cents, never the per-run cap. A stage or reviewer run the
+  blueprint cap refuses (spent, below the floor, or on a model without a
+  price), or one cut short at what the blueprint had left because that was
+  below the per-run cap or there is none, is a cap stop: the blueprint is
+  idle and the error event carries `"cap": "blueprint"`, the cap (`cap_usd`)
+  and what the blueprint has spent (`blueprint_spent_usd`). Its message names
+  the stage and says how to go on, for a spent cap "The blueprint's $2.00 cap
+  is used up ($2.14 spent); Readiness stopped. Raise the cap by clicking the
+  cost in the header (or reply `cap <usd>`) and it continues.", below the
+  floor that the cap leaves less than the next run needs; a model without a
+  price keeps its own refusal. A run that reaches the per-run cap is an
+  ordinary failed run, and a responder below its floor is refused inside the
+  asking run, which decides the question itself.
+- The cap is set when the blueprint is created and changed only by the `cap`
+  reply: a reopen keeps the stored cap whatever the start payload carries.
+  `cap <usd>` stores a new cap and `cap off` removes it; an amount not above
+  what the blueprint has spent is refused and changes nothing ("Nothing
+  changed: the blueprint has spent $2.14; a cap must be above that, or reply
+  `cap off`."). Each reply is a `cap` event with the cap it changed `from`
+  and `to`, or why it was refused, and the view's cost shows the new cap at
+  once. The cap applies from the next run, a later run of the same chain
+  included; a run in flight keeps the cap it started with. With nothing in
+  flight, a cap above the one a cap stop happened under (its `cap_usd`), or
+  no cap, runs the stopped stage again once, as a retry message would but
+  storing no note: a stage, a review, builder round or revision, a round's
+  continuation or chat run, or an intake with a need stored, which runs on
+  that need. The stored cap may be above it already, raised while the
+  stopped run went on; sending that cap again then resumes. The newest
+  start, end or refusal of the blueprint's runs must be that cap stop, and the
+  event records the stage it resumes ("Cost cap raised from $2.00 to
+  $4.00; resuming Readiness."). A cap at or below the stop's resumes
+  nothing, nor does any change at another stop, which waits for a message
+  or `continue`.
 - Reopening a session makes CM send a start for it; a stage interrupted by a
   server restart is re-run from its inputs, or from its stored conversation
   when it went on from a round (below), and a stage whose inputs were stored
@@ -806,16 +858,20 @@ Replies the server understands, besides a round's structured answers:
   round the pipeline went past without its answers, as when the run that
   posted it never recorded its end, is collapsed in the panel, and its stage
   runs again as any stage cut short does. An aborted stage waits for the
-  next message, as below.
+  next message or `continue`, as below.
 - After a later stage fails or is aborted, the next message is logged as a
   note and re-runs that stage; after a continuation, one of intake included,
   fails or is aborted, the next message is a note and runs it again from the
   same conversation; after a review or a builder round, a revision round
   included, fails or is aborted, the next message is a note and runs it
   again; after intake fails or is aborted, the next message is the need
-  again and intake re-runs on it. A pipeline stopped by the card contract or
-  by readiness's rounds is not re-run; the user starts a new blueprint with
-  a better design.
+  again and intake re-runs on it. `resume` or `continue` runs each of these
+  again as that message would but stores no note, and runs intake on the
+  need already stored. An abort that cuts a stage's run, and a stage run's
+  failure, tell the user to reply `continue`; a cap stop tells them to
+  raise the cap, and a cut emission or run start to reply approve. A
+  pipeline stopped by the card contract or by readiness's rounds is not
+  re-run; the user starts a new blueprint with a better design.
 - From slice 4, a project may opt into automatic export in config: a target
   repo, branch and directory; the bundle is committed there at each gate or at
   sign-off. Off by default.
@@ -969,15 +1025,18 @@ frames on the session's chat stream.
 - Tool results are capped at 128 KiB per call before the model sees them,
   head and tail kept, as in the chat backend.
 - Cost: every run's token buckets are priced at the model price CM sends in
-  the start payload; the ledger sums runs per blueprint. The per-run cap
-  (off at zero) stops a run within one model call of passing it, on a priced
-  model a responder run spends from the asking run's cap, and a capped
-  blueprint whose model has no price does not run. An unpriced model on an
-  uncapped blueprint counts only the cost the endpoint reports, and
-  max_turns still bounds every run. CM prices only the session model, so a
-  run on a per-persona override is unpriced: a capped blueprint refuses it,
-  an uncapped one counts the reported cost. A critique round re-bills the
-  conversation so far, and so does a revision round; the ledger counts both.
+  the start payload; the ledger sums runs per blueprint. A run's cap is the
+  per-run cap (off at zero), or what the blueprint cap, as stored when the
+  run starts, has left when that is smaller, and under a blueprint cap a run
+  needs its floor left to start (see Sessions). The run cap stops a run
+  within one model call of passing it, on a priced model a responder run
+  spends from the asking run's cap, and a capped blueprint whose model has
+  no price does not run. An unpriced model on an uncapped blueprint counts
+  only the cost the endpoint reports, and max_turns still bounds every run.
+  CM prices only the session model, so a run on a per-persona override is
+  unpriced: a capped blueprint refuses it, an uncapped one counts the
+  reported cost. A critique round re-bills the conversation so far, and so
+  does a revision round; the ledger counts both.
 - Every stage run compacts in its window: once a prompt reaches 85% of a
   128000-token window, the harness summarizes the older turns, keeps the
   last six messages and goes on. A model with a smaller window fails on the
@@ -1009,7 +1068,7 @@ internal/cm          MCP client: the project list, the stage read tools, and the
 internal/outcomes    outcomes stage and lessons
 internal/export      markdown rendering into the state directory
 internal/config
-internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export and gate commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
+internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, resume and continue commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
 ```
 
 ## Changes needed in CM
@@ -1025,6 +1084,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Panel: question and gate prompts (`LogEntry.Prompt`, protocol v0.24.0, with their own text, kind and recommended option from v0.25.0) rendered as buttons; the gate plan stays text, and lesson prompts reuse the same shape | slice 3 (lessons slice 4) |
 | Panel: the blueprint pane (scale bar, sheet, transcript markers), read through CM proxies of the architect's signed view and artifact endpoints, with its live stream relayed on the session's chat stream (protocol v0.26.0) | blueprint UI |
 | A research setting (`off` or `search`, off by default) with the search provider and its key in CM's configuration, sent as `ArchitectStart.Research` (protocol v0.27.0) | research |
+| Panel: clicking the cost in the sheet header asks for a new cap and sends `cap <usd>` or `cap off` as a chat message hidden from the transcript | cost cap |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

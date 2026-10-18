@@ -166,10 +166,12 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	m := c.modelFor(sess, st.Persona)
 
-	runCap, ok := c.capAllows(bg, au, bp, stageID, m, nil)
+	budget, ok := c.capAllows(bg, au, bp, stageID, m, nil)
 	if !ok {
 		return stageStopped
 	}
+
+	runCap := budget.capUSD
 
 	var err error
 
@@ -424,12 +426,22 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			note = fmt.Sprintf(", %.2f USD of it for its responder runs", charged)
 		}
 
-		au.event(bg, Event{Kind: EventError, BlueprintID: id, RunID: runID, Payload: map[string]any{
+		payload := map[string]any{
 			"stage":     stageID,
 			"reason":    "max_cost",
 			"spent_usd": spent,
 			"message":   fmt.Sprintf("run cost cap %.2f USD reached after %.2f USD%s; the stage stopped", runCap, spent, note),
-		}})
+		}
+
+		if budget.bound {
+			if stop, err := c.capStopAfter(bg, id, budget.blueprintCapUSD, store.RunKindStage, stageID); err != nil {
+				c.opts.Logger.Error("blueprint: read the cap stop", "blueprint", id, "run", runID, "error", err)
+			} else {
+				maps.Copy(payload, stop.payload())
+			}
+		}
+
+		au.event(bg, Event{Kind: EventError, BlueprintID: id, RunID: runID, Payload: payload})
 	case ctx.Err() != nil:
 		// The harness reports a cancelled run as an error; abort and End
 		// cancel, so this is a canceled run, not a failed one.

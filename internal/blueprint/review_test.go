@@ -965,3 +965,76 @@ func TestReview_ACompletedReviewLeavesTheBlueprintIdle(t *testing.T) {
 	require.Equal(t, stageStored, c.critique(ctx, &run{}, &session{audit: c.newAudit()}, bp, "shape"))
 	assert.Equal(t, string(StateIdle), stateOf(t, st, "BP1"), "the step after the review sets its own state")
 }
+
+func TestReview_TheBlueprintCapStopsTheReview(t *testing.T) {
+	maxCost := func(costUSD float64) func(context.Context, stage.Input) (stage.Output, error) {
+		return func(context.Context, stage.Input) (stage.Output, error) {
+			return stage.Output{Result: harness.Result{Reason: "max_cost", TotalCostUSD: costUSD}}, errors.New("stage shape.review: no artifact")
+		}
+	}
+
+	tests := []struct {
+		name    string
+		capUSD  float64
+		review  func(context.Context, stage.Input) (stage.Output, error)
+		reviews int
+		capStop bool
+	}{
+		{name: "less than the floor left refuses the review", capUSD: 1, review: reviews(5), capStop: true},
+		{name: "what the blueprint had left bound the review", capUSD: 2, review: maxCost(1.1), reviews: 1, capStop: true},
+		{name: "the per-run cap bound the review", capUSD: 10, review: maxCost(2.1), reviews: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			script := gatedScript()
+			// Shape spends 0.95: of a 1 USD cap that leaves 0.05, below a
+			// review's 0.10 floor.
+			script["shape"] = func(context.Context, stage.Input) (stage.Output, error) {
+				out := done("# Shape", nil)
+				out.Result.TotalCostUSD = 0.95
+
+				return out, nil
+			}
+			script["shape.review"] = tt.review
+
+			c, st, _, rec := newGated(t, script)
+			ctx := context.Background()
+			in := startInput("BP1")
+			in.CostCapUSD = tt.capUSD
+			in.Price = testPrice()
+			require.NoError(t, c.Start(ctx, in))
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			c.Wait("BP1")
+
+			runs, err := st.ListRuns(ctx, "BP1")
+			require.NoError(t, err)
+
+			var reviewers int
+
+			for _, r := range runs {
+				if r.Kind == store.RunKindReviewer {
+					reviewers++
+				}
+			}
+
+			assert.Equal(t, tt.reviews, reviewers)
+			assert.False(t, rec.has(EventGate), "the gate waits for its review")
+			assert.Equal(t, string(StateIdle), stateOf(t, st, "BP1"))
+
+			ev, ok := rec.first(EventError)
+			require.True(t, ok)
+			assert.Equal(t, "shape", ev.Payload["stage"])
+
+			if !tt.capStop {
+				assert.Empty(t, capStops(t, st), "a per-run cap stop is an ordinary failed run")
+				assert.Equal(t, "max_cost", ev.Payload["reason"], "reported as a stage run's per-run cap is")
+
+				return
+			}
+
+			assert.Equal(t, []string{"shape"}, capStops(t, st))
+			assert.InDelta(t, tt.capUSD, ev.Payload["cap_usd"], 1e-9)
+		})
+	}
+}

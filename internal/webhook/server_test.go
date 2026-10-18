@@ -36,6 +36,8 @@ type stubController struct {
 	aborts    []string
 	exports   []string
 	policies  []string
+	caps      []string
+	resumes   []string
 	ends      []string
 	startErr  error
 	msgErr    error
@@ -98,6 +100,26 @@ func (s *stubController) SetPolicy(ctx context.Context, id, stageID, policy, msg
 	defer s.mu.Unlock()
 
 	s.policies = append(s.policies, id+"|"+stageID+"|"+policy+"|"+msgID)
+	s.ctxErrs = append(s.ctxErrs, ctx.Err())
+
+	return nil
+}
+
+func (s *stubController) SetCap(ctx context.Context, id, value, msgID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.caps = append(s.caps, id+"|"+value+"|"+msgID)
+	s.ctxErrs = append(s.ctxErrs, ctx.Err())
+
+	return nil
+}
+
+func (s *stubController) Resume(ctx context.Context, id, msgID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.resumes = append(s.resumes, id+"|"+msgID)
 	s.ctxErrs = append(s.ctxErrs, ctx.Err())
 
 	return nil
@@ -599,11 +621,20 @@ func TestMessage_CommandsAreRouted(t *testing.T) {
 		wantAborts   int
 		wantExports  int
 		wantPolicies []string
+		wantCaps     []string
+		wantResumes  []string
 		wantMessages int
 	}{
 		{text: "abort", wantAborts: 1},
 		{text: "  Export ", wantExports: 1},
 		{text: "Gate Grounding HUMAN", wantPolicies: []string{"BP1|grounding|human|m-Gate Grounding HUMAN"}},
+		{text: "cap 4", wantCaps: []string{"BP1|4|m-cap 4"}},
+		{text: "Cap Off", wantCaps: []string{"BP1|off|m-Cap Off"}},
+		{text: "cap 4 now", wantMessages: 1},
+		{text: "cap four", wantMessages: 1},
+		{text: "resume", wantResumes: []string{"BP1|m-resume"}},
+		{text: " Continue ", wantResumes: []string{"BP1|m-Continue"}},
+		{text: "continue with the plan", wantMessages: 1},
 		{text: "please abort this", wantMessages: 1},
 		{text: "gate it behind a flag", wantMessages: 1},
 		{text: "the design", wantMessages: 1},
@@ -622,6 +653,8 @@ func TestMessage_CommandsAreRouted(t *testing.T) {
 			assert.Len(t, ctl.aborts, tt.wantAborts)
 			assert.Len(t, ctl.exports, tt.wantExports)
 			assert.Equal(t, tt.wantPolicies, ctl.policies)
+			assert.Equal(t, tt.wantCaps, ctl.caps)
+			assert.Equal(t, tt.wantResumes, ctl.resumes)
 			assert.Len(t, ctl.messages, tt.wantMessages)
 		})
 	}

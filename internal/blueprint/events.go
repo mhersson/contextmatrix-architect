@@ -10,6 +10,7 @@ import (
 
 	"github.com/mhersson/contextmatrix-harness/redact"
 
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -62,6 +63,12 @@ const (
 	// EventPolicy records a gate <stage> human|auto reply: the stage's new
 	// policy, or why the reply changed nothing.
 	EventPolicy = "policy"
+	// EventCap records a cap <usd>|off reply: the cap it changed from and to
+	// and the stage it resumes, or why it changed nothing.
+	EventCap = "cap"
+	// EventResume records a resume or continue reply: the stopped stage it
+	// runs again, or that nothing waits to resume and the stage running.
+	EventResume = "resume"
 	// EventGatePlan lists, once the first stage has completed, who answers
 	// each stage's questions and decides its gate.
 	EventGatePlan = "gate_plan"
@@ -204,7 +211,7 @@ func (a audit) artifact(ctx context.Context, id, stageID, body string, data map[
 	if data != nil {
 		b, err := json.Marshal(a.maskFields(data))
 		if err != nil {
-			return 0, fmt.Errorf("blueprint: encode %s artifact data: %w", stageID, err)
+			return 0, fmt.Errorf("blueprint: encode %s artifact data: %w", pack.StageName(stageID), err)
 		}
 
 		raw = b
@@ -214,7 +221,7 @@ func (a audit) artifact(ctx context.Context, id, stageID, body string, data map[
 		BlueprintID: id, Stage: stageID, Body: a.text(body), Data: raw,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("blueprint: store %s artifact: %w", stageID, err)
+		return 0, fmt.Errorf("blueprint: store %s artifact: %w", pack.StageName(stageID), err)
 	}
 
 	return version, nil

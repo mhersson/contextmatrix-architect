@@ -2,9 +2,11 @@ package blueprint
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,47 +60,339 @@ func submitAssumptions(v func(context.Context, stage.Artifact) error, assumption
 	return v(context.Background(), stage.Artifact{Body: "# Need", Data: map[string]any{"assumptions": assumptions}})
 }
 
-func TestTab_AcceptedAssumptionsAreRecordedAsAnsweredQuestions(t *testing.T) {
+// tabRound is round n of stageID as run posted it, a tab of texts alone (A1,
+// A2, ...), closed with decisions as a human's close stores it.
+func tabRound(n int, stageID string, run int64, texts []string, decisions ...protocol.AssumptionDecision) roundState {
+	s := roundState{
+		Number: n, Attempt: 1, BuilderRound: 1, PostedBy: run, RunID: run, Change: changeClosed, TabIssued: len(texts),
+		Frame: protocol.LogRound{Stage: stageID, Questions: []protocol.RoundQuestion{}, Decisions: decisions, Closed: true},
+	}
+
+	for i, text := range texts {
+		s.Frame.Assumptions = append(s.Frame.Assumptions, protocol.RoundAssumption{ID: fmt.Sprintf("A%d", i+1), Text: text})
+	}
+
+	for _, d := range decisions {
+		if !d.Accept {
+			s.Converted = append(s.Converted, d.ID)
+		}
+	}
+
+	return s
+}
+
+// doneRun records a stage run of stageID that ended done.
+func doneRun(t *testing.T, st *store.Store, stageID string) int64 {
+	t.Helper()
+
+	ctx := context.Background()
+	runID, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: stageID, Kind: store.RunKindStage, Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: time.Now().UTC()})
+	require.NoError(t, err)
+	require.NoError(t, st.EndRun(ctx, runID, store.RunDone, "done", store.RunUsage{}, time.Now().UTC()))
+
+	return runID
+}
+
+// snapshots counts the snapshots of round n stored with change.
+func snapshots(t *testing.T, st *store.Store, n int, change string) int {
+	t.Helper()
+
+	events, err := st.ListEventsOfKind(context.Background(), "BP1", EventRound)
+	require.NoError(t, err)
+
+	count := 0
+
+	for _, e := range events {
+		var s roundState
+		require.NoError(t, json.Unmarshal(e.Payload, &s))
+
+		if s.Number == n && s.Change == change {
+			count++
+		}
+	}
+
+	return count
+}
+
+func questionNumbers(qs []store.Question) []int {
+	out := make([]int, 0, len(qs))
+	for _, q := range qs {
+		out = append(out, q.Number)
+	}
+
+	return out
+}
+
+func TestTab_AcceptedAssumptionsTakeNoQuestionNumber(t *testing.T) {
+	var (
+		runs      atomic.Int32
+		submitted error
+	)
+
+	// Round 1 asks two questions, round 2 is a tab alone, round 3 asks one,
+	// and the last continuation submits the accepted ones by their tags.
 	script := happyScript()
-	script["intake"] = tabbed([]stage.RoundQuestion{roundQ("Users", "Who uses it?")}, []string{"One region.", "Postgres stays."}, stage.ChatAnswer{}, nil)
+	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		var rd stage.Round
+
+		switch runs.Add(1) {
+		case 1:
+			rd.Questions = []stage.RoundQuestion{roundQ("Users", "Who uses it?"), roundQ("Region", "Which region?")}
+		case 2:
+			rd.Assumptions = []string{"One region.", "Postgres stays.", "Two zones."}
+		case 3:
+			rd.Questions = []stage.RoundQuestion{roundQ("Zones", "How many zones?")}
+		default:
+			data := map[string]any{"slices": 1, "assumptions": []any{
+				map[string]any{"text": "One region.", "basis": "round2.A1"},
+				map[string]any{"text": "Postgres stays.", "basis": "Round2.a2"},
+			}}
+			submitted = in.Validate(ctx, stage.Artifact{Body: "# Need", Data: data})
+
+			return done("# Need", data), nil
+		}
+
+		if _, err := in.Interviewer.Ask(ctx, rd); err != nil {
+			return stage.Output{}, err
+		}
+
+		return askedOutput(in), nil
+	}
 
 	c, st, runner, _, _ := newPipeline(t, script)
 	ctx := context.Background()
 
 	drive(t, c, "BP1")
-	decide(t, c, "BP1", 1, []protocol.RoundAnswer{own(1, "ops")}, accept("A1"), convert("A2"))
+	answerRound(t, c, "BP1", 1, true, own(1, "ops"), own(2, "eu"))
 	c.Wait("BP1")
+	decide(t, c, "BP1", 2, nil, accept("A1"), accept("A2"), convert("A3"))
+	c.Wait("BP1")
+
+	third := latestRound(t, c, "BP1", 3)
+	require.Len(t, third.Frame.Questions, 1)
+	assert.Equal(t, 3, third.Frame.Questions[0].Number, "the next asked question follows Q1-Q2")
+
+	answerRound(t, c, "BP1", 3, true, own(3, "two"))
+	c.Wait("BP1")
+	require.NoError(t, submitted, "acceptances stated by their tags pass the submit checks under human")
 
 	qs, err := st.ListQuestions(ctx, "BP1")
 	require.NoError(t, err)
-	require.Len(t, qs, 2)
-	assert.Equal(t, "ops", qs[0].Answer)
+	assert.Equal(t, []int{1, 2, 3}, questionNumbers(qs), "only asked questions are rows")
 
-	acceptance := qs[1]
-	assert.Equal(t, 2, acceptance.Number)
-	assert.Equal(t, "One region.", acceptance.Text)
-	assert.Equal(t, "Accepted", acceptance.Answer)
-	assert.Equal(t, store.ResponderHuman, acceptance.Responder)
-	assert.False(t, acceptance.Assumption, "a human accepted it")
-	assert.Equal(t, "intake", acceptance.Stage)
-	assert.Equal(t, qs[0].RunID, acceptance.RunID, "recorded under the run that posted the round")
-	assert.Equal(t, qs[0].MessageID, acceptance.MessageID, "and the answering message")
-
-	s := latestRound(t, c, "BP1", 1)
-	assert.True(t, s.Frame.Closed)
-	assert.Equal(t, map[string]int{"A1": 2}, s.Accepted)
-	assert.Equal(t, []string{"A2"}, s.Converted)
+	tab := latestRound(t, c, "BP1", 2)
+	assert.True(t, tab.Frame.Closed)
+	assert.Nil(t, tab.Accepted)
+	assert.Equal(t, []string{"A3"}, tab.Converted)
+	assert.Zero(t, snapshots(t, st, 2, ChangeClosing), "a close reserves no number")
 
 	intakes := inputsOf(runner, "intake")
-	require.Len(t, intakes, 2)
+	require.Len(t, intakes, 4)
+	assert.NotNil(t, intakes[2].History)
+	assert.Contains(t, intakes[2].Task, "round2.A1", "the continuation is told the acceptance's tag")
+	assert.Contains(t, intakes[2].Task, "round2.A2")
+	assert.NotContains(t, intakes[2].Task, "round2.A3", "one turned into a question has no tag")
 
-	cont := intakes[1]
-	assert.NotNil(t, cont.History)
-	assert.Contains(t, cont.Task, "[Q2]", "the accepted assumption's tag")
-	assert.Contains(t, cont.Task, "A2", "the one turned into a question")
+	list, err := c.assumptions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"A1": assumptionConfirmed, "A2": assumptionConfirmed}, statuses(list))
+	assert.Equal(t, "round2.A2", byID(list)["A2"].Basis)
 }
 
-func TestTab_ACloseCutShortReusesTheAcceptanceNumbers(t *testing.T) {
+func TestTab_AnAcceptanceTagIsABasisTheUserConfirmed(t *testing.T) {
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	intake, ok := c.opts.Pack.Stage("intake")
+	require.True(t, ok)
+
+	au := c.newAudit()
+
+	autoRun := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", nil)
+	auto := tabRound(1, "intake", autoRun, []string{"Auto region."}, accept("A1"))
+	auto.Frame.Responder = true
+	c.putRound(ctx, au, "BP1", autoRun, auto)
+
+	poster := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", nil)
+	c.putRound(ctx, au, "BP1", poster, tabRound(2, "intake", poster, []string{"One region.", "Postgres stays."}, accept("A1"), convert("A2")))
+
+	// A later round of the attempt asks the one turned into a question.
+	follow := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", nil)
+	c.putRound(ctx, au, "BP1", follow, twoQuestionRound(3, 1, follow))
+
+	// A round the pipeline went past never closed, so it accepted nothing.
+	leftRun := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", nil)
+	left := tabRound(4, "intake", leftRun, []string{"Left region."}, accept("A1"))
+	left.Change = ChangeLeft
+	c.putRound(ctx, au, "BP1", leftRun, left)
+
+	tests := []struct {
+		name  string
+		entry any
+		ok    bool
+	}{
+		{"the acceptance's tag", map[string]any{"text": "One region.", "basis": "round2.A1"}, true},
+		{"a bracketed tag in another case", map[string]any{"text": "One region.", "basis": "[ROUND2.a1]"}, true},
+		{"the round as R", map[string]any{"text": "One region.", "basis": "R2.A1"}, false},
+		{"one turned into a question", map[string]any{"text": "Postgres stays.", "basis": "round2.A2"}, false},
+		{"an unknown round", map[string]any{"text": "One region.", "basis": "round9.A1"}, false},
+		{"one accepted on an auto round", map[string]any{"text": "Auto region.", "basis": "round1.A1"}, false},
+		{"one decided on a round the pipeline left", map[string]any{"text": "Left region.", "basis": "round4.A1"}, false},
+		{"a sentence naming the tag", "One region, as round2.A1 records.", false},
+		{"a sentence naming the tag in another case", "One region, as Round2.a1 records.", false},
+		{"a sentence naming an unknown round", "One region, unlike round9.A1.", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v, _ := c.assumptionsValidator(bp)
+			err := submitAssumptions(v, tt.entry)
+
+			if tt.ok {
+				assert.NoError(t, err)
+			} else {
+				assert.Error(t, err)
+			}
+		})
+	}
+
+	v, state := c.tabValidator(bp, intake, 1)
+	require.NoError(t, submitAssumptions(v, map[string]any{"text": "One region.", "basis": "round2.A1"}), "the tab check under human")
+	assert.Empty(t, state.last())
+
+	putData(t, st, "intake", map[string]any{"assumptions": []any{
+		map[string]any{"text": "One region.", "basis": "[ROUND2.a1]"},
+		map[string]any{"text": "Postgres stays.", "basis": "round2.A2"},
+		map[string]any{"text": "Far region.", "basis": "round9.A1"},
+		map[string]any{"text": "Auto region.", "basis": "round1.A1"},
+	}})
+
+	list, err := c.assumptions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"A1": assumptionConfirmed, "A2": assumptionUnverified, "A3": assumptionUnverified, "A4": assumptionUnverified}, statuses(list))
+	assert.Equal(t, "round2.A1", byID(list)["A1"].Basis)
+
+	for _, id := range []string{"A2", "A3", "A4"} {
+		assert.Empty(t, byID(list)[id].Basis, "%s reads as no basis", id)
+	}
+
+	putData(t, st, "grounding", map[string]any{"verdicts": []any{
+		map[string]any{"id": "A1", "status": "unverified", "evidence": "not found"},
+	}})
+
+	list, err = c.assumptions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, assumptionConfirmed, byID(list)["A1"].Status, "not finding it in the code never hides the user's acceptance")
+}
+
+func TestNormalTag(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"round2.A1", "round2.A1"},
+		{"[ROUND2.a1]", "round2.A1"},
+		{" Round12.a3 ", "round12.A3"},
+		{"[q1]", "Q1"},
+		{"s2", "S2"},
+		{"assumption", "ASSUMPTION"},
+		{"round2", "ROUND2"},
+	}
+
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, normalTag(tt.in), tt.in)
+	}
+}
+
+func TestTab_ARerunOfTheStageIsToldItsAcceptances(t *testing.T) {
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	intake, ok := c.opts.Pack.Stage("intake")
+	require.True(t, ok)
+
+	grounding, ok := c.opts.Pack.Stage("grounding")
+	require.True(t, ok)
+
+	// A chat run answered last; the run that posted the round accepted it.
+	poster := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", nil)
+	chat := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", nil)
+	s := tabRound(1, "intake", poster, []string{"One region."}, accept("A1"))
+	s.RunID = chat
+	c.putRound(ctx, c.newAudit(), "BP1", chat, s)
+
+	var b strings.Builder
+	require.NoError(t, c.writeAnswered(ctx, &b, bp, intake))
+	assert.Contains(t, b.String(), "round1.A1", "the stage run again is told its acceptance's tag")
+
+	b.Reset()
+	require.NoError(t, c.writeAnsweredAfter(ctx, &b, bp, intake, poster))
+	assert.Empty(t, b.String(), "only the acceptances of runs after the one resumed")
+
+	b.Reset()
+	require.NoError(t, c.writeAnswered(ctx, &b, bp, grounding))
+	assert.Empty(t, b.String(), "another stage's acceptance")
+}
+
+func TestTab_AnOlderAcceptanceRowStaysItsBasis(t *testing.T) {
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	intake, ok := c.opts.Pack.Stage("intake")
+	require.True(t, ok)
+
+	// An older close recorded A1 as the answered question Q5.
+	poster := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", nil)
+	s := tabRound(1, "intake", poster, []string{"One region."}, accept("A1"))
+	s.Accepted = map[string]int{"A1": 5}
+	c.putRound(ctx, c.newAudit(), "BP1", poster, s)
+	require.NoError(t, st.AddQuestion(ctx, store.Question{
+		BlueprintID: "BP1", RunID: poster, Stage: "intake", Number: 5, Text: "One region.", Options: []string{"Accept", "Turn into a question"},
+		Context: "Round 1's assumptions tab, A1", Answer: "Accepted", Responder: store.ResponderHuman, AnsweredAt: time.Now().UTC(),
+	}))
+
+	putData(t, st, "intake", map[string]any{"assumptions": []any{map[string]any{"text": "One region.", "basis": "Q5"}}})
+
+	list, err := c.assumptions(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, "Q5", list[0].Basis)
+	assert.Equal(t, assumptionConfirmed, list[0].Status)
+
+	next, err := c.nextQuestionNumber(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, 6, next)
+
+	var b strings.Builder
+	require.NoError(t, c.writeAnswered(ctx, &b, bp, intake))
+	assert.Equal(t, 1, strings.Count(b.String(), "[Q5]"), "its row stays its one citation")
+	assert.NotContains(t, b.String(), "round1.A1")
+}
+
+func TestTab_AResumedConversationIsToldItsOwnRoundsTags(t *testing.T) {
+	s := tabRound(2, "intake", 7, []string{"One region.", "Postgres stays."}, accept("A1"), convert("A2"))
+	accepted := []acceptedAssumption{
+		{Tag: "round1.A2", Round: 1, ID: "A2", Stage: "intake", RunID: 5, Text: "Two zones."},
+		{Tag: "round2.A1", Round: 2, ID: "A1", Stage: "intake", RunID: 7, Text: "One region."},
+	}
+
+	var b strings.Builder
+
+	writeRoundAssumptions(&b, s, accepted)
+	assert.Contains(t, b.String(), "round2.A1")
+	assert.NotContains(t, b.String(), "round1.A2", "another round's acceptance under the same id")
+}
+
+func TestTab_AnOlderClosingSnapshotClosesWithoutARow(t *testing.T) {
 	c, st, runner, _ := newController(t, artifactRun("# Need"))
 	ctx := context.Background()
 	au := c.newAudit()
@@ -109,7 +403,7 @@ func TestTab_ACloseCutShortReusesTheAcceptanceNumbers(t *testing.T) {
 	s.Frame.Assumptions = []protocol.RoundAssumption{{ID: "A1", Text: "One region."}}
 	c.putRound(ctx, au, "BP1", poster, s)
 
-	// The close reserved Q5 for A1 and stopped before any row.
+	// An older close reserved Q5 for A1 and stopped before any row.
 	closing := s.clone()
 	closing.Frame.Answers = []protocol.RoundAnswer{{Number: 1, Option: 2}, {Number: 2, Text: "the ops team"}}
 	closing.Frame.Decisions = []protocol.AssumptionDecision{accept("A1")}
@@ -118,31 +412,32 @@ func TestTab_ACloseCutShortReusesTheAcceptanceNumbers(t *testing.T) {
 
 	next, err := c.nextQuestionNumber(ctx, "BP1")
 	require.NoError(t, err)
-	assert.Equal(t, 6, next, "a new question numbers after the reserved acceptance")
+	assert.Equal(t, 6, next, "a new question numbers after the reserved one")
 
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	c.Wait("BP1")
 
 	qs, err := st.ListQuestions(ctx, "BP1")
 	require.NoError(t, err)
-	require.Len(t, qs, 3)
-	assert.Equal(t, []int{1, 2, 5}, []int{qs[0].Number, qs[1].Number, qs[2].Number})
-	assert.Equal(t, "One region.", qs[2].Text)
-	assert.Equal(t, "Accepted", qs[2].Answer)
-	assert.Equal(t, "m9", qs[2].MessageID)
+	assert.Equal(t, []int{1, 2}, questionNumbers(qs), "no row for the reserved number")
 
 	closed := latestRound(t, c, "BP1", 1)
 	assert.True(t, closed.Frame.Closed)
-	assert.Equal(t, map[string]int{"A1": 5}, closed.Accepted)
 	assert.Equal(t, 1, closedSnapshots(t, st, 1))
 	require.Equal(t, 1, runner.calls(), "one continuation")
+	assert.Contains(t, runner.input(0).Task, "round1.A1", "the stage is told the acceptance's tag")
 
 	_, err = c.closeRound(ctx, au, bp, closing)
-	require.NoError(t, err, "a second close writes no row twice")
+	require.NoError(t, err, "a second close writes no row")
 
 	qs, err = st.ListQuestions(ctx, "BP1")
 	require.NoError(t, err)
-	assert.Len(t, qs, 3)
+	assert.Len(t, qs, 2)
+
+	next, err = c.nextQuestionNumber(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, 6, next, "the reserved number stays reserved after the close")
+	assert.Equal(t, map[string]int{"A1": 5}, latestRound(t, c, "BP1", 1).Accepted)
 }
 
 func TestTab_ClosingAResponderRoundConfirmsNothing(t *testing.T) {
@@ -154,17 +449,21 @@ func TestTab_ClosingAResponderRoundConfirmsNothing(t *testing.T) {
 
 	s := twoQuestionRound(1, 1, 7)
 	s.Frame.Responder = true
-	s.Frame.Assumptions = []protocol.RoundAssumption{{ID: "A1", Text: "One region."}}
+	s.Frame.Assumptions = []protocol.RoundAssumption{{ID: "A1", Text: "One region."}, {ID: "A2", Text: "Postgres stays."}}
 	s.Frame.Answers = []protocol.RoundAnswer{{Number: 1, Option: 2}, {Number: 2, Text: "the ops team"}}
-	s.Frame.Decisions = []protocol.AssumptionDecision{accept("A1")}
+	s.Frame.Decisions = []protocol.AssumptionDecision{accept("A1"), convert("A2")}
 
 	closed, err := c.closeRound(ctx, au, bp, s)
 	require.NoError(t, err)
-	assert.Nil(t, closed.Accepted)
+	assert.Empty(t, closed.Converted, "only a human turns an assumption into a question")
+
+	accepted, err := c.acceptedAssumptions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Empty(t, accepted, "under auto no assumption is confirmed")
 
 	qs, err := st.ListQuestions(ctx, "BP1")
 	require.NoError(t, err)
-	assert.Len(t, qs, 2, "the answers only: under auto no assumption is confirmed")
+	assert.Len(t, qs, 2, "the answers only")
 }
 
 func TestTab_UnderHumanEveryStatedAssumptionNeedsABasis(t *testing.T) {
@@ -178,10 +477,8 @@ func TestTab_UnderHumanEveryStatedAssumptionNeedsABasis(t *testing.T) {
 	intake, ok := c.opts.Pack.Stage("intake")
 	require.True(t, ok)
 
-	require.NoError(t, st.AddQuestion(ctx, store.Question{
-		BlueprintID: "BP1", Stage: "intake", Number: 2, Text: "One region.", Options: []string{"Accept", "Turn into a question"},
-		Answer: "Accepted", Responder: store.ResponderHuman, AnsweredAt: time.Now().UTC(),
-	}))
+	poster := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", nil)
+	c.putRound(ctx, c.newAudit(), "BP1", poster, tabRound(1, "intake", poster, []string{"One region."}, accept("A1")))
 
 	v, _ := c.tabValidator(bp, intake, 1)
 	require.Error(t, submitAssumptions(v, "One region."), "no basis under the human policy")
@@ -190,7 +487,7 @@ func TestTab_UnderHumanEveryStatedAssumptionNeedsABasis(t *testing.T) {
 	require.Error(t, submitAssumptions(v, map[string]any{"text": "One region.", "basis": " "}), "a blank basis is none")
 
 	v, state := c.tabValidator(bp, intake, 1)
-	require.NoError(t, submitAssumptions(v, map[string]any{"text": "One region.", "basis": "Q2"}), "stated with its acceptance as the basis")
+	require.NoError(t, submitAssumptions(v, map[string]any{"text": "One region.", "basis": "round1.A1"}), "stated with its acceptance as the basis")
 	assert.Empty(t, state.last())
 
 	v, _ = c.tabValidator(bp, intake, 1)
@@ -210,14 +507,14 @@ func TestTab_AConvertedAssumptionMustBeAskedFirst(t *testing.T) {
 	require.True(t, ok)
 
 	au := c.newAudit()
-	stated := map[string]any{"text": "One region.", "basis": "Q3"}
+	stated := map[string]any{"text": "One region.", "basis": "round1.A1"}
 
 	poster := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", nil)
 	s := twoQuestionRound(1, 1, poster)
 	s.Frame.Assumptions = []protocol.RoundAssumption{{ID: "A1", Text: "One region."}, {ID: "A2", Text: "Postgres stays."}}
 	s.Frame.Answers = []protocol.RoundAnswer{{Number: 1, Option: 1}, {Number: 2, Text: "ops"}}
 	s.Frame.Decisions = []protocol.AssumptionDecision{accept("A1"), convert("A2")}
-	s.Change, s.Frame.Closed, s.Accepted, s.Converted = changeClosed, true, map[string]int{"A1": 3}, []string{"A2"}
+	s.Change, s.Frame.Closed, s.Converted = changeClosed, true, []string{"A2"}
 	c.putRound(ctx, au, "BP1", poster, s)
 
 	v, _ := c.tabValidator(bp, intake, 1)
@@ -332,8 +629,13 @@ func TestTab_AChatReplacesTheTabAndKeepsUnchangedDecisions(t *testing.T) {
 
 	s = latestRound(t, c, "BP1", 1)
 	assert.True(t, s.Frame.Closed)
-	assert.Equal(t, map[string]int{"A2": 2}, s.Accepted, "only what the user accepted, under the id it was shown with")
 	assert.Equal(t, []string{"A3"}, s.Converted)
+
+	accepted, err := c.acceptedAssumptions(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, accepted, 1, "only what the user accepted")
+	assert.Equal(t, "round1.A2", accepted[0].Tag, "under the id it was shown with")
+	assert.Equal(t, "One region.", accepted[0].Text)
 }
 
 func TestRetabbed_NeverReusesAnID(t *testing.T) {
@@ -449,7 +751,7 @@ func TestTab_AChatOnAStageWithoutTheCheckPostsNoTab(t *testing.T) {
 func TestTab_SignoffConfirmsAnAcceptedAssumption(t *testing.T) {
 	script := happyScript()
 	script["intake"] = tabbed([]stage.RoundQuestion{roundQ("Users", "Who uses it?")}, []string{"One region."}, stage.ChatAnswer{},
-		map[string]any{"slices": 1, "assumptions": []any{map[string]any{"text": "One region.", "basis": "Q2"}}})
+		map[string]any{"slices": 1, "assumptions": []any{map[string]any{"text": "One region.", "basis": "round1.A1"}}})
 
 	c, _, _, rec, _ := newPipeline(t, script)
 	ctx := context.Background()
@@ -462,7 +764,7 @@ func TestTab_SignoffConfirmsAnAcceptedAssumption(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	assert.Equal(t, "One region.", list[0].Text)
-	assert.Equal(t, "Q2", list[0].Basis)
+	assert.Equal(t, "round1.A1", list[0].Basis)
 	assert.Equal(t, assumptionConfirmed, list[0].Status)
 
 	so, ok := rec.first(EventSignOff)
@@ -477,28 +779,78 @@ func TestTab_SignoffConfirmsAnAcceptedAssumption(t *testing.T) {
 	assert.Equal(t, assumptionConfirmed, entry["status"])
 }
 
-func TestTab_AnAcceptedAssumptionStatedWithItsBasisIsNoUnusedAnswer(t *testing.T) {
+func TestTab_SolutionDesignOwesItsOwnAcceptances(t *testing.T) {
 	c, st, _, _, _ := newDialog(t, dialogScript())
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 
-	require.NoError(t, st.AddQuestion(ctx, store.Question{
-		BlueprintID: "BP1", RunID: 1, Stage: "solution_design", Number: 1, Text: "One region.", Options: []string{"Accept", "Turn into a question"},
-		Answer: "Accepted", Responder: store.ResponderHuman, AnsweredAt: time.Now().UTC(),
-	}))
-
 	bp, err := st.GetBlueprint(ctx, "BP1")
 	require.NoError(t, err)
 
-	d := goodDesign("assumption")
+	au := c.newAudit()
 
-	validate, _ := c.decisionsValidator(bp, "solution_design")
-	err = validate(ctx, stage.Artifact{Body: "# Design", Data: d})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Q1: unused_answer: ", "an acceptance the design never states is owed")
+	intakeRun := doneRun(t, st, "intake")
+	c.putRound(ctx, au, "BP1", intakeRun, tabRound(1, "intake", intakeRun, []string{"Two zones."}, accept("A1")))
 
-	d["assumptions"] = []any{map[string]any{"text": "One region.", "basis": "[q1]"}}
+	designRun := doneRun(t, st, "solution_design")
+	c.putRound(ctx, au, "BP1", designRun, tabRound(2, "solution_design", designRun, []string{"One region."}, accept("A1")))
 
-	validate, _ = c.decisionsValidator(bp, "solution_design")
-	require.NoError(t, validate(ctx, stage.Artifact{Body: "# Design", Data: d}), "an assumption resting on it uses it")
+	stating := func(d map[string]any, basis string) map[string]any {
+		d["assumptions"] = []any{map[string]any{"text": "One region.", "basis": basis}}
+
+		return d
+	}
+
+	owed := func(problems []string, tag string) bool {
+		return slices.ContainsFunc(problems, func(p string) bool { return strings.HasPrefix(p, tag+": unused_answer: ") })
+	}
+
+	tests := []struct {
+		name    string
+		design  map[string]any
+		owes    bool
+		refused bool
+	}{
+		{"unused by any decision or assumption", goodDesign("assumption"), true, true},
+		{"stated with it as the basis", stating(goodDesign("assumption"), "[ROUND2.a1]"), false, false},
+		{"the basis of a decision", goodDesign("ROUND2.A1"), false, false},
+		{"another stage's acceptance as a decision's basis", stating(goodDesign("round1.A1"), "round2.A1"), false, false},
+		{"an unknown tag as a decision's basis", stating(goodDesign("round9.A1"), "round2.A1"), false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			problems, err := c.decisionProblems(ctx, bp, "solution_design", tt.design)
+			require.NoError(t, err)
+			assert.Equal(t, tt.owes, owed(problems, "round2.A1"), problems)
+			assert.False(t, owed(problems, "round1.A1"), "intake's acceptance is not the design's to use")
+			assert.Equal(t, tt.refused, len(problems) > 0, problems)
+		})
+	}
+
+	// A re-slice after the acceptance: it is no longer owed, and stays citable.
+	doneRun(t, st, "slicing")
+
+	problems, err := c.decisionProblems(ctx, bp, "solution_design", goodDesign("assumption"))
+	require.NoError(t, err)
+	assert.False(t, owed(problems, "round2.A1"), problems)
+
+	problems, err = c.decisionProblems(ctx, bp, "solution_design", goodDesign("round2.A1"))
+	require.NoError(t, err)
+	assert.Empty(t, problems)
+
+	// An older close wrote a later acceptance as Q7: it is owed once, as Q7.
+	olderRun := doneRun(t, st, "solution_design")
+	older := tabRound(3, "solution_design", olderRun, []string{"Two regions."}, accept("A1"))
+	older.Accepted = map[string]int{"A1": 7}
+	c.putRound(ctx, au, "BP1", olderRun, older)
+	require.NoError(t, st.AddQuestion(ctx, store.Question{
+		BlueprintID: "BP1", RunID: olderRun, Stage: "solution_design", Number: 7, Text: "Two regions.", Options: []string{"Accept", "Turn into a question"},
+		Answer: "Accepted", Responder: store.ResponderHuman, AnsweredAt: time.Now().UTC(),
+	}))
+
+	problems, err = c.decisionProblems(ctx, bp, "solution_design", goodDesign("round2.A1"))
+	require.NoError(t, err)
+	assert.Len(t, problems, 1, problems)
+	assert.True(t, owed(problems, "Q7"), problems)
 }

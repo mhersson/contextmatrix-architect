@@ -88,12 +88,12 @@ func (c *Controller) newestReview(ctx context.Context, id, stageID string) (revi
 	case errors.Is(err, store.ErrNotFound):
 		return review{}, false, nil
 	case err != nil:
-		return review{}, false, fmt.Errorf("blueprint: read the review of %s: %w", stageID, err)
+		return review{}, false, fmt.Errorf("blueprint: read the review of %s: %w", pack.StageName(stageID), err)
 	}
 
 	var v review
 	if err := json.Unmarshal(art.Data, &v); err != nil {
-		return review{}, false, fmt.Errorf("blueprint: decode the review of %s: %w", stageID, err)
+		return review{}, false, fmt.Errorf("blueprint: decode the review of %s: %w", pack.StageName(stageID), err)
 	}
 
 	return v, true, nil
@@ -148,7 +148,7 @@ func (c *Controller) gateReview(ctx context.Context, id string, st pack.Stage, a
 func (c *Controller) reviewRounds(ctx context.Context, id, stageID string, attempt int) (int, error) {
 	arts, err := c.opts.Store.ListArtifacts(ctx, id)
 	if err != nil {
-		return 0, fmt.Errorf("blueprint: count the reviews of %s: %w", stageID, err)
+		return 0, fmt.Errorf("blueprint: count the reviews of %s: %w", pack.StageName(stageID), err)
 	}
 
 	n := 0
@@ -208,7 +208,7 @@ func (c *Controller) latestStageRun(ctx context.Context, id, stageID string) (st
 	}
 
 	if built.ID == 0 {
-		return store.Run{}, fmt.Errorf("blueprint: %s has no completed run", stageID)
+		return store.Run{}, fmt.Errorf("blueprint: %s has no completed run", pack.StageName(stageID))
 	}
 
 	return built, nil
@@ -225,14 +225,14 @@ func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp sto
 
 	st, ok := c.opts.Pack.Stage(stageID)
 	if !ok || st.Reviewer == nil {
-		c.fail(bg, au, bp.ID, 0, fmt.Sprintf("review %s: the pack has no reviewer for it", stageID))
+		c.fail(bg, au, bp.ID, 0, fmt.Sprintf("review %s: the pack has no reviewer for it", pack.StageName(stageID)))
 
 		return stageStopped
 	}
 
 	art, err := c.opts.Store.LatestArtifact(bg, bp.ID, stageID)
 	if err != nil {
-		c.fail(bg, au, bp.ID, 0, fmt.Sprintf("review %s: %v", stageID, err))
+		c.fail(bg, au, bp.ID, 0, fmt.Sprintf("review %s: %v", pack.StageName(stageID), err))
 
 		return stageStopped
 	}
@@ -416,7 +416,7 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 
 	v, err := parseReview(out.Artifact.Data)
 	if err != nil {
-		c.fail(bg, au, bp.ID, 0, fmt.Sprintf("review of %s: %v", st.ID, err))
+		c.fail(bg, au, bp.ID, 0, fmt.Sprintf("review of %s: %v", pack.StageName(st.ID), err))
 
 		return review{}, false
 	}

@@ -567,6 +567,74 @@ func TestAbort_CancelsTheRun(t *testing.T) {
 	assert.True(t, rec.has(EventAborted))
 }
 
+func TestAbort_NamesTheStageWhoseRunItCut(t *testing.T) {
+	tests := []struct {
+		name string
+		// abort aborts BP1 and waits until nothing runs.
+		abort func(t *testing.T) *recorder
+		want  string
+	}{
+		{
+			name: "a stage's run", want: "intake",
+			abort: func(t *testing.T) *recorder {
+				t.Helper()
+
+				started := make(chan struct{})
+				c, _, _, rec := newController(t, stopsFirst(anyRun, started, artifactRun("# Need")))
+				stopAt(t, c, started, func() { stateTheNeed(t, c) })
+
+				return rec
+			},
+		},
+		{
+			name: "nothing in flight", want: "",
+			abort: func(t *testing.T) *recorder {
+				t.Helper()
+
+				c, _, _, rec := newController(t, artifactRun("# Need"))
+				ctx := context.Background()
+				require.NoError(t, c.Start(ctx, startInput("BP1")))
+				require.NoError(t, c.Abort(ctx, "BP1", "m-abort"))
+				c.Wait("BP1")
+
+				return rec
+			},
+		},
+		{
+			name: "an emission", want: signoffStage,
+			abort: func(t *testing.T) *recorder {
+				t.Helper()
+
+				c, _, _, rec, _ := newPipeline(t, happyScript())
+				hold := newHoldCM(t, newFakeCM())
+				hold.title = "Add the thing"
+				c.opts.ConnectCM = hold.connect
+				ctx := context.Background()
+
+				require.NoError(t, c.Start(ctx, yoloInput("BP1")))
+				require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+				receive(t, hold.entered, "the held card")
+				require.NoError(t, c.Abort(ctx, "BP1", "m-abort"))
+				hold.free()
+				c.Wait("BP1")
+
+				return rec
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := tt.abort(t)
+
+			events := rec.all(EventAborted)
+			require.Len(t, events, 1)
+			require.Contains(t, events[0].Payload, "stage")
+			assert.Equal(t, tt.want, events[0].Payload["stage"])
+		})
+	}
+}
+
 func TestMessage_ConcurrentMessagesStartOneIntake(t *testing.T) {
 	finish := make(chan struct{})
 	c, st, runner, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
@@ -994,12 +1062,261 @@ func TestMessage_CostCap(t *testing.T) {
 					assert.Contains(t, ev.Payload["message"], "session/model", "the refusal names the model")
 				}
 
+				assert.Equal(t, []string{"intake"}, capStops(t, st), "a refusal of the blueprint cap is a cap stop")
+				assert.InDelta(t, tt.capUSD, ev.Payload["cap_usd"], 1e-9)
+				assert.InDelta(t, tt.spentUSD, ev.Payload["blueprint_spent_usd"], 1e-9)
+
 				return
 			}
 
 			require.Equal(t, 1, runner.calls())
 			assert.InDelta(t, tt.wantRunCap, runner.input(0).MaxCostUSD, 1e-9, "the run cap is what is left of the blueprint cap")
 			assert.False(t, rec.has(EventError))
+		})
+	}
+}
+
+// ranBefore stores an ended run of kind on stageID for blueprint BP1.
+func ranBefore(t *testing.T, st *store.Store, kind, stageID, status string, costUSD float64) {
+	t.Helper()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	id, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: stageID, Kind: kind, Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+	require.NoError(t, st.EndRun(ctx, id, status, status, store.RunUsage{CostUSD: costUSD}, now))
+}
+
+// capStops lists the stage of every stored cap stop of BP1, oldest first.
+func capStops(t *testing.T, st *store.Store) []string {
+	t.Helper()
+
+	events, err := st.ListEventsOfKind(context.Background(), "BP1", EventError)
+	require.NoError(t, err)
+
+	var out []string
+
+	for _, e := range events {
+		if stageID, ok := capStopOf(e); ok {
+			out = append(out, stageID)
+		}
+	}
+
+	return out
+}
+
+func TestRunFloor_IsTheMedianOfTheDoneRunsOfItsKindAndStage(t *testing.T) {
+	type ran struct {
+		kind, stage, status string
+		cost                float64
+	}
+
+	doneIntake := func(cost float64) ran { return ran{store.RunKindStage, "intake", store.RunDone, cost} }
+
+	tests := []struct {
+		name string
+		kind string
+		runs []ran
+		want float64
+	}{
+		{name: "no done run needs the minimum", kind: store.RunKindStage, want: 0.10},
+		{
+			name: "a median below the minimum is the minimum", kind: store.RunKindStage,
+			runs: []ran{doneIntake(0.02), doneIntake(0.05), doneIntake(0.03)}, want: 0.10,
+		},
+		{
+			name: "an odd count's median is its middle cost", kind: store.RunKindStage,
+			runs: []ran{doneIntake(0.9), doneIntake(0.2), doneIntake(0.4)}, want: 0.4,
+		},
+		{
+			name: "an even count's median is the mean of the middle two", kind: store.RunKindStage,
+			runs: []ran{doneIntake(0.9), doneIntake(0.2), doneIntake(0.4), doneIntake(0.1)}, want: 0.3,
+		},
+		{
+			name: "only done runs of the same kind and stage count", kind: store.RunKindStage,
+			runs: []ran{
+				doneIntake(0.3),
+				{store.RunKindStage, "intake", store.RunFailed, 5},
+				{store.RunKindStage, "intake", store.RunAsked, 5},
+				{store.RunKindResponder, "intake", store.RunDone, 5},
+				{store.RunKindStage, "shape", store.RunDone, 5},
+			},
+			want: 0.3,
+		},
+		{
+			name: "a reviewer's floor follows the done reviews of its stage", kind: store.RunKindReviewer,
+			runs: []ran{doneIntake(2), {store.RunKindReviewer, "intake", store.RunDone, 0.5}}, want: 0.5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, _, _ := newController(t, artifactRun("# Need"))
+			ctx := context.Background()
+			require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+			for _, r := range tt.runs {
+				ranBefore(t, st, r.kind, r.stage, r.status, r.cost)
+			}
+
+			got, err := c.runFloor(ctx, "BP1", tt.kind, "intake")
+			require.NoError(t, err)
+			assert.InDelta(t, tt.want, got, 1e-9)
+		})
+	}
+}
+
+func TestRun_LessThanTheFloorLeftIsACapStop(t *testing.T) {
+	tests := []struct {
+		name       string
+		capUSD     float64
+		wantRun    bool
+		wantRunCap float64
+	}{
+		{name: "less than the floor left is refused", capUSD: 1},
+		{name: "the floor left runs", capUSD: 1.1, wantRun: true, wantRunCap: 0.15},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, runner, rec := newController(t, artifactRun("# Need"))
+			ctx := context.Background()
+			in := startInput("BP1")
+			in.CostCapUSD = tt.capUSD
+			in.Price = testPrice()
+			require.NoError(t, c.Start(ctx, in))
+
+			// A responder run spends 0.95 and leaves intake's own floor at the minimum.
+			ranBefore(t, st, store.RunKindResponder, "intake", store.RunDone, 0.95)
+
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			c.Wait("BP1")
+
+			runs, err := st.ListRuns(ctx, "BP1")
+			require.NoError(t, err)
+
+			if tt.wantRun {
+				require.Equal(t, 1, runner.calls())
+				assert.InDelta(t, tt.wantRunCap, runner.input(0).MaxCostUSD, 1e-9)
+				assert.Empty(t, capStops(t, st))
+
+				return
+			}
+
+			assert.Zero(t, runner.calls())
+			assert.Len(t, runs, 1, "no run starts")
+
+			bp, err := st.GetBlueprint(ctx, "BP1")
+			require.NoError(t, err)
+			assert.Equal(t, string(StateIdle), bp.State)
+
+			assert.Equal(t, []string{"intake"}, capStops(t, st))
+
+			ev, ok := rec.first(EventError)
+			require.True(t, ok)
+			assert.InDelta(t, 1.0, ev.Payload["cap_usd"], 1e-9)
+			assert.InDelta(t, 0.95, ev.Payload["blueprint_spent_usd"], 1e-9)
+
+			msg, _ := ev.Payload["message"].(string)
+			assert.Contains(t, msg, "Intake", "the stopped stage by its display name")
+			assert.NotContains(t, msg, "intake", "never its raw id")
+		})
+	}
+}
+
+func TestRun_TheFloorCompareAndItsMessageAgreeInWholeCents(t *testing.T) {
+	tests := []struct {
+		name     string
+		spent    float64
+		wantRun  bool
+		wantText []string
+	}{
+		{name: "a hair under the floor is refused and says so in cents", spent: 0.903, wantText: []string{"leaves $0.09 ($0.90 spent)", "less than the $0.10"}},
+		{name: "an exact-cent remainder at the floor runs", spent: 0.90, wantRun: true},
+		{name: "a spent hair under the cap is used up", spent: 0.999, wantText: []string{"cap is used up ($1.00 spent)"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, runner, rec := newController(t, artifactRun("# Need"))
+			ctx := context.Background()
+			in := startInput("BP1")
+			in.CostCapUSD = 1
+			in.Price = testPrice()
+			require.NoError(t, c.Start(ctx, in))
+			ranBefore(t, st, store.RunKindResponder, "intake", store.RunDone, tt.spent)
+
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			c.Wait("BP1")
+
+			if tt.wantRun {
+				assert.Equal(t, 1, runner.calls())
+
+				return
+			}
+
+			assert.Zero(t, runner.calls())
+
+			ev, ok := rec.first(EventError)
+			require.True(t, ok)
+
+			msg, _ := ev.Payload["message"].(string)
+			for _, want := range tt.wantText {
+				assert.Contains(t, msg, want)
+			}
+		})
+	}
+}
+
+func TestRun_AMaxCostStopIsACapStopWhenTheBlueprintCapBinds(t *testing.T) {
+	tests := []struct {
+		name    string
+		runCap  float64
+		capUSD  float64
+		capStop bool
+	}{
+		{name: "what the blueprint had left bound the run", runCap: 2, capUSD: 1, capStop: true},
+		{name: "without a per-run cap the blueprint's binds", runCap: 0, capUSD: 1, capStop: true},
+		{name: "the per-run cap bound the run", runCap: 0.5, capUSD: 10},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, _, rec := newControllerWithRunCap(t, tt.runCap, func(_ context.Context, in stage.Input) (stage.Output, error) {
+				_, _ = in.Events.Write([]byte(`{"seq":1,"kind":"state_change","data":{"stop":"max_cost","cost_usd":1.1}}` + "\n"))
+
+				return stage.Output{Result: harness.Result{Reason: "max_cost", TotalCostUSD: 1.1}}, errors.New("stage intake: no artifact")
+			})
+			ctx := context.Background()
+			in := startInput("BP1")
+			in.CostCapUSD = tt.capUSD
+			in.Price = testPrice()
+			require.NoError(t, c.Start(ctx, in))
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			c.Wait("BP1")
+
+			runs, err := st.ListRuns(ctx, "BP1")
+			require.NoError(t, err)
+			require.Len(t, runs, 1)
+			assert.Equal(t, "max_cost", runs[0].Reason)
+
+			bp, err := st.GetBlueprint(ctx, "BP1")
+			require.NoError(t, err)
+			assert.Equal(t, string(StateIdle), bp.State)
+
+			ev, ok := rec.first(EventError)
+			require.True(t, ok)
+
+			if !tt.capStop {
+				assert.Empty(t, capStops(t, st), "a per-run cap stop is an ordinary failed run")
+				assert.NotContains(t, ev.Payload, "cap")
+
+				return
+			}
+
+			assert.Equal(t, []string{"intake"}, capStops(t, st))
+			assert.InDelta(t, tt.capUSD, ev.Payload["cap_usd"], 1e-9)
+			assert.InDelta(t, 1.1, ev.Payload["blueprint_spent_usd"], 1e-9, "the ledger with the stopped run")
 		})
 	}
 }
@@ -1881,8 +2198,8 @@ func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(summary), "split the card")
 	assert.Contains(t, string(summary), "ALPHA-042")
-	assert.Contains(t, string(summary), "| solution_design | 1 | approve | auto |", "a stage's gate is listed beside the sign-off's")
-	assert.Contains(t, string(summary), "| signoff | 1 | reject | human |")
+	assert.Contains(t, string(summary), "| Solution design | 1 | approve | auto |", "a stage's gate is listed beside the sign-off's")
+	assert.Contains(t, string(summary), "| Signoff | 1 | reject | human |")
 }
 
 func TestExport_UnknownBlueprint(t *testing.T) {

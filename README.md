@@ -110,8 +110,8 @@ with it, so `max_run_cost_usd` and a blueprint's cost cap bind on any
 endpoint, and a run is stopped within one model call of passing its cap. A
 model CM cannot price arrives without a price: an uncapped blueprint still
 runs and counts only the endpoint's reported cost (`max_turns` still bounds
-every run), a capped one refuses to run until a priced model is chosen or a
-new blueprint is started without a cap. A per-persona override in `models`
+every run), a capped one refuses to run until a priced model is chosen or the cap is
+lifted with `cap off`. A per-persona override in `models`
 names a model CM did not price, so its runs are unpriced the same way.
 `max_run_cost_usd: 0` disables the per-run cap; `max_turns` still bounds every
 run, and a blueprint's own cap still applies.
