@@ -215,21 +215,31 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   the accepted artifact, given its own persona, the stage's inputs, the
   questions the stage got answered, the assumptions so far, the gate
   feedback its attempt addresses, the user's notes and the artifact, never
-  the builder's transcript, and no tools. It scores the artifact 1-5, and
-  the verdict is stored as an artifact of the pseudo-stage `<stage>.review`.
-  Below the pack's threshold the findings, with the notes and answers the
-  builder's conversation has not seen, resume that conversation from its
-  stored transcript for another round of the same attempt. Three reviewer
-  rounds per attempt, then the gate waits for a human regardless of policy.
-  A passing verdict with findings resumes the builder once more the same
-  way, a revision round of the same attempt, and the revised version goes to
-  the gate without another review; the gate shows that it was revised and
-  the version the reviewer scored. Each reviewer round is a harness run with
-  its own cap, and so is a revision round; the ledger sums them.
-  The round is given the findings numbered, and its submit may list the ones
-  it addressed in its data as `addressed: [{finding, note}]`; a number the
-  round was not given is refused like any check problem, and the third
-  failing submit is accepted with its problems kept.
+  the builder's transcript, and no tools. It scores the artifact 1-5 and
+  keeps a findings ledger: each finding has an id stable within the stage
+  attempt (R1, R2, ...) and a severity (critical, major or minor). A later
+  round of the attempt is given every earlier finding, with the claim the
+  builder's addressed list makes beside it, and gives each a verdict against
+  the version it judges, `fixed` or `still_open`, whatever the claim says;
+  its new findings take the ids after the attempt's highest. A verdict
+  passes at or above the pack's threshold with no critical finding open or
+  still open, so an open critical finding fails it whatever the score, and a
+  score below the threshold must leave a finding open. The verdict and its
+  ledger are stored as an artifact of the pseudo-stage `<stage>.review`. A
+  verdict that does not pass sends the findings still open, with the notes
+  and answers the builder's conversation has not seen, to that conversation,
+  resumed from its stored transcript for another round of the same attempt.
+  Three reviewer rounds per attempt, then the gate waits for a human
+  regardless of policy. A passing verdict with findings still open resumes
+  the builder once more the same way, a revision round of the same attempt,
+  and the revised version goes to the gate without another review; the gate
+  shows that it was revised and the version the reviewer scored. Each
+  reviewer round is a harness run with its own cap, and so is a revision
+  round; the cost ledger sums them. The round is given its findings by id,
+  and its submit may list the ones it addressed in its data as
+  `addressed: [{finding, note}]`; an id the round was not given is refused
+  like any check problem, and the third failing submit is accepted with its
+  problems kept.
 - **A gate waits between runs.** The controller holds the stage's artifact and
   asks the client. Nothing runs meanwhile.
 - **A human rejection starts a new attempt**: a fresh run with the previous
@@ -253,7 +263,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price as CM sent it                                        |
 | stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets |
-| artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, findings, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
+| artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, whether it passed, its findings ledger with ids, severities, statuses and the reviewer's notes, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes, or at the responder's answer under auto, or at the answer for one asked alone before rounds; an assumption a human accepted on a tab is recorded on its round, not here |
 | gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted, each web search result list replaced by its query and result count |
@@ -395,7 +405,7 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
   carry `lists.yaml` and `card.md`; the loader refuses it otherwise, so an
   override pack cannot silently disable the card contract.
 - A gated stage declares a reviewer, so an auto gate has a decider: its
-  reviewer's score. A reviewer or a fold needs a gate, a fold needs a later
+  reviewer's verdict. A reviewer or a fold needs a gate, a fold needs a later
   gate to fold into, a loop stage takes no gate, and a pack with a reviewer
   carries `stages/review.md`. No stage id is `review` or `responder` or
   holds a dot, which names a stage's review. The loader refuses a pack that
@@ -560,8 +570,8 @@ only these reach the sign-off and the cards.
 
 | Policy  | Questions                                                                                   | Gates                                                                 |
 | ------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `human` | Asked in rounds in the CM session, one tab per question as `Q<n>` with its options and the recommended one marked. The run ends on the round, which waits as long as it takes, batches of answers included; every answer is recorded in `questions` when the round closes, and the stage resumes from its conversation. There is no limit on a human's questions. | Artifact shown with Approve and Reject; the reviewer's score is shown with it, and its findings in the review line just above; after a revision round the gate shows the revised version and says it was revised, with the version the reviewer scored. The reply, clicked or typed, is `approve` or `reject <feedback>`. |
-| `auto`  | A responder run answers each question of the round inside the asking run, which then ends on the round; the stage continues at once with the answers. Each answer is recorded as an `[assumption]` with responder `auto`, and the round is shown read-only. `max_questions` caps the questions per attempt, its builder rounds included; a round past the cap is refused and the stage decides. | The reviewer's score decides: approved at or above the threshold, after one revision round when it lists findings; below it the builder takes another round with the findings, three reviewer rounds per attempt, then a human decides. |
+| `human` | Asked in rounds in the CM session, one tab per question as `Q<n>` with its options and the recommended one marked. The run ends on the round, which waits as long as it takes, batches of answers included; every answer is recorded in `questions` when the round closes, and the stage resumes from its conversation. There is no limit on a human's questions. | Artifact shown with Approve and Reject; the reviewer's score is shown with it, with the ids of the critical findings it left open, and its ledger in the review line just above: each finding's id, severity and status, with the builder's claim beside a re-checked one; after a revision round the gate shows the revised version and says it was revised, with the version the reviewer scored. The reply, clicked or typed, is `approve` or `reject <feedback>`. |
+| `auto`  | A responder run answers each question of the round inside the asking run, which then ends on the round; the stage continues at once with the answers. Each answer is recorded as an `[assumption]` with responder `auto`, and the round is shown read-only. `max_questions` caps the questions per attempt, its builder rounds included; a round past the cap is refused and the stage decides. | The reviewer's verdict decides: approved when it passes (at or above the threshold with no critical finding open), after one revision round when findings stay open; otherwise the builder takes another round with the findings, three reviewer rounds per attempt, then a human decides. |
 
 **The responder run** is a separate harness run with the persona of the
 stage that asks (the product owner for intake questions, the system designer
@@ -919,10 +929,10 @@ frames on the session's chat stream.
   a gate row records it superseded, as `reject slicing` does for the design
   version it replaces. The newest version reads reviewing while its review,
   or the builder round after it, is owed, and current once that run fails,
-  as its step then reads failed. A verdict's findings are sent to the next
-  version when the verdict sends the builder back. A finding is marked
-  addressed in that version, with its note, only when the revision listed
-  it. A run whose end is recorded counts in the ledger only.
+  as its step then reads failed. A verdict's findings still open are sent to
+  the next version when the verdict sends the builder back, and one is
+  marked addressed in that version, with its note, only when the revision
+  listed its id. A run whose end is recorded counts in the ledger only.
   `Seq` is the id of the newest events row the view reflects, and every
   state change writes one. The view reads the store and memory only, so an
   ended session's blueprint has one while the architect is up. A record the

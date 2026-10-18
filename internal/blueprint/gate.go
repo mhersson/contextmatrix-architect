@@ -174,10 +174,10 @@ func (c *Controller) decide(ctx context.Context, au audit, id, stageID string, v
 
 // openGate acts on a gate whose artifact has its verdict, or is the
 // revision its verdict owed: when the stage and every stage folded into its
-// gate are under the auto policy now, a passing score approves them all and
-// what follows the stage is returned as advance returns it; otherwise, a
-// human policy on any of them or a score still below the threshold after the
-// attempt's rounds, the gate is shown and the chain stops.
+// gate are under the auto policy now, a passing verdict approves them all
+// and what follows the stage is returned as advance returns it; otherwise, a
+// human policy on any of them or a verdict that still does not pass after
+// the attempt's rounds, the gate is shown and the chain stops.
 func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Blueprint, out outcome) (string, outcome) {
 	st, _ := c.opts.Pack.Stage(out.stage)
 
@@ -202,7 +202,7 @@ func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Bluep
 		return "", outcome{}
 	}
 
-	if auto && found && st.Reviewer != nil && v.Score >= st.Reviewer.Threshold {
+	if auto && found && st.Reviewer != nil && v.passes(st.Reviewer.Threshold) {
 		for _, f := range folded {
 			if !c.decide(ctx, sess.audit, bp.ID, f.Stage, f.Version, store.GateApprove, "", store.ResponderAuto, "") {
 				return "", outcome{}
@@ -289,14 +289,12 @@ func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint,
 	case err != nil:
 		c.opts.Logger.Warn("blueprint: gate shown without its verdict", "blueprint", bp.ID, "stage", out.stage, "error", au.text(err.Error()))
 	case found && st.Reviewer != nil:
-		findings := v.Findings
-		if findings == nil {
-			findings = []string{}
-		}
+		threshold := st.Reviewer.Threshold
 
 		payload["review"] = map[string]any{
-			"score": v.Score, "threshold": st.Reviewer.Threshold, "findings": findings, "round": v.Round,
-			"passed": v.Score >= st.Reviewer.Threshold, "revised": revised, "judged": v.Version,
+			"score": v.Score, "threshold": threshold, "round": v.Round, "passed": v.passes(threshold),
+			"revised": revised, "judged": v.Version,
+			"findings": v.Findings.payload(addressedClaims(out.art)), "open_critical": v.openCritical(),
 		}
 	}
 

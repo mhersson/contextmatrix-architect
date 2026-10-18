@@ -458,7 +458,7 @@ func TestFold_AnAutoGateHandsSlicingToTheDesignReviewer(t *testing.T) {
 
 func TestFold_AnAutoFoldedGateApprovesTheRevisedDesign(t *testing.T) {
 	script := dialogScript()
-	script["solution_design.review"] = verdicts(scored(4, "name the owner"))
+	script["solution_design.review"] = verdicts(scored(4, "name the owner"), fixed(4, "R1"))
 
 	c, st, runner, rec, _ := newDialog(t, script)
 
@@ -479,7 +479,7 @@ func TestFold_AnAutoFoldedGateApprovesTheRevisedDesign(t *testing.T) {
 
 func TestFold_TheFoldedGateShowsTheRevisedDesign(t *testing.T) {
 	script := dialogScript()
-	script["solution_design.review"] = verdicts(scored(4, "name the owner"))
+	script["solution_design.review"] = verdicts(scored(4, "name the owner"), fixed(4, "R1"))
 
 	c, st, runner, rec, _ := newDialog(t, script)
 
@@ -507,7 +507,7 @@ func TestFold_ARevisionThatCutsToOneSliceDoesNotFold(t *testing.T) {
 	var slicings atomic.Int32
 
 	script := dialogScript()
-	script["slicing.review"] = verdicts(scored(4, "merge them"))
+	script["slicing.review"] = verdicts(scored(4, "merge them"), fixed(4, "R1"))
 	script["slicing"] = func(context.Context, stage.Input) (stage.Output, error) {
 		if slicings.Add(1) == 1 {
 			return done("# Slices", twoSlices()), nil

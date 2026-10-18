@@ -24,6 +24,8 @@ func entry(finding any, note any) map[string]any {
 }
 
 func TestAddressedProblems(t *testing.T) {
+	given := []string{"R1", "R2", "R4"}
+
 	tests := []struct {
 		name string
 		data map[string]any
@@ -31,22 +33,20 @@ func TestAddressedProblems(t *testing.T) {
 	}{
 		{name: "no list", data: map[string]any{"slices": []any{}}},
 		{name: "a null list", data: map[string]any{"addressed": nil}},
-		{name: "findings the round was given", data: map[string]any{"addressed": []any{entry(1.0, "named the owner"), entry(3.0, "split it")}}},
-		{name: "a note may be left out", data: map[string]any{"addressed": []any{entry(2.0, nil)}}},
-		{name: "a finding past the last", data: map[string]any{"addressed": []any{entry(4.0, "x")}}, want: []string{"finding 4 does not exist"}},
-		{name: "finding zero", data: map[string]any{"addressed": []any{entry(0.0, "x")}}, want: []string{"finding 0 does not exist"}},
-		{name: "a huge number", data: map[string]any{"addressed": []any{entry(1e30, "x")}}, want: []string{"addressed_unknown"}},
-		{name: "a fraction", data: map[string]any{"addressed": []any{entry(1.5, "x")}}, want: []string{"addressed_shape"}},
-		{name: "a number as text", data: map[string]any{"addressed": []any{entry("1", "x")}}, want: []string{"addressed_shape"}},
-		{name: "an entry that is not an object", data: map[string]any{"addressed": []any{"finding 1"}}, want: []string{"addressed_shape"}},
-		{name: "a note that is not text", data: map[string]any{"addressed": []any{entry(1.0, 7.0)}}, want: []string{"addressed_shape"}},
+		{name: "findings the round was given", data: map[string]any{"addressed": []any{entry("R1", "named the owner"), entry("R4", "split it")}}},
+		{name: "a note may be left out", data: map[string]any{"addressed": []any{entry("R2", nil)}}},
+		{name: "a finding the round was not given", data: map[string]any{"addressed": []any{entry("R3", "x")}}, want: []string{"finding R3 was not given"}},
+		{name: "a number, as before findings had ids", data: map[string]any{"addressed": []any{entry(1.0, "x")}}, want: []string{"addressed_shape"}},
+		{name: "a blank id", data: map[string]any{"addressed": []any{entry(" ", "x")}}, want: []string{"addressed_shape"}},
+		{name: "an entry that is not an object", data: map[string]any{"addressed": []any{"R1"}}, want: []string{"addressed_shape"}},
+		{name: "a note that is not text", data: map[string]any{"addressed": []any{entry("R1", 7.0)}}, want: []string{"addressed_shape"}},
 		{name: "not a list", data: map[string]any{"addressed": "all of them"}, want: []string{"addressed_shape"}},
-		{name: "each bad entry is its own problem", data: map[string]any{"addressed": []any{entry(9.0, "x"), entry(1.0, "ok"), "x"}}, want: []string{"addressed[1]", "addressed[3]"}},
+		{name: "each bad entry is its own problem", data: map[string]any{"addressed": []any{entry("R9", "x"), entry("R1", "ok"), "x"}}, want: []string{"addressed[1]", "addressed[3]"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := addressedProblems(tt.data, 3)
+			got := addressedProblems(tt.data, given)
 
 			require.Len(t, got, len(tt.want))
 
@@ -72,8 +72,9 @@ func TestAddressedOf(t *testing.T) {
 	}{
 		{name: "no data"},
 		{name: "no list", data: raw(map[string]any{"slices": []any{}})},
-		{name: "a list", data: raw(map[string]any{"addressed": []any{entry(2, "split it"), entry(1, nil)}}), want: []addressed{{finding: 2, note: "split it"}, {finding: 1}}},
-		{name: "entries that do not read are skipped", data: raw(map[string]any{"addressed": []any{"x", entry(0, "zero"), entry(1.5, "half"), entry(3, "kept")}}), want: []addressed{{finding: 3, note: "kept"}}},
+		{name: "a list", data: raw(map[string]any{"addressed": []any{entry("R2", "split it"), entry("R1", nil)}}), want: []addressed{{finding: "R2", note: "split it"}, {finding: "R1"}}},
+		{name: "a revision stored before findings had ids", data: raw(map[string]any{"addressed": []any{entry(2, "split it")}}), want: []addressed{{finding: "R2", note: "split it"}}},
+		{name: "entries that do not read are skipped", data: raw(map[string]any{"addressed": []any{"x", entry(0, "zero"), entry(1.5, "half"), entry("", "blank"), entry("Q1", "a question"), entry("R3", "kept")}}), want: []addressed{{finding: "R3", note: "kept"}}},
 		{name: "not a list", data: raw(map[string]any{"addressed": "all"})},
 	}
 
@@ -88,7 +89,7 @@ func TestAddressedOf(t *testing.T) {
 // addressed; a run that follows no review checks no such list.
 func TestReview_ARevisionNamesTheFindingsItAddressed(t *testing.T) {
 	script := gatedScript()
-	script["shape.review"] = verdicts(scored(4, "name the owner", "split it"))
+	script["shape.review"] = verdicts(scored(4, "name the owner", "split it"), fixed(5, "R1", "R2"))
 
 	var (
 		calls      atomic.Int32
@@ -96,7 +97,7 @@ func TestReview_ARevisionNamesTheFindingsItAddressed(t *testing.T) {
 		refused    atomic.Value // error
 	)
 
-	good := map[string]any{"addressed": []any{entry(2.0, "split into two")}}
+	good := map[string]any{"addressed": []any{entry("R2", "split into two")}}
 
 	script["shape"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
 		if calls.Add(1) == 1 {
@@ -105,7 +106,7 @@ func TestReview_ARevisionNamesTheFindingsItAddressed(t *testing.T) {
 			return done("# Shape", nil), nil
 		}
 
-		bad := map[string]any{"addressed": []any{entry(3.0, "x")}}
+		bad := map[string]any{"addressed": []any{entry("R3", "x")}}
 		if err := in.Validate(ctx, stage.Artifact{Body: "# Shape 2", Data: bad}); err != nil {
 			refused.Store(err)
 		}
@@ -125,12 +126,12 @@ func TestReview_ARevisionNamesTheFindingsItAddressed(t *testing.T) {
 
 	err, _ := refused.Load().(error)
 	require.Error(t, err, "a finding the round was not given is refused")
-	assert.Contains(t, err.Error(), "finding 3 does not exist")
+	assert.Contains(t, err.Error(), "finding R3 was not given")
 
 	art, err := st.LatestArtifact(context.Background(), "BP1", "shape")
 	require.NoError(t, err)
 	assert.Equal(t, 2, art.Version)
-	assert.Equal(t, []addressed{{finding: 2, note: "split into two"}}, addressedOf(art))
+	assert.Equal(t, []addressed{{finding: "R2", note: "split into two"}}, addressedOf(art))
 	assert.NotContains(t, string(art.Data), "check_problems", "an accepted list leaves no problems")
 }
 
@@ -149,7 +150,7 @@ func artifactsOf(rec *recorder, stageID string) []Event {
 
 func TestArtifactPayload_NamesWhoDrewItAndWhatFor(t *testing.T) {
 	script := gatedScript()
-	script["shape.review"] = verdicts(scored(4, "name the owner", "split it"))
+	script["shape.review"] = verdicts(scored(4, "name the owner", "split it"), fixed(5, "R1", "R2"))
 
 	c, _, _, rec := newGated(t, script)
 

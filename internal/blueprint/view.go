@@ -772,9 +772,9 @@ func decider(g store.Gate) string {
 	}
 }
 
-// reviewOf is the reviewer's verdict on st's version: each finding sent to
-// the next version when the verdict sent the builder back, and addressed in
-// it, with its note, only when that version listed it.
+// reviewOf is the reviewer's verdict on st's version: each finding still
+// open sent to the next version when the verdict sent the builder back, and
+// addressed in it, with its note, only when that version listed its id.
 func (rec record) reviewOf(st pack.Stage, version int) *protocol.ArtifactReview {
 	if st.Reviewer == nil {
 		return nil
@@ -802,29 +802,34 @@ func (rec record) reviewOf(st pack.Stage, version int) *protocol.ArtifactReview 
 	}
 
 	for _, f := range v.Findings {
-		out.Findings = append(out.Findings, protocol.ReviewFinding{Text: f})
+		out.Findings = append(out.Findings, protocol.ReviewFinding{Text: f.Text})
 	}
 
 	if settled(st, v) {
 		return out
 	}
 
+	// The findings still open went to the next version, which may list them
+	// as addressed, by id.
 	sent := version + 1
 
-	for i := range out.Findings {
-		out.Findings[i].SentTo = sent
-	}
+	var claims map[string]string
 
 	for _, a := range rec.arts[st.ID] {
-		if a.Version != sent {
+		if a.Version == sent {
+			claims = addressedClaims(a)
+		}
+	}
+
+	for i, f := range v.Findings {
+		if f.Status == findingFixed {
 			continue
 		}
 
-		for _, e := range addressedOf(a) {
-			if e.finding <= len(out.Findings) {
-				f := &out.Findings[e.finding-1]
-				f.AddressedIn, f.AddressedBy, f.AddressedNote = sent, st.Persona, e.note
-			}
+		out.Findings[i].SentTo = sent
+
+		if note, ok := claims[f.ID]; ok {
+			out.Findings[i].AddressedIn, out.Findings[i].AddressedBy, out.Findings[i].AddressedNote = sent, st.Persona, note
 		}
 	}
 

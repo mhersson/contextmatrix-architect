@@ -38,9 +38,10 @@ type interviewer struct {
 	// max caps the questions the run's attempt may ask under auto, 0 none;
 	// asked counts them, the attempt's earlier runs included.
 	max, asked int
-	// attempt, builderRound and revisedFor are the run's place, which a
+	// attempt, builderRound and findings are the run's place, which a
 	// continuation of its round takes over.
-	attempt, builderRound, revisedFor int
+	attempt, builderRound int
+	findings              []string
 	// qround is the round a chat run answers; posted the round the run
 	// posted or answered, for its end event.
 	qround, posted int
@@ -127,7 +128,7 @@ func (iv *interviewer) numbered(ctx context.Context, rd stage.Round, sources map
 	}
 
 	s := roundState{
-		Number: number, Attempt: iv.attempt, BuilderRound: iv.builderRound, RevisedFor: iv.revisedFor,
+		Number: number, Attempt: iv.attempt, BuilderRound: iv.builderRound, Findings: iv.findings,
 		PostedBy: iv.runID, RunID: iv.runID, Change: changePosted,
 		Frame: protocol.LogRound{Persona: personaName(iv.st.Persona), Stage: iv.st.ID, ResearchOff: !c.researchOn(iv.sess, iv.st)},
 	}

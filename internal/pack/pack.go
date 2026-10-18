@@ -70,8 +70,8 @@ type Fold struct {
 }
 
 // Reviewer is the run that judges a gated stage's artifact before its gate:
-// Persona plays it, and a score below Threshold, 1 to 5, sends the stage
-// back for another round.
+// Persona plays it, and a score below Threshold, 1 to 5, or a critical
+// finding left open sends the stage back for another round.
 type Reviewer struct {
 	Persona   string `yaml:"persona"`
 	Threshold int    `yaml:"threshold"`

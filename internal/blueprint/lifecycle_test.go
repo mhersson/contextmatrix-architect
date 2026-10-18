@@ -355,9 +355,9 @@ func TestStart_ContinuesABuilderRoundsRound(t *testing.T) {
 	in := runner.input(1)
 	assert.Equal(t, asking, in.History)
 	require.NotNil(t, in.Validate)
-	require.Error(t, in.Validate(ctx, stage.Artifact{Data: map[string]any{"addressed": []any{map[string]any{"finding": 2.0, "note": "x"}}}}),
+	require.Error(t, in.Validate(ctx, stage.Artifact{Data: map[string]any{"addressed": []any{map[string]any{"finding": "R2", "note": "x"}}}}),
 		"the round was given one finding")
-	require.NoError(t, in.Validate(ctx, stage.Artifact{Data: map[string]any{"addressed": []any{map[string]any{"finding": 1.0, "note": "x"}}}}))
+	require.NoError(t, in.Validate(ctx, stage.Artifact{Data: map[string]any{"addressed": []any{map[string]any{"finding": "R1", "note": "x"}}}}))
 }
 
 func TestMessage_AfterAFailedContinuationRunsItAgain(t *testing.T) {

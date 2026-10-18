@@ -1,10 +1,12 @@
 package blueprint
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/mhersson/contextmatrix-harness/llm"
@@ -15,29 +17,18 @@ import (
 )
 
 // maxReviewRounds is how many reviewer rounds one attempt of a stage gets;
-// a score still below the threshold then goes to a human.
+// a verdict that still does not pass then goes to a human.
 const maxReviewRounds = 3
-
-// review is a reviewer's verdict on one version of a stage's artifact,
-// stored as an artifact of the pseudo-stage <stage>.review.
-type review struct {
-	Score    int      `json:"score"`
-	Findings []string `json:"findings"`
-	Version  int      `json:"version"`
-	Attempt  int      `json:"attempt"`
-	Round    int      `json:"round"`
-}
 
 // round is a builder round after a review, a low one's next round or a
 // passing one's revision: the attempt it continues, its number, the
-// conversation it resumes (nil starts over), the next message, and how many
-// findings it was given, numbered from 1, which its submit may say it
-// addressed.
+// conversation it resumes (nil starts over), the next message, and the ids
+// of the findings it was given, which its submit may say it addressed.
 type round struct {
 	attempt, number int
 	history         []llm.Message
 	task            string
-	findings        int
+	findings        []string
 	// segment marks a run that goes on from a question round: SegmentAnswers
 	// resumes it with the answers, SegmentChat answers its chat; qround is the
 	// round. Empty for a stage run or a builder round.
@@ -50,33 +41,295 @@ type round struct {
 // reviewStage names the pseudo-stage a stage's verdicts are stored under.
 func reviewStage(stageID string) string { return stageID + ".review" }
 
-// parseReview reads a reviewer's submit: a whole score from 1 to 5 and a
-// list of findings, each a sentence.
-func parseReview(data map[string]any) (review, error) {
+// Finding severities and statuses, as the view carries them.
+const (
+	severityCritical = "critical"
+	severityMajor    = "major"
+	severityMinor    = "minor"
+
+	findingOpen      = "open"
+	findingFixed     = "fixed"
+	findingStillOpen = "still_open"
+)
+
+// finding is one entry of a review's ledger. ID is stable within the stage
+// attempt; Status is the reviewer's verdict: open when this review raised
+// it, fixed or still_open when it re-checked it against VerifiedIn. Note is
+// the reviewer's reason for a re-check verdict, which a builder round gets
+// with a finding still open.
+type finding struct {
+	ID         string `json:"id"`
+	Severity   string `json:"severity"`
+	Text       string `json:"text"`
+	Status     string `json:"status"`
+	VerifiedIn int    `json:"verified_in,omitempty"`
+	Note       string `json:"note,omitempty"`
+}
+
+// findingList is a review's ledger. A verdict stored before the ledger
+// lists sentences: each reads as an open major finding, numbered in order,
+// the numbers its builder round named them by.
+type findingList []finding
+
+func (l *findingList) UnmarshalJSON(raw []byte) error {
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return fmt.Errorf("decode the findings: %w", err)
+	}
+
+	out := make(findingList, 0, len(items))
+
+	for i, item := range items {
+		var text string
+		if json.Unmarshal(item, &text) == nil {
+			out = append(out, finding{ID: findingID(i + 1), Severity: severityMajor, Text: text, Status: findingOpen})
+
+			continue
+		}
+
+		var f finding
+		if err := json.Unmarshal(item, &f); err != nil {
+			return fmt.Errorf("decode finding %d: %w", i+1, err)
+		}
+
+		out = append(out, f)
+	}
+
+	*l = out
+
+	return nil
+}
+
+// payload is the ledger as plain data, so masking reaches every text;
+// claims adds, by id, the note the judged version's addressed list gave to
+// a re-checked finding. A finding the review raised was never given to the
+// builder, so an entry that shares its id is no claim on it.
+func (l findingList) payload(claims map[string]string) []any {
+	out := make([]any, 0, len(l))
+
+	for _, f := range l {
+		m := map[string]any{"id": f.ID, "severity": f.Severity, "text": f.Text, "status": f.Status}
+
+		if f.VerifiedIn > 0 {
+			m["verified_in"] = f.VerifiedIn
+		}
+
+		if f.Note != "" {
+			m["note"] = f.Note
+		}
+
+		if claim, ok := claims[f.ID]; ok && f.Status != findingOpen {
+			m["claim"] = claim
+		}
+
+		out = append(out, m)
+	}
+
+	return out
+}
+
+// findingID names the nth finding of an attempt.
+func findingID(n int) string { return fmt.Sprintf("R%d", n) }
+
+// findingNumber is the n of an id R<n>; 0 for any other text.
+func findingNumber(id string) int {
+	digits, ok := strings.CutPrefix(id, "R")
+	if !ok {
+		return 0
+	}
+
+	n, err := strconv.Atoi(digits)
+	if err != nil || n < 1 {
+		return 0
+	}
+
+	return n
+}
+
+// review is a reviewer's verdict on one version of a stage's artifact,
+// stored as an artifact of the pseudo-stage <stage>.review: the score and
+// the ledger of every finding its round judged.
+type review struct {
+	Score    int         `json:"score"`
+	Findings findingList `json:"findings"`
+	Version  int         `json:"version"`
+	Attempt  int         `json:"attempt"`
+	Round    int         `json:"round"`
+}
+
+// unresolved is the findings the reviewer has not seen fixed.
+func (v review) unresolved() []finding {
+	var out []finding
+
+	for _, f := range v.Findings {
+		if f.Status != findingFixed {
+			out = append(out, f)
+		}
+	}
+
+	return out
+}
+
+// openCritical names the critical findings not fixed; never nil.
+func (v review) openCritical() []string {
+	out := []string{}
+
+	for _, f := range v.unresolved() {
+		if f.Severity == severityCritical {
+			out = append(out, f.ID)
+		}
+	}
+
+	return out
+}
+
+// passes is the pass rule: a score at or above threshold, and no critical
+// finding open or still open, whatever the score.
+func (v review) passes(threshold int) bool {
+	return v.Score >= threshold && len(v.openCritical()) == 0
+}
+
+// parseReview reads a reviewer's submit against prior, the ledger of the
+// attempt's newest verdict: a whole score from 1 to 5, a verdict on every
+// prior finding, fixed or still_open with an optional note, and the new
+// findings, each a severity and a sentence. Re-checked findings were
+// verified in version; new ones take the ids after the attempt's highest. A
+// score below threshold sends the builder back, so it must leave a finding
+// open or still open.
+func parseReview(data map[string]any, prior findingList, threshold, version int) (review, error) {
 	score, ok := data["score"].(float64)
 	if !ok || score != float64(int(score)) || score < 1 || score > 5 {
 		return review{}, errors.New("score must be a whole number from 1 to 5")
 	}
 
-	v := review{Score: int(score)}
+	checks, err := parseChecks(data["verdicts"], prior)
+	if err != nil {
+		return review{}, err
+	}
 
-	if raw, ok := data["findings"]; ok && raw != nil {
-		items, isList := raw.([]any)
-		if !isList {
-			return review{}, errors.New("findings must be a list of sentences")
-		}
+	raised, err := parseFindings(data["findings"])
+	if err != nil {
+		return review{}, err
+	}
 
-		for i, item := range items {
-			s, isText := item.(string)
-			if !isText || strings.TrimSpace(s) == "" {
-				return review{}, fmt.Errorf("finding %d must be a sentence", i+1)
-			}
+	v := review{Score: int(score), Findings: findingList{}}
+	next := 1
 
-			v.Findings = append(v.Findings, strings.TrimSpace(s))
-		}
+	for _, f := range prior {
+		next = max(next, findingNumber(f.ID)+1)
+		ch := checks[f.ID]
+		f.Status, f.Note, f.VerifiedIn = ch.status, ch.note, version
+		v.Findings = append(v.Findings, f)
+	}
+
+	for _, f := range raised {
+		f.ID, f.Status = findingID(next), findingOpen
+		v.Findings = append(v.Findings, f)
+		next++
+	}
+
+	if v.Score < threshold && len(v.unresolved()) == 0 {
+		return review{}, fmt.Errorf("a score below %d sends the artifact back, so it needs at least one finding open or still open for the builder to act on", threshold)
 	}
 
 	return v, nil
+}
+
+// findingCheck is a later round's verdict on one earlier finding.
+type findingCheck struct{ status, note string }
+
+// parseChecks reads the verdicts on prior: exactly one per prior finding.
+func parseChecks(raw any, prior findingList) (map[string]findingCheck, error) {
+	known := map[string]bool{}
+	ids := make([]string, 0, len(prior))
+
+	for _, f := range prior {
+		known[f.ID] = true
+		ids = append(ids, f.ID)
+	}
+
+	out := map[string]findingCheck{}
+
+	if raw != nil {
+		items, isList := raw.([]any)
+		if !isList {
+			return nil, errors.New(`verdicts must be a list of {"id", "status", "note"} entries`)
+		}
+
+		if len(items) > 0 && len(prior) == 0 {
+			return nil, errors.New("a first round has no findings to re-check, so verdicts must be empty or left out")
+		}
+
+		for i, item := range items {
+			e, _ := item.(map[string]any)
+			id, _ := e["id"].(string)
+			status, _ := e["status"].(string)
+			note, noteIsText := e["note"].(string)
+			_, dup := out[id]
+
+			switch {
+			case strings.TrimSpace(id) == "":
+				return nil, fmt.Errorf("verdict %d needs the id of a finding to re-check", i+1)
+			case !known[id]:
+				return nil, fmt.Errorf("verdict %d names %s, which is not a finding to re-check; they are %s", i+1, id, strings.Join(ids, ", "))
+			case dup:
+				return nil, fmt.Errorf("%s has two verdicts", id)
+			case status != findingFixed && status != findingStillOpen:
+				return nil, fmt.Errorf("the verdict on %s must be fixed or still_open", id)
+			case e["note"] != nil && !noteIsText:
+				return nil, fmt.Errorf("the note on %s must be a sentence", id)
+			}
+
+			out[id] = findingCheck{status: status, note: strings.TrimSpace(note)}
+		}
+	}
+
+	var missing []string
+
+	for _, id := range ids {
+		if _, ok := out[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+
+	if len(missing) > 0 {
+		return nil, fmt.Errorf(`give every finding to re-check an entry in verdicts, {"id", "status": "fixed" or "still_open", "note"}; missing: %s`, strings.Join(missing, ", "))
+	}
+
+	return out, nil
+}
+
+// parseFindings reads the new findings: each a severity and a sentence.
+func parseFindings(raw any) ([]finding, error) {
+	if raw == nil {
+		return nil, nil
+	}
+
+	items, isList := raw.([]any)
+	if !isList {
+		return nil, errors.New(`findings must be a list of {"severity", "text"} entries`)
+	}
+
+	out := make([]finding, 0, len(items))
+
+	for i, item := range items {
+		e, isObject := item.(map[string]any)
+		severity, _ := e["severity"].(string)
+		text, _ := e["text"].(string)
+
+		switch {
+		case !isObject:
+			return nil, fmt.Errorf(`finding %d must be {"severity", "text"}`, i+1)
+		case severity != severityCritical && severity != severityMajor && severity != severityMinor:
+			return nil, fmt.Errorf("finding %d needs a severity: critical, major or minor", i+1)
+		case strings.TrimSpace(text) == "":
+			return nil, fmt.Errorf("finding %d must be a sentence", i+1)
+		}
+
+		out = append(out, finding{Severity: severity, Text: strings.TrimSpace(text)})
+	}
+
+	return out, nil
 }
 
 // newestReview is the newest verdict on any version of stageID's artifact;
@@ -99,16 +352,17 @@ func (c *Controller) newestReview(ctx context.Context, id, stageID string) (revi
 	return v, true, nil
 }
 
-// owesRevision reports a verdict that passed with findings: the builder
-// revises once more, and the revision goes to its gate unreviewed.
+// owesRevision reports a verdict that passed with findings still open: the
+// builder revises once more, and the revision goes to its gate unreviewed.
 func owesRevision(st pack.Stage, v review) bool {
-	return v.Score >= st.Reviewer.Threshold && len(v.Findings) > 0
+	return v.passes(st.Reviewer.Threshold) && len(v.unresolved()) > 0
 }
 
 // settled reports a verdict that leaves its artifact to the gate: a pass
-// without findings, or a low score on the attempt's last round.
+// with no finding open, or a verdict that does not pass on the attempt's
+// last round.
 func settled(st pack.Stage, v review) bool {
-	return !owesRevision(st, v) && (v.Score >= st.Reviewer.Threshold || v.Round >= maxReviewRounds)
+	return !owesRevision(st, v) && (v.passes(st.Reviewer.Threshold) || v.Round >= maxReviewRounds)
 }
 
 // gateReview is the verdict that decides st's gate on art: the newest
@@ -144,31 +398,33 @@ func (c *Controller) gateReview(ctx context.Context, id string, st pack.Stage, a
 	return v, true, true, nil
 }
 
-// reviewRounds counts the verdicts on stageID in attempt.
-func (c *Controller) reviewRounds(ctx context.Context, id, stageID string, attempt int) (int, error) {
+// attemptReviews lists the verdicts on stageID in attempt, oldest first:
+// their count is the rounds so far, and the newest holds the ledger a later
+// round re-checks.
+func (c *Controller) attemptReviews(ctx context.Context, id, stageID string, attempt int) ([]review, error) {
 	arts, err := c.opts.Store.ListArtifacts(ctx, id)
 	if err != nil {
-		return 0, fmt.Errorf("blueprint: count the reviews of %s: %w", pack.StageName(stageID), err)
+		return nil, fmt.Errorf("blueprint: read the reviews of %s: %w", pack.StageName(stageID), err)
 	}
 
-	n := 0
+	var out []review
 
 	for _, a := range arts {
 		var v review
 		if a.Stage == reviewStage(stageID) && json.Unmarshal(a.Data, &v) == nil && v.Attempt == attempt {
-			n++
+			out = append(out, v)
 		}
 	}
 
-	return n, nil
+	return out, nil
 }
 
 // critiquePending reports whether a gated stage's artifact still needs its
-// reviewer or its builder: no verdict on it yet, one below the threshold
+// reviewer or its builder: no verdict on it yet, one that does not pass
 // with a builder round left in the attempt, or one that passed with
-// findings, which owes a revision. A revision needs neither. A gate already
-// shown needs none: it stays with the human it was put to, even without a
-// verdict or with a revision owed.
+// findings still open, which owes a revision. A revision needs neither. A
+// gate already shown needs none: it stays with the human it was put to,
+// even without a verdict or with a revision owed.
 func (c *Controller) critiquePending(ctx context.Context, id string, st pack.Stage, art store.Artifact) (bool, error) {
 	if st.Reviewer == nil {
 		return false, nil
@@ -215,10 +471,10 @@ func (c *Controller) latestStageRun(ctx context.Context, id, stageID string) (st
 }
 
 // critique reviews a gated stage's latest artifact, unless a verdict on it
-// exists, and runs the builder's next round with the findings when the
-// score is below the threshold with a round left in the attempt, or its
-// revision when the score passed with findings. A revision is never
-// reviewed. A run that did not complete has been reported and stops.
+// exists, and runs the builder's next round with the findings still open
+// when the verdict does not pass with a round left in the attempt, or its
+// revision when the verdict passed with findings still open. A revision is
+// never reviewed. A run that did not complete has been reported and stops.
 func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string) stageEnd {
 	bg := context.Background()
 	au := sess.audit
@@ -284,7 +540,14 @@ func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp sto
 func (c *Controller) builderRound(ctx context.Context, bp store.Blueprint, st pack.Stage, built store.Run, art store.Artifact, v review) (*round, error) {
 	var b strings.Builder
 
-	rd := &round{attempt: built.Attempt, number: built.Round + 1, history: c.builtHistory(ctx, bp.ID, built), findings: len(v.Findings)}
+	open := v.unresolved()
+	ids := make([]string, 0, len(open))
+
+	for _, f := range open {
+		ids = append(ids, f.ID)
+	}
+
+	rd := &round{attempt: built.Attempt, number: built.Round + 1, history: c.builtHistory(ctx, bp.ID, built), findings: ids}
 
 	if len(rd.history) == 0 {
 		rd.history = nil
@@ -295,14 +558,14 @@ func (c *Controller) builderRound(ctx context.Context, bp store.Blueprint, st pa
 	fmt.Fprintf(&b, "## Reviewer findings (round %d)\n\n", v.Round)
 
 	if owesRevision(st, v) {
-		fmt.Fprintf(&b, "The reviewer passed your artifact at %d of 5 with these findings. Revise it to address every finding, then submit it again; the revised version goes to its gate without another review:\n\n", v.Score)
+		fmt.Fprintf(&b, "The reviewer passed your artifact at %d of 5 with these findings open. Revise it to address every one, then submit it again; the revised version goes to its gate without another review:\n\n", v.Score)
 	} else {
-		fmt.Fprintf(&b, "The reviewer scored your artifact %d of 5; %d passes. Address every finding, then submit the artifact again:\n\n", v.Score, st.Reviewer.Threshold)
+		fmt.Fprintf(&b, "The reviewer did not pass your artifact: %d of 5, where %d passes and a critical finding left open fails it whatever the score. Address every finding, then submit the artifact again; the reviewer re-checks each one against your revision:\n\n", v.Score, st.Reviewer.Threshold)
 	}
 
-	// Numbered: the round's submit names the findings it addressed by number.
-	for i, f := range v.Findings {
-		fmt.Fprintf(&b, "%d. %s\n", i+1, f)
+	// By id: the round's submit names the findings it addressed by id.
+	for _, f := range open {
+		writeFinding(&b, f)
 	}
 
 	b.WriteString("\n")
@@ -321,6 +584,27 @@ func (c *Controller) builderRound(ctx context.Context, bp store.Blueprint, st pa
 	rd.task = b.String()
 
 	return rd, nil
+}
+
+// writeFinding lists a finding for a builder round: its id and severity
+// and, for one still open, the reviewer's reason.
+func writeFinding(b *strings.Builder, f finding) {
+	fmt.Fprintf(b, "- %s (%s", f.ID, f.Severity)
+
+	if f.Status == findingStillOpen {
+		b.WriteString(", still open after your revision")
+
+		if f.Note != "" {
+			b.WriteString(": " + f.Note)
+		}
+	}
+
+	fmt.Fprintf(b, "): %s\n", f.Text)
+}
+
+// statusWord is a finding's status as a task reads it.
+func statusWord(status string) string {
+	return strings.ReplaceAll(status, "_", " ")
 }
 
 // builtHistory is the conversation of the run that built the artifact.
@@ -375,21 +659,30 @@ func (c *Controller) writeNewNotes(ctx context.Context, b *strings.Builder, id s
 
 // runReviewer judges a gated stage's artifact with the pack's reviewer: its
 // persona, the review instructions and reviewTask, never the builder's
-// transcript, and no tools. The verdict is stored as the next <stage>.review
-// artifact and announced, and the blueprint is idle until the next step
-// sets its state. false when the run did not complete, which is reported.
+// transcript, and no tools. The verdict, with its ledger, is stored as the
+// next <stage>.review artifact and announced, and the blueprint is idle
+// until the next step sets its state. false when the run did not complete,
+// which is reported.
 func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp store.Blueprint, st pack.Stage, art store.Artifact, attempt int) (review, bool) {
 	bg := context.Background()
 	au := sess.audit
 
-	rounds, err := c.reviewRounds(bg, bp.ID, st.ID, attempt)
+	past, err := c.attemptReviews(bg, bp.ID, st.ID, attempt)
 	if err != nil {
 		c.fail(bg, au, bp.ID, 0, err.Error())
 
 		return review{}, false
 	}
 
-	task, err := c.reviewTask(bg, bp, st, art, attempt)
+	var prior findingList
+	if len(past) > 0 {
+		prior = past[len(past)-1].Findings
+	}
+
+	// number, not round: round is the builder round type in this package.
+	number, threshold := len(past)+1, st.Reviewer.Threshold
+
+	task, err := c.reviewTask(bg, bp, st, art, attempt, prior)
 	if err != nil {
 		c.fail(bg, au, bp.ID, 0, err.Error())
 
@@ -397,12 +690,12 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 	}
 
 	out, err := c.runSide(ctx, r, sess, bp, sideRun{
-		kind: store.RunKindReviewer, stage: st.ID, persona: st.Reviewer.Persona, attempt: attempt, round: rounds + 1,
+		kind: store.RunKindReviewer, stage: st.ID, persona: st.Reviewer.Persona, attempt: attempt, round: number,
 		in: stage.Input{
 			Stage: reviewStage(st.ID), Persona: c.opts.Pack.Persona(st.Reviewer.Persona),
 			Instructions: c.opts.Pack.ReviewInstructions(), Task: task,
 			Validate: func(_ context.Context, a stage.Artifact) error {
-				_, err := parseReview(a.Data)
+				_, err := parseReview(a.Data, prior, threshold, art.Version)
 
 				return err
 			},
@@ -414,22 +707,19 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 		return review{}, false
 	}
 
-	v, err := parseReview(out.Artifact.Data)
+	v, err := parseReview(out.Artifact.Data, prior, threshold, art.Version)
 	if err != nil {
 		c.fail(bg, au, bp.ID, 0, fmt.Sprintf("review of %s: %v", pack.StageName(st.ID), err))
 
 		return review{}, false
 	}
 
-	v.Version, v.Attempt, v.Round = art.Version, attempt, rounds+1
-
-	findings := v.Findings
-	if findings == nil {
-		findings = []string{}
-	}
+	v.Version, v.Attempt, v.Round = art.Version, attempt, number
+	passed := v.passes(threshold)
 
 	if _, err := au.artifact(bg, bp.ID, reviewStage(st.ID), out.Artifact.Body, map[string]any{
-		"score": v.Score, "findings": findings, "version": v.Version, "attempt": v.Attempt, "round": v.Round,
+		"score": v.Score, "passed": passed, "findings": v.Findings.payload(nil),
+		"version": v.Version, "attempt": v.Attempt, "round": v.Round,
 	}); err != nil {
 		c.fail(bg, au, bp.ID, 0, err.Error())
 
@@ -437,8 +727,9 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 	}
 
 	au.event(bg, Event{Kind: EventReview, BlueprintID: bp.ID, Payload: map[string]any{
-		"stage": st.ID, "version": art.Version, "score": v.Score, "threshold": st.Reviewer.Threshold,
-		"findings": findings, "round": v.Round,
+		"stage": st.ID, "version": art.Version, "score": v.Score, "threshold": threshold, "passed": passed,
+		"round": v.Round, "reviewer": st.Reviewer.Persona,
+		"findings": v.Findings.payload(addressedClaims(art)), "open_critical": v.openCritical(),
 	}})
 
 	c.setState(bg, bp.ID, StateIdle)
@@ -450,8 +741,10 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 // it got answered, the assumptions, the gate feedback the attempt addresses,
 // the artifacts folded into its gate, each with the gate feedback its own
 // attempt addresses, the artifact, whose data holds any problems it was
-// accepted with, the user's notes and the score that passes.
-func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pack.Stage, art store.Artifact, attempt int) (string, error) {
+// accepted with, the user's notes, and, from the attempt's second round,
+// every earlier finding with the builder's claim beside it, and the score
+// that passes.
+func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pack.Stage, art store.Artifact, attempt int, prior findingList) (string, error) {
 	var b strings.Builder
 
 	if err := c.writeInputs(ctx, &b, bp, st, false, "review task"); err != nil {
@@ -501,7 +794,23 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pack
 		return "", fmt.Errorf("blueprint: review task for %s: %w", st.ID, err)
 	}
 
-	fmt.Fprintf(&b, "Score it from 1 to 5; %d or more passes.\n", st.Reviewer.Threshold)
+	if len(prior) > 0 {
+		claims := addressedClaims(art)
+
+		fmt.Fprintf(&b, "## Findings to re-check\n\nEarlier rounds of this attempt raised these findings. Judge each against version %d itself, whatever the builder says it addressed, and give every one a verdict, fixed or still_open:\n\n", art.Version)
+
+		for _, f := range prior {
+			fmt.Fprintf(&b, "- %s (%s, %s): %s\n", f.ID, f.Severity, statusWord(f.Status), f.Text)
+
+			if note, ok := claims[f.ID]; ok {
+				fmt.Fprintf(&b, "  The builder's claim, to verify: %s\n", cmp.Or(note, "addressed, without a note"))
+			}
+		}
+
+		b.WriteString("\n")
+	}
+
+	fmt.Fprintf(&b, "Score it from 1 to 5; %d or more passes, unless a critical finding is left open, which fails it whatever the score.\n", st.Reviewer.Threshold)
 
 	return b.String(), nil
 }
