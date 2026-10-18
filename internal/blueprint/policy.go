@@ -103,9 +103,9 @@ func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID s
 // off, as ParseCommand returns it, and off stores 0, no cap. An amount not
 // above what the blueprint has spent is refused and changes nothing. Like
 // a gate reply it works while a stage runs, and the cap applies from the
-// next run. With nothing in flight, a raise or a removal runs again the
-// stage the blueprint cap stopped, once, as a retry message would but
-// without a note; nothing else starts.
+// next run. With nothing in flight, a cap above the one a cap stop happened
+// under, or no cap, runs the stopped stage again, once, as a retry message
+// would but without a note; nothing else starts.
 func (c *Controller) SetCap(ctx context.Context, id, value, msgID string) error {
 	to := 0.0
 
@@ -150,9 +150,6 @@ func (c *Controller) SetCap(ctx context.Context, id, value, msgID string) error 
 		return fmt.Errorf("blueprint: cap: %w", err)
 	}
 
-	// A lowering never lifts a cap stop, so only a raise or a removal
-	// resumes one.
-	lifts := to == 0 || to > bp.CostCapUSD
 	bp.CostCapUSD = to
 
 	// The slot is held while the stop is read, so nothing starts between
@@ -174,7 +171,7 @@ func (c *Controller) SetCap(ctx context.Context, id, value, msgID string) error 
 
 	var at stopPoint
 
-	if claimed && lifts {
+	if claimed {
 		p, found, err := c.stoppedAt(ctx, bp)
 		if err != nil {
 			// The cap is stored; only the resume is lost, and a message
@@ -182,7 +179,9 @@ func (c *Controller) SetCap(ctx context.Context, id, value, msgID string) error 
 			c.opts.Logger.Warn("blueprint: read the stop a cap change resumes", "blueprint", id, "error", sess.audit.text(err.Error()))
 		}
 
-		if found && p.byCap {
+		// The stop's own cap, not the one stored: a raise while its run went
+		// on is stored already, and a cap at or below the stop's stops again.
+		if found && p.byCap && (to == 0 || to > p.capUSD) {
 			at = p
 			payload["resumes"] = p.stage
 		}

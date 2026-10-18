@@ -422,7 +422,7 @@ func (c *Controller) need(ctx, runCtx context.Context, r *run, sess *session, bp
 // pending (round.stalled when that run failed or was aborted), or the first
 // stage, before its first artifact, with a need stored. fold is the fold to
 // record before the stage runs. byCap says the blueprint cap stopped it (see
-// stoppedByCap).
+// stoppedByCap), and capUSD is the cap it stopped under.
 type stopPoint struct {
 	stage    string
 	critique bool
@@ -430,6 +430,7 @@ type stopPoint struct {
 	need     bool
 	fold     *folding
 	byCap    bool
+	capUSD   float64
 }
 
 // stoppedAt reads where bp stands stopped, as input reads it for a message;
@@ -483,7 +484,7 @@ func (c *Controller) stoppedAt(ctx context.Context, bp store.Blueprint) (stopPoi
 		}
 	}
 
-	if p.byCap, err = c.stoppedByCap(ctx, bp.ID, p.stage); err != nil {
+	if p.byCap, p.capUSD, err = c.stoppedByCap(ctx, bp.ID, p.stage); err != nil {
 		return stopPoint{}, false, err
 	}
 
@@ -491,17 +492,17 @@ func (c *Controller) stoppedAt(ctx context.Context, bp store.Blueprint) (stopPoi
 }
 
 // stoppedByCap reports whether the newest start, end or refusal of a run is
-// a cap stop of stageID. A run of stageID since says no, and so does a run
-// of another stage, which places the pipeline past an older stop, or an
-// error that names no stage, a failure. A stale reply's error stops nothing
-// and is passed over.
-func (c *Controller) stoppedByCap(ctx context.Context, id, stageID string) (bool, error) {
+// a cap stop of stageID, and the cap it stopped under. A run of stageID
+// since says no, and so does a run of another stage, which places the
+// pipeline past an older stop, or an error that names no stage, a failure.
+// A stale reply's error stops nothing and is passed over.
+func (c *Controller) stoppedByCap(ctx context.Context, id, stageID string) (bool, float64, error) {
 	var events []store.Event
 
 	for _, kind := range []string{EventStageStarted, EventStageEnded, EventError} {
 		of, err := c.opts.Store.ListEventsOfKind(ctx, id, kind)
 		if err != nil {
-			return false, fmt.Errorf("blueprint: read the %s events: %w", kind, err)
+			return false, 0, fmt.Errorf("blueprint: read the %s events: %w", kind, err)
 		}
 
 		events = append(events, of...)
@@ -511,24 +512,27 @@ func (c *Controller) stoppedByCap(ctx context.Context, id, stageID string) (bool
 
 	for _, e := range events {
 		var p struct {
-			Stage  string `json:"stage"`
-			Reason string `json:"reason"`
+			Stage  string  `json:"stage"`
+			Reason string  `json:"reason"`
+			CapUSD float64 `json:"cap_usd"`
 		}
 
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
-			return false, fmt.Errorf("blueprint: read event %d: %w", e.ID, err)
+			return false, 0, fmt.Errorf("blueprint: read event %d: %w", e.ID, err)
 		}
 
 		if e.Kind == EventError && p.Reason == reasonStaleReply {
 			continue
 		}
 
-		_, byCap := capStopOf(e)
+		if _, byCap := capStopOf(e); !byCap || p.Stage != stageID {
+			return false, 0, nil
+		}
 
-		return byCap && p.Stage == stageID, nil
+		return true, p.CapUSD, nil
 	}
 
-	return false, nil
+	return false, 0, nil
 }
 
 // resume runs p again on slot r, which the caller holds, as a retry message

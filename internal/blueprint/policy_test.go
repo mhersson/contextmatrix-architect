@@ -372,7 +372,44 @@ func TestStart_AReopenKeepsTheStoredCap(t *testing.T) {
 	assert.InDelta(t, 5.0, storedCap(t, st), 1e-9, "only the cap command changes the cap")
 }
 
-func TestSetCap_ARaiseRunsWhatTheCapStoppedOnce(t *testing.T) {
+// cutShortAfterARaise leaves BP1 on the single pack idle on a cap stop of
+// intake: its run started under a 1.5 USD cap, the cap went up to 4 while it
+// ran, and what the old cap left cut it short.
+func cutShortAfterARaise(t *testing.T) (*Controller, *store.Store, *fakeRunner, *recorder) {
+	t.Helper()
+
+	started, held := make(chan struct{}), make(chan struct{})
+
+	var n atomic.Int32
+
+	c, st, runner, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+		if n.Add(1) > 1 {
+			return artifactOutput("# Need", in), nil
+		}
+
+		close(started)
+		<-held
+
+		return stage.Output{Result: harness.Result{Reason: "max_cost", TotalCostUSD: 1.6}}, errors.New("stage intake: no artifact")
+	})
+	release := closer(t, held)
+
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, cappedInput(1.5)))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	signalled(t, started)
+	require.NoError(t, c.SetCap(ctx, "BP1", "4", "m-during"))
+	release()
+	c.Wait("BP1")
+
+	ev, ok := rec.first(EventError)
+	require.True(t, ok)
+	require.InDelta(t, 1.5, ev.Payload["cap_usd"], 1e-9, "the stop names the cap its run started under")
+
+	return c, st, runner, rec
+}
+
+func TestSetCap_ACapAboveTheStopsOwnRunsTheStoppedStageOnce(t *testing.T) {
 	question := roundQ("Deploy", "Helm or Kustomize?", "Helm", "Kustomize")
 
 	tests := []struct {
@@ -381,7 +418,9 @@ func TestSetCap_ARaiseRunsWhatTheCapStoppedOnce(t *testing.T) {
 		setup func(t *testing.T) (*Controller, *store.Store, *fakeRunner, *recorder)
 		stage string
 		// runs is the runner stage the resumed run is.
-		runs  string
+		runs string
+		// value is the cap sent; empty sends 4.
+		value string
 		check func(t *testing.T, st *store.Store, runner *fakeRunner)
 	}{
 		{
@@ -395,6 +434,22 @@ func TestSetCap_ARaiseRunsWhatTheCapStoppedOnce(t *testing.T) {
 				t.Helper()
 				assert.Len(t, inputsOf(runner, "shape.review"), 1, "the chain goes on to its gate")
 			},
+		},
+		{
+			name: "a stage the cap refused, the cap removed", stage: "shape", runs: "shape", value: capOff,
+			setup: func(t *testing.T) (*Controller, *store.Store, *fakeRunner, *recorder) {
+				t.Helper()
+
+				return shapeRefused(t, gatedScript())
+			},
+		},
+		{
+			name: "a run the old cap cut short after a raise, the stored cap sent again", stage: "intake", runs: "intake", value: "4",
+			setup: cutShortAfterARaise,
+		},
+		{
+			name: "a run the old cap cut short after a raise, a lower cap above the stop's", stage: "intake", runs: "intake", value: "3",
+			setup: cutShortAfterARaise,
 		},
 		{
 			name: "a stage the cap refused, a stale reply since", stage: "shape", runs: "shape",
@@ -499,16 +554,22 @@ func TestSetCap_ARaiseRunsWhatTheCapStoppedOnce(t *testing.T) {
 			require.Equal(t, string(StateIdle), stateOf(t, st, "BP1"))
 
 			before := len(inputsOf(runner, tt.runs))
+			changes := len(rec.all(EventCap))
 
-			require.NoError(t, c.SetCap(ctx, "BP1", "4", "m-raise"))
+			value := tt.value
+			if value == "" {
+				value = "4"
+			}
+
+			require.NoError(t, c.SetCap(ctx, "BP1", value, "m-raise"))
 			c.Wait("BP1")
 			require.NoError(t, c.SetCap(ctx, "BP1", "5", "m-again"))
 			c.Wait("BP1")
 
 			assert.Len(t, inputsOf(runner, tt.runs), before+1, "the stopped run runs once")
-			assert.Equal(t, []string{tt.stage}, capStops(t, st), "under the raised cap it runs")
+			assert.Equal(t, []string{tt.stage}, capStops(t, st), "under the new cap it runs")
 
-			events := rec.all(EventCap)
+			events := rec.all(EventCap)[changes:]
 			require.Len(t, events, 2)
 			assert.Equal(t, tt.stage, events[0].Payload["resumes"])
 			assert.NotContains(t, events[1].Payload, "resumes", "nothing waits once it ran")
@@ -591,6 +652,14 @@ func TestSetCap_StartsNothingWithoutACapStop(t *testing.T) {
 				require.True(t, rec.has(EventGate))
 
 				return c, st, runner, rec
+			},
+		},
+		{
+			name: "the cap the stop happened under", value: "1",
+			setup: func(t *testing.T) (*Controller, *store.Store, *fakeRunner, *recorder) {
+				t.Helper()
+
+				return shapeRefused(t, gatedScript())
 			},
 		},
 		{

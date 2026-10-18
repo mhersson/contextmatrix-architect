@@ -820,14 +820,16 @@ Replies the server understands, besides a round's structured answers:
   and `to`, or why it was refused, and the view's cost shows the new cap at
   once. The cap applies from the next run, a later run of the same chain
   included; a run in flight keeps the cap it started with. With nothing in
-  flight, a raise or a removal at a cap stop runs the stopped stage again
-  once, as a retry message would but storing no note: a stage, a review,
-  builder round or revision, a round's continuation or chat run, or an
-  intake with a need stored, which runs on that need. The newest start, end
-  or refusal of the stage's runs must be that cap stop, and the event
-  records the stage it resumes ("Cost cap raised from $2.00 to $4.00;
-  resuming Readiness."). A lowering never lifts a cap stop, so it resumes
-  nothing, and any other stop waits for a message.
+  flight, a cap above the one a cap stop happened under (its `cap_usd`), or
+  no cap, runs the stopped stage again once, as a retry message would but
+  storing no note: a stage, a review, builder round or revision, a round's
+  continuation or chat run, or an intake with a need stored, which runs on
+  that need. The stored cap may be above it already, raised while the
+  stopped run went on; sending that cap again then resumes. The newest
+  start, end or refusal of the stage's runs must be that cap stop, and the
+  event records the stage it resumes ("Cost cap raised from $2.00 to
+  $4.00; resuming Readiness."). A cap at or below the stop's resumes
+  nothing, nor does any change at another stop, which waits for a message.
 - Reopening a session makes CM send a start for it; a stage interrupted by a
   server restart is re-run from its inputs, or from its stored conversation
   when it went on from a round (below), and a stage whose inputs were stored
