@@ -9,6 +9,10 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
+// changeLeft marks a round the pipeline went past without its answers; the
+// panel collapses it like a closed one.
+const changeLeft = "left"
+
 // segmentStep is what runs next on a run slot: a stage run, a critique, or
 // a run that goes on from a round (seg). The zero step runs nothing.
 type segmentStep struct {
@@ -137,15 +141,16 @@ func (c *Controller) settleOn(ctx context.Context, r *run, id string) {
 		return
 	}
 
-	c.follow(bg, ctx, r, sess, bp)
+	c.follow(bg, ctx, r, sess, bp, true)
 }
 
 // follow runs what follows the round the pipeline stands at on slot r,
-// which the caller holds, waking a stalled round: the continuation once the
-// round is answered, else nothing and the slot is released. A round that
-// cannot be read or closed fails the blueprint.
-func (c *Controller) follow(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint) {
-	step, err := c.nextSegment(ctx, sess, bp, true)
+// which the caller holds: the continuation once the round is answered, else
+// nothing and the slot is released. wake runs a stalled round again: a
+// message arrived. A round that cannot be read or closed fails the
+// blueprint.
+func (c *Controller) follow(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, wake bool) {
+	step, err := c.nextSegment(ctx, sess, bp, wake)
 	if err != nil {
 		c.fail(ctx, sess.audit, bp.ID, 0, err.Error())
 		c.release(bp.ID, r)
@@ -228,7 +233,80 @@ func (c *Controller) atRound(ctx, runCtx context.Context, r *run, sess *session,
 	}
 
 	sess.audit.event(ctx, note)
-	c.follow(context.WithoutCancel(ctx), runCtx, r, sess, bp)
+	c.follow(context.WithoutCancel(ctx), runCtx, r, sess, bp, true)
 
 	return nil
+}
+
+// resumeRound acts on the round a reopened blueprint stands at, on slot r,
+// which the caller holds: an open round is shown again with what is stored
+// and waits, an answered one closes and its continuation runs, and a
+// stalled one waits for the next message.
+func (c *Controller) resumeRound(ctx context.Context, r *run, sess *session, bp store.Blueprint, place roundPlace) {
+	bg := context.WithoutCancel(ctx)
+
+	c.showRound(bg, sess.audit, bp.ID, place.state.Number)
+	c.follow(bg, ctx, r, sess, bp, false)
+}
+
+// showRound publishes round n again as stored while it is the newest round
+// and waits for answers. A complete round is not shown: it closes at once,
+// and its close keeps the answering message for the question rows it
+// writes. The round is read under the round lock, so a reply stored since
+// the caller placed it is shown, never overwritten.
+func (c *Controller) showRound(ctx context.Context, au audit, id string, n int) {
+	lock := c.roundLock(id)
+	lock.Lock()
+	defer lock.Unlock()
+
+	rounds, err := c.rounds(ctx, id)
+	if err != nil {
+		c.opts.Logger.Error("blueprint: read the round to show it again", "blueprint", id, "error", err)
+
+		return
+	}
+
+	if len(rounds) == 0 {
+		return
+	}
+
+	s := rounds[len(rounds)-1]
+	if s.Number != n || s.Frame.Closed || s.complete() {
+		return
+	}
+
+	shown := s.clone()
+	shown.Change, shown.MessageID, shown.Dropped = changeShown, "", 0
+	c.putRound(ctx, au, id, 0, shown)
+}
+
+// collapseLeftRound closes the newest round in the panel when it is still
+// open but the pipeline no longer stands at it, as when the run that posted
+// it never recorded its end: nothing will answer it, and the panel would
+// keep it docked. It never goes through closeRound, so no answer is
+// recorded for it. The caller has found no round the pipeline stands at.
+func (c *Controller) collapseLeftRound(ctx context.Context, au audit, id string) {
+	lock := c.roundLock(id)
+	lock.Lock()
+	defer lock.Unlock()
+
+	rounds, err := c.rounds(ctx, id)
+	if err != nil {
+		c.opts.Logger.Error("blueprint: read the rounds to collapse a left one", "blueprint", id, "error", err)
+
+		return
+	}
+
+	if len(rounds) == 0 {
+		return
+	}
+
+	s := rounds[len(rounds)-1]
+	if s.Frame.Closed {
+		return
+	}
+
+	left := s.clone()
+	left.Change, left.MessageID, left.Dropped, left.Frame.Closed = changeLeft, "", 0, true
+	c.putRound(ctx, au, id, 0, left)
 }

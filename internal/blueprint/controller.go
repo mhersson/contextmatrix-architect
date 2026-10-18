@@ -274,7 +274,11 @@ func effectivePrice(p *protocol.ModelPrice) *protocol.ModelPrice {
 }
 
 // Start attaches a session to the blueprint with in.ID, creating it on
-// first sight. A stage left running by a crash is marked interrupted and
+// first sight. A question round the pipeline stands at resumes: an open one
+// is shown again and waits, an answered one closes and its stage continues
+// from the stored conversation, and one whose continuation failed or was
+// aborted waits for the next message; an open round the pipeline went past
+// is collapsed. A stage left running by a crash is marked interrupted and
 // re-run, and a stage whose inputs were stored but which never started
 // runs. An open gate is shown again, or, never shown, opened under the
 // policy now in effect once its pending review or builder round has run. At
@@ -353,6 +357,12 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 		c.detach(in.ID, sess)
 
 		return err
+	}
+
+	if next.qround != nil {
+		c.resumeRound(runCtx, r, sess, bp, *next.qround)
+
+		return nil
 	}
 
 	if next.end {
@@ -518,8 +528,8 @@ func (c *Controller) Message(ctx context.Context, id, text, msgID string) error 
 	return c.input(ctx, runCtx, r, sess, id, trimmed, msgID)
 }
 
-// Abort ends the run in flight, if any. The blueprint persists; the next
-// message retries the stage that was cut short.
+// Abort ends the run in flight, if any; an open round stays open. The
+// blueprint persists; the next message retries the stage that was cut short.
 func (c *Controller) Abort(ctx context.Context, id, msgID string) error {
 	c.mu.Lock()
 

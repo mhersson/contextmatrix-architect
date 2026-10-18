@@ -25,6 +25,8 @@ const (
 	changePosted  = "posted"
 	changeAnswers = "answers"
 	changeClosed  = "closed"
+	// changeShown: a reopen shows an open round again.
+	changeShown = "shown"
 )
 
 // roundState is one snapshot of a question round: the frame the panel shows

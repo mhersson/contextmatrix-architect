@@ -113,12 +113,12 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   adapter: `internal/webhook`, CM's chat-backend protocol. CM starts a session
   with a payload, the user's messages arrive on `/message`, events stream back
   as log entries over SSE and the panel renders them as messages and tool
-  calls. A question or gate a human answers is a text entry carrying a
-  prompt (`LogEntry.Prompt`): actions, each a label and the exact reply
-  text, which the panel shows as buttons, the markdown staying the readable
-  fallback. A gate's, the sign-off's, a stopped emission's or a run start's
-  prompt carries the entry without its reply instruction as its text, and
-  the kind `gate`. A click sends the reply as an ordinary message, so the
+  calls. A gate a human answers is a text entry carrying a prompt
+  (`LogEntry.Prompt`): actions, each a label and the exact reply text, which
+  the panel shows as buttons, the markdown staying the readable fallback. A
+  gate's, the sign-off's, a stopped emission's or a run start's prompt
+  carries the entry without its reply instruction as its text, and the kind
+  `gate`. A click sends the reply as an ordinary message, so the
   architect's reply parsing is the same for a click and a typed answer.
   A stage asks in rounds: a round is a text
   entry whose prompt has the kind `round`, the id `round:<n>` and the round
@@ -741,12 +741,13 @@ Replies the server understands, besides a round's structured answers:
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
 | `lessons`                     | Lists lessons and their state.                                          |
-| `abort`                       | Ends the open run; the blueprint stays and can be reopened.             |
+| `abort`                       | Ends the open run; the blueprint stays and can be reopened, and an open round stays open. |
 
 - A run does not start if it would breach the blueprint's cost cap.
 - Reopening a session makes CM send a start for it; a stage interrupted by a
-  server restart is re-run from its inputs, and a stage whose inputs were
-  stored but which never started runs. Completed artifacts are never lost. A
+  server restart is re-run from its inputs, or from its stored conversation
+  when it went on from a round (below), and a stage whose inputs were stored
+  but which never started runs. Completed artifacts are never lost. A
   record the pack cannot place, such as a stage the pack no longer has, is
   reported in the session and nothing runs. An open gate or sign-off is shown
   again as it was, a gate that was never shown opens under the policy now in
@@ -758,13 +759,22 @@ Replies the server understands, besides a round's structured answers:
   a message finds the session unknown or the log stream ends.
 - A stage the session's end cut short runs again on reopen, given the answers
   its earlier runs got and who gave each; a reopen that comes while that run
-  still winds down waits for it first. A round outlives End and a restart: its
-  stored answers stay and it waits. An aborted stage waits for the next
-  message, as below.
+  still winds down waits for it first. A round outlives End, a restart and
+  days away: its stored answers stay, a reopen shows it again with them, and
+  it waits. A continuation that the session's end or a restart cut short
+  runs again on reopen from the same stored conversation, and a round that
+  closed but never continued continues; a close cut short finishes, and no
+  answer is recorded twice. An abort ends a run in flight, never a round. A
+  round the pipeline went past without its answers, as when the run that
+  posted it never recorded its end, is collapsed in the panel, and its stage
+  runs again as any stage cut short does. An aborted stage waits for the
+  next message, as below.
 - After a later stage fails or is aborted, the next message is logged as a
-  note and re-runs that stage; after a review or a builder round, a revision
-  round included, fails or is aborted, the next message is a note and runs
-  it again; after intake fails or is aborted, the next message is the need
+  note and re-runs that stage; after a continuation, one of intake included,
+  fails or is aborted, the next message is a note and runs it again from the
+  same conversation; after a review or a builder round, a revision round
+  included, fails or is aborted, the next message is a note and runs it
+  again; after intake fails or is aborted, the next message is the need
   again and intake re-runs on it. A pipeline stopped by the card contract or
   by readiness's rounds is not re-run; the user starts a new blueprint with
   a better design.

@@ -39,6 +39,9 @@ type outcome struct {
 	// the sign-off's latest rejection, or the contract round cards stopped
 	// on; 0 when no round applies.
 	round int
+	// qround is the question round a reopened blueprint stands at; nil when
+	// none.
+	qround *roundPlace
 }
 
 // after decides what follows completed from the stored artifacts; an empty
@@ -198,21 +201,39 @@ func rerunsOnReopen(r store.Run) bool {
 	return endedWithSession(r) || r.Status == store.RunInterrupted
 }
 
-// resumePoint decides what a reopened blueprint does: re-run a stage a
-// crash left running, run a model stage whose inputs exist but which never
-// started (a crash between storing one artifact and starting the next run).
-// A failed or aborted stage waits for the user's next message and an ended
-// pipeline for a new blueprint. A stage the session's end cut short runs
-// again. An open gate is returned for the gate to resume, and so is one
-// whose artifact still needs its critique, unless its latest review, builder
-// round or revision failed or was aborted. A ready end is returned for the
-// sign-off, emission or watch to resume. A position the record does not
-// yield is reported, not returned: the session still attaches. The caller
-// holds the run slot.
+// resumePoint decides what a reopened blueprint does: resume the question
+// round the pipeline stands at, re-run a stage a crash left running, run a
+// model stage whose inputs exist but which never started (a crash between
+// storing one artifact and starting the next run). An open round the
+// pipeline went past is collapsed first. A failed or aborted stage waits for
+// the user's next message and an ended pipeline for a new blueprint. A stage
+// the session's end cut short runs again. An open gate is returned for the
+// gate to resume, and so is one whose artifact still needs its critique,
+// unless its latest review, builder round or revision failed or was aborted.
+// A ready end is returned for the sign-off, emission or watch to resume. A
+// position the record does not yield is reported, not returned: the session
+// still attaches. The caller holds the run slot.
 func (c *Controller) resumePoint(ctx context.Context, au audit, bp store.Blueprint) (outcome, error) {
 	interrupted, err := c.interruptedStage(ctx, bp)
-	if err != nil || interrupted != "" {
-		return outcome{stage: interrupted}, err
+	if err != nil {
+		return outcome{}, err
+	}
+
+	// A round decides first: the runs it left are its continuation's or its
+	// chat's, whatever interruptedStage found.
+	place, found, err := c.roundAt(ctx, bp.ID)
+	if err != nil {
+		return outcome{}, err
+	}
+
+	if found {
+		return outcome{qround: &place}, nil
+	}
+
+	c.collapseLeftRound(ctx, au, bp.ID)
+
+	if interrupted != "" {
+		return outcome{stage: interrupted}, nil
 	}
 
 	out, last, err := c.position(ctx, bp)

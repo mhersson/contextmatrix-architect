@@ -520,7 +520,7 @@ func TestRelease_ARoundChangeTheHolderNeverReadIsActedOn(t *testing.T) {
 }
 
 func TestRelease_AHolderTheSessionEndCutShortLeavesARoundChangeToTheReopen(t *testing.T) {
-	c, _, runner, _ := newController(t, asks("# Need", roundQ("Deploy", "Helm or Kustomize?", "Helm", "Kustomize")))
+	c, st, runner, _ := newController(t, asks("# Need", roundQ("Deploy", "Helm or Kustomize?", "Helm", "Kustomize")))
 	ctx := context.Background()
 
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
@@ -562,8 +562,13 @@ func TestRelease_AHolderTheSessionEndCutShortLeavesARoundChangeToTheReopen(t *te
 
 	c.Wait("BP1")
 
-	assert.Equal(t, 1, runner.calls(), "the ended holder's release runs nothing; the reopen owns the slot")
-	assert.False(t, latestRound(t, c, "BP1", 1).Frame.Closed)
+	assert.Equal(t, 2, runner.calls(), "the ended holder's release runs nothing; the reopen closes the round and goes on")
+	assert.True(t, latestRound(t, c, "BP1", 1).Frame.Closed)
+	assert.Equal(t, 1, closedSnapshots(t, st, 1), "the round closes once")
+
+	qs, err := st.ListQuestions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Len(t, qs, 1)
 }
 
 func autoStart(id string) StartInput {
