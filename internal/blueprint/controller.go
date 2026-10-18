@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -749,7 +750,23 @@ func (s *capStop) shortfall() string {
 	}
 
 	return fmt.Sprintf("blueprint's $%.2f cap leaves $%.2f ($%.2f spent), less than the $%.2f the next run needs",
-		s.capUSD, s.capUSD-s.spent, s.spent, s.floor)
+		s.capUSD, float64(leftCents(s.capUSD, s.spent))/100, s.spent, float64(floorCents(s.floor))/100)
+}
+
+// centsEpsilon absorbs float error in dollar sums, so an exact-cent
+// remainder such as 1.00 - 0.90 is not one cent short.
+const centsEpsilon = 1e-6
+
+// leftCents is the whole cents of capUSD not yet spent; the cap checks and
+// the messages that print them use cents, so a message never states a
+// remainder below the floor while refusing for one at or above it.
+func leftCents(capUSD, spent float64) int {
+	return int(math.Floor((capUSD-spent)*100 + centsEpsilon))
+}
+
+// floorCents is a run floor rounded up to whole cents.
+func floorCents(floor float64) int {
+	return int(math.Ceil(floor*100 - centsEpsilon))
 }
 
 // payload is the stop's error event payload.
@@ -806,16 +823,16 @@ func (c *Controller) runCap(ctx context.Context, bp store.Blueprint, kind, stage
 	stop := &capStop{stage: stageID, capUSD: capUSD, spent: spent}
 
 	if m.price == nil {
-		stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q has no price, so the cap cannot bind; pick a priced model, or start a new blueprint without a cap", capUSD, m.name)
+		stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q has no price, so the cap cannot bind; pick a priced model, or reply `cap off` to lift the cap", capUSD, m.name)
 		if m.override {
-			stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q, the configured override for stage %s, has no price (CM prices only the session model), so the cap cannot bind; drop the override, or start a new blueprint without a cap", capUSD, m.name, pack.StageName(stageID))
+			stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q, the configured override for stage %s, has no price (CM prices only the session model), so the cap cannot bind; drop the override, or reply `cap off` to lift the cap", capUSD, m.name, pack.StageName(stageID))
 		}
 
 		return runBudget{refused: stop}, nil
 	}
 
 	left := capUSD - spent
-	if left <= 0 {
+	if leftCents(capUSD, spent) <= 0 {
 		return runBudget{refused: stop}, nil
 	}
 
@@ -824,7 +841,7 @@ func (c *Controller) runCap(ctx context.Context, bp store.Blueprint, kind, stage
 		return runBudget{}, err
 	}
 
-	if left < floor {
+	if leftCents(capUSD, spent) < floorCents(floor) {
 		stop.floor = floor
 
 		return runBudget{refused: stop}, nil
@@ -883,7 +900,7 @@ func (c *Controller) capStopAfter(ctx context.Context, id string, capUSD float64
 
 	stop := &capStop{stage: stageID, capUSD: capUSD, spent: spent}
 
-	if spent < capUSD {
+	if leftCents(capUSD, spent) > 0 {
 		if stop.floor, err = c.runFloor(ctx, id, kind, stageID); err != nil {
 			return nil, err
 		}

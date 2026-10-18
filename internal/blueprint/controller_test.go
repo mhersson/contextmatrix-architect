@@ -1224,6 +1224,50 @@ func TestRun_LessThanTheFloorLeftIsACapStop(t *testing.T) {
 	}
 }
 
+func TestRun_TheFloorCompareAndItsMessageAgreeInWholeCents(t *testing.T) {
+	tests := []struct {
+		name     string
+		spent    float64
+		wantRun  bool
+		wantText []string
+	}{
+		{name: "a hair under the floor is refused and says so in cents", spent: 0.903, wantText: []string{"leaves $0.09 ($0.90 spent)", "less than the $0.10"}},
+		{name: "an exact-cent remainder at the floor runs", spent: 0.90, wantRun: true},
+		{name: "a spent hair under the cap is used up", spent: 0.999, wantText: []string{"cap is used up ($1.00 spent)"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, runner, rec := newController(t, artifactRun("# Need"))
+			ctx := context.Background()
+			in := startInput("BP1")
+			in.CostCapUSD = 1
+			in.Price = testPrice()
+			require.NoError(t, c.Start(ctx, in))
+			ranBefore(t, st, store.RunKindResponder, "intake", store.RunDone, tt.spent)
+
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			c.Wait("BP1")
+
+			if tt.wantRun {
+				assert.Equal(t, 1, runner.calls())
+
+				return
+			}
+
+			assert.Zero(t, runner.calls())
+
+			ev, ok := rec.first(EventError)
+			require.True(t, ok)
+
+			msg, _ := ev.Payload["message"].(string)
+			for _, want := range tt.wantText {
+				assert.Contains(t, msg, want)
+			}
+		})
+	}
+}
+
 func TestRun_AMaxCostStopIsACapStopWhenTheBlueprintCapBinds(t *testing.T) {
 	tests := []struct {
 		name    string
