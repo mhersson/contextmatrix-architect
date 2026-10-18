@@ -433,6 +433,11 @@ func TestTab_AnOlderClosingSnapshotClosesWithoutARow(t *testing.T) {
 	qs, err = st.ListQuestions(ctx, "BP1")
 	require.NoError(t, err)
 	assert.Len(t, qs, 2)
+
+	next, err = c.nextQuestionNumber(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, 6, next, "the reserved number stays reserved after the close")
+	assert.Equal(t, map[string]int{"A1": 5}, latestRound(t, c, "BP1", 1).Accepted)
 }
 
 func TestTab_ClosingAResponderRoundConfirmsNothing(t *testing.T) {
