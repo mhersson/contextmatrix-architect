@@ -925,8 +925,14 @@ frames on the session's chat stream.
   round stays the open prompt. Every artifact version is listed with its
   status (current, reviewing, at_gate, approved, rejected, superseded,
   folded), who decided
-  its gate (you, the responder, or automatically for a sign-off an emitting
-  mode approved) and when, and its reviewer's verdict. A rejected version
+  its gate (you, or automatically: a stage gate the auto policy approved on
+  its reviewer's verdict, or a sign-off an emitting mode approved) and when,
+  and its reviewer's verdict: the score, the threshold, whether it passed
+  (derived from the score and the ledger), the round (1 for a verdict
+  stored without one), and the ledger, each finding with its id, severity,
+  text and status and, for a re-checked one, the version it was verified in.
+  Each review lists every finding its round judged, and an earlier
+  version's review is never rewritten. A rejected version
   stays rejected; any other is superseded once a newer one exists, or once
   a gate row records it superseded, as `reject slicing` does for the design
   version it replaces. The newest version reads reviewing while its review,
@@ -934,7 +940,8 @@ frames on the session's chat stream.
   as its step then reads failed. A verdict's findings still open are sent to
   the next version when the verdict sends the builder back, and one is
   marked addressed in that version, with its note, only when the revision
-  listed its id. A run whose end is recorded counts in the ledger only.
+  listed its id: the builder's claim, which the next round's verdict on the
+  same id checks. A run whose end is recorded counts in the ledger only.
   `Seq` is the id of the newest events row the view reflects, and every
   state change writes one. The view reads the store and memory only, so an
   ended session's blueprint has one while the architect is up. A record the
@@ -1101,6 +1108,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Panel: the blueprint pane (scale bar, sheet, transcript markers), read through CM proxies of the architect's signed view and artifact endpoints, with its live stream relayed on the session's chat stream (protocol v0.26.0) | blueprint UI |
 | A research setting (`off` or `search`, off by default) with the search provider and its key in CM's configuration, sent as `ArchitectStart.Research` (protocol v0.27.0) | research |
 | Panel: clicking the cost in the sheet header asks for a new cap and sends `cap <usd>` or `cap off` as a chat message hidden from the transcript | cost cap |
+| Panel: the review popover and the gate bar show the findings ledger (id, severity, the reviewer's status, the builder's claim beside it), and the tester persona has a display name (protocol v0.28.0) | reviewers |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

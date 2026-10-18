@@ -44,7 +44,6 @@ const (
 // Who decided a gate, as the view says it.
 const (
 	byYou       = "you"
-	byResponder = "responder"
 	byAutomatic = "automatic"
 )
 
@@ -759,22 +758,22 @@ func (rec record) decide(ref *protocol.ArtifactRef, newest bool) {
 	}
 }
 
-// decider names who decided g: you, the responder for a stage gate under
-// the auto policy, or the mode for a sign-off it approved.
+// decider names who decided g: you, or automatically, for a stage gate the
+// auto policy approved on its reviewer's verdict and for a sign-off an
+// emitting mode approved.
 func decider(g store.Gate) string {
-	switch {
-	case g.Responder == store.ResponderHuman:
+	if g.Responder == store.ResponderHuman {
 		return byYou
-	case g.Stage == signoffStage:
-		return byAutomatic
-	default:
-		return byResponder
 	}
+
+	return byAutomatic
 }
 
 // reviewOf is the reviewer's verdict on st's version: each finding still
 // open sent to the next version when the verdict sent the builder back, and
-// addressed in it, with its note, only when that version listed its id.
+// addressed in it, with its note, only when that version listed its id. Each
+// review lists every finding its round judged; an earlier version's review is
+// never rewritten.
 func (rec record) reviewOf(st pack.Stage, version int) *protocol.ArtifactReview {
 	if st.Reviewer == nil {
 		return nil
@@ -796,13 +795,20 @@ func (rec record) reviewOf(st pack.Stage, version int) *protocol.ArtifactReview 
 		return nil
 	}
 
+	threshold := st.Reviewer.Threshold
+
+	// Passed is derived, never read from the stored verdict. A verdict stored
+	// without its round was its attempt's first.
 	out := &protocol.ArtifactReview{
-		Reviewer: st.Reviewer.Persona, Score: v.Score, Threshold: st.Reviewer.Threshold,
+		Reviewer: st.Reviewer.Persona, Score: v.Score, Threshold: threshold,
+		Passed: v.passes(threshold), Round: cmp.Or(v.Round, 1),
 		Findings: make([]protocol.ReviewFinding, 0, len(v.Findings)),
 	}
 
 	for _, f := range v.Findings {
-		out.Findings = append(out.Findings, protocol.ReviewFinding{Text: f.Text})
+		out.Findings = append(out.Findings, protocol.ReviewFinding{
+			ID: f.ID, Severity: f.Severity, Text: f.Text, Status: f.Status, VerifiedIn: f.VerifiedIn,
+		})
 	}
 
 	if settled(st, v) {
