@@ -158,7 +158,7 @@ func TestAsk_ACancelledRunRecordsNoRound(t *testing.T) {
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
 
-	intake, ok := c.opts.Pack.Stage("intake")
+	intake, ok := c.stepAt("intake")
 	require.True(t, ok)
 
 	iv := &interviewer{c: c, bp: bp, st: intake, r: &run{}}

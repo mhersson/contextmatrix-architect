@@ -48,8 +48,13 @@ type outcome struct {
 // after decides what follows completed from the stored artifacts; an empty
 // completed means no stage has completed yet. A loop stage's verdict ends
 // the pipeline or re-runs its target, cards accepted with findings end it,
-// and otherwise the next stage in pack order follows.
+// and otherwise the next step of the blueprint's pipeline follows.
 func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed string) (outcome, error) {
+	steps, _, err := c.steps(ctx, bp.ID)
+	if err != nil {
+		return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
+	}
+
 	from := 0
 
 	var (
@@ -58,9 +63,16 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 	)
 
 	if completed != "" {
-		st, ok := c.opts.Pack.Stage(completed)
+		st, ok := c.stepAt(completed)
 		if !ok {
 			return outcome{}, fmt.Errorf("blueprint: stage %q in the record is not in pack %s %s", completed, c.opts.Pack.Name, c.opts.Pack.Version)
+		}
+
+		// Checked before any branch: a gated step the pipeline does not hold
+		// would otherwise reach its gate or its critique.
+		from = stepIndex(steps, completed) + 1
+		if from == 0 {
+			return outcome{}, fmt.Errorf("blueprint: %s in the record is not a step of this blueprint's pipeline", c.stepName(ctx, bp.ID, completed))
 		}
 
 		art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, completed)
@@ -153,12 +165,11 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 			}
 		}
 
-		from = slices.IndexFunc(c.opts.Pack.Stages, func(s pack.Stage) bool { return s.ID == completed }) + 1
 		last = art
 	}
 
-	if from < len(c.opts.Pack.Stages) {
-		return outcome{stage: c.opts.Pack.Stages[from].ID, fold: fold}, nil
+	if from < len(steps) {
+		return outcome{stage: steps[from].ID, fold: fold}, nil
 	}
 
 	return outcome{end: true, ready: true, art: last}, nil
@@ -167,10 +178,20 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 // predatesGate reports a record written before the pack gave st a gate: a
 // later stage's run follows st's latest completed run, which under a gate
 // only an approval or a fold allows. A shown gate stays with its human.
-func (c *Controller) predatesGate(ctx context.Context, id string, st pack.Stage, art store.Artifact) (bool, error) {
+func (c *Controller) predatesGate(ctx context.Context, id string, st pipelineStep, art store.Artifact) (bool, error) {
 	shown, err := c.gateShown(ctx, id, st.ID, art.Version)
 	if err != nil || shown {
 		return false, err
+	}
+
+	steps, _, err := c.steps(ctx, id)
+	if err != nil {
+		return false, err
+	}
+
+	i := stepIndex(steps, st.ID)
+	if i < 0 {
+		return false, nil
 	}
 
 	runs, err := c.opts.Store.ListRuns(ctx, id)
@@ -178,13 +199,12 @@ func (c *Controller) predatesGate(ctx context.Context, id string, st pack.Stage,
 		return false, fmt.Errorf("blueprint: list runs: %w", err)
 	}
 
-	stages := c.opts.Pack.Stages
-	later := stages[slices.IndexFunc(stages, func(s pack.Stage) bool { return s.ID == st.ID })+1:]
+	later := steps[i+1:]
 	built := -1
 
-	for i, r := range runs {
+	for j, r := range runs {
 		if r.Kind == store.RunKindStage && r.Stage == st.ID && r.Status == store.RunDone {
-			built = i
+			built = j
 		}
 	}
 
@@ -193,7 +213,7 @@ func (c *Controller) predatesGate(ctx context.Context, id string, st pack.Stage,
 	}
 
 	return slices.ContainsFunc(runs[built+1:], func(r store.Run) bool {
-		return r.Kind == store.RunKindStage && slices.ContainsFunc(later, func(s pack.Stage) bool { return s.ID == r.Stage })
+		return r.Kind == store.RunKindStage && slices.ContainsFunc(later, func(s pipelineStep) bool { return s.ID == r.Stage })
 	}), nil
 }
 
@@ -642,11 +662,12 @@ func (c *Controller) report(ctx context.Context, sess *session, bp store.Bluepri
 }
 
 // taskFor builds a stage's first user message: the need for a stage that
-// consumes nothing, else the artifacts it consumes in pack order; for a
-// stage run again after a rejection at its gate, the rejected artifact and
-// every feedback; for a loop's target, its last submit and the loop's
-// findings.
-func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.Stage) (string, error) {
+// consumes nothing, else the artifacts it consumes (consumedSteps): in pack
+// order, a per-slice step's for its own slice, then each earlier slice's
+// after them; for a stage run again after a rejection at its gate, the
+// rejected artifact and every feedback; for a loop's target, its last
+// submit and the loop's findings.
+func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pipelineStep) (string, error) {
 	var b strings.Builder
 
 	if err := c.writeInputs(ctx, &b, bp, st, false, "task"); err != nil {
@@ -681,7 +702,7 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pack.St
 // writeAssumptions gives a stage that consumes a stage with stated
 // assumptions every assumption so far, each with its id and latest status:
 // the ids a verdict names.
-func (c *Controller) writeAssumptions(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pack.Stage) error {
+func (c *Controller) writeAssumptions(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pipelineStep) error {
 	states := slices.ContainsFunc(st.Consumes, func(id string) bool {
 		consumed, _ := c.opts.Pack.Stage(id)
 
@@ -764,13 +785,13 @@ func (c *Controller) writeNotesAfter(ctx context.Context, b *strings.Builder, id
 // and got answered and the assumptions the user accepted on their tabs, so
 // a stage run again after a crash, an End or a rejection neither asks them
 // again nor drops an acceptance.
-func (c *Controller) writeAnswered(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pack.Stage) error {
+func (c *Controller) writeAnswered(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pipelineStep) error {
 	return c.writeAnsweredAfter(ctx, b, bp, st, 0)
 }
 
 // writeAnsweredAfter is writeAnswered for the questions and acceptances of
 // the runs after run after.
-func (c *Controller) writeAnsweredAfter(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pack.Stage, after int64) error {
+func (c *Controller) writeAnsweredAfter(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pipelineStep, after int64) error {
 	questions, err := c.opts.Store.ListQuestions(ctx, bp.ID)
 	if err != nil {
 		return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
@@ -847,9 +868,10 @@ func writeQuestions(b *strings.Builder, questions []store.Question) {
 }
 
 // writeInputs opens a task: the target projects, the need (always when
-// needAlways, else only for a stage that consumes nothing) and the latest
-// artifact of every stage st consumes. what names the task in an error.
-func (c *Controller) writeInputs(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pack.Stage, needAlways bool, what string) error {
+// needAlways, else only for a stage that consumes nothing), the slice a
+// per-slice step works on, and the latest artifact of every step st reads
+// (consumedSteps). what names the task in an error.
+func (c *Controller) writeInputs(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pipelineStep, needAlways bool, what string) error {
 	fmt.Fprintf(b, "Target projects: %s\n\n", strings.Join(bp.Projects, ", "))
 
 	if needAlways || len(st.Consumes) == 0 {
@@ -861,13 +883,22 @@ func (c *Controller) writeInputs(ctx context.Context, b *strings.Builder, bp sto
 		b.WriteString("Need:\n" + need.Body + "\n\n")
 	}
 
-	for _, id := range st.Consumes {
-		art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, id)
+	steps, pieces, err := c.steps(ctx, bp.ID)
+	if err != nil {
+		return fmt.Errorf("blueprint: %s for %s: %w", what, st.ID, err)
+	}
+
+	if st.Slice != "" {
+		writeSlice(b, pieces, st.Slice)
+	}
+
+	for _, in := range consumedSteps(steps, st) {
+		art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, in.ID)
 		if err != nil {
-			return fmt.Errorf("blueprint: %s for %s: input %s: %w", what, st.ID, id, err)
+			return fmt.Errorf("blueprint: %s for %s: input %s: %w", what, st.ID, in.ID, err)
 		}
 
-		writeArtifact(b, id, art)
+		writeArtifact(b, in.ID, art)
 	}
 
 	return nil
@@ -877,7 +908,7 @@ func (c *Controller) writeInputs(ctx context.Context, b *strings.Builder, bp sto
 // started from and the feedback of every rejection, when that artifact was
 // rejected at the gate. Attempt 0 is a fresh one, which starts from the
 // latest artifact.
-func (c *Controller) writeGateFeedback(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pack.Stage, attempt int) error {
+func (c *Controller) writeGateFeedback(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pipelineStep, attempt int) error {
 	feedback, err := c.gateFeedback(ctx, bp.ID, st.ID)
 	if err != nil {
 		return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
@@ -965,9 +996,9 @@ func (c *Controller) startedFrom(ctx context.Context, id, stageID string, attemp
 
 // writeLoopFindings gives a stage a loop re-runs what it submitted last,
 // the loop stage's verdict on it and the sign-off's feedback.
-func (c *Controller) writeLoopFindings(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pack.Stage) error {
+func (c *Controller) writeLoopFindings(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pipelineStep) error {
 	for _, other := range c.opts.Pack.Stages {
-		if other.LoopsTo != st.ID {
+		if other.LoopsTo != st.Stage.ID {
 			continue
 		}
 

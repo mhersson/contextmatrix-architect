@@ -248,10 +248,13 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   asks the client. Nothing runs meanwhile.
 - **A human rejection starts a new attempt**: a fresh run with the previous
   artifact and the feedback as input.
-- **Across stages only artifacts carry forward**, never transcripts. Each stage
-  consumes the artifacts the pack names.
-- **Crash recovery.** Artifacts are stored per stage, so after a dead process
-  reopening the blueprint's session re-runs the open stage from its inputs. A
+- **Across stages only artifacts carry forward**, never transcripts. Each step
+  consumes the artifacts the pack names: a per-slice stage's step its own
+  slice's and the earlier slices' that its `earlier_slices` names (see
+  Stages).
+- **Crash recovery.** Artifacts are stored per step, a per-slice stage's per
+  slice, so after a dead process reopening the blueprint's session re-runs
+  the open step from its inputs. A
   re-run is given the questions its stage already asked, their answers and who
   answered each (the user or the responder), so it does not ask them again,
   and the assumptions the user accepted on its tabs, each with its tag. A
@@ -277,6 +280,14 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | emissions     | append-only: blueprint, kind (card, playbook, run), the draft card id, project, CM id, created at; one row per blueprint, kind and draft id |
 | outcomes      | per emitted card: final state, review attempts, parked reason, cost, finding text, proposed lesson                            |
 | lessons       | text, rationale, evidence card ids, scope (pack or project), state (`proposed`, `active`, `rejected`), decided by             |
+
+Every `stage` column, and every event payload's `stage`, holds a step key:
+the stage id for a whole-blueprint stage, `<stage>@SL<n>` for a per-slice
+stage's step for slice n, except a `policy` event's, which names the pack
+stage and covers every slice. `@` never appears in a stage id. So a slice's
+runs, artifacts, gates, questions, rounds and reviewer verdicts
+(`<stage>@SL<n>.review`) are its own. A record from before stages ran per
+slice holds plain ids only.
 
 Schema bumps are one-way: an older binary refuses a newer file.
 
@@ -325,14 +336,28 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
 - Every stage that interviews (intake, slicing and solution design) reads the
   code, so it states what the code answers as a finding and asks only what
   neither the code nor the need settles.
-- The first stage with the code tools, intake in the default
-  pack, ends by telling the session what each target project lacks for an
-  agent run: a verify command in CM (read again then), an instruction file
-  at the root, or any commit. None of it blocks. Decomposition plans it as
-  setup, and the user may set the verify command in CM meanwhile; the next
-  decomposition submit reads it.
-- Slicing's submit is checked: at least one slice, each with an id of its
-  own, a title, and only the blueprint's target projects.
+- The first stage with the code tools, intake in the default pack, ends -
+  for a per-slice stage, its SL1 step ends - by telling the session what
+  each target project lacks for an agent run: a verify command in CM (read
+  again then), an instruction file at the root, or any commit. None of it
+  blocks. Decomposition plans it as setup, and the user may set the verify
+  command in CM meanwhile; the next decomposition submit reads it.
+- Slicing's submit is checked: at least one slice, each named SL1, SL2, ...
+  in its order, with a title and only the blueprint's target projects.
+- A stage the pack marks `per_slice` runs once per slice of slicing's newest
+  version, in slicing's order: every per-slice stage for SL1, then every one
+  for SL2, and so on. The n-th slice is SL<n>, whatever slicing's data calls
+  it. Before slicing stores a version, the per-slice stages are one step
+  each. A per-slice step reads the whole-blueprint stages it consumes, its
+  own slice's earlier steps, and, slice by slice, each earlier slice's
+  artifacts of the stages its `earlier_slices` names. A whole-blueprint
+  stage after the per-slice stages reads every slice's, in order. A
+  per-slice task opens by naming its slice. A gate reply (`gate <stage>
+  human|auto`) and a stage's policies cover every slice of the stage. A
+  rejection at a slice's gate runs that slice's step again. A run's cost
+  floor reads every slice's runs of its stage. A blueprint whose record ran
+  a per-slice stage under its plain id, from before stages repeated per
+  slice, keeps running them once for the whole blueprint.
 - Solution design's submit is checked: it has slices, every slice of slicing
   among them; every decision has a chosen option, a rejected option and a
   basis (`Q<n>`, `round<n>.A<k>`, `S<n>` or `assumption`); and every

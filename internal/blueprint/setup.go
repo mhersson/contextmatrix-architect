@@ -25,11 +25,11 @@ func (c *Controller) checkoutStage() string {
 	return ""
 }
 
-// reportSetup tells the session, once the checkout stage ends and before
-// the paid stages, what each target project lacks for an agent run. Nothing is
-// published when no project lacks anything. A read that fails is logged and
-// skipped: the report is advice, and decomposition plans the setup either
-// way.
+// reportSetup tells the session, once the checkout stage's first step ends
+// (SL1's for a per-slice stage) and before the paid stages, what each
+// target project lacks for an agent run. Nothing is published when no
+// project lacks anything. A read that fails is logged and skipped: the
+// report is advice, and decomposition plans the setup either way.
 func (c *Controller) reportSetup(ctx context.Context, sess *session, bp store.Blueprint) {
 	// An aborted run tells the session nothing more.
 	if ctx.Err() != nil {

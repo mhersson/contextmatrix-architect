@@ -78,6 +78,10 @@ type record struct {
 	roundStage string
 	// policies is each stage's gate policy, its question policy when it has no gate.
 	policies map[string]string
+	// steps is the blueprint's pipeline and pieces the slices it repeats
+	// per-slice stages for.
+	steps  []pipelineStep
+	pieces []piece
 }
 
 // View is where blueprint id stands: the pipeline's steps, the run in
@@ -137,6 +141,14 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 	for _, a := range arts {
 		rec.arts[a.Stage] = append(rec.arts[a.Stage], a)
 	}
+
+	var slicing *store.Artifact
+
+	if arts := rec.arts[c.opts.Pack.SlicingStage()]; len(arts) > 0 {
+		slicing = &arts[len(arts)-1]
+	}
+
+	rec.steps, rec.pieces = blueprintSteps(c.opts.Pack, rec.runs, slicing)
 
 	gates, err := c.opts.Store.AllGates(ctx, bp.ID)
 	if err != nil {
@@ -470,7 +482,7 @@ func (c *Controller) pipeline(rec record) []protocol.PipelineStep {
 		}
 
 		if st.Fold != nil {
-			step.FoldsInto = c.foldTarget(st.ID)
+			step.FoldsInto, _ = pack.SplitStep(foldTarget(rec.steps, st.ID))
 		}
 
 		if st.LoopsTo != "" {

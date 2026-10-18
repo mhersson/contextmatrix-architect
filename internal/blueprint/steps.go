@@ -1,0 +1,228 @@
+package blueprint
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
+	"github.com/mhersson/contextmatrix-architect/internal/store"
+)
+
+// pipelineStep is one place in a blueprint's pipeline: a pack stage and,
+// for a per-slice stage once slicing has stored a version, the slice it
+// runs for. ID shadows the stage's id with the step's record key
+// (pack.StepKey), so whatever reads or writes the record names the step;
+// Stage.ID is the pack id, for the pack's own lookups.
+type pipelineStep struct {
+	pack.Stage
+	ID    string
+	Slice string
+}
+
+// piece is one slice of slicing's newest version: SL<n> by its position,
+// and its title.
+type piece struct {
+	id, title string
+}
+
+// sliceID names the n-th slice, from 1.
+func sliceID(n int) string { return fmt.Sprintf("SL%d", n) }
+
+// piecesOf reads a slicing artifact's slices in order. The n-th is SL<n>
+// whatever id its data gives it; the slices check makes a new submit agree.
+func piecesOf(art store.Artifact) []piece {
+	var d struct {
+		Slices []struct {
+			Title string `json:"title"`
+		} `json:"slices"`
+	}
+
+	if len(art.Data) == 0 || json.Unmarshal(art.Data, &d) != nil {
+		return nil
+	}
+
+	out := make([]piece, 0, len(d.Slices))
+	for i, s := range d.Slices {
+		out = append(out, piece{id: sliceID(i + 1), title: strings.TrimSpace(s.Title)})
+	}
+
+	return out
+}
+
+// unsliced reports a record written before stages ran per slice: a run of
+// a per-slice stage under its plain id. Such a blueprint keeps running its
+// per-slice stages once, for the whole blueprint.
+func unsliced(pk *pack.Pack, runs []store.Run) bool {
+	return slices.ContainsFunc(runs, func(r store.Run) bool {
+		st, ok := pk.Stage(r.Stage)
+
+		return ok && st.PerSlice
+	})
+}
+
+// stepsOf is the pipeline the pack gives pieces: its stages in order, the
+// per-slice ones repeated for every piece, all of one slice's steps before
+// the next slice's. Without pieces the per-slice stages are one step each.
+func stepsOf(pk *pack.Pack, pieces []piece) []pipelineStep {
+	var (
+		out   []pipelineStep
+		group []pack.Stage
+	)
+
+	// The pack loader keeps the per-slice stages contiguous, so the group is
+	// complete at the first stage after it.
+	flush := func() {
+		for _, p := range pieces {
+			for _, s := range group {
+				out = append(out, pipelineStep{Stage: s, ID: pack.StepKey(s.ID, p.id), Slice: p.id})
+			}
+		}
+
+		group = nil
+	}
+
+	for _, st := range pk.Stages {
+		if st.PerSlice && len(pieces) > 0 {
+			group = append(group, st)
+
+			continue
+		}
+
+		flush()
+
+		out = append(out, pipelineStep{Stage: st, ID: st.ID})
+	}
+
+	flush()
+
+	return out
+}
+
+// blueprintSteps is the pipeline a blueprint's record gives, and the pieces
+// it repeats per-slice stages for: slicing's newest version's, or none
+// before slicing stores one and on a record from before stages ran per
+// slice. slicing is the newest artifact of the pack's slicing stage, nil
+// when there is none.
+func blueprintSteps(pk *pack.Pack, runs []store.Run, slicing *store.Artifact) ([]pipelineStep, []piece) {
+	if slicing == nil || unsliced(pk, runs) {
+		return stepsOf(pk, nil), nil
+	}
+
+	pieces := piecesOf(*slicing)
+
+	return stepsOf(pk, pieces), pieces
+}
+
+// steps reads blueprint id's pipeline from the store.
+func (c *Controller) steps(ctx context.Context, id string) ([]pipelineStep, []piece, error) {
+	runs, err := c.opts.Store.ListRuns(ctx, id)
+	if err != nil {
+		return nil, nil, fmt.Errorf("blueprint: list runs: %w", err)
+	}
+
+	var slicing *store.Artifact
+
+	if sid := c.opts.Pack.SlicingStage(); sid != "" {
+		art, err := c.opts.Store.LatestArtifact(ctx, id, sid)
+
+		switch {
+		case err == nil:
+			slicing = &art
+		case !errors.Is(err, store.ErrNotFound):
+			return nil, nil, fmt.Errorf("blueprint: read %s: %w", pack.StageName(sid, false), err)
+		}
+	}
+
+	steps, pieces := blueprintSteps(c.opts.Pack, runs, slicing)
+
+	return steps, pieces, nil
+}
+
+// sliced reports whether blueprint id runs per slice with two or more
+// slices, the only case in which text a person reads names a step's slice;
+// false when the record cannot be read.
+func (c *Controller) sliced(ctx context.Context, id string) bool {
+	_, pieces, err := c.steps(ctx, id)
+
+	return err == nil && len(pieces) >= 2
+}
+
+// stepName is how key reads to a person on blueprint id: with its slice
+// only when the blueprint has two or more.
+func (c *Controller) stepName(ctx context.Context, id, key string) string {
+	return pack.StageName(key, c.sliced(ctx, id))
+}
+
+// stepAt is the step a record key names: its pack stage and the slice the
+// key carries. false when the key names no pack stage, or a slice for a
+// stage that does not repeat per slice.
+func (c *Controller) stepAt(key string) (pipelineStep, bool) {
+	stageID, slice := pack.SplitStep(key)
+
+	st, ok := c.opts.Pack.Stage(stageID)
+	if !ok || (slice != "" && !st.PerSlice) {
+		return pipelineStep{}, false
+	}
+
+	return pipelineStep{Stage: st, ID: key, Slice: slice}, true
+}
+
+// stepIndex is key's position in steps; -1 when it is not one of them.
+func stepIndex(steps []pipelineStep, key string) int {
+	return slices.IndexFunc(steps, func(s pipelineStep) bool { return s.ID == key })
+}
+
+// consumedSteps lists the steps whose latest artifacts st reads, in the
+// order its pack entry consumes them: a whole-blueprint stage's one step; a
+// per-slice stage's step for st's own slice, or for every slice in order
+// when st runs for the whole blueprint; then, for a per-slice st, each
+// earlier slice's steps of the stages its earlier_slices names, slice by
+// slice.
+func consumedSteps(steps []pipelineStep, st pipelineStep) []pipelineStep {
+	var out []pipelineStep
+
+	for _, id := range st.Consumes {
+		for _, s := range steps {
+			if s.Stage.ID == id && (st.Slice == "" || s.Slice == "" || s.Slice == st.Slice) {
+				out = append(out, s)
+			}
+		}
+	}
+
+	if st.Slice == "" {
+		return out
+	}
+
+	// Steps run in slice order, so the earlier slices' come first; stop at st's own.
+	for _, s := range steps {
+		if s.Slice == st.Slice {
+			break
+		}
+
+		if s.Slice != "" && slices.Contains(st.EarlierSlices, s.Stage.ID) {
+			out = append(out, s)
+		}
+	}
+
+	return out
+}
+
+// writeSlice opens a per-slice task: the slice it works on, its title and
+// its place among the slices.
+func writeSlice(b *strings.Builder, pieces []piece, slice string) {
+	for i, p := range pieces {
+		if p.id != slice {
+			continue
+		}
+
+		fmt.Fprintf(b, "## The slice\n\nThis run works on slice %s, %q, number %d of %d in slicing's order. "+
+			"Earlier slices are settled: build on what their artifacts below hold, and never redo or duplicate it.\n\n",
+			p.id, p.title, i+1, len(pieces))
+
+		return
+	}
+}

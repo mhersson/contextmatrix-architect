@@ -858,7 +858,8 @@ func (c *Controller) runCap(ctx context.Context, bp store.Blueprint, kind, stage
 
 // runFloor is what a run of kind on stageID needs left of the blueprint cap
 // to start: the median cost of the blueprint's done runs of that kind and
-// stage, never below minRunFloorUSD.
+// stage, never below minRunFloorUSD. A per-slice step's floor reads every
+// slice's runs of its stage.
 func (c *Controller) runFloor(ctx context.Context, id, kind, stageID string) (float64, error) {
 	runs, err := c.opts.Store.ListRuns(ctx, id)
 	if err != nil {
@@ -868,7 +869,7 @@ func (c *Controller) runFloor(ctx context.Context, id, kind, stageID string) (fl
 	var costs []float64
 
 	for _, r := range runs {
-		if r.Status == store.RunDone && r.Kind == kind && r.Stage == stageID {
+		if r.Status == store.RunDone && r.Kind == kind && sameStage(r.Stage, stageID) {
 			costs = append(costs, r.Usage.CostUSD)
 		}
 	}
@@ -887,6 +888,14 @@ func (c *Controller) runFloor(ctx context.Context, id, kind, stageID string) (fl
 	}
 
 	return max(minRunFloorUSD, median), nil
+}
+
+// sameStage reports whether two record keys name steps of one pack stage.
+func sameStage(a, b string) bool {
+	x, _ := pack.SplitStep(a)
+	y, _ := pack.SplitStep(b)
+
+	return x == y
 }
 
 // capStopAfter is the cap stop of a run of kind on stageID cut short at what

@@ -179,7 +179,7 @@ func (c *Controller) decide(ctx context.Context, au audit, id, stageID string, v
 // that still does not pass after the attempt's rounds, the gate is shown and
 // the chain stops.
 func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Blueprint, out outcome) (string, outcome) {
-	st, _ := c.opts.Pack.Stage(out.stage)
+	st, _ := c.stepAt(out.stage)
 
 	v, found, err := c.gateReview(ctx, bp.ID, st, out.art)
 	if err != nil {
@@ -281,7 +281,7 @@ func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint,
 		payload["problems"] = problems
 	}
 
-	st, _ := c.opts.Pack.Stage(out.stage)
+	st, _ := c.stepAt(out.stage)
 
 	v, found, err := c.gateReview(ctx, bp.ID, st, out.art)
 

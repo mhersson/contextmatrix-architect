@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -179,9 +180,17 @@ func listAlphaUnset(context.Context, string) ([]cm.Project, error) {
 // of every run it is asked for.
 type stageScript map[string]func(ctx context.Context, in stage.Input) (stage.Output, error)
 
+// stepSlice matches the slice a step key carries, for scripts that answer a
+// stage the same way for every slice.
+var stepSlice = regexp.MustCompile(`@SL[0-9]+`)
+
 func scripted(script stageScript) func(context.Context, stage.Input) (stage.Output, error) {
 	return func(ctx context.Context, in stage.Input) (stage.Output, error) {
 		fn, ok := script[in.Stage]
+		if !ok {
+			fn, ok = script[stepSlice.ReplaceAllString(in.Stage, "")]
+		}
+
 		if !ok {
 			return stage.Output{}, fmt.Errorf("unscripted stage %s", in.Stage)
 		}

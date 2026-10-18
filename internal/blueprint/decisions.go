@@ -173,7 +173,7 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 // missingSlices reports every slice of a slicing stageID consumes that
 // present lacks; a slicing without an artifact has none.
 func (c *Controller) missingSlices(ctx context.Context, bp store.Blueprint, stageID string, present map[string]bool) ([]string, error) {
-	st, ok := c.opts.Pack.Stage(stageID)
+	st, ok := c.stepAt(stageID)
 	if !ok {
 		return nil, nil
 	}

@@ -20,8 +20,8 @@ func (c *Controller) slicesValidator(bp store.Blueprint) (func(context.Context, 
 	})
 }
 
-// sliceProblems checks slicing's submit: at least one slice, unique ids, a
-// title each, and only the blueprint's target projects.
+// sliceProblems checks slicing's submit: at least one slice, each named
+// SL1, SL2, ... in its order, a title each, target projects only.
 func sliceProblems(data map[string]any, targets []string) []string {
 	var d struct {
 		Slices []struct {
@@ -61,6 +61,8 @@ func sliceProblems(data map[string]any, targets []string) []string {
 			out = append(out, problem(where, "slice_id", "a slice needs an id"))
 		case seen[id]:
 			out = append(out, problem(where, "slice_id", "the id is used twice"))
+		case id != sliceID(i+1):
+			out = append(out, problem(where, "slice_id", fmt.Sprintf("the id must be %s: slices are named SL1, SL2, ... in slicing's order", sliceID(i+1))))
 		}
 
 		seen[id] = true
@@ -103,7 +105,7 @@ func sliceIDs(art store.Artifact) []string {
 // stageID consumes, 0 when there is none. Run ids rise, so a question with a
 // higher run id was asked about the slices as they are now.
 func (c *Controller) slicedBy(ctx context.Context, id, stageID string) (int64, error) {
-	st, ok := c.opts.Pack.Stage(stageID)
+	st, ok := c.stepAt(stageID)
 	if !ok {
 		return 0, nil
 	}

@@ -27,7 +27,7 @@ const maxRoundBytes = 96 << 10
 type interviewer struct {
 	c     *Controller
 	bp    store.Blueprint
-	st    pack.Stage
+	st    pipelineStep
 	sess  *session
 	runID int64
 	r     *run
@@ -130,7 +130,7 @@ func (iv *interviewer) numbered(ctx context.Context, rd stage.Round, sources map
 	s := roundState{
 		Number: number, Attempt: iv.attempt, BuilderRound: iv.builderRound, Findings: iv.findings,
 		PostedBy: iv.runID, RunID: iv.runID, Change: changePosted,
-		Frame: protocol.LogRound{Persona: personaName(iv.st.Persona), Stage: iv.st.ID, ResearchOff: !c.researchOn(iv.sess, iv.st)},
+		Frame: protocol.LogRound{Persona: personaName(iv.st.Persona), Stage: iv.st.ID, ResearchOff: !c.researchOn(iv.sess, iv.st.Stage)},
 	}
 
 	for i, q := range rd.Questions {

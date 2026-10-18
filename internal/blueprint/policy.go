@@ -293,10 +293,10 @@ func (c *Controller) stageNamed(name string) (pack.Stage, bool) {
 	return pack.Stage{}, false
 }
 
-// gateOpenAt reports whether stageID's gate is open, the blueprint waiting
-// on its decision; a gate whose critique is pending was never shown. A
-// record that cannot be read reports no open gate and is logged: it only
-// drops a hint.
+// gateOpenAt reports whether stageID's gate, of any slice, is open, the
+// blueprint waiting on its decision; a gate whose critique is pending was
+// never shown. A record that cannot be read reports no open gate and is
+// logged: it only drops a hint.
 func (c *Controller) gateOpenAt(ctx context.Context, id, stageID string) bool {
 	bp, err := c.opts.Store.GetBlueprint(ctx, id)
 	if err != nil {
@@ -312,12 +312,14 @@ func (c *Controller) gateOpenAt(ctx context.Context, id, stageID string) bool {
 		return false
 	}
 
-	return out.gate && !out.critique && out.stage == stageID
+	gated, _ := pack.SplitStep(out.stage)
+
+	return out.gate && !out.critique && gated == stageID
 }
 
-// roundOpenAt reports whether stageID's round waits for answers; an open
-// round keeps the responder it was put to. A record that cannot be read
-// reports none and is logged: it only drops a hint.
+// roundOpenAt reports whether stageID's round, of any slice, waits for
+// answers; an open round keeps the responder it was put to. A record that
+// cannot be read reports none and is logged: it only drops a hint.
 func (c *Controller) roundOpenAt(ctx context.Context, id, stageID string) bool {
 	place, found, err := c.roundAt(ctx, id)
 	if err != nil {
@@ -326,7 +328,9 @@ func (c *Controller) roundOpenAt(ctx context.Context, id, stageID string) bool {
 		return false
 	}
 
-	return found && !place.state.Frame.Closed && place.state.Frame.Stage == stageID
+	asking, _ := pack.SplitStep(place.state.Frame.Stage)
+
+	return found && !place.state.Frame.Closed && asking == stageID
 }
 
 // stageIDs names the pack's stages in order: the stages a gate reply may name.
@@ -364,8 +368,11 @@ func (c *Controller) policyFor(ctx context.Context, bp store.Blueprint, stageID 
 
 // resolvePolicy is policy, or gatePolicy when gate is set, over the
 // blueprint's policy events, oldest first, so a caller resolving several
-// stages reads them once. A gate reply sets both.
+// stages reads them once. A gate reply sets both. A per-slice step resolves
+// as its stage.
 func (c *Controller) resolvePolicy(bp store.Blueprint, events []store.Event, stageID string, gate bool) (string, error) {
+	stageID, _ = pack.SplitStep(stageID)
+
 	for i := len(events) - 1; i >= 0; i-- {
 		var p struct {
 			Stage   string `json:"stage"`
@@ -410,6 +417,13 @@ func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.B
 		return
 	}
 
+	steps, _, err := c.steps(ctx, bp.ID)
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: gate plan not posted", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
+
+		return
+	}
+
 	stages := make([]any, 0, len(c.opts.Pack.Stages))
 
 	for _, st := range c.opts.Pack.Stages {
@@ -431,7 +445,7 @@ func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.B
 		}
 
 		if st.Fold != nil {
-			if into := c.foldTarget(st.ID); into != "" {
+			if into := foldTarget(steps, st.ID); into != "" {
 				entry["folds_into"], entry["fold_field"], entry["fold_max"] = into, st.Fold.Field, st.Fold.Max
 			}
 		}

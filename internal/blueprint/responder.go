@@ -199,7 +199,7 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion) (p
 // need, the asking stage's inputs, the gate feedback the asking attempt
 // addresses, the user's notes, every answer so far and the question with its
 // options and context.
-func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st pack.Stage, attempt int, q protocol.RoundQuestion) (string, error) {
+func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st pipelineStep, attempt int, q protocol.RoundQuestion) (string, error) {
 	var b strings.Builder
 
 	if err := c.writeInputs(ctx, &b, bp, st, true, "responder task"); err != nil {

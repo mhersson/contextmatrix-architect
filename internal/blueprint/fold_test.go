@@ -553,6 +553,8 @@ func TestSlicesValidator(t *testing.T) {
 		}, want: "slice_id"},
 		{name: "no title", slices: []any{map[string]any{"id": "SL1", "title": " ", "projects": []any{"alpha"}}}, want: "slice_title"},
 		{name: "a project the blueprint does not target", slices: []any{map[string]any{"id": "SL1", "title": "a", "projects": []any{"beta"}}}, want: "slice_project"},
+		{name: "an id out of slicing's order", slices: []any{map[string]any{"id": "SL2", "title": "a", "projects": []any{"alpha"}}}, want: "slice_id"},
+		{name: "an id of another form", slices: []any{map[string]any{"id": "S1", "title": "a", "projects": []any{"alpha"}}}, want: "slice_id"},
 	}
 
 	for _, tt := range tests {

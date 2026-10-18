@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 
-	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -19,18 +17,16 @@ type folding struct {
 	into    string
 }
 
-// foldTarget is the gate a stage folds into: the next gated stage after it
-// in pack order; "" when there is none.
-func (c *Controller) foldTarget(stageID string) string {
-	stages := c.opts.Pack.Stages
-
-	i := slices.IndexFunc(stages, func(s pack.Stage) bool { return s.ID == stageID })
+// foldTarget is the gate step key folds into: the next gated step after it
+// that is no shared stage's; "" when there is none.
+func foldTarget(steps []pipelineStep, key string) string {
+	i := stepIndex(steps, key)
 	if i < 0 {
 		return ""
 	}
 
-	for _, s := range stages[i+1:] {
-		if s.Gate {
+	for _, s := range steps[i+1:] {
+		if s.Gate && !s.Shared {
 			return s.ID
 		}
 	}
@@ -38,12 +34,12 @@ func (c *Controller) foldTarget(stageID string) string {
 	return ""
 }
 
-// foldersOf lists the stages that fold into stageID's gate.
-func (c *Controller) foldersOf(stageID string) []pack.Stage {
-	var out []pack.Stage
+// foldersOf lists the steps that fold into key's gate.
+func foldersOf(steps []pipelineStep, key string) []pipelineStep {
+	var out []pipelineStep
 
-	for _, s := range c.opts.Pack.Stages {
-		if s.Fold != nil && c.foldTarget(s.ID) == stageID {
+	for _, s := range steps {
+		if s.Fold != nil && foldTarget(steps, s.ID) == key {
 			out = append(out, s)
 		}
 	}
@@ -57,12 +53,17 @@ func (c *Controller) foldersOf(stageID string) []pack.Stage {
 // human nor the auto policy loses a decision. A policy changed after the
 // fold is openGate's: the folded gate stays a human's while any stage it
 // judges is.
-func (c *Controller) foldsInto(ctx context.Context, bp store.Blueprint, st pack.Stage, art store.Artifact) (string, error) {
+func (c *Controller) foldsInto(ctx context.Context, bp store.Blueprint, st pipelineStep, art store.Artifact) (string, error) {
 	if st.Fold == nil {
 		return "", nil
 	}
 
-	into := c.foldTarget(st.ID)
+	steps, _, err := c.steps(ctx, bp.ID)
+	if err != nil {
+		return "", err
+	}
+
+	into := foldTarget(steps, st.ID)
 	if into == "" {
 		return "", nil
 	}
@@ -122,7 +123,7 @@ func (c *Controller) folded(ctx context.Context, id, stageID string) ([]store.Ar
 
 // foldedRejected returns the stage folding into st's gate whose latest
 // artifact was rejected there; it runs again, and everything after it.
-func (c *Controller) foldedRejected(ctx context.Context, id string, st pack.Stage) (string, error) {
+func (c *Controller) foldedRejected(ctx context.Context, id string, st pipelineStep) (string, error) {
 	rejected, err := c.foldersDecided(ctx, id, st.ID, store.GateReject)
 	if err != nil || len(rejected) == 0 {
 		return "", err
@@ -132,11 +133,16 @@ func (c *Controller) foldedRejected(ctx context.Context, id string, st pack.Stag
 }
 
 // foldersDecided returns the latest artifact of every stage that folds into
-// stageID's gate whose latest decision is decision, in pack order.
+// stageID's gate whose latest decision is decision, in pipeline order.
 func (c *Controller) foldersDecided(ctx context.Context, id, stageID, decision string) ([]store.Artifact, error) {
+	steps, _, err := c.steps(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
 	var out []store.Artifact
 
-	for _, f := range c.foldersOf(stageID) {
+	for _, f := range foldersOf(steps, stageID) {
 		art, err := c.opts.Store.LatestArtifact(ctx, id, f.ID)
 
 		switch {

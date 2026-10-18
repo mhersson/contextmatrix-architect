@@ -577,7 +577,7 @@ func TestQuestions_ARerunIsToldWhoAnsweredEach(t *testing.T) {
 	bp, err := st.GetBlueprint(ctx, "BP1")
 	require.NoError(t, err)
 
-	intake, ok := c.opts.Pack.Stage("intake")
+	intake, ok := c.stepAt("intake")
 	require.True(t, ok)
 
 	task, err := c.taskFor(ctx, bp, intake)
@@ -596,7 +596,7 @@ func TestQuestions_TheResponderIsToldWhoAnsweredEarlierOnes(t *testing.T) {
 	bp, err := st.GetBlueprint(ctx, "BP1")
 	require.NoError(t, err)
 
-	intake, ok := c.opts.Pack.Stage("intake")
+	intake, ok := c.stepAt("intake")
 	require.True(t, ok)
 
 	task, err := c.responderTask(ctx, bp, intake, 1, protocol.RoundQuestion{Number: 3, Text: "Next?"})

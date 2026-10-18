@@ -366,7 +366,7 @@ func settled(st pack.Stage, v review) bool {
 // gateReview is the verdict that decides st's gate on art: the newest
 // verdict, when it judged art. found is false otherwise, and for a stage
 // without a reviewer.
-func (c *Controller) gateReview(ctx context.Context, id string, st pack.Stage, art store.Artifact) (review, bool, error) {
+func (c *Controller) gateReview(ctx context.Context, id string, st pipelineStep, art store.Artifact) (review, bool, error) {
 	if st.Reviewer == nil {
 		return review{}, false, nil
 	}
@@ -404,7 +404,7 @@ func (c *Controller) attemptReviews(ctx context.Context, id, stageID string, att
 // reviewer or its builder: no verdict on it yet, or one that does not settle
 // it. A gate already shown needs none: it stays with the human it was put
 // to, even without a verdict.
-func (c *Controller) critiquePending(ctx context.Context, id string, st pack.Stage, art store.Artifact) (bool, error) {
+func (c *Controller) critiquePending(ctx context.Context, id string, st pipelineStep, art store.Artifact) (bool, error) {
 	if st.Reviewer == nil {
 		return false, nil
 	}
@@ -414,7 +414,7 @@ func (c *Controller) critiquePending(ctx context.Context, id string, st pack.Sta
 		return false, err
 	}
 
-	if found && settled(st, v) {
+	if found && settled(st.Stage, v) {
 		return false, nil
 	}
 
@@ -457,7 +457,7 @@ func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp sto
 	bg := context.Background()
 	au := sess.audit
 
-	st, ok := c.opts.Pack.Stage(stageID)
+	st, ok := c.stepAt(stageID)
 	if !ok || st.Reviewer == nil {
 		c.fail(bg, au, bp.ID, 0, fmt.Sprintf("review %s: the pack has no reviewer for it", pack.StageName(stageID, false)))
 
@@ -492,7 +492,7 @@ func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp sto
 		}
 	}
 
-	if settled(st, v) {
+	if settled(st.Stage, v) {
 		return stageStored
 	}
 
@@ -513,7 +513,7 @@ func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp sto
 // questions a round cut short asked. Without a transcript the round starts
 // over, given its own artifact and the findings; its task carries every note
 // and answer already.
-func (c *Controller) builderRound(ctx context.Context, bp store.Blueprint, st pack.Stage, built store.Run, art store.Artifact, v review) (*round, error) {
+func (c *Controller) builderRound(ctx context.Context, bp store.Blueprint, st pipelineStep, built store.Run, art store.Artifact, v review) (*round, error) {
 	var b strings.Builder
 
 	open := v.unresolved()
@@ -635,7 +635,7 @@ func (c *Controller) writeNewNotes(ctx context.Context, b *strings.Builder, id s
 // is stored as the next <stage>.review artifact and announced, and the
 // blueprint is idle until the next step sets its state. false when the run
 // did not complete, which is reported.
-func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp store.Blueprint, st pack.Stage, art store.Artifact, attempt int) (review, bool) {
+func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp store.Blueprint, st pipelineStep, art store.Artifact, attempt int) (review, bool) {
 	bg := context.Background()
 	au := sess.audit
 
@@ -723,7 +723,7 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 // accepted with, the user's notes, and, from the attempt's second round,
 // every earlier finding with the builder's claim beside it, and the score
 // that passes.
-func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pack.Stage, art store.Artifact, attempt int, prior findingList) (string, error) {
+func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipelineStep, art store.Artifact, attempt int, prior findingList) (string, error) {
 	var b strings.Builder
 
 	if err := c.writeInputs(ctx, &b, bp, st, false, "review task"); err != nil {
@@ -752,7 +752,7 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pack
 	}
 
 	for _, f := range folded {
-		fst, _ := c.opts.Pack.Stage(f.Stage)
+		fst, _ := c.stepAt(f.Stage)
 
 		built, err := c.latestStageRun(ctx, bp.ID, f.Stage)
 		if err != nil {
@@ -799,7 +799,7 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pack
 // group web_fetch alone while the session has research on, behind the same
 // leak guard as the stage's research. The text returned opens its task.
 // It never posts the research-off notice: the session's first stage does.
-func (c *Controller) reviewerTools(ctx context.Context, sess *session, bp store.Blueprint, st pack.Stage) ([]tools.Tool, string, error) {
+func (c *Controller) reviewerTools(ctx context.Context, sess *session, bp store.Blueprint, st pipelineStep) ([]tools.Tool, string, error) {
 	var (
 		ts    []tools.Tool
 		lead  string

@@ -1,0 +1,31 @@
+name: sliced
+version: "1"
+stages:
+  - id: intake
+    persona: product_owner
+    produces: need
+    policy: human
+  - id: slicing
+    persona: product_owner
+    produces: slices
+    consumes: [intake]
+    checks: [slices]
+    policy: human
+    gate: true
+    fold: {field: slices, max: 1}
+    reviewer: {persona: system_designer, threshold: 4}
+  - id: solution_design
+    persona: system_designer
+    produces: design
+    consumes: [intake, slicing]
+    policy: human
+    gate: true
+    reviewer: {persona: senior_developer, threshold: 4}
+    per_slice: true
+    earlier_slices: [solution_design]
+  - id: grounding
+    persona: senior_developer
+    produces: grounding
+    consumes: [intake, slicing, solution_design]
+    per_slice: true
+    earlier_slices: [solution_design]
