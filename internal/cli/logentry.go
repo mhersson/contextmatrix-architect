@@ -85,8 +85,12 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 
 		if str(p["status"]) == store.RunAsked {
 			what := fmt.Sprintf("%s waits for the answers to round %.0f", runLabel(p), num(p["question_round"]))
-			if chat, _ := p["chat"].(bool); chat {
+
+			switch chat, _ := p["chat"].(bool); {
+			case chat:
 				what = fmt.Sprintf("%s replied in round %.0f's chat", runLabel(p), num(p["question_round"]))
+			case p["responder"] == true:
+				what = fmt.Sprintf("%s had the responder answer round %.0f", runLabel(p), num(p["question_round"]))
 			}
 
 			entry.Content = fmt.Sprintf("%s (%s %.2f USD).", what, label, num(p["cost_usd"]))

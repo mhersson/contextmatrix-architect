@@ -366,7 +366,7 @@ func (c *Controller) assumptionsValidator(bp store.Blueprint) (func(context.Cont
 // tabValidator refuses a submit of st, as boundedValidator bounds it, that
 // states an assumption without a basis while st's policy, read at submit,
 // is human, or that comes before an assumption the user turned into a
-// question on a round of the attempt was asked in a later round of it.
+// question on a round of the attempt has no later round of the attempt posted.
 func (c *Controller) tabValidator(bp store.Blueprint, st pack.Stage, attempt int) (func(context.Context, stage.Artifact) error, *validatorState) {
 	return boundedValidator("assumptions tab", func(ctx context.Context, a stage.Artifact) ([]string, error) {
 		policy, err := c.policy(ctx, bp, st.ID)

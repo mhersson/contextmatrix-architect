@@ -164,7 +164,7 @@ func (answerChatTool) Schema() llm.Tool {
 		Parameters: json.RawMessage(`{"type":"object","properties":{
 			"reply":{"type":"string","description":"your reply in the round's chat"},
 			"questions":{"type":"array","items":` + questionSchema(true) + `},
-			"assumptions":{"type":"array","items":{"type":"string"},"description":"replaces the round's assumptions tab: every assumption you still hold, one standalone sentence each; leave it out to keep the tab"}},"required":["reply"]}`),
+			"assumptions":{"type":"array","items":{"type":"string"},"description":"replaces the round's assumptions tab: every assumption you still hold, one standalone sentence each; leave it out to keep the tab; never an empty list"}},"required":["reply"]}`),
 	}}
 }
 
@@ -183,10 +183,19 @@ func (t answerChatTool) Execute(ctx context.Context, args map[string]any) (tools
 		return tools.Result{}, fmt.Errorf("%s: %w", AnswerChatName, err)
 	}
 
-	// A present list, even an empty one, replaces the tab; nil keeps it.
+	// A present list replaces the tab; nil keeps it. An empty or mistyped
+	// value is refused so a reflexive [] cannot wipe the person's decisions.
 	var assumptions []string
+
 	if raw, ok := args["assumptions"]; ok && raw != nil {
-		assumptions = append([]string{}, textList(raw)...)
+		if _, isList := raw.([]any); !isList {
+			return tools.Result{}, fmt.Errorf("%s: assumptions must be a list of sentences", AnswerChatName)
+		}
+
+		assumptions = textList(raw)
+		if len(assumptions) == 0 {
+			return tools.Result{}, fmt.Errorf("%s: assumptions is empty; leave it out to keep the tab, or list every assumption you still hold", AnswerChatName)
+		}
 	}
 
 	text, err := t.iv.Answer(ctx, ChatAnswer{Reply: reply, Questions: qs, Assumptions: assumptions})

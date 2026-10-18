@@ -343,7 +343,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		c.endRun(bg, runID, store.RunAsked, "round", usage)
 		au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
 			"stage": stageID, "kind": store.RunKindStage, "status": store.RunAsked, "cost_usd": usage.CostUSD, "priced": isPriced,
-			"question_round": iv.posted, "chat": in.Chat,
+			"question_round": iv.posted, "chat": in.Chat, "responder": iv.responded,
 		}})
 
 		return stageAsked

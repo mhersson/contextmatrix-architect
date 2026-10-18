@@ -44,6 +44,9 @@ type interviewer struct {
 	// qround is the round a chat run answers; posted the round the run
 	// posted or answered, for its end event.
 	qround, posted int
+	// responded is set when the run's round was answered by the responder
+	// under auto, so nothing waits on the person.
+	responded bool
 	// seen is how many chat entries a chat run was given; its reply follows
 	// them.
 	seen int
@@ -155,6 +158,7 @@ func (iv *interviewer) numbered(ctx context.Context, rd stage.Round, sources map
 // it.
 func (iv *interviewer) respondAll(ctx context.Context, s roundState) (string, error) {
 	s.Frame.Responder = true
+	iv.responded = true
 
 	for _, a := range s.Frame.Assumptions {
 		s.Frame.Decisions = append(s.Frame.Decisions, protocol.AssumptionDecision{ID: a.ID, Accept: true})

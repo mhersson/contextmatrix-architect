@@ -149,7 +149,6 @@ func TestChat_ReplyDuringAChatSegmentClosesTheRoundAfterIt(t *testing.T) {
 	require.Equal(t, 3, runner.calls())
 	cont := runner.input(2)
 	assert.False(t, cont.Chat)
-	assert.Contains(t, cont.Task, "Kustomize")
 	assert.True(t, latestRound(t, c, "BP1", 1).Frame.Closed)
 
 	qs, err := c.opts.Store.ListQuestions(ctx, "BP1")

@@ -890,8 +890,26 @@ func TestLogEntry_ATabOnlyRoundCountsItsAssumptions(t *testing.T) {
 	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRound, BlueprintID: "BP1", Payload: p})
 	require.True(t, ok)
 	require.NotNil(t, entry.Prompt)
-	assert.Contains(t, entry.Prompt.Text, "2", "the tab's count")
-	assert.NotContains(t, entry.Prompt.Text, "0 question", "no questions are counted")
+	assert.Equal(t, "Round 3: 2 assumption(s) from the system designer", entry.Prompt.Text)
+}
+
+func TestLogEntry_AnAutoRoundEndIsNotAWait(t *testing.T) {
+	end := func(extra map[string]any) string {
+		p := map[string]any{"stage": "solution_design", "kind": "stage", "status": "asked", "question_round": 2.0, "cost_usd": 0.5}
+		for k, v := range extra {
+			p[k] = v
+		}
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "BP1", Payload: p})
+		require.True(t, ok)
+
+		return entry.Content
+	}
+
+	waiting := end(nil)
+	assert.NotEqual(t, waiting, end(map[string]any{"responder": true}), "an auto round is not rendered as a wait")
+	assert.NotEqual(t, waiting, end(map[string]any{"chat": true}))
+	assert.Equal(t, waiting, end(map[string]any{"responder": false}))
 }
 
 func roundPayloadForTest() map[string]any {

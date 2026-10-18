@@ -153,6 +153,31 @@ func TestRun_ARoundWithNeitherQuestionsNorAssumptionsIsRefused(t *testing.T) {
 	}
 }
 
+func TestRun_AnswerChatRefusesAnEmptyOrNonListTab(t *testing.T) {
+	for _, args := range []string{
+		`{"reply":"Yes.","assumptions":[]}`,
+		`{"reply":"Yes.","assumptions":"One region."}`,
+		`{"reply":"Yes.","assumptions":{"a":1}}`,
+	} {
+		t.Run(args, func(t *testing.T) {
+			f := &fakeLLM{responses: []llm.Response{
+				{ToolCalls: []llm.ToolCall{toolCall("c1", "answer_chat", args)}, FinishReason: "tool_calls"},
+				{ToolCalls: []llm.ToolCall{toolCall("c2", "answer_chat", `{"reply":"Yes."}`)}, FinishReason: "tool_calls"},
+			}}
+			iv := &stubInterviewer{}
+
+			in := baseInput(&bytes.Buffer{})
+			in.Interviewer, in.Chat = iv, true
+
+			out, err := runnerWith(f).Run(context.Background(), in)
+			require.NoError(t, err)
+			assert.Equal(t, 1, out.Result.ToolCallFailures)
+			require.Len(t, iv.answers, 1, "only the corrected call reaches the interviewer")
+			assert.Nil(t, iv.answers[0].Assumptions)
+		})
+	}
+}
+
 func TestRun_AnswerChatAssumptionsReplaceTheTabOnlyWhenGiven(t *testing.T) {
 	tests := []struct {
 		name string
@@ -160,7 +185,6 @@ func TestRun_AnswerChatAssumptionsReplaceTheTabOnlyWhenGiven(t *testing.T) {
 		want []string
 	}{
 		{"left out keeps the tab", `{"reply":"Yes."}`, nil},
-		{"an empty list empties it", `{"reply":"Yes.","assumptions":[]}`, []string{}},
 		{"a list replaces it", `{"reply":"Yes.","assumptions":["Two zones."," "]}`, []string{"Two zones."}},
 	}
 

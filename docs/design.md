@@ -178,7 +178,8 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   same attempt and builder round, resumes the stored conversation with the
   messages it has not seen and replies with `answer_chat`. It may revise a
   question or add one; a question whose options change loses its answer,
-  and the others keep theirs. It may also replace the assumptions tab; an
+  and the others keep theirs. It may also replace the assumptions tab with
+  a non-empty list (an empty or non-list value is a tool error; leaving the key out keeps the tab); an
   assumption whose text is unchanged keeps its label and its decision, and
   a new one takes a label the round never issued. Messages
   written while a chat run runs are answered by the next, and a round whose
@@ -583,8 +584,8 @@ a label the round never issued, so a decision the user made on a dropped
 assumption never lands on another. A human
 accepts each or turns it into a question: an accepted one is recorded as an
 answered question, `Q<n>`, which the stage states it with as its basis, so
-it reads `confirmed`; one turned into a question must be asked in a later
-round of the attempt before the stage may submit. Under the human policy
+it reads `confirmed`; after one is turned into a question, a later round of
+the attempt must be posted before the stage may submit. Under the human policy
 every stated assumption must have a basis. Under `auto` each assumption is
 accepted automatically, logged on the round, and keeps the status its basis
 gives it, never `confirmed`. The stage submits each assumption as a
