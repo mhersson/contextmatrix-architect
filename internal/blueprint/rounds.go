@@ -213,19 +213,29 @@ func (c *Controller) nextRoundNumber(ctx context.Context, id string) (int, error
 
 // roundSources resolves every source tag the questions' options cite; a tag
 // that is no source of the blueprint is refused, since a link the panel
-// shows must lead somewhere the architect read.
+// shows must lead somewhere the architect read. A source is named by its
+// identity, a page web_fetch read by its title when the page had one.
 func (c *Controller) roundSources(ctx context.Context, id string, qs []stage.RoundQuestion) (map[string]protocol.RoundSource, error) {
 	known, err := c.opts.Store.ListSources(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("blueprint: list sources: %w", err)
 	}
 
+	titles, err := c.sourceTitles(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
 	byTag := map[string]protocol.RoundSource{}
 
 	for _, src := range known {
 		rs := protocol.RoundSource{Tag: src.Tag(), Title: src.Identity}
-		if src.Kind == "url" {
+		if src.Kind == sourceKindURL {
 			rs.URL = src.Identity
+
+			if title, ok := titles[src.Tag()]; ok {
+				rs.Title = title
+			}
 		}
 
 		byTag[src.Tag()] = rs

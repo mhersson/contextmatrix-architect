@@ -397,6 +397,33 @@ func TestResearch_TheSearchKeyIsMaskedLikeEverySecret(t *testing.T) {
 	assert.NotContains(t, art.Body, testSearchKey)
 }
 
+func TestResearch_ARoundSaysWhetherItsStageResearched(t *testing.T) {
+	tests := []struct {
+		name string
+		in   StartInput
+		off  bool
+	}{
+		{"research on", researchStart("BP1"), false},
+		{"research off", startInput("BP1"), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeRunner{fn: func(ctx context.Context, in stage.Input) (stage.Output, error) {
+				if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Store", "Which store?", "sqlite", "postgres")}}); err != nil {
+					return stage.Output{}, err
+				}
+
+				return askedOutput(in), nil
+			}}
+			c, _, _ := newResearchPipeline(t, runner, searchOK, fakeFetcher{})
+			driveIn(t, c, tt.in)
+
+			assert.Equal(t, tt.off, latestRound(t, c, "BP1", 1).Frame.ResearchOff)
+		})
+	}
+}
+
 func TestResearch_ResponderLookupsCarryTheResponderRun(t *testing.T) {
 	var (
 		mu             sync.Mutex

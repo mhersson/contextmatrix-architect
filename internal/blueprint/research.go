@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -93,6 +94,30 @@ func (l researchLedger) Page(ctx context.Context, page research.Page) (string, e
 	}
 
 	return src.Tag(), nil
+}
+
+// sourceTitles maps the tag of every page web_fetch read to the page's
+// title, from the research events that recorded the reads.
+func (c *Controller) sourceTitles(ctx context.Context, id string) (map[string]string, error) {
+	events, err := c.opts.Store.ListEventsOfKind(ctx, id, EventResearch)
+	if err != nil {
+		return nil, fmt.Errorf("blueprint: read the research events: %w", err)
+	}
+
+	out := map[string]string{}
+
+	for _, e := range events {
+		var p struct {
+			Tag   string `json:"tag"`
+			Title string `json:"title"`
+		}
+
+		if json.Unmarshal(e.Payload, &p) == nil && p.Tag != "" && p.Title != "" {
+			out[p.Tag] = p.Title
+		}
+	}
+
+	return out, nil
 }
 
 // researchGuard is the leak guard of one run of stageID. It reads its

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mhersson/contextmatrix-architect/internal/research"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
@@ -350,6 +351,34 @@ func TestRoundSources(t *testing.T) {
 
 	_, err = c.roundSources(ctx, "BP1", []stage.RoundQuestion{{Text: "Which?", Options: []stage.RoundOption{{Title: "Helm", Sources: []string{"S9"}}}}})
 	require.Error(t, err)
+}
+
+func TestRoundSources_APageReadIsShownByItsTitle(t *testing.T) {
+	c, st, au := newRoundController(t)
+	ctx := context.Background()
+
+	_, err := st.AddSource(ctx, store.Source{BlueprintID: "BP1", Kind: "repo", Identity: "alpha", Version: "abc", FetchedAt: time.Now().UTC()})
+	require.NoError(t, err)
+
+	l := researchLedger{c: c, au: au, id: "BP1", stage: "intake"}
+
+	read, err := l.Page(ctx, research.Page{URL: "https://helm.sh/docs", Text: "Helm is a package manager."})
+	require.NoError(t, err)
+	l.Lookup(ctx, research.Lookup{Tool: research.FetchToolName, URL: "https://helm.sh/docs", Tag: read, Title: "Helm docs", Bytes: 26})
+
+	// A page read without a title keeps its address as its name.
+	untitled, err := l.Page(ctx, research.Page{URL: "https://kustomize.io", Text: "Kustomize."})
+	require.NoError(t, err)
+	l.Lookup(ctx, research.Lookup{Tool: research.FetchToolName, URL: "https://kustomize.io", Tag: untitled, Bytes: 10})
+
+	got, err := c.roundSources(ctx, "BP1", []stage.RoundQuestion{{Options: []stage.RoundOption{
+		{Title: "Helm", Sources: []string{"S1", read}},
+		{Title: "Kustomize", Sources: []string{untitled}},
+	}}})
+	require.NoError(t, err)
+	assert.Equal(t, protocol.RoundSource{Tag: read, Title: "Helm docs", URL: "https://helm.sh/docs"}, got[read])
+	assert.Equal(t, protocol.RoundSource{Tag: untitled, Title: "https://kustomize.io", URL: "https://kustomize.io"}, got[untitled])
+	assert.Equal(t, protocol.RoundSource{Tag: "S1", Title: "alpha"}, got["S1"], "a code source has no URL")
 }
 
 func TestFrameQuestion(t *testing.T) {

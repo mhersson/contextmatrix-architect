@@ -94,6 +94,7 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	for _, id := range []string{"intake", "slicing", "solution_design"} {
 		s, _ := p.Stage(id)
 		assert.Contains(t, s.Tools, ToolResearch, "%s researches its questions when research is on", id)
+		assert.Contains(t, s.Tools, ToolCode, "%s reads the code before it asks", id)
 	}
 
 	grounding, _ := p.Stage("grounding")

@@ -763,6 +763,35 @@ func TestRun_KeepsTransientResultsOutOfARunWithoutAnArtifact(t *testing.T) {
 	assert.Equal(t, "lookup: 2 hits", got)
 }
 
+func TestRun_KeepsTransientResultsOutOfAForcedFollowUp(t *testing.T) {
+	f := &fakeLLM{responses: []llm.Response{
+		{ToolCalls: []llm.ToolCall{toolCall("c1", "lookup", `{}`)}, FinishReason: "tool_calls"},
+		{Content: "I have what I need.", FinishReason: "stop"},
+		{ToolCalls: []llm.ToolCall{toolCall("c2", "submit_artifact", `{"body":"# Need"}`)}, FinishReason: "tool_calls"},
+	}}
+
+	in := baseInput(&bytes.Buffer{})
+	in.Tools = []tools.Tool{lookupTool{}}
+
+	out, err := runnerWith(f).Run(context.Background(), in)
+	require.NoError(t, err)
+	assert.Equal(t, "# Need", out.Artifact.Body)
+
+	// The follow-up belongs to the run, so its model reads the whole result.
+	require.Len(t, f.requests, 3)
+
+	seen, ok := toolResult(f.requests[2].Messages, "c1")
+	require.True(t, ok)
+	assert.Contains(t, seen, "hit one")
+
+	got, ok := toolResult(out.Result.Messages, "c1")
+	require.True(t, ok)
+	assert.Equal(t, "lookup: 2 hits", got, "the record of a forced follow-up keeps only what the tool stores")
+
+	_, ok = toolResult(out.Result.Messages, "c2")
+	assert.True(t, ok, "the record holds the follow-up's conversation")
+}
+
 func TestRun_PassesARecordedHistoryThroughUnchanged(t *testing.T) {
 	history := []llm.Message{
 		{Role: "user", Content: "the task"},
