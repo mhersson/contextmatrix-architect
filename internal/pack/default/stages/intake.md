@@ -52,3 +52,9 @@ Rules:
 - When the need is complete, call submit_artifact with the markdown as body
   and a data object {"slices": <number>, "projects": [<names>],
   "assumptions": ["<sentence>" or {"text": "<sentence>", "basis": "Q<n>"}, ...]}.
+
+When a reviewer's findings come back to you, each with an id such as R2,
+revise for them and add `"addressed": [{"finding": "<its id>", "note": "<one sentence on what you changed>"}]`
+to the data, one entry per finding you addressed. Leave out a finding you
+did not address; never claim one you did not. The reviewer checks your
+revision itself, not your notes.

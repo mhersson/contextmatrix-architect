@@ -2,10 +2,12 @@ package blueprint
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
 	"github.com/stretchr/testify/assert"
@@ -161,6 +163,123 @@ func TestGatePolicy_TheGatePlanNamesBoth(t *testing.T) {
 		map[string]any{"stage": "intake", "policy": pack.PolicyHuman, "gate": true, "gate_policy": pack.PolicyAuto},
 		map[string]any{"stage": "plan", "policy": pack.PolicyAuto, "gate": false},
 	}, plan.Payload["stages"])
+}
+
+// seedBeforeIntakeGate stores BP1 on the reviewed pack as a pack that gave
+// intake no gate left it: intake built and completed with no verdict and no
+// gate row, then a plan run that ended with status. It returns plan's run.
+func seedBeforeIntakeGate(t *testing.T, st *store.Store, status string, state State) int64 {
+	t.Helper()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	require.NoError(t, st.CreateBlueprint(ctx, store.Blueprint{
+		ID: "BP1", Projects: []string{"alpha"}, Mode: protocol.ArchitectModeDefault, Model: "m",
+		State: string(state), CreatedAt: now, UpdatedAt: now,
+	}))
+
+	_, err := st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: needStage, Body: "the need"})
+	require.NoError(t, err)
+
+	intake, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+	require.NoError(t, st.EndRun(ctx, intake, store.RunDone, "", store.RunUsage{}, now))
+
+	_, err = st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: "intake", Body: "# Need"})
+	require.NoError(t, err)
+
+	plan, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "plan", Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+	require.NoError(t, st.EndRun(ctx, plan, status, "", store.RunUsage{}, now))
+
+	return plan
+}
+
+func TestGatePolicy_AStagePassedBeforeItHadAGateIsNotJudgedWhenTheNextFailed(t *testing.T) {
+	c, st, runner, rec := newReviewed(t, reviewedScript())
+	ctx := context.Background()
+
+	seedBeforeIntakeGate(t, st, store.RunFailed, StateFailed)
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	assert.Empty(t, inputsOf(runner, "intake.review"), "no review of intake")
+	assert.Empty(t, stagesRun(runner), "the failed plan waits for the next message")
+	assert.False(t, rec.has(EventGate))
+
+	v, err := c.View(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, v.Pipeline, 2)
+	assert.Equal(t, stepDone, v.Pipeline[0].Status)
+	assert.Equal(t, stepFailed, v.Pipeline[1].Status)
+
+	require.NoError(t, c.Message(ctx, "BP1", "try again", "m1"))
+	c.Wait("BP1")
+
+	assert.Empty(t, inputsOf(runner, "intake.review"), "nor after the note")
+	assert.Equal(t, []string{"plan"}, stagesRun(runner), "the note runs plan again")
+
+	gates, err := st.ListGates(ctx, "BP1", "intake")
+	require.NoError(t, err)
+	assert.Empty(t, gates)
+}
+
+func TestGatePolicy_AStagePassedBeforeItHadAGateIsNotJudgedWhileTheNextAsks(t *testing.T) {
+	c, st, runner, rec := newReviewed(t, reviewedScript())
+	ctx := context.Background()
+
+	plan := seedBeforeIntakeGate(t, st, store.RunAsked, StateWaiting)
+
+	raw, err := json.Marshal(roundState{
+		Number: 1, Attempt: 1, BuilderRound: 1, PostedBy: plan, RunID: plan, Change: changePosted,
+		Frame: protocol.LogRound{Stage: "plan", Questions: []protocol.RoundQuestion{{
+			Number: 1, Title: "Users", Text: "Who uses it?", Options: []protocol.RoundOption{{Title: "Operators"}},
+		}}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, st.AppendEvent(ctx, store.Event{Time: time.Now().UTC(), BlueprintID: "BP1", RunID: plan, Kind: EventRound, Payload: raw}))
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	assert.Empty(t, inputsOf(runner, "intake.review"), "no review of intake")
+	assert.Empty(t, stagesRun(runner), "the round waits for its human")
+	assert.False(t, rec.has(EventGate))
+
+	v, err := c.View(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, v.Pipeline, 2)
+	assert.Equal(t, stepDone, v.Pipeline[0].Status)
+	assert.Equal(t, stepWaiting, v.Pipeline[1].Status)
+	require.NotNil(t, v.Open)
+	assert.Equal(t, roundPromptID(1), v.Open.PromptID)
+
+	answerRound(t, c, "BP1", 1, true, own(1, "the people who run releases"))
+	c.Wait("BP1")
+
+	assert.Empty(t, inputsOf(runner, "intake.review"), "nor after the answers")
+	assert.Equal(t, []string{"plan"}, stagesRun(runner), "plan goes on from its round")
+}
+
+func TestGatePolicy_AShownGateStaysWithItsHumanWhateverRanAfterIt(t *testing.T) {
+	c, st, runner, rec := newReviewed(t, reviewedScript())
+	ctx := context.Background()
+
+	seedBeforeIntakeGate(t, st, store.RunFailed, StateFailed)
+	require.NoError(t, st.AppendEvent(ctx, store.Event{
+		Time: time.Now().UTC(), BlueprintID: "BP1", Kind: EventGate, Payload: []byte(`{"stage":"intake","version":1}`),
+	}))
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	gate, ok := rec.first(EventGate)
+	require.True(t, ok, "the gate is shown again")
+	assert.Equal(t, "intake", gate.Payload["stage"])
+	assert.Empty(t, inputsOf(runner, "intake.review"), "a shown gate is not reviewed")
+	assert.Empty(t, stagesRun(runner))
 }
 
 func TestGatePolicy_TheViewShowsTheGatePolicy(t *testing.T) {

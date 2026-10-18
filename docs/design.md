@@ -13,12 +13,12 @@ small. Every stage before the cards exists only to make the cards better.
 A user opens a blueprint session in CM's chat panel and states a need ("get
 this project running containerised on Kubernetes"). The architect researches it,
 plays the roles a team would (product owner, system designer, senior developer,
-reviewer), asks what it cannot decide, records every decision and assumption,
-drafts the cards, checks them against the card contract, and emits the
-playbook. CM does what CM does from there. In yolo mode the whole path from
-need to merged pull requests on a playbook branch runs without a human touching
-it, unless a card's repository has no commits: the run then waits for a first
-commit and an `approve`.
+tester, reviewer), asks what it cannot decide, records every decision and
+assumption, drafts the cards, checks them against the card contract, and
+emits the playbook. CM does what CM does from there. In yolo mode the whole
+path from need to merged pull requests on a playbook branch runs without a
+human touching it, unless a card's repository has no commits: the run then
+waits for a first commit and an `approve`.
 
 ## Vocabulary
 
@@ -31,7 +31,7 @@ commit and an `approve`.
 | question      | Something a stage cannot decide alone, asked in a round.                                            |
 | round         | The questions a stage asks together, and its assumptions as the last tab: one tab each in the session, answered in one sitting or in batches, stored until every question has an answer and every assumption a decision. |
 | responder     | Who answers a question or decides a gate: a human in the CM session, or the AI (`auto`).            |
-| persona       | The role a run plays: product owner, system designer, senior developer, reviewer.                   |
+| persona       | The role a run plays: product owner, system designer, senior developer, tester, reviewer.            |
 | pack          | A team's stages, personas, gate policies, checks and card template. Data, not code.                 |
 | source        | One external input a blueprint used, with its identity and version.                                 |
 | card contract | The rules a card must satisfy to be emitted. The core of this design.                               |
@@ -74,6 +74,7 @@ Settled during design. Each has its reason so it is not re-litigated.
 | A playbook for several cards, a bare card for one         | Manual entries are the only way to express human and live checks across cards. A one-card playbook would end in a merged PR on a playbook branch plus a second PR to main; a bare card ends in one PR to the default branch. The `emissions` table is the blueprint's handle in CM either way. |
 | Fixed stage list, no composer; size is never estimated    | Every stage earns its place even for an infrastructure request; cheap stages collapse rather than skip. Gates fold and the playbook decision falls out of counts in the artifacts (slices, cards), so a need is never classified small or big up front. Evidence for skippable stages comes from Outcomes, which does not exist yet. |
 | Personas attached to stages, no agent system              | Roles are prompt text in the pack. The composer-and-agents machinery of AI-DLC is a second decision engine the first one has not earned.                         |
+| Reviewers read from the next role's seat and keep a findings ledger | A reviewer that trusts the builder's notes passes artifacts the next role cannot use. Each gated artifact is judged by the role that works from it next, with the code and the pages it cites to check claims, and told to refute rather than confirm. Findings keep their id through the attempt and every revision is reviewed again, so a finding is fixed only when the reviewer sees it fixed in the artifact, never on the builder's word; an open critical finding fails the review whatever the score. |
 | Jira out of v1, in as one later slice                     | The pipeline is exercised on the operator's own projects first. The adapter shape (seed in, mirror out, never state) keeps later integration small, provided sources carry kinds from day one. |
 | Lessons are human-approved                                | A blueprint yields a handful of cards; early lessons are anecdotal. Human approval guards against learning noise.                                                 |
 | No memory layer                                           | Live retrieval plus versioned sources. A knowledge layer, if ever, is fed only approved architect outputs.                                                        |
@@ -299,19 +300,19 @@ cited.
 ## Stages
 
 The default pack. Personas: product owner (PO), system designer (SD), senior
-developer (DEV), reviewer (REV).
+developer (DEV), tester (TST), reviewer (REV).
 
-| #  | Stage           | Persona | Consumes          | Produces                                                                                              | Gate      |
-| -- | --------------- | ------- | ----------------- | ----------------------------------------------------------------------------------------------------- | --------- |
-| 1  | Intake          | PO      | the need          | need: problem, value, scope in and out, measurable outcomes, the expected shape, reading the code      | questions |
-| 2  | Slicing         | PO      | need              | slices, each delivering standalone value; one slice is fine; reads the code                             | yes; folds into 3 when there is one slice |
-| 3  | Solution design | SD      | need, slices      | per slice: projects involved, decisions with rejected options and their basis, cross-project contracts; asks a question for each decision with real alternatives; reads the code | yes       |
-| 4  | Grounding       | DEV     | design            | per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        |
-| 5  | Acceptance      | DEV     | design, grounding | per slice: criteria checkable inside one repo; human and live checks split into manual steps         | `auto` by default |
-| 6  | Decomposition   | DEV     | all above         | draft cards with type and priority, `depends_on` per project, manual entries for human and live checks, a playbook title and order, and the setup for a project without a verify command or instruction file | no        |
-| 7  | Readiness       | REV     | cards             | contract check per card; failures loop back to 6, three rounds max                                    | no        |
-| 8  | Sign-off        | human   | everything        | approval; then emission                                                                               | yes       |
-| -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   |
+| #  | Stage           | Persona | Consumes          | Produces                                                                                              | Gate      | Reviewer |
+| -- | --------------- | ------- | ----------------- | ----------------------------------------------------------------------------------------------------- | --------- | -------- |
+| 1  | Intake          | PO      | the need          | need: problem, value, scope in and out, measurable outcomes, the expected shape, reading the code      | `auto` by default; its questions go to a human | SD       |
+| 2  | Slicing         | PO      | need              | slices, each delivering standalone value; one slice is fine; reads the code                             | yes; folds into 3 when there is one slice | SD       |
+| 3  | Solution design | SD      | need, slices      | per slice: projects involved, decisions with rejected options and their basis, cross-project contracts; asks a question for each decision with real alternatives; reads the code | yes       | DEV      |
+| 4  | Grounding       | DEV     | design            | per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        | -        |
+| 5  | Acceptance      | DEV     | design, grounding | per slice: criteria checkable inside one repo; human and live checks split into manual steps         | `auto` by default | TST      |
+| 6  | Decomposition   | DEV     | all above         | draft cards with type and priority, `depends_on` per project, manual entries for human and live checks, a playbook title and order, and the setup for a project without a verify command or instruction file | no        | -        |
+| 7  | Readiness       | REV     | cards             | contract check per card; failures loop back to 6, three rounds max                                    | no        | -        |
+| 8  | Sign-off        | human   | everything        | approval; then emission                                                                               | yes       | -        |
+| -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   | -        |
 
 The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign-off is the controller's step after readiness (see Emission). Every stage is a model run; a design the user already has goes in the need or an answer, and solution design adopts it.
 
@@ -362,18 +363,24 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   stage's gate policy is human; it approves both on its own only when both
   gate policies are auto.
 - Reviewer runs are declared on every gated stage in the pack and skipped
-  when its gate folds. The default pack declares them for slicing, solution
-  design and acceptance; readiness is decomposition's reviewer and gets
-  none. A one-slice need costs nine runs: intake, slicing, solution design
-  and its review, grounding, acceptance and its review, decomposition and
-  readiness, and each review that leaves findings open adds a builder round
-  and a review of its revision, at most two of each per reviewed step, plus
-  one continuation run per question round and one chat run per chat reply.
+  when its gate folds. Each reads as the role that works from the artifact
+  next: the system designer judges intake's need and the slices (can I
+  design from this?), the senior developer the design (can I build from
+  this?), and the tester acceptance (can I write the tests from this?).
+  Readiness is decomposition's reviewer and gets none. A one-slice need
+  costs ten runs when every review passes clean: intake and its review,
+  slicing, solution design and its review, grounding, acceptance and its
+  review, decomposition and readiness, and each review that leaves findings
+  open adds a builder round and a review of its revision, at most two of
+  each per reviewed step, plus one continuation run per question round and
+  one chat run per chat reply.
 - In default mode a one-slice need touches the human at the rounds of
   intake, slicing and solution design (no limit when a human answers), the
   solution design gate with slicing folded into it, and the sign-off. A
   need that slices into several gets slicing's own gate as well, without
-  anyone classifying it.
+  anyone classifying it. Intake's gate is `auto`: its reviewer's verdict
+  decides it, and it waits for a human only when the third review does not
+  pass, or after `gate intake human`.
 - A cross-project contract is copied into the cards on both sides of the
   boundary.
 - Human-only and live-environment checks become manual playbook entries, never
@@ -569,6 +576,7 @@ Both resolve, first match winning, from the blueprint's latest
 `gate <stage> human|auto` reply, which sets both, then the mode (every mode
 but default makes both `auto`), then the pack: the stage's `policy` for its
 questions, and its `gate_policy` for its gate, which defaults to `policy`.
+In the default pack intake's questions go to a human and its gate is `auto`.
 A stage that declares the `assumptions` check records what it decides
 itself as data, and every responder answer is recorded as an assumption;
 only these reach the sign-off and the cards.
@@ -665,10 +673,11 @@ The mode is chosen in the panel's new-session dialog and recorded on the
 blueprint.
 
 - **Default**: policies as the pack sets them. The embedded pack makes
-  intake, slicing and solution design `human` and every other stage
-  `auto`. The sign-off waits for a human. A `gate <stage> human|auto` reply,
-  listed in the gate plan posted after intake, changes a stage's policy for
-  this blueprint.
+  intake, slicing and solution design `human` and every other stage `auto`;
+  intake's gate alone differs from its stage's policy: it is `auto`,
+  decided by its reviewer's verdict. The sign-off waits for a human. A
+  `gate <stage> human|auto` reply, listed in the gate plan posted after
+  intake, changes a stage's policy for this blueprint.
 - **`auto`**: every policy `auto`. Stops before emission. Cards auto-vet in
   CM on the non-Jira path, so this stop is the only human backstop.
 - **`auto+emit`**: as above, then emits the playbook and stops. When it
@@ -856,8 +865,9 @@ Replies the server understands, besides a round's structured answers:
   when it went on from a round (below), and a stage whose inputs were stored
   but which never started runs. Completed artifacts are never lost. A record
   the pack cannot place, such as a stage the pack no longer has, is reported
-  in the session and nothing runs. An open gate or sign-off is shown again
-  as it was, and a gate shown on a revision that no verdict judged, stored
+  in the session and nothing runs. A stage the pipeline went past before its
+  pack gave it a gate is not judged again. An open gate or sign-off is shown
+  again as it was, and a gate shown on a revision that no verdict judged, stored
   before every revision was reviewed, is shown again without a review; a
   gate that was never shown opens under the policy now in effect, a review
   or builder round that a restart or the session's end cut short runs again,

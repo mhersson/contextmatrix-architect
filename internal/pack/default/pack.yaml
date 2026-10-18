@@ -1,5 +1,5 @@
 name: default
-version: "0.13"
+version: "0.14"
 stages:
   - id: intake
     persona: product_owner
@@ -7,7 +7,10 @@ stages:
     tools: [code, research]
     checks: [assumptions]
     policy: human
+    gate: true
+    gate_policy: auto
     max_questions: 3
+    reviewer: {persona: system_designer, threshold: 4, tools: [code, research]}
   - id: slicing
     persona: product_owner
     produces: slices
@@ -17,7 +20,7 @@ stages:
     policy: human
     gate: true
     fold: {field: slices, max: 1}
-    reviewer: {persona: system_designer, threshold: 4}
+    reviewer: {persona: system_designer, threshold: 4, tools: [code, research]}
   - id: solution_design
     persona: system_designer
     produces: design
@@ -27,7 +30,7 @@ stages:
     policy: human
     gate: true
     max_questions: 5
-    reviewer: {persona: senior_developer, threshold: 4}
+    reviewer: {persona: senior_developer, threshold: 4, tools: [code, research]}
   - id: grounding
     persona: senior_developer
     produces: grounding
@@ -40,7 +43,7 @@ stages:
     checks: [criteria]
     policy: auto
     gate: true
-    reviewer: {persona: senior_developer, threshold: 4}
+    reviewer: {persona: tester, threshold: 4, tools: [code, research]}
   - id: decomposition
     persona: senior_developer
     produces: cards

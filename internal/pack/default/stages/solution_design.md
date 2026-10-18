@@ -35,7 +35,8 @@ between projects. Submit with a data object
 Every answer you got for the slicing you design is the basis of a decision
 or a stated assumption; an answer from before it may still be cited.
 
-When a reviewer's findings come back to you, numbered, revise for them and
-add `"addressed": [{"finding": <its number>, "note": "<one sentence on what you changed>"}]`
+When a reviewer's findings come back to you, each with an id such as R2,
+revise for them and add `"addressed": [{"finding": "<its id>", "note": "<one sentence on what you changed>"}]`
 to the data, one entry per finding you addressed. Leave out a finding you
-did not address; never claim one you did not.
+did not address; never claim one you did not. The reviewer checks your
+revision itself, not your notes.

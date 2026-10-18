@@ -133,6 +133,15 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 					break
 				}
 
+				before, err := c.predatesGate(ctx, bp.ID, st, art)
+				if err != nil {
+					return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
+				}
+
+				if before {
+					break
+				}
+
 				pending, err := c.critiquePending(ctx, bp.ID, st, art)
 				if err != nil {
 					return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
@@ -153,6 +162,39 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 	}
 
 	return outcome{end: true, ready: true, art: last}, nil
+}
+
+// predatesGate reports a record written before the pack gave st a gate: a
+// later stage's run follows st's latest completed run, which under a gate
+// only an approval or a fold allows. A shown gate stays with its human.
+func (c *Controller) predatesGate(ctx context.Context, id string, st pack.Stage, art store.Artifact) (bool, error) {
+	shown, err := c.gateShown(ctx, id, st.ID, art.Version)
+	if err != nil || shown {
+		return false, err
+	}
+
+	runs, err := c.opts.Store.ListRuns(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("blueprint: list runs: %w", err)
+	}
+
+	stages := c.opts.Pack.Stages
+	later := stages[slices.IndexFunc(stages, func(s pack.Stage) bool { return s.ID == st.ID })+1:]
+	built := -1
+
+	for i, r := range runs {
+		if r.Kind == store.RunKindStage && r.Stage == st.ID && r.Status == store.RunDone {
+			built = i
+		}
+	}
+
+	if built < 0 {
+		return false, nil
+	}
+
+	return slices.ContainsFunc(runs[built+1:], func(r store.Run) bool {
+		return r.Kind == store.RunKindStage && slices.ContainsFunc(later, func(s pack.Stage) bool { return s.ID == r.Stage })
+	}), nil
 }
 
 // position reads where a blueprint with no run in flight stands: what

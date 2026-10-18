@@ -72,6 +72,7 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 
 	acceptance, _ := p.Stage("acceptance")
 	assert.Equal(t, PolicyAuto, acceptance.Policy, "acceptance's gate is auto by default")
+	assert.Equal(t, PolicyAuto, acceptance.GatePolicy)
 	assert.True(t, acceptance.Gate)
 
 	slicing, _ := p.Stage("slicing")
@@ -88,8 +89,19 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	assert.Equal(t, "senior_developer", design.Reviewer.Persona)
 
 	intake, _ := p.Stage("intake")
-	assert.Equal(t, PolicyHuman, intake.Policy)
+	assert.Equal(t, PolicyHuman, intake.Policy, "a human answers intake's questions")
+	assert.True(t, intake.Gate)
+	assert.Equal(t, PolicyAuto, intake.GatePolicy, "intake's reviewer's verdict decides its gate")
 	assert.Equal(t, 3, intake.MaxQuestions)
+
+	next := map[string]string{"intake": "system_designer", "slicing": "system_designer", "solution_design": "senior_developer", "acceptance": "tester"}
+
+	for id, persona := range next {
+		s, _ := p.Stage(id)
+		require.NotNil(t, s.Reviewer, id)
+		assert.Equal(t, persona, s.Reviewer.Persona, "%s is reviewed from the next role's seat", id)
+		assert.Equal(t, []string{ToolCode, ToolResearch}, s.Reviewer.Tools, "%s's reviewer reads the code and opens cited pages", id)
+	}
 
 	for _, id := range []string{"intake", "slicing", "solution_design"} {
 		s, _ := p.Stage(id)
