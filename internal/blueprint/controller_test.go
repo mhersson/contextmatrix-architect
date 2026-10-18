@@ -567,6 +567,74 @@ func TestAbort_CancelsTheRun(t *testing.T) {
 	assert.True(t, rec.has(EventAborted))
 }
 
+func TestAbort_NamesTheStageWhoseRunItCut(t *testing.T) {
+	tests := []struct {
+		name string
+		// abort aborts BP1 and waits until nothing runs.
+		abort func(t *testing.T) *recorder
+		want  string
+	}{
+		{
+			name: "a stage's run", want: "intake",
+			abort: func(t *testing.T) *recorder {
+				t.Helper()
+
+				started := make(chan struct{})
+				c, _, _, rec := newController(t, stopsFirst(anyRun, started, artifactRun("# Need")))
+				stopAt(t, c, started, func() { stateTheNeed(t, c) })
+
+				return rec
+			},
+		},
+		{
+			name: "nothing in flight", want: "",
+			abort: func(t *testing.T) *recorder {
+				t.Helper()
+
+				c, _, _, rec := newController(t, artifactRun("# Need"))
+				ctx := context.Background()
+				require.NoError(t, c.Start(ctx, startInput("BP1")))
+				require.NoError(t, c.Abort(ctx, "BP1", "m-abort"))
+				c.Wait("BP1")
+
+				return rec
+			},
+		},
+		{
+			name: "an emission", want: signoffStage,
+			abort: func(t *testing.T) *recorder {
+				t.Helper()
+
+				c, _, _, rec, _ := newPipeline(t, happyScript())
+				hold := newHoldCM(t, newFakeCM())
+				hold.title = "Add the thing"
+				c.opts.ConnectCM = hold.connect
+				ctx := context.Background()
+
+				require.NoError(t, c.Start(ctx, yoloInput("BP1")))
+				require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+				receive(t, hold.entered, "the held card")
+				require.NoError(t, c.Abort(ctx, "BP1", "m-abort"))
+				hold.free()
+				c.Wait("BP1")
+
+				return rec
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := tt.abort(t)
+
+			events := rec.all(EventAborted)
+			require.Len(t, events, 1)
+			require.Contains(t, events[0].Payload, "stage")
+			assert.Equal(t, tt.want, events[0].Payload["stage"])
+		})
+	}
+}
+
 func TestMessage_ConcurrentMessagesStartOneIntake(t *testing.T) {
 	finish := make(chan struct{})
 	c, st, runner, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {

@@ -13,6 +13,28 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/blueprint"
 )
 
+func TestLogEntryFor_AnAbortNamesContinueOnlyWhenItCutAStage(t *testing.T) {
+	cases := []struct {
+		name  string
+		stage string
+		want  bool
+	}{
+		{"a stage's run", "solution_design", true},
+		{"nothing in flight", "", false},
+		{"the sign-off's emission or run start", "signoff", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventAborted, BlueprintID: "S1", Payload: map[string]any{
+				"stage": tc.stage, "message_id": "m1",
+			}})
+			require.True(t, ok)
+			assert.Equal(t, tc.want, strings.Contains(entry.Content, "`continue`"))
+		})
+	}
+}
+
 func TestLogEntryFor(t *testing.T) {
 	cases := []struct {
 		name     string

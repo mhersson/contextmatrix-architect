@@ -549,6 +549,8 @@ func (c *Controller) Message(ctx context.Context, id, text, msgID string) error 
 
 // Abort ends the run in flight, if any; an open round stays open. The
 // blueprint persists; the next message retries the stage that was cut short.
+// The event names the stage the slot held: "" when none, or the sign-off
+// while it and its emission hold it.
 func (c *Controller) Abort(ctx context.Context, id, msgID string) error {
 	c.mu.Lock()
 
@@ -559,13 +561,16 @@ func (c *Controller) Abort(ctx context.Context, id, msgID string) error {
 		return ErrNotFound
 	}
 
+	cut := ""
+
 	if r := c.runs[id]; r != nil {
+		cut = r.stage
 		r.aborted = true
 		r.cancel(nil)
 	}
 
 	c.mu.Unlock()
-	sess.audit.event(ctx, Event{Kind: EventAborted, BlueprintID: id, Payload: map[string]any{"message_id": msgID}})
+	sess.audit.event(ctx, Event{Kind: EventAborted, BlueprintID: id, Payload: map[string]any{"message_id": msgID, "stage": cut}})
 
 	return nil
 }

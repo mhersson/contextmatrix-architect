@@ -867,11 +867,11 @@ Replies the server understands, besides a round's structured answers:
   again; after intake fails or is aborted, the next message is the need
   again and intake re-runs on it. `resume` or `continue` runs each of these
   again as that message would but stores no note, and runs intake on the
-  need already stored. An abort and a stage run's failure tell the user to
-  reply `continue`; a cap stop tells them to raise the cap. A pipeline
-  stopped by the card contract or
-  by readiness's rounds is not re-run; the user starts a new blueprint with
-  a better design.
+  need already stored. An abort that cuts a stage's run, and a stage run's
+  failure, tell the user to reply `continue`; a cap stop tells them to
+  raise the cap, and a cut emission or run start to reply approve. A
+  pipeline stopped by the card contract or by readiness's rounds is not
+  re-run; the user starts a new blueprint with a better design.
 - From slice 4, a project may opt into automatic export in config: a target
   repo, branch and directory; the bundle is committed there at each gate or at
   sign-off. Off by default.

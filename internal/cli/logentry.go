@@ -143,7 +143,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = decidedText(p)
 	case blueprint.EventAborted:
 		entry.Type = "system"
-		entry.Content = "Abort requested. Any running stage is canceled; reply `continue` to run it again. The blueprint is kept and can be reopened."
+		entry.Content = abortedText(p)
 	case blueprint.EventExported:
 		files, _ := p["files"].(int)
 		entry.Type = "system"
@@ -810,6 +810,17 @@ func capText(p map[string]any) string {
 	}
 
 	return text + "."
+}
+
+// abortedText renders an abort: a stage whose run it cut runs again on
+// continue, while an abort that cut nothing, or the sign-off's emission or
+// run start, which approve resumes, leaves continue nothing to run.
+func abortedText(p map[string]any) string {
+	if stage := str(p["stage"]); stage != "" && stage != "signoff" {
+		return "Abort requested. " + pack.StageName(stage) + " is canceled; reply `continue` to run it again. The blueprint is kept and can be reopened."
+	}
+
+	return "Abort requested. Any running stage is canceled; the blueprint is kept and can be reopened."
 }
 
 // stopsStage reports an error that is a stage run's own stop, which
