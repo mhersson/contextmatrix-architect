@@ -36,7 +36,7 @@ const (
 // the artifact, so only the architect's masking keeps it off the panel.
 const e2eSearchKey = "brave-e2e-key-0123456789"
 
-// fakeLLM answers the intake with one submit_artifact call and records the
+// fakeLLM answers every stage with one submit_artifact call and records the
 // tools each request offers.
 type fakeLLM struct {
 	mu    sync.Mutex
@@ -100,7 +100,7 @@ func post(t *testing.T, client *http.Client, url string, body any) *http.Respons
 func TestServe_EndToEnd(t *testing.T) {
 	cfg := &config.Config{
 		ContextMatrixURL: "http://cm.invalid", APIKey: e2eKey, Port: 0, LogLevel: "info",
-		StateDir: t.TempDir(), MaxRunCostUSD: 1, MaxTurns: 5, WorkspaceMaxAgeDays: 7,
+		StateDir: t.TempDir(), Pack: "../blueprint/testdata/research", MaxRunCostUSD: 1, MaxTurns: 5, WorkspaceMaxAgeDays: 7,
 		ReplaySkew: 5 * time.Minute, ReplayCacheSize: 100, MessageDedupTTL: time.Minute, MessageDedupCacheSize: 100,
 	}
 

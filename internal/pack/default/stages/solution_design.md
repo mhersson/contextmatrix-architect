@@ -1,7 +1,7 @@
 # Solution design
 
 Input: the need, slicing's slices, and a read-only checkout of each target
-project. Design every slice slicing cut, under its id. Ask about every
+project. Design every slice slicing cut, under its id. Read the code before you ask (repo_info, read, grep, glob). A fact the code settles, such as what already exists, the conventions in use or a choice already made, goes in as a finding with its source tag S<n> and is never a question. Ask only what neither the code nor the need settles. Ask about every
 decision with real alternatives in a round: call ask_questions once with
 the related questions together. Each question names the decision under a
 short tab title, says why it matters, and offers the proposals as options,

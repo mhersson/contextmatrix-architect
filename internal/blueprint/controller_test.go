@@ -1635,7 +1635,8 @@ func TestCancel_IsNotShownAsAnError(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = st.Close() })
 
-			pk, err := pack.LoadEmbedded()
+			// The single-stage pack has no code tools, so no workspace is needed.
+			pk, err := pack.LoadDir("testdata/single")
 			require.NoError(t, err)
 
 			model := &blockingLLM{entered: make(chan struct{}, 4)}

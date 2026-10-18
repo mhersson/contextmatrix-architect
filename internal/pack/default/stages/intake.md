@@ -1,6 +1,7 @@
 # Intake
 
-Input: the need as the user stated it, and the target projects.
+Input: the need as the user stated it, and a read-only checkout of each target
+project.
 
 Produce the need as markdown with these sections:
 
@@ -13,6 +14,10 @@ Produce the need as markdown with these sections:
 
 Rules:
 
+- Read the code before you ask (repo_info, read, grep, glob). A fact the
+  code settles, such as what already exists, the conventions in use or a
+  choice already made, goes in as a finding with its source tag S<n> and is
+  never a question. Ask only what neither the code nor the need settles.
 - Ask about what changes the cards and only the user can answer: who it is
   for, what is in and out of scope, what "done" is measured by. Never ask
   what you can read or decide.

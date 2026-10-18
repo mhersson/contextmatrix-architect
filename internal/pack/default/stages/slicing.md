@@ -1,11 +1,16 @@
 # Slicing
 
-Input: the need.
+Input: the need and a read-only checkout of each target project.
 
 Cut the need into slices, each delivering value on its own. One slice is
 the normal case; cut more only where a part ships and pays off without the
 rest. Never cut by layer or by project: a slice spans every project it
 needs.
+
+Read the code before you ask (repo_info, read, grep, glob). A fact the code
+settles, such as what already exists, the conventions in use or a choice
+already made, goes in as a finding with its source tag S<n> and is never a
+question. Ask only what neither the code nor the need settles.
 
 When the cut turns on what only the user can answer, ask in a round: call
 ask_questions once with the related questions together, each with a short
