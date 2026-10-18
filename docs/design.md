@@ -625,8 +625,10 @@ assumptions read their basis's status until grounding judges them again. The
 sign-off (unverified, contradicted, assumed, confirmed, then verified), the
 playbook description and a single card's Context list every assumption with
 its latest status; each adds, for an assumed or confirmed one, who answered
-the question or accepted the assumption it rests on and its tag, and the
-answer, for every entry that carries one. When no stage stated any as data,
+the question it rests on and its tag, and the answer, for every entry that
+carries one. A confirmed one resting on an accepted assumption reads
+"accepted at" the stage of the tab it was accepted on instead, with no tag
+and no answer. When no stage stated any as data,
 as with an intake stored before assumptions were data, they show the text of
 intake's Assumptions section instead, without ids or statuses.
 

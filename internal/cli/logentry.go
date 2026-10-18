@@ -723,6 +723,10 @@ func assumptionStatus(a map[string]any) string {
 		who = "assumed by the responder"
 	case "confirmed":
 		who = "confirmed by you"
+
+		if at := str(a["accepted"]); at != "" {
+			return who + ", accepted at " + strings.ReplaceAll(at, "_", " ")
+		}
 	default:
 		if evidence := str(a["evidence"]); evidence != "" {
 			status += ": " + evidence

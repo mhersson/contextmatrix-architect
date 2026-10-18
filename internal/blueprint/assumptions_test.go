@@ -587,3 +587,71 @@ func TestAssumptions_TheCardAndThePlaybookCarryTheBasisAndItsAnswer(t *testing.T
 	require.Len(t, cards, 1)
 	check("a single card's Context", cards[0].Body)
 }
+
+func TestAssumptions_AnAcceptedAssumptionReadsAsAcceptedAtItsStage(t *testing.T) {
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+
+	au := c.newAudit()
+
+	intakeRun := doneRun(t, st, "intake")
+	c.putRound(ctx, au, "BP1", intakeRun, tabRound(2, "intake", intakeRun, []string{"One region."}, accept("A1")))
+
+	// An older close wrote the acceptance as the answered row Q5.
+	designRun := doneRun(t, st, "solution_design")
+	older := tabRound(3, "solution_design", designRun, []string{"Two zones."}, accept("A1"))
+	older.Accepted = map[string]int{"A1": 5}
+	c.putRound(ctx, au, "BP1", designRun, older)
+	require.NoError(t, st.AddQuestion(ctx, store.Question{
+		BlueprintID: "BP1", RunID: designRun, Stage: "solution_design", Number: 5, Text: "Two zones.", Options: []string{"Accept", "Turn into a question"},
+		Answer: "Accepted", Responder: store.ResponderHuman, AnsweredAt: time.Now().UTC(),
+	}))
+
+	seedAnswer(t, st, 1, store.ResponderHuman, "")
+	putData(t, st, "intake", map[string]any{"slices": 1, "assumptions": []any{
+		map[string]any{"text": "One region.", "basis": "round2.A1"},
+		map[string]any{"text": "Two zones.", "basis": "Q5"},
+		map[string]any{"text": "The API keeps its routes.", "basis": "Q1"},
+	}})
+
+	list, err := c.assumptions(ctx, "BP1")
+	require.NoError(t, err)
+
+	got := byID(list)
+	assert.Equal(t, "intake", got["A1"].AcceptedAt)
+	assert.Equal(t, "solution_design", got["A2"].AcceptedAt)
+	assert.Empty(t, got["A2"].Answer)
+	assert.Empty(t, got["A3"].AcceptedAt)
+	assert.Equal(t, "answer 1", got["A3"].Answer)
+
+	payload := map[string]map[string]any{}
+
+	for _, e := range assumptionsPayload(list) {
+		entry, ok := e.(map[string]any)
+		require.True(t, ok)
+
+		id, _ := entry["id"].(string)
+		payload[id] = entry
+	}
+
+	assert.Equal(t, "solution_design", payload["A2"]["accepted"])
+	assert.NotContains(t, payload["A3"], "accepted")
+
+	lines := assumptionLines(list)
+
+	for text, stage := range map[string]string{"One region.": "intake", "Two zones.": "solution design"} {
+		status, _, _ := strings.Cut(lineWith(lines, text), text)
+		assert.Contains(t, status, "accepted at "+stage)
+
+		for _, hidden := range []string{"Q5", "round2.A1", "Accepted"} {
+			assert.NotContains(t, status, hidden)
+		}
+	}
+
+	answered, _, _ := strings.Cut(lineWith(lines, "The API keeps its routes."), "The API")
+	assert.Contains(t, answered, "Q1")
+	assert.Contains(t, answered, "answer 1")
+	assert.NotContains(t, answered, "accepted at")
+}

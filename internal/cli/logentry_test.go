@@ -930,3 +930,18 @@ func TestLogEntry_ASegmentStartIsNoDivider(t *testing.T) {
 	require.True(t, ok)
 	assert.Nil(t, entry.Marker)
 }
+
+func TestAssumptionStatus_AnAcceptedAssumptionNamesItsStageNotATag(t *testing.T) {
+	for _, basis := range []string{"round2.A1", "Q5"} {
+		got := assumptionStatus(map[string]any{"id": "A1", "status": "confirmed", "basis": basis, "accepted": "solution_design"})
+
+		assert.Contains(t, got, "accepted at solution design")
+		assert.NotContains(t, got, basis)
+		assert.NotContains(t, got, "Accepted")
+	}
+
+	answered := assumptionStatus(map[string]any{"id": "A1", "status": "confirmed", "basis": "Q1", "answer": "ops"})
+	assert.Contains(t, answered, "Q1")
+	assert.Contains(t, answered, "ops")
+	assert.NotContains(t, answered, "accepted at")
+}

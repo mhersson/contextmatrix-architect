@@ -38,6 +38,9 @@ type assumption struct {
 	Answer   string
 	Status   string
 	Evidence string
+	// AcceptedAt is the stage whose round tab the user accepted this on,
+	// when the basis is an acceptance; Answer is then empty.
+	AcceptedAt string
 }
 
 // stated is one assumption as a stage submitted it.
@@ -86,6 +89,11 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 
 	accepted := acceptedTags(acceptances)
 
+	acceptedAt := map[string]string{}
+	for _, a := range acceptances {
+		acceptedAt[a.Tag] = a.Stage
+	}
+
 	answered := map[string]store.Question{}
 	for _, q := range questions {
 		answered[q.Tag()] = q
@@ -127,10 +135,17 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 			}
 
 			status, proof := basisStatus(answered, accepted, evidence, s.Basis)
-			out = append(out, assumption{
+			a := assumption{
 				ID: fmt.Sprintf("A%d", len(out)+1), Stage: st.ID, Text: s.Text, Basis: s.Basis, Answer: answered[s.Basis].Answer,
 				Status: status, Evidence: proof,
-			})
+			}
+
+			// An older acceptance's row answers "Accepted", which says nothing.
+			if accepted[s.Basis] {
+				a.Answer, a.AcceptedAt = "", acceptedAt[s.Basis]
+			}
+
+			out = append(out, a)
 			source = append(source, newest)
 		}
 	}
@@ -333,7 +348,9 @@ func assumptionLines(list []assumption) string {
 	for _, a := range list {
 		status := a.Status
 
-		if who, ok := backer[a.Status]; ok {
+		if a.Status == assumptionConfirmed && a.AcceptedAt != "" {
+			status += " by the user, accepted at " + stageWords(a.AcceptedAt)
+		} else if who, ok := backer[a.Status]; ok {
 			status += " by " + who
 			if a.Basis != a.ID {
 				status += ", " + a.Basis
@@ -358,14 +375,23 @@ func assumptionLines(list []assumption) string {
 	return strings.Join(lines, "\n")
 }
 
+// stageWords is how a stage id reads in text shown to a person.
+func stageWords(id string) string { return strings.ReplaceAll(id, "_", " ") }
+
 // assumptionsPayload carries assumptions in an event.
 func assumptionsPayload(list []assumption) []any {
 	out := make([]any, 0, len(list))
 
 	for _, a := range list {
-		out = append(out, map[string]any{
+		entry := map[string]any{
 			"id": a.ID, "stage": a.Stage, "text": a.Text, "basis": a.Basis, "answer": a.Answer, "status": a.Status, "evidence": a.Evidence,
-		})
+		}
+
+		if a.AcceptedAt != "" {
+			entry["accepted"] = a.AcceptedAt
+		}
+
+		out = append(out, entry)
 	}
 
 	return out
