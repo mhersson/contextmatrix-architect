@@ -28,13 +28,14 @@ var ErrNoArtifact = errors.New("stage: run ended without an artifact")
 // matches the chat backend's.
 const ToolOutputMaxBytes = 128 << 10
 
-// A run whose prompt reaches 85% of a 128k window summarizes its older
+// A run whose prompt reaches 85% of its model's window summarizes its older
 // turns and goes on, keeping the last six messages verbatim: the chat
-// backend's bounds. Dialog stages grow with a human's answers.
+// backend's bounds. CM sends the window with the session start; a model it
+// does not know gets 128000.
 const (
-	contextWindow       = 128000
-	compactionThreshold = 0.85
-	keepRecentMessages  = 6
+	defaultContextWindow = 128000
+	compactionThreshold  = 0.85
+	keepRecentMessages   = 6
 )
 
 // Input is everything one run needs.
@@ -48,6 +49,9 @@ type Input struct {
 	Endpoint   protocol.LLMEndpoint
 	MaxCostUSD float64
 	MaxTurns   int
+	// ContextWindow is the model's context length in tokens; 0 is unknown
+	// and runs on defaultContextWindow.
+	ContextWindow int
 	// Interviewer posts the run's rounds (ask_questions); nil offers no round
 	// tool.
 	Interviewer Interviewer
@@ -202,6 +206,17 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 		return Output{}, fmt.Errorf("stage %s: a chat run needs an interviewer", in.Stage)
 	}
 
+	window := in.ContextWindow
+	if window <= 0 {
+		window = defaultContextWindow
+	}
+
+	system := in.Persona + "\n\n" + in.Instructions
+
+	if err := preflight(system, in.Task, in.History, window); err != nil {
+		return Output{Result: harness.Result{Reason: ReasonTooBig}}, fmt.Errorf("stage %s: %w", in.Stage, err)
+	}
+
 	mark := &terminalMark{}
 
 	var builtins []tools.Tool
@@ -231,13 +246,13 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 
 	cfg := harness.Config{
 		Model:              in.Model,
-		SystemPrompt:       in.Persona + "\n\n" + in.Instructions,
+		SystemPrompt:       system,
 		MaxTurns:           in.MaxTurns,
 		MaxCostUSD:         in.MaxCostUSD,
 		RedactToolOutput:   redact.New(in.Secrets).Apply,
 		History:            in.History,
 		ToolOutputMaxBytes: ToolOutputMaxBytes,
-		ContextWindow:      contextWindow,
+		ContextWindow:      window,
 		Compaction:         &harness.Compaction{Threshold: compactionThreshold, KeepRecentTurns: keepRecentMessages},
 	}
 
@@ -261,6 +276,10 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 	}
 
 	if !res.Completed || res.CompletionArgs == nil {
+		if res.Reason == ReasonContextLimit {
+			return Output{Result: res}, fmt.Errorf("stage %s: %w", in.Stage, &ContextFullError{Window: window, Limit: compactionLimit(window)})
+		}
+
 		return Output{Result: res}, fmt.Errorf("%w: reason %s", ErrNoArtifact, res.Reason)
 	}
 

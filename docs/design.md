@@ -1188,10 +1188,16 @@ frames on the session's chat stream.
   unpriced: a capped blueprint refuses it, an uncapped one counts the
   reported cost. A builder round after a review re-bills the conversation so
   far; the ledger counts it.
-- Every stage run compacts in its window: once a prompt reaches 85% of a
-  128000-token window, the harness summarizes the older turns, keeps the
-  last six messages and goes on. A model with a smaller window fails on the
-  provider's error first.
+- Every run compacts in its model's window: CM sends the window with the
+  session start (128000 tokens when it does not know it), and once a prompt
+  reaches 85% of it the harness summarizes the older turns, keeps the last
+  six messages and goes on. A run whose system prompt, task and newest
+  history messages (what compaction cannot summarize) are estimated, at 2.5
+  bytes a token, to reach that 85%, or whose whole opening prompt is
+  estimated to reach the window itself (the first call carries all of it
+  before compaction can act), is refused before any model call. A model
+  whose real window is smaller than CM says fails on the provider's error
+  first.
 - State dir: `architect.db`, `exports/<blueprint>/<time>/`,
   `workspaces/mirrors/<repo>/` and
   `workspaces/trees/<blueprint>/<project>/`, with a project's secondary
