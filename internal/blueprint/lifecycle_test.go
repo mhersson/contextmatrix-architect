@@ -269,6 +269,39 @@ func TestStart_FinishesACloseCutShort(t *testing.T) {
 	assert.Equal(t, asking, runner.input(0).History)
 }
 
+func TestStart_ContinuesAClosedResponderRoundWithoutFinishingItsClose(t *testing.T) {
+	c, st, runner, _ := newController(t, artifactRun("# Need"))
+	ctx := context.Background()
+	au := c.newAudit()
+
+	seeded(t, st)
+
+	// An auto round is stored closed by its asking run, which then ended
+	// asked. Q2's responder failed, so its answer is the failure and it has
+	// no questions row.
+	poster := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", asking)
+	s := twoQuestionRound(1, 1, poster)
+	s.Change, s.Frame.Responder, s.Frame.Closed = changeClosed, true, true
+	s.Frame.Answers = []protocol.RoundAnswer{{Number: 1, Option: 2}, {Number: 2, Text: "no answer (responder down)"}}
+	c.putRound(ctx, au, "BP1", poster, s)
+
+	require.NoError(t, st.AddQuestion(ctx, store.Question{
+		BlueprintID: "BP1", RunID: poster, Stage: "intake", Number: 1, Text: "Helm or Kustomize?", Options: []string{"Helm", "Kustomize"},
+		Answer: "Kustomize", Responder: store.ResponderAuto, Assumption: true, AnsweredAt: time.Now().UTC(),
+	}))
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	require.Equal(t, 1, runner.calls(), "one continuation")
+	assert.Equal(t, asking, runner.input(0).History)
+
+	qs, err := st.ListQuestions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Len(t, qs, 1, "a closed responder round is no close cut short")
+	assert.Equal(t, 1, closedSnapshots(t, st, 1))
+}
+
 func TestStart_ContinuesABuilderRoundsRound(t *testing.T) {
 	var calls atomic.Int32
 
@@ -380,7 +413,7 @@ func TestStart_CollapsesARoundThePipelineLeft(t *testing.T) {
 	c.Wait("BP1")
 
 	s := latestRound(t, c, "BP1", 1)
-	assert.Equal(t, changeLeft, s.Change)
+	assert.Equal(t, ChangeLeft, s.Change)
 	assert.True(t, s.Frame.Closed, "the panel collapses it")
 
 	qs, err := st.ListQuestions(ctx, "BP1")

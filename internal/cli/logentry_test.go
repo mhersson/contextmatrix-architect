@@ -810,6 +810,36 @@ func TestLogEntry_RoundFrame(t *testing.T) {
 	assert.Equal(t, "text", entry.Type)
 }
 
+func TestLogEntry_ALeftRoundIsNotHeadedAnswered(t *testing.T) {
+	render := func(change string) protocol.LogEntry {
+		t.Helper()
+
+		p := roundPayloadForTest()
+		p["change"] = change
+
+		frame, ok := p["frame"].(map[string]any)
+		require.True(t, ok)
+
+		frame["closed"] = true
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRound, BlueprintID: "BP1", Payload: p})
+		require.True(t, ok)
+		require.NotNil(t, entry.Prompt)
+		require.NotNil(t, entry.Prompt.Round)
+
+		return entry
+	}
+
+	answered, left := render("closed"), render(blueprint.ChangeLeft)
+
+	assert.True(t, left.Prompt.Round.Closed, "the panel collapses a left round")
+	assert.Equal(t, "round:3", left.Prompt.ID)
+	assert.Contains(t, left.Prompt.Text, "Round 3")
+	assert.NotEqual(t, answered.Prompt.Text, left.Prompt.Text, "a left round is not headed as answered")
+	assert.Contains(t, left.Content, left.Prompt.Text, "the fallback line carries the same heading")
+	assert.NotContains(t, left.Content, answered.Prompt.Text)
+}
+
 func roundPayloadForTest() map[string]any {
 	raw := []byte(`{"round":3,"change":"posted","frame":{"persona":"system designer","stage":"solution_design",
 		"questions":[{"number":7,"title":"Deploy","text":"Helm or Kustomize?","options":[{"title":"Helm"}]}]}}`)

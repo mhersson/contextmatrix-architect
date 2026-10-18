@@ -63,9 +63,10 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			return protocol.LogEntry{}, false
 		}
 
+		left := str(p["change"]) == blueprint.ChangeLeft
 		entry.Type = "text"
-		entry.Content = roundText(n, frame)
-		entry.Prompt = &protocol.LogPrompt{ID: fmt.Sprintf("round:%d", n), Kind: "round", Text: roundHeading(n, frame), Round: &frame}
+		entry.Content = roundText(n, frame, left)
+		entry.Prompt = &protocol.LogPrompt{ID: fmt.Sprintf("round:%d", n), Kind: "round", Text: roundHeading(n, frame, left), Round: &frame}
 	case blueprint.EventArtifact:
 		// A sheet reference: the body is on the sheet, never transcript text.
 		note := artifactNote(p)
@@ -401,8 +402,12 @@ func roundFrame(p map[string]any) (int, protocol.LogRound, bool) {
 	return n, f, n > 0
 }
 
-func roundHeading(n int, f protocol.LogRound) string {
+// roundHeading names round n; left marks a round the pipeline went past
+// before it was answered, which is closed but holds no full answer.
+func roundHeading(n int, f protocol.LogRound, left bool) string {
 	switch {
+	case left:
+		return fmt.Sprintf("Round %d, left unanswered", n)
 	case f.Closed:
 		return fmt.Sprintf("Round %d, answered", n)
 	case f.Responder:
@@ -414,10 +419,10 @@ func roundHeading(n int, f protocol.LogRound) string {
 
 // roundText is the round as plain markdown, for a panel without the block:
 // each question with its answer, or its options while it has none.
-func roundText(n int, f protocol.LogRound) string {
+func roundText(n int, f protocol.LogRound, left bool) string {
 	var b strings.Builder
 
-	b.WriteString("**" + roundHeading(n, f) + ".**")
+	b.WriteString("**" + roundHeading(n, f, left) + ".**")
 
 	answers := map[int]protocol.RoundAnswer{}
 	for _, a := range f.Answers {

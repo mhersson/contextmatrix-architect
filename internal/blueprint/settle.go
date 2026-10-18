@@ -9,10 +9,6 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-// changeLeft marks a round the pipeline went past without its answers; the
-// panel collapses it like a closed one.
-const changeLeft = "left"
-
 // segmentStep is what runs next on a run slot: a stage run, a critique, or
 // a run that goes on from a round (seg). The zero step runs nothing.
 type segmentStep struct {
@@ -259,19 +255,8 @@ func (c *Controller) showRound(ctx context.Context, au audit, id string, n int) 
 	lock.Lock()
 	defer lock.Unlock()
 
-	rounds, err := c.rounds(ctx, id)
-	if err != nil {
-		c.opts.Logger.Error("blueprint: read the round to show it again", "blueprint", id, "error", err)
-
-		return
-	}
-
-	if len(rounds) == 0 {
-		return
-	}
-
-	s := rounds[len(rounds)-1]
-	if s.Number != n || s.Frame.Closed || s.complete() {
+	s, ok := c.newestRound(ctx, id)
+	if !ok || s.Number != n || s.Frame.Closed || s.complete() {
 		return
 	}
 
@@ -290,23 +275,30 @@ func (c *Controller) collapseLeftRound(ctx context.Context, au audit, id string)
 	lock.Lock()
 	defer lock.Unlock()
 
-	rounds, err := c.rounds(ctx, id)
-	if err != nil {
-		c.opts.Logger.Error("blueprint: read the rounds to collapse a left one", "blueprint", id, "error", err)
-
-		return
-	}
-
-	if len(rounds) == 0 {
-		return
-	}
-
-	s := rounds[len(rounds)-1]
-	if s.Frame.Closed {
+	s, ok := c.newestRound(ctx, id)
+	if !ok || s.Frame.Closed {
 		return
 	}
 
 	left := s.clone()
-	left.Change, left.MessageID, left.Dropped, left.Frame.Closed = changeLeft, "", 0, true
+	left.Change, left.MessageID, left.Dropped, left.Frame.Closed = ChangeLeft, "", 0, true
 	c.putRound(ctx, au, id, 0, left)
+}
+
+// newestRound is the blueprint's newest round snapshot; ok is false when it
+// has none, or when the rounds cannot be read, which is logged. The caller
+// holds id's round lock.
+func (c *Controller) newestRound(ctx context.Context, id string) (roundState, bool) {
+	rounds, err := c.rounds(ctx, id)
+	if err != nil {
+		c.opts.Logger.Error("blueprint: read the newest round", "blueprint", id, "error", err)
+
+		return roundState{}, false
+	}
+
+	if len(rounds) == 0 {
+		return roundState{}, false
+	}
+
+	return rounds[len(rounds)-1], true
 }

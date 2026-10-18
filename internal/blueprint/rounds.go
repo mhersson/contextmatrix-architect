@@ -27,6 +27,9 @@ const (
 	changeClosed  = "closed"
 	// changeShown: a reopen shows an open round again.
 	changeShown = "shown"
+	// ChangeLeft marks a round the pipeline went past without its answers;
+	// the panel collapses it like a closed one.
+	ChangeLeft = "left"
 )
 
 // roundState is one snapshot of a question round: the frame the panel shows
