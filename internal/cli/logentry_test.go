@@ -89,6 +89,9 @@ func TestLogEntryFor(t *testing.T) {
 			},
 			"signoff": "human",
 		}}, "text", []string{"Intake: human", "Shape: auto", "Solution design", "gate <stage> human", "gate <stage> auto"}, false},
+		{"gate plan with a gate of its own policy", blueprint.Event{Kind: blueprint.EventGatePlan, BlueprintID: "S1", Payload: map[string]any{
+			"stages": []any{map[string]any{"stage": "intake", "policy": "human", "gate": true, "gate_policy": "auto"}},
+		}}, "text", []string{"Intake: human; its gate is auto"}, false},
 		{"setup gaps", blueprint.Event{Kind: blueprint.EventSetupGaps, BlueprintID: "S1", Payload: map[string]any{"projects": []any{
 			map[string]any{"project": "alpha", "has_verify": false, "has_instruction_file": false, "empty": true},
 			map[string]any{"project": "beta", "has_verify": true, "has_instruction_file": false, "empty": false},
@@ -214,15 +217,30 @@ func TestLogEntryFor(t *testing.T) {
 			"stage": "shape", "kind": "reviewer", "status": "done", "cost_usd": 0.02,
 		}}, "system", []string{"Review of Shape", "0.02"}, false},
 		{"a verdict", blueprint.Event{Kind: blueprint.EventReview, BlueprintID: "S1", Payload: map[string]any{
-			"stage": "shape", "version": 2, "score": 3, "threshold": 4, "findings": []any{"name the owner"}, "round": 1,
-		}}, "system", []string{"Shape", "3", "4", "name the owner"}, false},
+			"stage": "shape", "version": 2, "score": 3, "threshold": 4, "findings": []any{map[string]any{"id": "R1", "severity": "major", "text": "name the owner", "status": "open"}}, "round": 1,
+		}}, "system", []string{"Shape", "3", "4", "R1", "major", "name the owner"}, false},
+		{"a verdict that re-checked its findings", blueprint.Event{Kind: blueprint.EventReview, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "shape", "version": 2, "score": 4, "threshold": 4, "round": 2, "open_critical": []string{"R3"},
+			"findings": []any{
+				map[string]any{"id": "R1", "severity": "critical", "text": "name the owner", "status": "fixed", "verified_in": 2, "claim": "named in the table"},
+				map[string]any{"id": "R2", "severity": "minor", "text": "split it", "status": "still_open", "verified_in": 2},
+				map[string]any{"id": "R3", "severity": "critical", "text": "no way back", "status": "open"},
+			},
+		}}, "system", []string{"R1 (critical, fixed in version 2)", "named in the table", "R2 (minor, still open in version 2)", "R3 (critical, open)"}, false},
+		{"a gate with open critical findings", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "shape", "version": 3, "actions": []any{},
+			"review": map[string]any{
+				"score": 4, "threshold": 4, "round": 3, "passed": false, "open_critical": []string{"R2", "R5"},
+				"findings": []any{map[string]any{"id": "R2", "severity": "critical", "text": "a", "status": "still_open", "verified_in": 3}},
+			},
+		}}, "text", []string{"R2 and R5"}, false},
 		{"a gate with a verdict", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "shape", "version": 7, "actions": []any{map[string]any{"label": "Approve", "reply": "approve", "feedback": false}},
-			"review": map[string]any{"score": 2, "threshold": 4, "findings": []any{"split it"}, "round": 3, "passed": false},
+			"review": map[string]any{"score": 2, "threshold": 4, "findings": []any{map[string]any{"id": "R1", "severity": "major", "text": "split it", "status": "still_open", "verified_in": 7}}, "round": 3, "passed": false},
 		}}, "text", []string{"2", "4"}, false},
 		{"a gate whose checks accepted problems", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "solution_design", "version": 1, "actions": []any{},
-			"review":   map[string]any{"score": 4, "threshold": 4, "findings": []any{"name the owner"}, "round": 1, "passed": true},
+			"review":   map[string]any{"score": 4, "threshold": 4, "findings": []any{map[string]any{"id": "R1", "severity": "minor", "text": "name the owner", "status": "open"}}, "round": 1, "passed": true},
 			"problems": []any{"Q1: unused_answer: the question was answered, but no decision rests on it"},
 		}}, "text", []string{"- Q1: unused_answer: the question was answered, but no decision rests on it\n\n"}, false},
 		{"a note that runs a review again", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{
@@ -594,18 +612,23 @@ func TestLogEntryFor_AGateShowsItsReviewFindingsOnce(t *testing.T) {
 	const finding = "name the response fields"
 
 	review, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventReview, BlueprintID: "S1", Payload: map[string]any{
-		"stage": "solution_design", "version": 1, "score": 3, "threshold": 4, "findings": []any{finding}, "round": 3,
+		"stage": "solution_design", "version": 1, "score": 3, "threshold": 4, "round": 3,
+		"findings": []any{map[string]any{"id": "R1", "severity": "critical", "text": finding, "status": "still_open", "verified_in": 1}},
 	}})
 	require.True(t, ok)
 
 	gate, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
 		"stage": "solution_design", "version": 1, "actions": []any{},
-		"review": map[string]any{"score": 3, "threshold": 4, "findings": []any{finding}, "round": 3, "passed": false},
+		"review": map[string]any{
+			"score": 3, "threshold": 4, "round": 3, "passed": false, "open_critical": []string{"R1"},
+			"findings": []any{map[string]any{"id": "R1", "severity": "critical", "text": finding, "status": "still_open", "verified_in": 1}},
+		},
 	}})
 	require.True(t, ok)
 
 	assert.Equal(t, 1, strings.Count(review.Content+"\n"+gate.Content, finding), "the findings are shown once, in the review above the gate")
 	assert.Contains(t, review.Content, finding)
+	assert.Contains(t, gate.Content, "R1", "the gate names the open critical finding")
 }
 
 func TestLogEntryFor_AFoldedGateShowsTheFoldedSheetAndNeverTheDesignBody(t *testing.T) {
@@ -647,38 +670,6 @@ func TestLogEntryFor_AFoldedGateShowsTheFoldedSheetAndNeverTheDesignBody(t *test
 	assert.Contains(t, gate.Content, "- "+designProblem)
 	assert.Less(t, strings.Index(gate.Content, sliced), strings.Index(gate.Content, "- "+slicingProblem), "each folded artifact with its problems")
 	assert.Equal(t, "gate:solution_design:v2", gate.Prompt.ID, "the prompt is the design gate's")
-}
-
-func TestLogEntryFor_ARevisedGateNamesTheVersionTheReviewerScored(t *testing.T) {
-	gate := func(review map[string]any) protocol.LogEntry {
-		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
-			"stage": "shape", "version": 7, "actions": []any{map[string]any{"label": "Approve", "reply": "approve", "feedback": false}},
-			"review": review,
-		}})
-		require.True(t, ok)
-		require.NotNil(t, entry.Prompt)
-
-		return entry
-	}
-
-	base := func() map[string]any {
-		return map[string]any{"passed": true, "round": 1, "score": 4, "threshold": 4, "findings": []any{"thin"}}
-	}
-
-	plain := gate(base())
-
-	notRevised := base()
-	notRevised["revised"], notRevised["judged"] = false, 7
-	assert.Equal(t, plain.Content, gate(notRevised).Content, "an unrevised gate reads as one stored before revisions were recorded")
-
-	revised := base()
-	revised["revised"], revised["judged"] = true, 6
-	got := gate(revised)
-
-	assert.NotEqual(t, plain.Content, got.Content)
-	assert.Contains(t, got.Content, "version 6")
-	assert.Contains(t, got.Prompt.Text, "version 6", "the prompt's text carries the revision too")
-	assert.NotContains(t, got.Content, "thin", "findings stay in the review above")
 }
 
 func TestLogEntryFor_SignoffShowsEachAssumptionsSourceInPayloadOrder(t *testing.T) {
@@ -809,7 +800,7 @@ func TestLogEntryFor_Markers(t *testing.T) {
 		},
 		{
 			"a review stays a prose row",
-			ev(blueprint.EventReview, map[string]any{"stage": "solution_design", "version": 1, "score": 4, "threshold": 4, "findings": []string{"a"}, "round": 1}),
+			ev(blueprint.EventReview, map[string]any{"stage": "solution_design", "version": 1, "score": 4, "threshold": 4, "findings": []any{map[string]any{"id": "R1", "severity": "minor", "text": "a", "status": "open"}}, "round": 1}),
 			"system", nil, "4 of 5",
 		},
 		{
@@ -1007,7 +998,10 @@ func TestLogEntryFor_AGateAndItsReviewNameTheStageNotItsID(t *testing.T) {
 
 	gate, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
 		"stage": id, "version": 2, "actions": []any{map[string]any{"label": "Approve", "reply": "approve", "feedback": false}},
-		"review": map[string]any{"revised": true, "judged": 1, "score": 4, "threshold": 4, "findings": []any{"f"}},
+		"review": map[string]any{
+			"score": 4, "threshold": 4, "round": 2, "passed": true, "judged": 2, "open_critical": []string{},
+			"findings": []any{map[string]any{"id": "R1", "severity": "minor", "text": "f", "status": "open"}},
+		},
 		"folded": []any{map[string]any{"stage": "slicing_plan", "version": 1, "body": "# Slices"}},
 	}})
 	require.True(t, ok)

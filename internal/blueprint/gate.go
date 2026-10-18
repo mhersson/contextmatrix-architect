@@ -172,16 +172,16 @@ func (c *Controller) decide(ctx context.Context, au audit, id, stageID string, v
 	return true
 }
 
-// openGate acts on a gate whose artifact has its verdict, or is the
-// revision its verdict owed: when the stage and every stage folded into its
-// gate are under the auto policy now, a passing score approves them all and
-// what follows the stage is returned as advance returns it; otherwise, a
-// human policy on any of them or a score still below the threshold after the
-// attempt's rounds, the gate is shown and the chain stops.
+// openGate acts on a gate whose artifact has its verdict: when the stage and
+// every stage folded into its gate are under the auto policy now, a passing
+// verdict approves them all and what follows the stage is returned as
+// advance returns it; otherwise, a human policy on any of them or a verdict
+// that still does not pass after the attempt's rounds, the gate is shown and
+// the chain stops.
 func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Blueprint, out outcome) (string, outcome) {
 	st, _ := c.opts.Pack.Stage(out.stage)
 
-	v, found, _, err := c.gateReview(ctx, bp.ID, st, out.art)
+	v, found, err := c.gateReview(ctx, bp.ID, st, out.art)
 	if err != nil {
 		c.fail(ctx, sess.audit, bp.ID, 0, err.Error())
 
@@ -202,7 +202,7 @@ func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Bluep
 		return "", outcome{}
 	}
 
-	if auto && found && st.Reviewer != nil && v.Score >= st.Reviewer.Threshold {
+	if auto && found && st.Reviewer != nil && v.passes(st.Reviewer.Threshold) {
 		for _, f := range folded {
 			if !c.decide(ctx, sess.audit, bp.ID, f.Stage, f.Version, store.GateApprove, "", store.ResponderAuto, "") {
 				return "", outcome{}
@@ -222,8 +222,8 @@ func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Bluep
 }
 
 // allAuto reports whether stageID and every stage folded into its gate are
-// under the auto policy now: a folded gate stays a human's while any stage
-// it judges is.
+// under the auto gate policy now: a folded gate stays a human's while any
+// stage it judges has a human gate policy.
 func (c *Controller) allAuto(ctx context.Context, bp store.Blueprint, stageID string, folded []store.Artifact) (bool, error) {
 	stages := []string{stageID}
 	for _, f := range folded {
@@ -231,7 +231,7 @@ func (c *Controller) allAuto(ctx context.Context, bp store.Blueprint, stageID st
 	}
 
 	for _, id := range stages {
-		policy, err := c.policy(ctx, bp, id)
+		policy, err := c.gatePolicy(ctx, bp, id)
 		if err != nil {
 			return false, err
 		}
@@ -245,11 +245,11 @@ func (c *Controller) allAuto(ctx context.Context, bp store.Blueprint, stageID st
 }
 
 // showGate shows a stage's gate with its reviewer's verdict, the version
-// that verdict judged and whether the artifact is its revision, and leaves
-// the blueprint waiting for the decision; a folded gate carries the folded
-// artifacts, which the panel has not shown near it. The replies it takes
-// travel with it, for the panel's prompt; when they cannot be read, the gate
-// is not shown and the blueprint goes idle with the error reported.
+// that verdict judged, and leaves the blueprint waiting for the decision; a
+// folded gate carries the folded artifacts, which the panel has not shown
+// near it. The replies it takes travel with it, for the panel's prompt; when
+// they cannot be read, the gate is not shown and the blueprint goes idle with
+// the error reported.
 func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint, out outcome) {
 	actions, folded, err := c.gateActions(ctx, bp.ID, out.stage)
 	if err != nil {
@@ -283,20 +283,18 @@ func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint,
 
 	st, _ := c.opts.Pack.Stage(out.stage)
 
-	v, found, revised, err := c.gateReview(ctx, bp.ID, st, out.art)
+	v, found, err := c.gateReview(ctx, bp.ID, st, out.art)
 
 	switch {
 	case err != nil:
 		c.opts.Logger.Warn("blueprint: gate shown without its verdict", "blueprint", bp.ID, "stage", out.stage, "error", au.text(err.Error()))
 	case found && st.Reviewer != nil:
-		findings := v.Findings
-		if findings == nil {
-			findings = []string{}
-		}
+		threshold := st.Reviewer.Threshold
 
 		payload["review"] = map[string]any{
-			"score": v.Score, "threshold": st.Reviewer.Threshold, "findings": findings, "round": v.Round,
-			"passed": v.Score >= st.Reviewer.Threshold, "revised": revised, "judged": v.Version,
+			"score": v.Score, "threshold": threshold, "round": v.Round, "passed": v.passes(threshold),
+			"judged":   v.Version,
+			"findings": v.Findings.payload(addressedClaims(out.art)), "open_critical": v.openCritical(),
 		}
 	}
 

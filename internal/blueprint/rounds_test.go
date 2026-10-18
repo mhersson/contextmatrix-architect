@@ -427,3 +427,9 @@ func TestCloseRound_ACloseCutShortWritesOnlyWhatIsMissing(t *testing.T) {
 	assert.Equal(t, 2, qs[1].Number)
 	assert.Equal(t, "the ops team", qs[1].Answer)
 }
+
+func TestRoundState_NamesTheFindingsItsBuilderRoundWasGiven(t *testing.T) {
+	assert.Equal(t, []string{"R2", "R4"}, roundState{Findings: []string{"R2", "R4"}}.findingIDs())
+	assert.Equal(t, []string{"R1", "R2"}, roundState{RevisedFor: 2}.findingIDs(), "a snapshot stored before findings had ids")
+	assert.Empty(t, roundState{}.findingIDs())
+}

@@ -303,7 +303,10 @@ func TestView_States(t *testing.T) {
 				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
 				put(t, st, "slicing", stageData("slicing"))
 				ran(t, st, "slicing", store.RunKindReviewer, 1, 1, 0.05)
-				put(t, st, reviewStage("slicing"), map[string]any{"score": 4, "findings": []any{"name the owner", "split it"}, "version": 1, "attempt": 1, "round": 1})
+				put(t, st, reviewStage("slicing"), map[string]any{"score": 4, "findings": []any{
+					map[string]any{"id": "R1", "severity": "major", "text": "name the owner", "status": "open"},
+					map[string]any{"id": "R2", "severity": "minor", "text": "split it", "status": "open"},
+				}, "version": 1, "attempt": 1, "round": 1})
 				flying(t, c, st, "slicing", store.RunKindStage, 2)
 			},
 			check: func(t *testing.T, v protocol.BlueprintView) {
@@ -312,6 +315,11 @@ func TestView_States(t *testing.T) {
 				r := refOf(t, v, "slicing", 1)
 				require.NotNil(t, r.Review)
 				require.Len(t, r.Review.Findings, 2)
+				assert.True(t, r.Review.Passed)
+				assert.Equal(t, 1, r.Review.Round)
+				assert.Equal(t, "R1", r.Review.Findings[0].ID)
+				assert.Equal(t, "minor", r.Review.Findings[1].Severity)
+				assert.Equal(t, "open", r.Review.Findings[1].Status)
 
 				for _, f := range r.Review.Findings {
 					assert.Equal(t, 2, f.SentTo, "every finding went to the revision")
@@ -326,11 +334,14 @@ func TestView_States(t *testing.T) {
 				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
 				put(t, st, "slicing", stageData("slicing"))
 				ran(t, st, "slicing", store.RunKindReviewer, 1, 1, 0.05)
-				put(t, st, reviewStage("slicing"), map[string]any{"score": 4, "findings": []any{"name the owner", "split it"}, "version": 1, "attempt": 1, "round": 1})
+				put(t, st, reviewStage("slicing"), map[string]any{"score": 4, "findings": []any{
+					map[string]any{"id": "R1", "severity": "major", "text": "name the owner", "status": "open"},
+					map[string]any{"id": "R2", "severity": "minor", "text": "split it", "status": "open"},
+				}, "version": 1, "attempt": 1, "round": 1})
 				ran(t, st, "slicing", store.RunKindStage, 1, 2, 0.1)
 
 				data := stageData("slicing")
-				data["addressed"] = []any{map[string]any{"finding": 1, "note": "named"}, map[string]any{"finding": 9, "note": "bogus"}}
+				data["addressed"] = []any{map[string]any{"finding": "R1", "note": "named"}, map[string]any{"finding": "R9", "note": "bogus"}}
 				put(t, st, "slicing", data)
 				appendEvent(t, st, EventGate, map[string]any{"stage": "slicing", "version": 2})
 			},
@@ -338,13 +349,87 @@ func TestView_States(t *testing.T) {
 				r := refOf(t, v, "slicing", 1)
 				assert.Equal(t, artSuperseded, r.Status)
 				require.NotNil(t, r.Review)
-				assert.Equal(t, protocol.ReviewFinding{Text: "name the owner", SentTo: 2, AddressedIn: 2, AddressedBy: "product_owner", AddressedNote: "named"}, r.Review.Findings[0])
-				assert.Equal(t, protocol.ReviewFinding{Text: "split it", SentTo: 2}, r.Review.Findings[1], "a finding the revision did not list is only sent")
+				assert.Equal(t, protocol.ReviewFinding{ID: "R1", Severity: "major", Text: "name the owner", Status: "open", SentTo: 2, AddressedIn: 2, AddressedBy: "product_owner", AddressedNote: "named"}, r.Review.Findings[0])
+				assert.Equal(t, protocol.ReviewFinding{ID: "R2", Severity: "minor", Text: "split it", Status: "open", SentTo: 2}, r.Review.Findings[1], "a finding the revision did not list is only sent")
 
 				revised := refOf(t, v, "slicing", 2)
 				assert.Equal(t, artAtGate, revised.Status)
-				assert.Nil(t, revised.Review, "a revision is never reviewed")
+				assert.Nil(t, revised.Review, "the revision has no verdict yet")
 				assert.Equal(t, 2, stepOf(t, v, "slicing").LatestVersion)
+			},
+		},
+		{
+			name: "a re-checked finding keeps its id in the later review",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				through(t, c, st, "intake")
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", stageData("slicing"))
+				ran(t, st, "slicing", store.RunKindReviewer, 1, 1, 0.05)
+				put(t, st, reviewStage("slicing"), map[string]any{"score": 4, "findings": []any{
+					map[string]any{"id": "R1", "severity": "critical", "text": "no owner", "status": "open"},
+				}, "version": 1, "attempt": 1, "round": 1})
+				ran(t, st, "slicing", store.RunKindStage, 1, 2, 0.1)
+
+				data := stageData("slicing")
+				data["addressed"] = []any{map[string]any{"finding": "R1", "note": "named the owner"}}
+				put(t, st, "slicing", data)
+				ran(t, st, "slicing", store.RunKindReviewer, 1, 2, 0.05)
+				put(t, st, reviewStage("slicing"), map[string]any{"score": 5, "findings": []any{
+					map[string]any{"id": "R1", "severity": "critical", "text": "no owner", "status": "fixed", "verified_in": 2},
+				}, "version": 2, "attempt": 1, "round": 2})
+				appendEvent(t, st, EventGate, map[string]any{"stage": "slicing", "version": 2})
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				first := refOf(t, v, "slicing", 1).Review
+				require.NotNil(t, first)
+				assert.False(t, first.Passed, "a critical finding left open fails a review at the threshold")
+				assert.Equal(t, 1, first.Round)
+				assert.Equal(t, []protocol.ReviewFinding{{
+					ID: "R1", Severity: "critical", Text: "no owner", Status: "open",
+					SentTo: 2, AddressedIn: 2, AddressedBy: "product_owner", AddressedNote: "named the owner",
+				}}, first.Findings, "the claim sits where the finding was sent")
+
+				second := refOf(t, v, "slicing", 2).Review
+				require.NotNil(t, second)
+				assert.True(t, second.Passed)
+				assert.Equal(t, 2, second.Round)
+				assert.Equal(t, []protocol.ReviewFinding{{ID: "R1", Severity: "critical", Text: "no owner", Status: "fixed", VerifiedIn: 2}},
+					second.Findings, "the later review keeps the id with its verdict")
+			},
+		},
+		{
+			name: "a verdict stored before the ledger",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				through(t, c, st, "intake")
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", stageData("slicing"))
+				ran(t, st, "slicing", store.RunKindReviewer, 1, 1, 0.05)
+				put(t, st, reviewStage("slicing"), map[string]any{"score": 4, "findings": []any{"name the owner"}, "version": 1, "attempt": 1, "round": 1})
+				appendEvent(t, st, EventGate, map[string]any{"stage": "slicing", "version": 1})
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				r := refOf(t, v, "slicing", 1).Review
+				require.NotNil(t, r)
+				assert.True(t, r.Passed)
+				assert.Equal(t, 1, r.Round)
+				assert.Equal(t, []protocol.ReviewFinding{{ID: "R1", Severity: "major", Text: "name the owner", Status: "open", SentTo: 2}}, r.Findings)
+			},
+		},
+		{
+			name: "a verdict stored without its round",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				through(t, c, st, "intake")
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", stageData("slicing"))
+				ran(t, st, "slicing", store.RunKindReviewer, 1, 1, 0.05)
+				put(t, st, reviewStage("slicing"), map[string]any{"score": 4, "findings": []any{"name the owner"}, "version": 1, "attempt": 1})
+				appendEvent(t, st, EventGate, map[string]any{"stage": "slicing", "version": 1})
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				r := refOf(t, v, "slicing", 1).Review
+				require.NotNil(t, r)
+				assert.True(t, r.Passed)
+				assert.Equal(t, 1, r.Round)
 			},
 		},
 		{
@@ -606,7 +691,7 @@ func TestView_States(t *testing.T) {
 			check: func(t *testing.T, v protocol.BlueprintView) {
 				r := refOf(t, v, "slicing", 1)
 				assert.Equal(t, artApproved, r.Status)
-				assert.Equal(t, byResponder, r.DecidedBy)
+				assert.Equal(t, byAutomatic, r.DecidedBy, "the reviewer's verdict decided it")
 			},
 		},
 		{

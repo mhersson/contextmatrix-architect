@@ -30,7 +30,8 @@ Produce markdown with one `## <slice id>: <title>` section per slice: its
 value and the projects it touches. Submit with a data object
 `{"slices": [{"id": "SL1", "title": "<title>", "value": "<the value it delivers alone>", "projects": ["<name>"]}]}`.
 
-When a reviewer's findings come back to you, numbered, revise for them and
-add `"addressed": [{"finding": <its number>, "note": "<one sentence on what you changed>"}]`
+When a reviewer's findings come back to you, each with an id such as R2,
+revise for them and add `"addressed": [{"finding": "<its id>", "note": "<one sentence on what you changed>"}]`
 to the data, one entry per finding you addressed. Leave out a finding you
-did not address; never claim one you did not.
+did not address; never claim one you did not. The reviewer checks your
+revision itself, not your notes.

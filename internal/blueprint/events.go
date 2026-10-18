@@ -105,7 +105,10 @@ const (
 	// it.
 	EventGate = "gate"
 	// EventReview is a reviewer's verdict on a stage's artifact: the score,
-	// the threshold that passes, the findings and the round.
+	// the threshold, whether it passed, the round, the reviewer, the ledger
+	// (each finding's id, severity, text, status, the version a re-check
+	// verified, the reviewer's note and the builder's claim) and the
+	// critical findings still open.
 	EventReview = "review"
 	// EventDecided records a decision at a stage's gate or the sign-off, by a
 	// human or the auto policy, or a stage's fold into a later gate.

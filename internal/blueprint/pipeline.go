@@ -25,7 +25,7 @@ const maxContractRounds = 3
 // the stage that completed (gate, with stage and art the artifact that
 // waits), or the pipeline's end with the artifact it ended on. critique
 // marks a gate whose artifact still needs its reviewer, or a builder round
-// after a low verdict or the revision after a passing one with findings.
+// after a verdict that does not settle it.
 // fold, on an outcome that passes a stage, is the fold the caller records.
 type outcome struct {
 	stage    string
@@ -133,6 +133,15 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 					break
 				}
 
+				before, err := c.predatesGate(ctx, bp.ID, st, art)
+				if err != nil {
+					return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
+				}
+
+				if before {
+					break
+				}
+
 				pending, err := c.critiquePending(ctx, bp.ID, st, art)
 				if err != nil {
 					return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
@@ -153,6 +162,39 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 	}
 
 	return outcome{end: true, ready: true, art: last}, nil
+}
+
+// predatesGate reports a record written before the pack gave st a gate: a
+// later stage's run follows st's latest completed run, which under a gate
+// only an approval or a fold allows. A shown gate stays with its human.
+func (c *Controller) predatesGate(ctx context.Context, id string, st pack.Stage, art store.Artifact) (bool, error) {
+	shown, err := c.gateShown(ctx, id, st.ID, art.Version)
+	if err != nil || shown {
+		return false, err
+	}
+
+	runs, err := c.opts.Store.ListRuns(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("blueprint: list runs: %w", err)
+	}
+
+	stages := c.opts.Pack.Stages
+	later := stages[slices.IndexFunc(stages, func(s pack.Stage) bool { return s.ID == st.ID })+1:]
+	built := -1
+
+	for i, r := range runs {
+		if r.Kind == store.RunKindStage && r.Stage == st.ID && r.Status == store.RunDone {
+			built = i
+		}
+	}
+
+	if built < 0 {
+		return false, nil
+	}
+
+	return slices.ContainsFunc(runs[built+1:], func(r store.Run) bool {
+		return r.Kind == store.RunKindStage && slices.ContainsFunc(later, func(s pack.Stage) bool { return s.ID == r.Stage })
+	}), nil
 }
 
 // position reads where a blueprint with no run in flight stands: what
@@ -210,7 +252,7 @@ func rerunsOnReopen(r store.Run) bool {
 // the user's next message and an ended pipeline for a new blueprint. A stage
 // the session's end cut short runs again. An open gate is returned for the
 // gate to resume, and so is one whose artifact still needs its critique,
-// unless its latest review, builder round or revision failed or was aborted.
+// unless its latest review or builder round failed or was aborted.
 // A ready end is returned for the sign-off, emission or watch to resume. A
 // position the record does not yield is reported, not returned: the session
 // still attaches. The caller holds the run slot.
@@ -346,7 +388,7 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 	}
 
 	if out.gate && out.critique {
-		// A review, builder round or revision that failed or was aborted:
+		// A review or builder round that failed or was aborted:
 		// the message is a note and runs it again.
 		note := noteEvent(id, text, msgID, out.stage, false)
 		note.Payload["retries"] = out.stage
@@ -417,11 +459,11 @@ func (c *Controller) need(ctx, runCtx context.Context, r *run, sess *session, bp
 }
 
 // stopPoint is where a pipeline with no run in flight stands stopped: a
-// pending model stage, a gated stage whose critique (its review, builder
-// round or revision) is pending, a round whose continuation or chat run is
-// pending (round.stalled when that run failed or was aborted), or the first
-// stage, before its first artifact, with a need stored. fold is the fold to
-// record before the stage runs. byCap says the blueprint cap stopped it (see
+// pending model stage, a gated stage whose critique (its review or builder
+// round) is pending, a round whose continuation or chat run is pending
+// (round.stalled when that run failed or was aborted), or the first stage,
+// before its first artifact, with a need stored. fold is the fold to record
+// before the stage runs. byCap says the blueprint cap stopped it (see
 // stoppedByCap), and capUSD is the cap it stopped under.
 type stopPoint struct {
 	stage    string

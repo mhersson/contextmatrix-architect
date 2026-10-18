@@ -340,22 +340,32 @@ func (c *Controller) stageIDs() []string {
 	return out
 }
 
-// policy is who answers stageID's questions and decides its gate for this
-// blueprint, the first of these that says: the blueprint's latest gate
-// reply for the stage, a mode other than default (every policy auto), the
-// pack.
+// policy is who answers stageID's questions for this blueprint, the first of
+// these that says: the blueprint's latest gate reply for the stage, a mode
+// other than default (every policy auto), the pack's policy.
 func (c *Controller) policy(ctx context.Context, bp store.Blueprint, stageID string) (string, error) {
+	return c.policyFor(ctx, bp, stageID, false)
+}
+
+// gatePolicy is who decides stageID's gate for this blueprint: the same
+// reply and mode as policy, then the pack's gate policy.
+func (c *Controller) gatePolicy(ctx context.Context, bp store.Blueprint, stageID string) (string, error) {
+	return c.policyFor(ctx, bp, stageID, true)
+}
+
+func (c *Controller) policyFor(ctx context.Context, bp store.Blueprint, stageID string, gate bool) (string, error) {
 	events, err := c.opts.Store.ListEventsOfKind(ctx, bp.ID, EventPolicy)
 	if err != nil {
 		return "", fmt.Errorf("blueprint: read the gate replies: %w", err)
 	}
 
-	return c.resolvePolicy(bp, events, stageID)
+	return c.resolvePolicy(bp, events, stageID, gate)
 }
 
-// resolvePolicy is policy over the blueprint's policy events, oldest first,
-// so a caller resolving several stages reads them once.
-func (c *Controller) resolvePolicy(bp store.Blueprint, events []store.Event, stageID string) (string, error) {
+// resolvePolicy is policy, or gatePolicy when gate is set, over the
+// blueprint's policy events, oldest first, so a caller resolving several
+// stages reads them once. A gate reply sets both.
+func (c *Controller) resolvePolicy(bp store.Blueprint, events []store.Event, stageID string, gate bool) (string, error) {
 	for i := len(events) - 1; i >= 0; i-- {
 		var p struct {
 			Stage   string `json:"stage"`
@@ -376,22 +386,34 @@ func (c *Controller) resolvePolicy(bp store.Blueprint, events []store.Event, sta
 		return pack.PolicyAuto, nil
 	}
 
-	if st, ok := c.opts.Pack.Stage(stageID); ok && st.Policy != "" {
-		return st.Policy, nil
-	}
+	st, ok := c.opts.Pack.Stage(stageID)
 
-	return pack.PolicyAuto, nil
+	switch {
+	case ok && gate && st.GatePolicy != "":
+		return st.GatePolicy, nil
+	case ok && st.Policy != "":
+		return st.Policy, nil
+	default:
+		return pack.PolicyAuto, nil
+	}
 }
 
 // postGatePlan tells the session, once the first stage has completed, who
-// answers each model stage's questions and decides its gate. A policy that
-// cannot be read skips the plan: it is advice, and every question and gate
-// reads the policy again.
+// answers each model stage's questions and decides its gate; a gated
+// stage's entry carries its gate policy. A policy that cannot be read skips
+// the plan: it is advice, and every question and gate reads the policy again.
 func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.Blueprint) {
+	events, err := c.opts.Store.ListEventsOfKind(ctx, bp.ID, EventPolicy)
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: gate plan not posted", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
+
+		return
+	}
+
 	stages := make([]any, 0, len(c.opts.Pack.Stages))
 
 	for _, st := range c.opts.Pack.Stages {
-		policy, err := c.policy(ctx, bp, st.ID)
+		policy, err := c.resolvePolicy(bp, events, st.ID, false)
 		if err != nil {
 			c.opts.Logger.Warn("blueprint: gate plan not posted", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
 
@@ -399,6 +421,14 @@ func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.B
 		}
 
 		entry := map[string]any{"stage": st.ID, "policy": policy, "gate": st.Gate}
+
+		if st.Gate {
+			if entry["gate_policy"], err = c.resolvePolicy(bp, events, st.ID, true); err != nil {
+				c.opts.Logger.Warn("blueprint: gate plan not posted", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
+
+				return
+			}
+		}
 
 		if st.Fold != nil {
 			if into := c.foldTarget(st.ID); into != "" {

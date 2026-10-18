@@ -41,11 +41,15 @@ const (
 // roundState is one snapshot of a question round: the frame the panel shows
 // and what resuming the stage needs.
 type roundState struct {
-	Number       int   `json:"round"`
-	Attempt      int   `json:"attempt"`
-	BuilderRound int   `json:"builder_round"`
-	RevisedFor   int   `json:"revised_for,omitempty"`
-	PostedBy     int64 `json:"posted_by"`
+	Number       int `json:"round"`
+	Attempt      int `json:"attempt"`
+	BuilderRound int `json:"builder_round"`
+	// Findings are the ids of the review findings a builder round was given,
+	// which its submit may name as addressed. RevisedFor counts them in a
+	// snapshot stored before findings had ids, R1 to R<n>.
+	Findings   []string `json:"findings,omitempty"`
+	RevisedFor int      `json:"revised_for,omitempty"`
+	PostedBy   int64    `json:"posted_by"`
 	// RunID is the run whose stored conversation the next segment resumes:
 	// the one that posted the round, or the last that answered its chat.
 	RunID int64 `json:"run_id"`
@@ -122,6 +126,20 @@ func RoundAnswered(f protocol.LogRound) bool {
 	}
 
 	return true
+}
+
+// findingIDs are the ids of the findings the round's builder round was given.
+func (s roundState) findingIDs() []string {
+	if len(s.Findings) > 0 || s.RevisedFor == 0 {
+		return s.Findings
+	}
+
+	ids := make([]string, 0, s.RevisedFor)
+	for n := 1; n <= s.RevisedFor; n++ {
+		ids = append(ids, findingID(n))
+	}
+
+	return ids
 }
 
 // chatPending reports chat entries the stage's conversation has not seen.
@@ -735,7 +753,7 @@ func (c *Controller) roundAt(ctx context.Context, id string) (roundPlace, bool, 
 // attempt, given every answered question by its task; a builder round
 // returns nil, and its critique runs it again from the build it revises.
 func (c *Controller) continuation(ctx context.Context, bp store.Blueprint, s roundState) (*round, error) {
-	rd := &round{attempt: s.Attempt, number: s.BuilderRound, findings: s.RevisedFor, segment: SegmentAnswers, qround: s.Number}
+	rd := &round{attempt: s.Attempt, number: s.BuilderRound, findings: s.findingIDs(), segment: SegmentAnswers, qround: s.Number}
 
 	rd.history = c.runHistory(ctx, bp.ID, s.RunID)
 	if rd.history == nil {

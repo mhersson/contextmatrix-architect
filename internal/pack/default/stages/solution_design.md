@@ -17,9 +17,10 @@ When the user writes about an open round, answer with answer_chat,
 researching or reading the code first when the answer needs it, and revise
 or add questions when the point changes the round.
 Decide everything else yourself and record each such decision as an
-assumption, one standalone sentence each. One resting on an answered question gives it as
-its basis, `{"text": "<sentence>", "basis": "Q<n>"}`; the text states the
-fact, never who answered or which question, and never restates an answer.
+assumption, one standalone sentence each. One resting on an answered question or an accepted
+assumption gives it as its basis, `{"text": "<sentence>", "basis":
+"<Q<n> or round<n>.A<k>>"}`; the text states the fact, never who answered
+or which question, and never restates an answer.
 Before you submit, post your assumptions in a round's `assumptions` list,
 with the round's questions or alone; the user accepts each or turns it into
 a question. State an accepted one with the basis its acceptance gave, ask
@@ -31,11 +32,13 @@ ask only what it leaves open.
 Produce markdown with one `## <slice id>` section per slice: the projects
 involved, each decision with the options it rejected, and the contracts
 between projects. Submit with a data object
-`{"slices": [{"id": "SL1", "projects": ["<name>"], "decisions": [{"id": "DEC1", "text": "<what is decided>", "chosen": "<the option>", "rejected": [{"option": "<an option>", "why": "<why not>"}], "basis": "<Q<n>, S<n> or assumption>"}], "contracts": ["<a contract between projects, for both sides>"]}], "assumptions": ["<sentence>" or {"text": "<sentence>", "basis": "Q<n>"}]}`.
-Every answer you got for the slicing you design is the basis of a decision
-or a stated assumption; an answer from before it may still be cited.
+`{"slices": [{"id": "SL1", "projects": ["<name>"], "decisions": [{"id": "DEC1", "text": "<what is decided>", "chosen": "<the option>", "rejected": [{"option": "<an option>", "why": "<why not>"}], "basis": "<Q<n>, round<n>.A<k>, S<n> or assumption>"}], "contracts": ["<a contract between projects, for both sides>"]}], "assumptions": ["<sentence>" or {"text": "<sentence>", "basis": "<Q<n> or round<n>.A<k>>"}]}`.
+Every answer you got and every assumption the user accepted for the slicing
+you design is the basis of a decision or a stated assumption; one from
+before it may still be cited.
 
-When a reviewer's findings come back to you, numbered, revise for them and
-add `"addressed": [{"finding": <its number>, "note": "<one sentence on what you changed>"}]`
+When a reviewer's findings come back to you, each with an id such as R2,
+revise for them and add `"addressed": [{"finding": "<its id>", "note": "<one sentence on what you changed>"}]`
 to the data, one entry per finding you addressed. Leave out a finding you
-did not address; never claim one you did not.
+did not address; never claim one you did not. The reviewer checks your
+revision itself, not your notes.

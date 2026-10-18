@@ -259,7 +259,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 		in.Chat = rd.segment == SegmentChat
 
-		if rd.findings > 0 {
+		if len(rd.findings) > 0 {
 			check, state := addressedValidator(rd.findings)
 			in.Validate = allOf(append(validatorsOf(in.Validate), check))
 			checks.bounded = append(checks.bounded, state)
@@ -295,7 +295,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		tools: in.Tools, sink: sink, max: st.MaxQuestions, asked: asked,
 	}
 	if rd != nil {
-		iv.revisedFor, iv.qround, iv.seen = rd.findings, rd.qround, rd.seen
+		iv.findings, iv.qround, iv.seen = rd.findings, rd.qround, rd.seen
 	}
 
 	in.Interviewer = iv
@@ -388,7 +388,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		// stage's round, the round cards with findings were accepted on.
 		revisedFor := 0
 		if rd != nil {
-			revisedFor = rd.findings
+			revisedFor = len(rd.findings)
 		}
 
 		payload := map[string]any{

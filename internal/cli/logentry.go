@@ -855,10 +855,16 @@ func gatePlanText(p map[string]any) string {
 	b.WriteString("**Gate plan.** Who answers each stage's questions and decides its gate:")
 
 	for _, s := range anyMaps(p["stages"]) {
-		fmt.Fprintf(&b, "\n- %s: %s", pack.StageName(str(s["stage"])), str(s["policy"]))
+		policy := str(s["policy"])
+
+		fmt.Fprintf(&b, "\n- %s: %s", pack.StageName(str(s["stage"])), policy)
 
 		if gate, _ := s["gate"].(bool); gate {
-			b.WriteString(", with a gate")
+			if gp := str(s["gate_policy"]); gp != "" && gp != policy {
+				fmt.Fprintf(&b, "; its gate is %s", gp)
+			} else {
+				b.WriteString(", with a gate")
+			}
 
 			if into := str(s["folds_into"]); into != "" {
 				limit, unit := num(s["fold_max"]), "entries"
@@ -866,7 +872,7 @@ func gatePlanText(p map[string]any) string {
 					unit = "entry"
 				}
 
-				fmt.Fprintf(&b, " that folds into %s's gate when both stages have the same policy and its %s has at most %.0f %s", pack.StageName(into), str(s["fold_field"]), limit, unit)
+				fmt.Fprintf(&b, " that folds into %s's gate when both stages have the same gate policy and its %s has at most %.0f %s", pack.StageName(into), str(s["fold_field"]), limit, unit)
 			}
 		}
 	}
@@ -884,9 +890,10 @@ func gatePlanText(p map[string]any) string {
 }
 
 // gateText renders a stage's gate: the body (the version on the sheet waits,
-// the reviewer's score, the artifacts folded into it shown below, the
-// problems its checks accepted them with) and the reply line that decides
-// it, which starts with its separator.
+// the reviewer's score and the critical findings it left open, the
+// artifacts folded into it shown below, the problems its checks accepted
+// them with) and the reply line that decides it, which starts with its
+// separator.
 func gateText(p map[string]any) (body, reply string) {
 	var replies []string
 
@@ -921,22 +928,20 @@ func gateText(p map[string]any) (body, reply string) {
 	// gate refers to them rather than listing them a second time.
 	if v, ok := p["review"].(map[string]any); ok {
 		findings := ""
-		if len(stringsOf(v["findings"])) > 0 {
+		if len(anyMaps(v["findings"])) > 0 {
 			findings = "; its findings are in the review above"
 		}
 
-		revised, _ := v["revised"].(bool)
 		passed, _ := v["passed"].(bool)
 
 		switch {
-		case revised:
-			text += fmt.Sprintf(" The reviewer scored %s version %.0f at %.0f of 5 (passes at %.0f); its findings, in the review above, went back for one revision, and the version on the sheet is the revision, not reviewed again.",
-				pack.StageName(stage), num(v["judged"]), num(v["score"]), num(v["threshold"]))
 		case passed:
 			text += fmt.Sprintf(" The reviewer scored it %.0f of 5 (passes at %.0f)%s.", num(v["score"]), num(v["threshold"]), findings)
 		default:
 			text += fmt.Sprintf(" The reviewer did not pass it after %.0f round(s): %.0f of 5 (passes at %.0f)%s.", num(v["round"]), num(v["score"]), num(v["threshold"]), findings)
 		}
+
+		text += openCriticalText(stringsOf(v["open_critical"]))
 	}
 
 	if list := problemsList(p["problems"]); list != "" {
@@ -1025,16 +1030,70 @@ func runLabel(p map[string]any) string {
 	}
 }
 
-// reviewText renders a reviewer's verdict.
+// reviewText renders a reviewer's verdict and its ledger: each finding's
+// id, severity and status, with the builder's claim beside a re-checked one.
 func reviewText(p map[string]any) string {
 	text := fmt.Sprintf("The reviewer scored %s version %.0f %.0f of 5 (passes at %.0f), round %.0f.",
 		pack.StageName(str(p["stage"])), num(p["version"]), num(p["score"]), num(p["threshold"]), num(p["round"]))
 
-	for _, f := range stringsOf(p["findings"]) {
-		text += "\n- " + f
+	text += openCriticalText(stringsOf(p["open_critical"]))
+
+	for _, f := range anyMaps(p["findings"]) {
+		text += "\n- " + findingLine(f)
 	}
 
 	return text
+}
+
+// openCriticalText names the critical findings a verdict left open, which
+// fail it whatever its score; "" when there are none.
+func openCriticalText(ids []string) string {
+	switch len(ids) {
+	case 0:
+		return ""
+	case 1:
+		return fmt.Sprintf(" Open critical finding %s fails it whatever the score.", ids[0])
+	default:
+		return fmt.Sprintf(" Open critical findings %s fail it whatever the score.", joinIDs(ids))
+	}
+}
+
+// findingLine is one ledger entry: id, severity, the reviewer's status and
+// the text, then the builder's claim, which is never the verdict.
+func findingLine(f map[string]any) string {
+	status := "open"
+
+	switch str(f["status"]) {
+	case "fixed":
+		status = fmt.Sprintf("fixed in version %.0f", num(f["verified_in"]))
+	case "still_open":
+		status = fmt.Sprintf("still open in version %.0f", num(f["verified_in"]))
+	}
+
+	line := fmt.Sprintf("%s (%s, %s): %s", str(f["id"]), str(f["severity"]), status, str(f["text"]))
+
+	if note := str(f["note"]); note != "" {
+		line += " Reviewer: " + note
+	}
+
+	if claim, ok := f["claim"].(string); ok {
+		if claim == "" {
+			line += " The builder lists it as addressed."
+		} else {
+			line += " The builder's claim: " + claim
+		}
+	}
+
+	return line
+}
+
+// joinIDs lists ids as a sentence does: R2; R2 and R5; or R2, R4 and R5.
+func joinIDs(ids []string) string {
+	if len(ids) < 2 {
+		return strings.Join(ids, "")
+	}
+
+	return strings.Join(ids[:len(ids)-1], ", ") + " and " + ids[len(ids)-1]
 }
 
 // actionsPrompt makes a gate decidable by a click from the replies its

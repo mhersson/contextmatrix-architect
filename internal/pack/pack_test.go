@@ -72,6 +72,7 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 
 	acceptance, _ := p.Stage("acceptance")
 	assert.Equal(t, PolicyAuto, acceptance.Policy, "acceptance's gate is auto by default")
+	assert.Equal(t, PolicyAuto, acceptance.GatePolicy)
 	assert.True(t, acceptance.Gate)
 
 	slicing, _ := p.Stage("slicing")
@@ -88,8 +89,19 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	assert.Equal(t, "senior_developer", design.Reviewer.Persona)
 
 	intake, _ := p.Stage("intake")
-	assert.Equal(t, PolicyHuman, intake.Policy)
+	assert.Equal(t, PolicyHuman, intake.Policy, "a human answers intake's questions")
+	assert.True(t, intake.Gate)
+	assert.Equal(t, PolicyAuto, intake.GatePolicy, "intake's reviewer's verdict decides its gate")
 	assert.Equal(t, 3, intake.MaxQuestions)
+
+	next := map[string]string{"intake": "system_designer", "slicing": "system_designer", "solution_design": "senior_developer", "acceptance": "tester"}
+
+	for id, persona := range next {
+		s, _ := p.Stage(id)
+		require.NotNil(t, s.Reviewer, id)
+		assert.Equal(t, persona, s.Reviewer.Persona, "%s is reviewed from the next role's seat", id)
+		assert.Equal(t, []string{ToolCode, ToolResearch}, s.Reviewer.Tools, "%s's reviewer reads the code and opens cited pages", id)
+	}
 
 	for _, id := range []string{"intake", "slicing", "solution_design"} {
 		s, _ := p.Stage(id)
@@ -227,6 +239,8 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "a source key", stage: "    source: human\n", want: "source"},
 		{name: "an old gate value", stage: "    gate: questions\n", want: "cannot unmarshal"},
 		{name: "unknown policy", stage: "    policy: sometimes\n", want: "unknown policy"},
+		{name: "unknown gate_policy", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4}\n    gate_policy: sometimes\n", files: map[string]string{"stages/review.md": "x"}, want: "unknown gate_policy"},
+		{name: "gate_policy without a gate", stage: "    gate_policy: auto\n", want: "has a gate_policy but no gate"},
 		{name: "negative max_questions", stage: "    max_questions: -1\n", want: "max_questions"},
 		{name: "gate without a reviewer", stage: "    gate: true\n", want: "needs a reviewer"},
 		{name: "reviewer without a gate", stage: "    reviewer: {persona: po, threshold: 4}\n", want: "no gate"},
@@ -247,6 +261,8 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "card checks without card.md", stage: "    tools: [code]\n    checks: [cards]\n", files: map[string]string{"card.md": ""}, want: "card.md"},
 		{name: "card checks without code tools", stage: "    checks: [cards]\n", want: "tools: [code]"},
 		{name: "a reviewer without review instructions", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4}\n", want: "stages/review.md"},
+		{name: "a reviewer with the cm tools", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4, tools: [cm]}\n", files: map[string]string{"stages/review.md": "x"}, want: "not code or research"},
+		{name: "a reviewer with an unknown tool group", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4, tools: [shell]}\n", files: map[string]string{"stages/review.md": "x"}, want: "not code or research"},
 		{name: "a reserved stage id", stage: "  - id: review\n    persona: po\n", files: map[string]string{"stages/review.md": "x"}, want: "reserved"},
 		{name: "a dot in a stage id", stage: "  - id: s1.review\n    persona: po\n", files: map[string]string{"stages/s1.review.md": "x"}, want: "dot"},
 	}
@@ -343,4 +359,32 @@ func TestStageName(t *testing.T) {
 	} {
 		assert.Equal(t, tc.want, StageName(tc.id), tc.id)
 	}
+}
+
+func TestLoad_GatePolicy(t *testing.T) {
+	stages := "    policy: human\n    gate: true\n    gate_policy: auto\n    reviewer: {persona: po, threshold: 4}\n" +
+		"  - id: s2\n    persona: po\n    policy: human\n    gate: true\n    reviewer: {persona: po, threshold: 4}\n" +
+		"  - id: s3\n    persona: po\n    policy: human\n"
+
+	p, err := load(packFS(stages, map[string]string{"stages/s2.md": "x", "stages/s3.md": "x", "stages/review.md": "judge it"}))
+	require.NoError(t, err)
+
+	s1, _ := p.Stage("s1")
+	assert.Equal(t, PolicyHuman, s1.Policy, "a human answers its questions")
+	assert.Equal(t, PolicyAuto, s1.GatePolicy, "its reviewer's verdict decides its gate")
+
+	s2, _ := p.Stage("s2")
+	assert.Equal(t, PolicyHuman, s2.GatePolicy, "a gate takes the stage's policy by default")
+
+	s3, _ := p.Stage("s3")
+	assert.Empty(t, s3.GatePolicy, "a stage without a gate has no gate policy")
+}
+
+func TestLoad_ReviewerTools(t *testing.T) {
+	p, err := load(packFS("    gate: true\n    reviewer: {persona: po, threshold: 4, tools: [code, research]}\n", map[string]string{"stages/review.md": "judge it"}))
+	require.NoError(t, err)
+
+	s1, _ := p.Stage("s1")
+	require.NotNil(t, s1.Reviewer)
+	assert.Equal(t, []string{ToolCode, ToolResearch}, s1.Reviewer.Tools)
 }
