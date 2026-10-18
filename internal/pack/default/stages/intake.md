@@ -39,9 +39,10 @@ Rules:
   assumption. Each assumption is one sentence that stands alone: a reader
   who has only that sentence understands it. Never point at other text,
   such as "as noted above" or "see above".
-- An assumption that rests on an answered question gives it as its basis,
-  `{"text": "<sentence>", "basis": "Q<n>"}`. State the fact, never who
-  answered or which question; never restate an answer as an assumption.
+- An assumption that rests on an answered question or an accepted
+  assumption gives it as its basis, `{"text": "<sentence>", "basis":
+  "<Q<n> or round<n>.A<k>>"}`. State the fact, never who answered or which
+  question; never restate an answer as an assumption.
 - Before you submit, post your assumptions in a round's `assumptions`
   list, with the round's questions or alone; the user accepts each or turns
   it into a question. State an accepted one with the basis its acceptance
@@ -51,7 +52,7 @@ Rules:
   touches.
 - When the need is complete, call submit_artifact with the markdown as body
   and a data object {"slices": <number>, "projects": [<names>],
-  "assumptions": ["<sentence>" or {"text": "<sentence>", "basis": "Q<n>"}, ...]}.
+  "assumptions": ["<sentence>" or {"text": "<sentence>", "basis": "<Q<n> or round<n>.A<k>>"}, ...]}.
 
 When a reviewer's findings come back to you, each with an id such as R2,
 revise for them and add `"addressed": [{"finding": "<its id>", "note": "<one sentence on what you changed>"}]`
