@@ -140,7 +140,7 @@ func (c *Controller) acceptanceOf(ctx context.Context, id string) (acc acceptanc
 	case errors.Is(err, store.ErrNotFound):
 		return acceptance{}, stageID, false, nil
 	case err != nil:
-		return acceptance{}, stageID, false, fmt.Errorf("read %s: %w", pack.StageName(stageID), err)
+		return acceptance{}, stageID, false, fmt.Errorf("read %s: %w", pack.StageName(stageID, false), err)
 	}
 
 	var d acceptanceData

@@ -731,7 +731,7 @@ func (s *capStop) Error() string {
 		return s.unpriced
 	}
 
-	return "The " + s.shortfall() + "; " + pack.StageName(s.stage) + " stopped. Raise the cap by clicking the cost in the header (or reply `cap <usd>`) and it continues."
+	return "The " + s.shortfall() + "; " + pack.StageName(s.stage, false) + " stopped. Raise the cap by clicking the cost in the header (or reply `cap <usd>`) and it continues."
 }
 
 // reason is why a responder the blueprint cap refused did not run: the
@@ -825,7 +825,7 @@ func (c *Controller) runCap(ctx context.Context, bp store.Blueprint, kind, stage
 	if m.price == nil {
 		stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q has no price, so the cap cannot bind; pick a priced model, or reply `cap off` to lift the cap", capUSD, m.name)
 		if m.override {
-			stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q, the configured override for stage %s, has no price (CM prices only the session model), so the cap cannot bind; drop the override, or reply `cap off` to lift the cap", capUSD, m.name, pack.StageName(stageID))
+			stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q, the configured override for stage %s, has no price (CM prices only the session model), so the cap cannot bind; drop the override, or reply `cap off` to lift the cap", capUSD, m.name, pack.StageName(stageID, false))
 		}
 
 		return runBudget{refused: stop}, nil

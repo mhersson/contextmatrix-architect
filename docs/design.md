@@ -399,7 +399,10 @@ pack.yaml          stage order; per stage: persona, consumes,
                    (human, or auto by default) and for its gate (`gate_policy`,
                    the same by default), the gate, its fold condition, the
                    reviewer's persona, threshold and tool groups, the auto
-                   responder's question cap, loop target and rounds
+                   responder's question cap, loop target and rounds, whether
+                   it repeats per slice (`per_slice`) and which earlier
+                   slices' stages it reads (`earlier_slices`), and whether it
+                   settles what every slice shares (`shared`)
 personas/*.md      role text, one file per persona
 stages/*.md        instructions, one file per stage, review.md for every reviewer run and responder.md for every responder run
 card.md            the card body template
@@ -420,6 +423,11 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
   carries `stages/review.md`. A reviewer's tool groups are `code` and
   `research` only, and `research` gives it `web_fetch` alone. No stage id
   is `review` or `responder` or holds a dot, which names a stage's review.
+  Per-slice stages are contiguous, follow the stage that checks slices and
+  neither fold nor loop; `earlier_slices` names per-slice stages only; a
+  shared stage has a gate and sits between the stage that checks slices and
+  the per-slice stages, and no fold lands on its gate. No stage id holds `@`,
+  which joins a per-slice stage's id and its slice in the record.
   The loader refuses a pack that breaks one of these, and one whose `gate`
   is not true or false, such as a pack from before version 0.5 with `gate:
   questions`.

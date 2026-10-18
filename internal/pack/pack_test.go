@@ -351,13 +351,20 @@ func TestLoad_ResponderInstructionsAreOptional(t *testing.T) {
 func TestStageName(t *testing.T) {
 	t.Parallel()
 
-	for _, tc := range []struct{ id, want string }{
-		{"solution_design", "Solution design"},
-		{"intake", "Intake"},
-		{"a_b_c_d", "A b c d"},
-		{"", ""},
+	for _, tc := range []struct {
+		id     string
+		sliced bool
+		want   string
+	}{
+		{"solution_design", false, "Solution design"},
+		{"intake", false, "Intake"},
+		{"a_b_c_d", false, "A b c d"},
+		{"", false, ""},
+		{"solution_design@SL2", true, "Solution design (SL2)"},
+		{"solution_design@SL1", false, "Solution design"},
+		{"intake", true, "Intake"},
 	} {
-		assert.Equal(t, tc.want, StageName(tc.id), tc.id)
+		assert.Equal(t, tc.want, StageName(tc.id, tc.sliced), tc.id)
 	}
 }
 
@@ -387,4 +394,101 @@ func TestLoad_ReviewerTools(t *testing.T) {
 	s1, _ := p.Stage("s1")
 	require.NotNil(t, s1.Reviewer)
 	assert.Equal(t, []string{ToolCode, ToolResearch}, s1.Reviewer.Tools)
+}
+
+// slicedPack is a pack whose stages are the given yaml: a stage list over
+// one persona, with instructions for every stage id the tests use and the
+// review instructions.
+func slicedPack(stagesYAML string) fstest.MapFS {
+	fsys := fstest.MapFS{
+		"pack.yaml":        {Data: []byte("name: t\nversion: \"1\"\nstages:\n" + stagesYAML)},
+		"personas/po.md":   {Data: []byte("persona")},
+		"stages/review.md": {Data: []byte("judge it")},
+	}
+
+	for _, id := range []string{"cut", "shared", "design", "cards", "check", "plain"} {
+		fsys["stages/"+id+".md"] = &fstest.MapFile{Data: []byte("instructions")}
+	}
+
+	return fsys
+}
+
+const (
+	cutYAML    = "  - id: cut\n    persona: po\n    checks: [slices]\n    gate: true\n    fold: {field: slices, max: 1}\n    reviewer: {persona: po, threshold: 4}\n"
+	sharedYAML = "  - id: shared\n    persona: po\n    shared: true\n    gate: true\n    reviewer: {persona: po, threshold: 4}\n"
+	designYAML = "  - id: design\n    persona: po\n    per_slice: true\n    earlier_slices: [design, cards]\n    gate: true\n    reviewer: {persona: po, threshold: 4}\n"
+	cardsYAML  = "  - id: cards\n    persona: po\n    per_slice: true\n    earlier_slices: [design, cards]\n"
+	checkYAML  = "  - id: check\n    persona: po\n    consumes: [cards]\n    loops_to: cards\n    max_rounds: 2\n"
+	plainYAML  = "  - id: plain\n    persona: po\n"
+)
+
+func TestLoad_SliceKeys(t *testing.T) {
+	p, err := load(slicedPack(cutYAML + sharedYAML + designYAML + cardsYAML + checkYAML))
+	require.NoError(t, err)
+
+	design, _ := p.Stage("design")
+	assert.True(t, design.PerSlice)
+	assert.Equal(t, []string{"design", "cards"}, design.EarlierSlices)
+
+	shared, _ := p.Stage("shared")
+	assert.True(t, shared.Shared)
+	assert.False(t, shared.PerSlice)
+
+	check, _ := p.Stage("check")
+	assert.False(t, check.PerSlice, "a stage after the per-slice ones runs for the whole blueprint")
+	assert.Equal(t, "cut", p.SlicingStage())
+
+	none, err := load(packFS("", nil))
+	require.NoError(t, err)
+	assert.Empty(t, none.SlicingStage())
+}
+
+func TestLoad_SliceKeysInvalid(t *testing.T) {
+	tests := []struct {
+		name   string
+		stages string
+		want   string
+	}{
+		{name: "a per-slice stage without a slicing stage", stages: plainYAML + designYAML, want: "needs an earlier stage that checks slices"},
+		{name: "a per-slice stage before slicing", stages: designYAML + cutYAML, want: "needs an earlier stage that checks slices"},
+		{
+			name:   "the slicing stage itself per-slice",
+			stages: strings.Replace(cutYAML, "    fold: {field: slices, max: 1}\n", "    per_slice: true\n", 1) + designYAML + cardsYAML,
+			want:   "needs an earlier stage that checks slices",
+		},
+		{name: "per-slice stages apart", stages: cutYAML + designYAML + plainYAML + cardsYAML, want: "apart from the other per-slice stages"},
+		{name: "per_slice and shared", stages: cutYAML + strings.Replace(designYAML, "per_slice: true", "per_slice: true\n    shared: true", 1), want: "both per_slice and shared"},
+		{name: "a per-slice stage that folds", stages: cutYAML + strings.Replace(designYAML, "gate: true", "gate: true\n    fold: {field: slices, max: 1}", 1) + cardsYAML, want: "cannot fold"},
+		{name: "a per-slice stage that loops", stages: cutYAML + designYAML + strings.Replace(cardsYAML, "earlier_slices", "loops_to: design\n    max_rounds: 2\n    earlier_slices", 1), want: "cannot loop"},
+		{name: "earlier_slices on a whole-blueprint stage", stages: cutYAML + designYAML + cardsYAML + "  - id: plain\n    persona: po\n    earlier_slices: [design]\n", want: "is not per_slice"},
+		{name: "earlier_slices naming a whole-blueprint stage", stages: cutYAML + strings.Replace(designYAML, "[design, cards]", "[cut]", 1), want: "is not a per-slice stage"},
+		{name: "a shared stage without a gate", stages: cutYAML + "  - id: shared\n    persona: po\n    shared: true\n" + designYAML + cardsYAML, want: "needs a gate"},
+		{name: "a shared stage before slicing", stages: sharedYAML + cutYAML + designYAML + cardsYAML, want: "sits between"},
+		{name: "the slicing stage itself shared", stages: strings.Replace(cutYAML, "checks: [slices]", "checks: [slices]\n    shared: true", 1) + designYAML + cardsYAML, want: "sits between"},
+		{name: "a shared stage after the per-slice stages", stages: cutYAML + designYAML + cardsYAML + sharedYAML, want: "sits between"},
+		{name: "a shared stage without per-slice stages", stages: cutYAML + sharedYAML, want: "sits between"},
+		{name: "a fold whose only later gate is a shared stage's", stages: cutYAML + sharedYAML + "  - id: cards\n    persona: po\n    per_slice: true\n", want: "no later stage has a gate to fold into"},
+		{name: "an @ in a stage id", stages: "  - id: plain@x\n    persona: po\n", want: "@"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := load(slicedPack(tt.stages))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+func TestStepKey(t *testing.T) {
+	for _, tc := range []struct{ stage, slice, key string }{
+		{"solution_design", "SL2", "solution_design@SL2"},
+		{"intake", "", "intake"},
+	} {
+		assert.Equal(t, tc.key, StepKey(tc.stage, tc.slice))
+
+		stage, slice := SplitStep(tc.key)
+		assert.Equal(t, tc.stage, stage)
+		assert.Equal(t, tc.slice, slice)
+	}
 }

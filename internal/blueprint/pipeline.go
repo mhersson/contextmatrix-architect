@@ -511,7 +511,7 @@ func (c *Controller) stoppedAt(ctx context.Context, bp store.Blueprint) (stopPoi
 
 			p = stopPoint{stage: first, need: true}
 		case err != nil:
-			return stopPoint{}, false, fmt.Errorf("blueprint: read %s's artifact: %w", pack.StageName(first), err)
+			return stopPoint{}, false, fmt.Errorf("blueprint: read %s's artifact: %w", pack.StageName(first, false), err)
 		default:
 			out, _, err := c.position(ctx, bp)
 			if err != nil {

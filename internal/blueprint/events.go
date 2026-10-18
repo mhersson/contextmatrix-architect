@@ -214,7 +214,7 @@ func (a audit) artifact(ctx context.Context, id, stageID, body string, data map[
 	if data != nil {
 		b, err := json.Marshal(a.maskFields(data))
 		if err != nil {
-			return 0, fmt.Errorf("blueprint: encode %s artifact data: %w", pack.StageName(stageID), err)
+			return 0, fmt.Errorf("blueprint: encode %s artifact data: %w", pack.StageName(stageID, false), err)
 		}
 
 		raw = b
@@ -224,7 +224,7 @@ func (a audit) artifact(ctx context.Context, id, stageID, body string, data map[
 		BlueprintID: id, Stage: stageID, Body: a.text(body), Data: raw,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("blueprint: store %s artifact: %w", pack.StageName(stageID), err)
+		return 0, fmt.Errorf("blueprint: store %s artifact: %w", pack.StageName(stageID, false), err)
 	}
 
 	return version, nil

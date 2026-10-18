@@ -349,7 +349,7 @@ func assumptionLines(list []assumption) string {
 		status := a.Status
 
 		if a.Status == assumptionConfirmed && a.AcceptedAt != "" {
-			status += " by the user, accepted at " + pack.StageName(a.AcceptedAt)
+			status += " by the user, accepted at " + pack.StageName(a.AcceptedAt, false)
 		} else if who, ok := backer[a.Status]; ok {
 			status += " by " + who
 			if a.Basis != a.ID {

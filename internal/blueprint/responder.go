@@ -148,7 +148,7 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion) (p
 			// The stage still runs and decides, so this is not the blueprint's failure.
 			au.event(bg, Event{Kind: EventError, BlueprintID: iv.bp.ID, RunID: iv.runID, Payload: map[string]any{
 				"stage": stageID, "reason": "responder_refused",
-				"message": fmt.Sprintf("The responder for %s did not run: %s. The stage decides Q%d itself.", pack.StageName(stageID), refused.reason, q.Number),
+				"message": fmt.Sprintf("The responder for %s did not run: %s. The stage decides Q%d itself.", pack.StageName(stageID, false), refused.reason, q.Number),
 			}})
 		}
 

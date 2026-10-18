@@ -80,7 +80,7 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 		Status: store.RunRunning, Model: m.name, StartedAt: c.opts.Now().UTC(),
 	})
 	if err != nil {
-		return stage.Output{}, fmt.Errorf("blueprint: start the %s run of %s: %w", s.kind, pack.StageName(s.stage), err)
+		return stage.Output{}, fmt.Errorf("blueprint: start the %s run of %s: %w", s.kind, pack.StageName(s.stage, false), err)
 	}
 
 	f := &flight{
@@ -162,7 +162,7 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 		c.opts.Logger.Error("blueprint: read the cap stop", "blueprint", bp.ID, "run", runID, "error", err)
 	}
 
-	return out, fmt.Errorf("blueprint: the %s run of %s: %w", s.kind, pack.StageName(s.stage), runErr)
+	return out, fmt.Errorf("blueprint: the %s run of %s: %w", s.kind, pack.StageName(s.stage, false), runErr)
 }
 
 // sideFailed reports a reviewer run that did not complete, as a stage run's

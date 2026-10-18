@@ -72,7 +72,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		// A sheet reference: the body is on the sheet, never transcript text.
 		note := artifactNote(p)
 		entry.Type = "text"
-		entry.Content = fmt.Sprintf("%s rev %.0f: %s.", pack.StageName(str(p["stage"])), num(p["version"]), note)
+		entry.Content = fmt.Sprintf("%s rev %.0f: %s.", pack.StageName(str(p["stage"]), false), num(p["version"]), note)
 		entry.Marker = &protocol.LogMarker{
 			Kind: "artifact", Stage: str(p["stage"]), Version: int(num(p["version"])), Persona: str(p["persona"]), Note: note,
 		}
@@ -111,9 +111,9 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		case num(p["round"]) > 0 && stage == "":
 			entry.Content = fmt.Sprintf("Noted. Round %.0f still waits for its answers in the question block; the stage's next run gets the note.", num(p["round"]))
 		case stage != "" && critique:
-			entry.Content = fmt.Sprintf("Noted. The review of %s, or its next builder round, runs again, and it and every run after it get the note.", pack.StageName(stage))
+			entry.Content = fmt.Sprintf("Noted. The review of %s, or its next builder round, runs again, and it and every run after it get the note.", pack.StageName(stage, false))
 		case stage != "":
-			entry.Content = fmt.Sprintf("Noted. Stage %s runs again, and it and every stage after it get the note.", pack.StageName(stage))
+			entry.Content = fmt.Sprintf("Noted. Stage %s runs again, and it and every stage after it get the note.", pack.StageName(stage, false))
 		case ended:
 			entry.Content = "Noted. The pipeline has ended, so no stage starts to get it."
 		case duringRun:
@@ -166,7 +166,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = str(p["prompt"])
 
 		if strings.TrimSpace(entry.Content) == "" {
-			entry.Content = fmt.Sprintf("Stage %s takes your next message.", pack.StageName(str(p["stage"])))
+			entry.Content = fmt.Sprintf("Stage %s takes your next message.", pack.StageName(str(p["stage"]), false))
 		}
 
 		entry.Prompt = resumePrompt(p)
@@ -736,7 +736,7 @@ func assumptionStatus(a map[string]any) string {
 		who = "confirmed by you"
 
 		if at := str(a["accepted"]); at != "" {
-			return who + ", accepted at " + pack.StageName(at)
+			return who + ", accepted at " + pack.StageName(at, false)
 		}
 	default:
 		if evidence := str(a["evidence"]); evidence != "" {
@@ -768,7 +768,7 @@ func policyText(p map[string]any) string {
 		return "Nothing changed. " + refused + " Reply `gate <stage> human` or `gate <stage> auto`."
 	}
 
-	text := fmt.Sprintf("Stage %s is now %s for this blueprint, from its next question or gate.", pack.StageName(str(p["stage"])), str(p["policy"]))
+	text := fmt.Sprintf("Stage %s is now %s for this blueprint, from its next question or gate.", pack.StageName(str(p["stage"]), false), str(p["policy"]))
 
 	if str(p["open"]) == "round" {
 		text += " Its open round of questions stays with whoever it was put to."
@@ -806,7 +806,7 @@ func capText(p map[string]any) string {
 	}
 
 	if resumes := str(p["resumes"]); resumes != "" {
-		return text + "; resuming " + pack.StageName(resumes) + "."
+		return text + "; resuming " + pack.StageName(resumes, false) + "."
 	}
 
 	return text + "."
@@ -817,7 +817,7 @@ func capText(p map[string]any) string {
 // run start, which approve resumes, leaves continue nothing to run.
 func abortedText(p map[string]any) string {
 	if stage := str(p["stage"]); stage != "" && stage != "signoff" {
-		return "Abort requested. " + pack.StageName(stage) + " is canceled; reply `continue` to run it again. The blueprint is kept and can be reopened."
+		return "Abort requested. " + pack.StageName(stage, false) + " is canceled; reply `continue` to run it again. The blueprint is kept and can be reopened."
 	}
 
 	return "Abort requested. Any running stage is canceled; the blueprint is kept and can be reopened."
@@ -837,11 +837,11 @@ func stopsStage(p map[string]any) bool {
 // nothing waits to resume and what runs.
 func resumeText(p map[string]any) string {
 	if nothing, _ := p["nothing"].(bool); !nothing {
-		return "Resuming " + pack.StageName(str(p["stage"])) + "."
+		return "Resuming " + pack.StageName(str(p["stage"]), false) + "."
 	}
 
 	if running := str(p["running"]); running != "" {
-		return "Nothing is waiting to resume; " + pack.StageName(running) + " is running."
+		return "Nothing is waiting to resume; " + pack.StageName(running, false) + " is running."
 	}
 
 	return "Nothing is waiting to resume."
@@ -857,7 +857,7 @@ func gatePlanText(p map[string]any) string {
 	for _, s := range anyMaps(p["stages"]) {
 		policy := str(s["policy"])
 
-		fmt.Fprintf(&b, "\n- %s: %s", pack.StageName(str(s["stage"])), policy)
+		fmt.Fprintf(&b, "\n- %s: %s", pack.StageName(str(s["stage"]), false), policy)
 
 		if gate, _ := s["gate"].(bool); gate {
 			if gp := str(s["gate_policy"]); gp != "" && gp != policy {
@@ -872,7 +872,7 @@ func gatePlanText(p map[string]any) string {
 					unit = "entry"
 				}
 
-				fmt.Fprintf(&b, " that folds into %s's gate when both stages have the same gate policy and its %s has at most %.0f %s", pack.StageName(into), str(s["fold_field"]), limit, unit)
+				fmt.Fprintf(&b, " that folds into %s's gate when both stages have the same gate policy and its %s has at most %.0f %s", pack.StageName(into, false), str(s["fold_field"]), limit, unit)
 			}
 		}
 	}
@@ -909,12 +909,12 @@ func gateText(p map[string]any) (body, reply string) {
 	stage, version := str(p["stage"]), num(p["version"])
 	folded := anyMaps(p["folded"])
 
-	text := fmt.Sprintf("**Gate: %s, version %.0f.** Version %.0f is on the sheet and waits for your decision.", pack.StageName(stage), version, version)
+	text := fmt.Sprintf("**Gate: %s, version %.0f.** Version %.0f is on the sheet and waits for your decision.", pack.StageName(stage, false), version, version)
 
 	if len(folded) > 0 {
 		names := make([]string, 0, len(folded))
 		for _, f := range folded {
-			names = append(names, fmt.Sprintf("%s version %.0f", pack.StageName(str(f["stage"])), num(f["version"])))
+			names = append(names, fmt.Sprintf("%s version %.0f", pack.StageName(str(f["stage"]), false), num(f["version"])))
 		}
 
 		text += fmt.Sprintf(" It also judges %s, whose gate folded into this one, shown below.", strings.Join(names, " and "))
@@ -956,7 +956,7 @@ func gateText(p map[string]any) (body, reply string) {
 
 	if len(folded) > 0 {
 		for _, f := range folded {
-			text += fmt.Sprintf("\n\n**%s, version %.0f**\n\n%s", pack.StageName(str(f["stage"])), num(f["version"]), str(f["body"]))
+			text += fmt.Sprintf("\n\n**%s, version %.0f**\n\n%s", pack.StageName(str(f["stage"]), false), num(f["version"]), str(f["body"]))
 
 			if list := problemsList(f["problems"]); list != "" {
 				text += "\n\n" + list
@@ -995,15 +995,15 @@ func decidedText(p map[string]any) string {
 	if stage := str(p["stage"]); stage != "" && stage != "signoff" {
 		switch {
 		case str(p["decision"]) == "fold":
-			return fmt.Sprintf("%s folds into %s's gate, which judges both.", pack.StageName(stage), pack.StageName(str(p["feedback"])))
+			return fmt.Sprintf("%s folds into %s's gate, which judges both.", pack.StageName(stage, false), pack.StageName(str(p["feedback"]), false))
 		case str(p["decision"]) == "superseded":
-			return fmt.Sprintf("%s runs again after %s.", pack.StageName(stage), pack.StageName(str(p["feedback"])))
+			return fmt.Sprintf("%s runs again after %s.", pack.StageName(stage, false), pack.StageName(str(p["feedback"]), false))
 		case reject:
-			return fmt.Sprintf("Rejected %s; it runs again with your feedback.", pack.StageName(stage))
+			return fmt.Sprintf("Rejected %s; it runs again with your feedback.", pack.StageName(stage, false))
 		case auto:
-			return fmt.Sprintf("%s passed its gate under the auto policy.", pack.StageName(stage))
+			return fmt.Sprintf("%s passed its gate under the auto policy.", pack.StageName(stage, false))
 		default:
-			return fmt.Sprintf("Approved %s.", pack.StageName(stage))
+			return fmt.Sprintf("Approved %s.", pack.StageName(stage, false))
 		}
 	}
 
@@ -1022,11 +1022,11 @@ func decidedText(p map[string]any) string {
 func runLabel(p map[string]any) string {
 	switch str(p["kind"]) {
 	case store.RunKindReviewer:
-		return "Review of " + pack.StageName(str(p["stage"]))
+		return "Review of " + pack.StageName(str(p["stage"]), false)
 	case store.RunKindResponder:
-		return "The responder for " + pack.StageName(str(p["stage"]))
+		return "The responder for " + pack.StageName(str(p["stage"]), false)
 	default:
-		return "Stage " + pack.StageName(str(p["stage"]))
+		return "Stage " + pack.StageName(str(p["stage"]), false)
 	}
 }
 
@@ -1034,7 +1034,7 @@ func runLabel(p map[string]any) string {
 // id, severity and status, with the builder's claim beside a re-checked one.
 func reviewText(p map[string]any) string {
 	text := fmt.Sprintf("The reviewer scored %s version %.0f %.0f of 5 (passes at %.0f), round %.0f.",
-		pack.StageName(str(p["stage"])), num(p["version"]), num(p["score"]), num(p["threshold"]), num(p["round"]))
+		pack.StageName(str(p["stage"]), false), num(p["version"]), num(p["score"]), num(p["threshold"]), num(p["round"]))
 
 	text += openCriticalText(stringsOf(p["open_critical"]))
 

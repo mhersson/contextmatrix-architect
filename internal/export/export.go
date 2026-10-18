@@ -78,7 +78,7 @@ func blueprintMD(b Bundle) string {
 	for _, r := range b.Runs {
 		total += r.Usage.CostUSD
 		fmt.Fprintf(&sb, "| %d | %s | %s | %d | %d | %s | %s | %.4f | %d | %d |\n",
-			r.ID, pack.StageName(r.Stage), r.Kind, r.Attempt, r.Round, r.Status, r.Model, r.Usage.CostUSD, r.Usage.PromptTokens, r.Usage.CompletionTokens)
+			r.ID, pack.StageName(r.Stage, false), r.Kind, r.Attempt, r.Round, r.Status, r.Model, r.Usage.CostUSD, r.Usage.PromptTokens, r.Usage.CompletionTokens)
 	}
 
 	fmt.Fprintf(&sb, "\nTotal recorded cost: %.4f USD\n", total)
@@ -88,7 +88,7 @@ func blueprintMD(b Bundle) string {
 
 		for _, g := range b.Gates {
 			fmt.Fprintf(&sb, "| %s | %s | %d | %s | %s | %s |\n",
-				g.DecidedAt.Format("2006-01-02 15:04 UTC"), pack.StageName(g.Stage), g.Version, g.Decision, g.Responder, cell(g.Feedback))
+				g.DecidedAt.Format("2006-01-02 15:04 UTC"), pack.StageName(g.Stage, false), g.Version, g.Decision, g.Responder, cell(g.Feedback))
 		}
 	}
 
@@ -132,7 +132,7 @@ func questionsMD(questions []store.Question) string {
 	sb.WriteString("# Questions and answers\n\n")
 
 	for _, q := range questions {
-		fmt.Fprintf(&sb, "## %s (%s, answered by %s, %s)\n\n%s\n", q.Tag(), pack.StageName(q.Stage), q.Responder,
+		fmt.Fprintf(&sb, "## %s (%s, answered by %s, %s)\n\n%s\n", q.Tag(), pack.StageName(q.Stage, false), q.Responder,
 			q.AnsweredAt.Format("2006-01-02 15:04:05 UTC"), q.Text)
 
 		if q.Context != "" {
