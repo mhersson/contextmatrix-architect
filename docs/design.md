@@ -166,8 +166,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   `round:<n>` and its questions `Q<n>` after every question so far, shows it,
   and ends the harness run with the status `asked`. No model runs and nothing waits in memory while a human thinks.
   Answers sent in batches are stored as they come. Once every question has
-  an answer and every assumption on its tab a decision the round closes,
-  each answer and each accepted assumption is recorded in `questions`, and a
+  an answer and every assumption on its tab a decision the round closes:
+  each answer is recorded in `questions`, each accepted assumption on the
+  round itself (see Interaction), and a
   continuation runs: a stage run of the same attempt and builder round that
   resumes the stored conversation of the run that asked, or of the chat run
   that replied last, with the answers, the chat it has not answered and the
@@ -235,7 +236,8 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
 - **Crash recovery.** Artifacts are stored per stage, so after a dead process
   reopening the blueprint's session re-runs the open stage from its inputs. A
   re-run is given the questions its stage already asked, their answers and who
-  answered each (the user or the responder), so it does not ask them again. A
+  answered each (the user or the responder), so it does not ask them again,
+  and the assumptions the user accepted on its tabs, each with its tag. A
   stage run is resumed from the store only as a continuation after a round;
   a builder round after a review, a low one's next round or a passing one's
   revision, resumes the transcript of the run that built the artifact.
@@ -249,7 +251,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price as CM sent it                                        |
 | stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, findings, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
-| questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes (an assumption a human accepted on its tab included), or at the responder's answer under auto, or at the answer for one asked alone before rounds |
+| questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes, or at the responder's answer under auto, or at the answer for one asked alone before rounds; an assumption a human accepted on a tab is recorded on its round, not here |
 | gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted, each web search result list replaced by its query and result count |
 | events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning; every change of the blueprint's state is a `state` row, stored and never sent to the panel; every web search and page read is a `research` event (the query and result count, the URL and source tag, or the rule that refused it), and a session that runs a research stage without research says so once in a `research_off` event; a round is its `round` snapshots, the newest per round number winning |
@@ -316,10 +318,10 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   own, a title, and only the blueprint's target projects.
 - Solution design's submit is checked: it has slices, every slice of slicing
   among them; every decision has a chosen option, a rejected option and a
-  basis (`Q<n>`, `S<n>` or `assumption`); and every question it got answered
+  basis (`Q<n>`, `round<n>.A<k>`, `S<n>` or `assumption`); and every
+  question it got answered and every assumption the user accepted on its tabs
   since the slicing it consumes was built is the basis of a decision or of a
-  stated assumption, an assumption accepted on a round's tab included; an
-  answer from before a re-slice stays a basis it may cite.
+  stated assumption; one from before a re-slice stays a basis it may cite.
 - Acceptance's submit is checked: it has slices, every slice of slicing
   among them and each with at least one criterion; every criterion has an
   id of its own, a target project and its text, and every manual check an
@@ -583,29 +585,35 @@ the last tab of a round, labelled A1, A2, ... within the round; a chat that
 replaces the tab keeps an unchanged assumption's label and gives a new one
 a label the round never issued, so a decision the user made on a dropped
 assumption never lands on another. A human
-accepts each or turns it into a question: an accepted one is recorded as an
-answered question, `Q<n>`, which the stage states it with as its basis, so
-it reads `confirmed`; after one is turned into a question, a later round of
+accepts each or turns it into a question: an accepted one is recorded on its
+round, whose closed snapshot is the record, and cited as `round<n>.A<k>`, the
+round's number and the label (`round2.A1` for A1 on round 2's tab); the stage
+states it with that tag as its basis, so it reads `confirmed`. It takes no
+question number: `Q<n>` counts only questions a round asked. One a
+blueprint holds as a `questions` row stays cited by that row's `Q<n>`, whose
+number stays taken. After one is turned into a question, a later round of
 the attempt must be posted before the stage may submit. Under the human policy
 every stated assumption must have a basis. Under `auto` each assumption is
 accepted automatically, logged on the round, and keeps the status its basis
-gives it, never `confirmed`. The stage submits each assumption as a
-standalone sentence, or as `{"text": "<sentence>", "basis": "Q<n>"}` when it
-rests on an answered question. The check refuses a sentence that points at
-other text (the `dangling_references` list) or names an answered question
-(the basis carries the question and the sentence states the fact, so no
-model prose says who answered), and a basis that is no answered question;
-the third failing submit is accepted with its problems kept in its data,
-and a basis naming no answered question then reads as none. The controller numbers them
+gives it, never `confirmed`; no auto round records an acceptance. The stage
+submits each assumption as a standalone sentence, or as
+`{"text": "<sentence>", "basis": "<tag>"}` when it rests on an answered
+question (`Q<n>`) or an accepted assumption (`round<n>.A<k>`). The check refuses
+a sentence that points at other text (the `dangling_references` list) or
+names an answered question or an accepted assumption (the basis carries it
+and the sentence states the fact, so no model prose says who answered), and
+a basis that is neither; the third failing submit is accepted with its
+problems kept in its data, and such a basis then reads as none. The controller numbers them
 A1, A2, ... across those stages in pack order and gives every later stage
 that consumes a stating stage the list with the ids. An assumption starts
-with its basis's status: `confirmed` when a human answered the question,
-`assumed` when the responder did, `verified` with the responder's evidence
-when that answer was verified, and `unverified` without a basis. An auto
+with its basis's status: `confirmed` when a human answered the question or
+accepted the assumption, `assumed` when the responder answered it,
+`verified` with the responder's evidence when that answer was verified, and
+`unverified` without a basis. An auto
 answer's own `Q<n>` entry is listed only while no stated assumption in the
 latest stating artifacts rests on it; otherwise those that do carry its
 status, so an answer and its restatement are one entry. Every stated
-assumption with a basis carries that question's answer too, a human's
+assumption resting on an answered question carries its answer too, a human's
 included, so a merged entry still shows the answer the responder gave. A later
 stage (grounding) submits verdicts, verified or contradicted with evidence, as
 new artifact data, never an update; a verdict sets the status and evidence. An
@@ -617,10 +625,10 @@ assumptions read their basis's status until grounding judges them again. The
 sign-off (unverified, contradicted, assumed, confirmed, then verified), the
 playbook description and a single card's Context list every assumption with
 its latest status; each adds, for an assumed or confirmed one, who answered
-the question it rests on and its tag, and the answer, for every entry that
-carries one. When no stage stated any as data, as with an intake stored before
-assumptions were data, they show the text of intake's Assumptions section
-instead, without ids or statuses.
+the question or accepted the assumption it rests on and its tag, and the
+answer, for every entry that carries one. When no stage stated any as data,
+as with an intake stored before assumptions were data, they show the text of
+intake's Assumptions section instead, without ids or statuses.
 
 Later policy: `jira` (question posted as a comment; after two reminders
 without a reply it falls through to `auto`, logged as such).

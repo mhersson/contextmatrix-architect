@@ -584,35 +584,62 @@ func (c *Controller) writeNotesAfter(ctx context.Context, b *strings.Builder, id
 }
 
 // writeAnswered gives a run the questions earlier runs of its stage asked
-// and got answered, so a stage run again after a crash, an End or a
-// rejection does not ask them again.
+// and got answered and the assumptions the user accepted on their tabs, so
+// a stage run again after a crash, an End or a rejection neither asks them
+// again nor drops an acceptance.
 func (c *Controller) writeAnswered(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pack.Stage) error {
 	return c.writeAnsweredAfter(ctx, b, bp, st, 0)
 }
 
-// writeAnsweredAfter is writeAnswered for the questions of the runs after
-// run after.
+// writeAnsweredAfter is writeAnswered for the questions and acceptances of
+// the runs after run after.
 func (c *Controller) writeAnsweredAfter(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pack.Stage, after int64) error {
 	questions, err := c.opts.Store.ListQuestions(ctx, bp.ID)
 	if err != nil {
 		return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
 	}
 
+	accepted, err := c.acceptedAssumptions(ctx, bp.ID)
+	if err != nil {
+		return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
+	}
+
 	var own []store.Question
 
+	rows := map[string]bool{}
+
 	for _, q := range questions {
+		rows[q.Tag()] = true
+
 		if q.Stage == st.ID && q.RunID > after {
 			own = append(own, q)
 		}
 	}
 
-	if len(own) == 0 {
-		return nil
+	var ownAccepted []acceptedAssumption
+
+	for _, a := range accepted {
+		// A row an older close wrote is listed with the questions.
+		if a.Stage == st.ID && a.RunID > after && !rows[a.Tag] {
+			ownAccepted = append(ownAccepted, a)
+		}
 	}
 
-	b.WriteString("## Questions this stage already asked\n\nThey are answered; use the answers and do not ask them again:\n\n")
+	if len(own) > 0 {
+		b.WriteString("## Questions this stage already asked\n\nThey are answered; use the answers and do not ask them again:\n\n")
 
-	writeQuestions(b, own)
+		writeQuestions(b, own)
+	}
+
+	if len(ownAccepted) > 0 {
+		b.WriteString("## Assumptions the user accepted at this stage\n\nState each with its tag as the basis:\n\n")
+
+		for _, a := range ownAccepted {
+			fmt.Fprintf(b, "- [%s] %s\n", a.Tag, a.Text)
+		}
+
+		b.WriteString("\n")
+	}
 
 	return nil
 }

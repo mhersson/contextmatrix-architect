@@ -46,12 +46,12 @@ func (c *Controller) decisionsValidator(bp store.Blueprint, stageID string) (fun
 
 // decisionProblems checks a design: it has slices; every decision has a
 // chosen option, a rejected option and a basis the blueprint knows (an
-// answered question, a recorded source or "assumption"); every slice of a
-// consumed slicing is designed; and every question the stage got answered
-// since that slicing was built, in any attempt, is the basis of some
-// decision or stated assumption, so no answer is dropped: an assumption
-// accepted on a round's tab is an answered question its statement rests
-// on. An answer from before a re-slice stays citable.
+// answered question, an accepted assumption, a recorded source or
+// "assumption"); every slice of a consumed slicing is designed; and every
+// question the stage got answered and every assumption the user accepted on
+// its tabs since that slicing was built, in any attempt, is the basis of
+// some decision or stated assumption, so none is dropped. One from before a
+// re-slice stays citable.
 func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, stageID string, data map[string]any) ([]string, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
@@ -73,6 +73,11 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 		return nil, fmt.Errorf("read the sources: %w", err)
 	}
 
+	accepted, err := c.acceptedAssumptions(ctx, bp.ID)
+	if err != nil {
+		return nil, err
+	}
+
 	since, err := c.slicedBy(ctx, bp.ID, stageID)
 	if err != nil {
 		return nil, err
@@ -80,13 +85,29 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 
 	known := map[string]bool{}
 
-	var own []string
+	// owed is a basis the stage must use, with what made it one.
+	type owed struct{ tag, what string }
+
+	var own []owed
 
 	for _, q := range questions {
 		known[q.Tag()] = true
 
 		if q.Stage == stageID && q.RunID > since {
-			own = append(own, q.Tag())
+			own = append(own, owed{q.Tag(), "the question was answered"})
+		}
+	}
+
+	for _, a := range accepted {
+		// A row an older close wrote is owed above, as its question.
+		if known[a.Tag] {
+			continue
+		}
+
+		known[a.Tag] = true
+
+		if a.Stage == stageID && a.RunID > since {
+			own = append(own, owed{a.Tag, "the user accepted the assumption"})
 		}
 	}
 
@@ -123,7 +144,7 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 			case known[basis]:
 				used[basis] = true
 			default:
-				out = append(out, problem(where, "basis", fmt.Sprintf("%q is no answered question (Q<n>), recorded source (S<n>) or assumption", dec.Basis)))
+				out = append(out, problem(where, "basis", fmt.Sprintf("%q is no answered question (Q<n>), accepted assumption (round<n>.A<k>), recorded source (S<n>) or assumption", dec.Basis)))
 			}
 		}
 	}
@@ -140,9 +161,9 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 
 	out = append(out, missing...)
 
-	for _, tag := range own {
-		if !used[tag] {
-			out = append(out, problem(tag, "unused_answer", "the question was answered, but no decision or stated assumption rests on it"))
+	for _, o := range own {
+		if !used[o.tag] {
+			out = append(out, problem(o.tag, "unused_answer", o.what+", but no decision or stated assumption rests on it"))
 		}
 	}
 
