@@ -328,6 +328,54 @@ func TestResponder_NoBudgetLeftLeavesTheStageToDecide(t *testing.T) {
 	require.NoError(t, err, "the stage decides and goes on")
 }
 
+func TestResponder_BelowItsFloorTheStageDecides(t *testing.T) {
+	got := make(chan error, 1)
+
+	script := happyScript()
+	script["intake"] = askingIntake(got)
+	script["intake.responder"] = returns("# Answer", map[string]any{"answer": "helm", "reasoning": "r", "grounded": true})
+
+	c, st, runner, rec, _ := newPipeline(t, script)
+	ctx := context.Background()
+
+	in := autoInput()
+	in.Price = testPrice()
+	in.CostCapUSD = 0.9
+
+	require.NoError(t, c.Start(ctx, in))
+
+	// An earlier responder run puts the responder's floor at 0.5, above the
+	// 0.4 left, while intake's own floor stays at the minimum.
+	ranBefore(t, st, store.RunKindResponder, "intake", store.RunDone, 0.5)
+
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	require.NoError(t, <-got, "the stage decides the question")
+	assert.Empty(t, inputsOf(runner, "intake.responder"), "no responder run below its floor")
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+
+	var responders int
+
+	for _, r := range runs {
+		if r.Kind == store.RunKindResponder {
+			responders++
+		}
+	}
+
+	assert.Equal(t, 1, responders, "only the earlier responder run")
+
+	refused, ok := rec.first(EventError)
+	require.True(t, ok, "the refusal is reported")
+	assert.Equal(t, "responder_refused", refused.Payload["reason"])
+	assert.Empty(t, capStops(t, st), "a responder refused inside its run stops no stage")
+
+	_, err = st.LatestArtifact(ctx, "BP1", "intake")
+	require.NoError(t, err, "the stage decides and goes on")
+}
+
 func TestResponder_GetsTheGateFeedbackItsAttemptAddresses(t *testing.T) {
 	var shapes atomic.Int32
 

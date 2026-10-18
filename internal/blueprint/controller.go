@@ -689,67 +689,216 @@ func (c *Controller) modelFor(sess *session, persona string) runModel {
 	return runModel{name: sess.model, price: sess.price}
 }
 
-// runCap is the cap a run of stageID on model m must stay under: the
-// configured per-run cap, or what is left of the blueprint cap when that is
-// smaller; 0 means no cap. refused says why the run may not start: a capped
-// blueprint whose run would be unpriced, since the cap could not bind, or a
-// spent cap. It reports nothing.
-func (c *Controller) runCap(ctx context.Context, bp store.Blueprint, stageID string, m runModel) (float64, string, error) {
-	runCap := c.opts.MaxRunCostUSD
+// minRunFloorUSD is the least a run needs left of the blueprint cap to
+// start, however little its kind's earlier runs cost.
+const minRunFloorUSD = 0.10
 
-	if bp.CostCapUSD <= 0 {
-		return runCap, "", nil
+// capBlueprint is a cap stop's "cap" in its error event payload.
+const capBlueprint = "blueprint"
+
+// runBudget is what the blueprint cap allows a run: the cap it must stay
+// under (0 means none), or refused, why it may not start. bound says capUSD
+// is what the blueprint cap has left, being below the per-run cap or there
+// being none, so the run reaching it is a cap stop.
+type runBudget struct {
+	capUSD  float64
+	bound   bool
+	refused *capStop
+}
+
+// capStop is a stage the blueprint cost cap stopped: a run of it refused, or
+// cut short at what the blueprint had left. floor is set when what is left
+// is below the floor the next run needs; unpriced is the refusal of a model
+// without a price, which keeps its own text.
+type capStop struct {
+	stage         string
+	capUSD, spent float64
+	floor         float64
+	unpriced      string
+}
+
+// Error is the stop's message, which says how to go on.
+func (s *capStop) Error() string {
+	if s.unpriced != "" {
+		return s.unpriced
 	}
 
-	if m.price == nil {
-		if m.override {
-			return 0, fmt.Sprintf("cost cap %.2f USD is set but model %q, the configured override for stage %s, has no price (CM prices only the session model), so the cap cannot bind; drop the override, or start a new blueprint without a cap", bp.CostCapUSD, m.name, pack.StageName(stageID)), nil
-		}
+	return "The " + s.shortfall() + "; " + pack.StageName(s.stage) + " stopped. Raise the cap by clicking the cost in the header (or reply `cap <usd>`) and it continues."
+}
 
-		return 0, fmt.Sprintf("cost cap %.2f USD is set but model %q has no price, so the cap cannot bind; pick a priced model, or start a new blueprint without a cap", bp.CostCapUSD, m.name), nil
+// reason is why a responder the blueprint cap refused did not run: the
+// asking stage goes on, so it names no stop.
+func (s *capStop) reason() string {
+	if s.unpriced != "" {
+		return s.unpriced
+	}
+
+	return "the " + s.shortfall()
+}
+
+func (s *capStop) shortfall() string {
+	if s.floor == 0 {
+		return fmt.Sprintf("blueprint's $%.2f cap is used up ($%.2f spent)", s.capUSD, s.spent)
+	}
+
+	return fmt.Sprintf("blueprint's $%.2f cap leaves $%.2f ($%.2f spent), less than the $%.2f the next run needs",
+		s.capUSD, s.capUSD-s.spent, s.spent, s.floor)
+}
+
+// payload is the stop's error event payload.
+func (s *capStop) payload() map[string]any {
+	return map[string]any{
+		"stage": s.stage, "message": s.Error(),
+		"cap": capBlueprint, "cap_usd": s.capUSD, "blueprint_spent_usd": s.spent,
+	}
+}
+
+// capStopOf reports whether e is a cap stop, and the stage it stopped.
+func capStopOf(e store.Event) (string, bool) {
+	if e.Kind != EventError {
+		return "", false
+	}
+
+	var p struct {
+		Cap   string `json:"cap"`
+		Stage string `json:"stage"`
+	}
+
+	if json.Unmarshal(e.Payload, &p) != nil || p.Cap != capBlueprint {
+		return "", false
+	}
+
+	return p.Stage, true
+}
+
+// runCap is what the blueprint cap allows a run of kind on stageID on model
+// m: the configured per-run cap, or what is left of the blueprint cap when
+// that is smaller. It refuses a capped blueprint whose run would be
+// unpriced, since the cap could not bind, a spent cap, and less left than
+// the run's floor. It reports nothing.
+func (c *Controller) runCap(ctx context.Context, bp store.Blueprint, kind, stageID string, m runModel) (runBudget, error) {
+	b := runBudget{capUSD: c.opts.MaxRunCostUSD}
+
+	if bp.CostCapUSD <= 0 {
+		return b, nil
 	}
 
 	spent, err := c.opts.Store.BlueprintCost(ctx, bp.ID)
 	if err != nil {
-		return 0, "", fmt.Errorf("cost lookup failed: %w", err)
+		return runBudget{}, fmt.Errorf("cost lookup failed: %w", err)
+	}
+
+	stop := &capStop{stage: stageID, capUSD: bp.CostCapUSD, spent: spent}
+
+	if m.price == nil {
+		stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q has no price, so the cap cannot bind; pick a priced model, or start a new blueprint without a cap", bp.CostCapUSD, m.name)
+		if m.override {
+			stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q, the configured override for stage %s, has no price (CM prices only the session model), so the cap cannot bind; drop the override, or start a new blueprint without a cap", bp.CostCapUSD, m.name, pack.StageName(stageID))
+		}
+
+		return runBudget{refused: stop}, nil
+	}
+
+	left := bp.CostCapUSD - spent
+	if left <= 0 {
+		return runBudget{refused: stop}, nil
+	}
+
+	floor, err := c.runFloor(ctx, bp.ID, kind, stageID)
+	if err != nil {
+		return runBudget{}, err
+	}
+
+	if left < floor {
+		stop.floor = floor
+
+		return runBudget{refused: stop}, nil
 	}
 
 	// A run cap of zero means no per-run cap; the blueprint cap alone
 	// bounds the run by what is left of it.
-	if remaining := bp.CostCapUSD - spent; runCap <= 0 || remaining < runCap {
-		runCap = remaining
+	if b.capUSD <= 0 || left < b.capUSD {
+		b.capUSD, b.bound = left, true
 	}
 
-	if runCap <= 0 {
-		return 0, fmt.Sprintf("cost cap %.2f USD would be breached (spent %.2f)", bp.CostCapUSD, spent), nil
-	}
-
-	return runCap, "", nil
+	return b, nil
 }
 
-// capAllows reports whether a run of stageID on model m may start under the
-// blueprint's cost cap, and the cap it must stay under (see runCap). A
-// refusal is reported to the panel, with refused merged into its event
-// payload, and leaves the blueprint idle.
-func (c *Controller) capAllows(ctx context.Context, au audit, bp store.Blueprint, stageID string, m runModel, refused map[string]any) (float64, bool) {
-	runCap, reason, err := c.runCap(ctx, bp, stageID, m)
+// runFloor is what a run of kind on stageID needs left of the blueprint cap
+// to start: the median cost of the blueprint's done runs of that kind and
+// stage, never below minRunFloorUSD.
+func (c *Controller) runFloor(ctx context.Context, id, kind, stageID string) (float64, error) {
+	runs, err := c.opts.Store.ListRuns(ctx, id)
+	if err != nil {
+		return 0, fmt.Errorf("cost lookup failed: %w", err)
+	}
+
+	var costs []float64
+
+	for _, r := range runs {
+		if r.Status == store.RunDone && r.Kind == kind && r.Stage == stageID {
+			costs = append(costs, r.Usage.CostUSD)
+		}
+	}
+
+	if len(costs) == 0 {
+		return minRunFloorUSD, nil
+	}
+
+	sort.Float64s(costs)
+
+	mid := len(costs) / 2
+	median := costs[mid]
+
+	if len(costs)%2 == 0 {
+		median = (costs[mid-1] + costs[mid]) / 2
+	}
+
+	return max(minRunFloorUSD, median), nil
+}
+
+// capStopAfter is the cap stop of a run of kind on stageID cut short at what
+// the blueprint had left, as the ledger stands once the run has ended.
+func (c *Controller) capStopAfter(ctx context.Context, bp store.Blueprint, kind, stageID string) (*capStop, error) {
+	spent, err := c.opts.Store.BlueprintCost(ctx, bp.ID)
+	if err != nil {
+		return nil, fmt.Errorf("cost lookup failed: %w", err)
+	}
+
+	stop := &capStop{stage: stageID, capUSD: bp.CostCapUSD, spent: spent}
+
+	if spent < bp.CostCapUSD {
+		if stop.floor, err = c.runFloor(ctx, bp.ID, kind, stageID); err != nil {
+			return nil, err
+		}
+	}
+
+	return stop, nil
+}
+
+// capAllows reports whether a stage run of stageID on model m may start
+// under the blueprint's cost cap, and what it is allowed (see runCap). A
+// refusal is a cap stop reported to the panel, with refused merged into its
+// event payload, and leaves the blueprint idle.
+func (c *Controller) capAllows(ctx context.Context, au audit, bp store.Blueprint, stageID string, m runModel, refused map[string]any) (runBudget, bool) {
+	b, err := c.runCap(ctx, bp, store.RunKindStage, stageID, m)
 	if err != nil {
 		c.fail(ctx, au, bp.ID, 0, err.Error())
 
-		return 0, false
+		return runBudget{}, false
 	}
 
-	if reason != "" {
-		payload := map[string]any{"stage": stageID, "message": reason}
+	if b.refused != nil {
+		payload := b.refused.payload()
 		maps.Copy(payload, refused)
 
 		au.event(ctx, Event{Kind: EventError, BlueprintID: bp.ID, Payload: payload})
 		c.setState(ctx, bp.ID, StateIdle)
 
-		return 0, false
+		return runBudget{}, false
 	}
 
-	return runCap, true
+	return b, true
 }
 
 // noteEvent records a message that is neither the need nor an answer.

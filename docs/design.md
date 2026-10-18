@@ -580,7 +580,9 @@ decisions the AI made. A responder that fails leaves its question to the
 stage, which decides it and records an assumption where it can; under a pack
 without `stages/responder.md` an auto round is refused and the stage decides
 every question. On a priced model a responder spends
-from the asking run's cost cap.
+from the asking run's cost cap; one a cap refuses (the asking run's spent,
+or less than its floor left of the blueprint's) leaves its question to the
+stage too.
 
 **Assumptions are data.** Before it submits, a stage that declares the
 `assumptions` check (intake and solution design) posts its assumptions as
@@ -792,7 +794,22 @@ Replies the server understands, besides a round's structured answers:
 | `lessons`                     | Lists lessons and their state.                                          |
 | `abort`                       | Ends the open run; the blueprint stays and can be reopened, and an open round stays open. |
 
-- A run does not start if it would breach the blueprint's cost cap.
+- Under a blueprint cost cap a run starts only with its floor left: the
+  median cost of the blueprint's done runs of its kind (stage, reviewer or
+  responder) and stage, never less than $0.10. The floor bounds what the
+  blueprint cap has left, never the per-run cap. A stage or reviewer run the
+  blueprint cap refuses (spent, below the floor, or on a model without a
+  price), or one cut short at what the blueprint had left because that was
+  below the per-run cap or there is none, is a cap stop: the blueprint is
+  idle and the error event carries `"cap": "blueprint"`, the cap (`cap_usd`)
+  and what the blueprint has spent (`blueprint_spent_usd`). Its message names
+  the stage and says how to go on, for a spent cap "The blueprint's $2.00 cap
+  is used up ($2.14 spent); Readiness stopped. Raise the cap by clicking the
+  cost in the header (or reply `cap <usd>`) and it continues.", below the
+  floor that the cap leaves less than the next run needs; a model without a
+  price keeps its own refusal. A run that reaches the per-run cap is an
+  ordinary failed run, and a responder below its floor is refused inside the
+  asking run, which decides the question itself.
 - Reopening a session makes CM send a start for it; a stage interrupted by a
   server restart is re-run from its inputs, or from its stored conversation
   when it went on from a round (below), and a stage whose inputs were stored
@@ -982,11 +999,13 @@ frames on the session's chat stream.
 - Tool results are capped at 128 KiB per call before the model sees them,
   head and tail kept, as in the chat backend.
 - Cost: every run's token buckets are priced at the model price CM sends in
-  the start payload; the ledger sums runs per blueprint. The per-run cap
-  (off at zero) stops a run within one model call of passing it, on a priced
-  model a responder run spends from the asking run's cap, and a capped
-  blueprint whose model has no price does not run. An unpriced model on an
-  uncapped blueprint counts only the cost the endpoint reports, and
+  the start payload; the ledger sums runs per blueprint. A run's cap is the
+  per-run cap (off at zero), or what the blueprint cap has left when that is
+  smaller, and under a blueprint cap a run needs its floor left to start (see
+  Sessions). The run cap stops a run within one model call of passing it, on
+  a priced model a responder run spends from the asking run's cap, and a
+  capped blueprint whose model has no price does not run. An unpriced model
+  on an uncapped blueprint counts only the cost the endpoint reports, and
   max_turns still bounds every run. CM prices only the session model, so a
   run on a per-persona override is unpriced: a capped blueprint refuses it,
   an uncapped one counts the reported cost. A critique round re-bills the

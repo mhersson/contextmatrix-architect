@@ -212,12 +212,14 @@ func TestLogEntryFor(t *testing.T) {
 }
 
 func TestLogEntryFor_RefusedNeedShowsOnlyTheMessage(t *testing.T) {
+	const message = "The blueprint's $1.00 cap is used up ($1.00 spent); Intake stopped."
+
 	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventError, BlueprintID: "S1", Payload: map[string]any{
-		"stage": "intake", "message": "cost cap 1.00 USD would be breached (spent 1.00)",
+		"stage": "intake", "message": message, "cap": "blueprint", "cap_usd": 1.0, "blueprint_spent_usd": 1.0,
 		"message_id": "m1", "need": "containerise this project",
 	}})
 	require.True(t, ok)
-	assert.Equal(t, "cost cap 1.00 USD would be breached (spent 1.00)", entry.Content, "the need stays in the audit log, not the panel")
+	assert.Equal(t, message, entry.Content, "the need stays in the audit log, not the panel")
 }
 
 func TestLogEntryFor_ANoteAtAnEndedPipelineIsToldApart(t *testing.T) {
