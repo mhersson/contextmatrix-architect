@@ -187,15 +187,27 @@ func TestGatePlan_NamesWhereAGateFolds(t *testing.T) {
 	plan, ok := rec.first(EventGatePlan)
 	require.True(t, ok)
 
-	var slicing map[string]any
+	stages, ok := plan.Payload["stages"].([]any)
+	require.True(t, ok)
 
-	for _, s := range plan.Payload["stages"].([]any) {
-		if m := s.(map[string]any); m["stage"] == "slicing" {
-			slicing = m
-		}
+	byStage := map[string]map[string]any{}
+
+	for _, s := range stages {
+		m, ok := s.(map[string]any)
+		require.True(t, ok)
+
+		byStage[m["stage"].(string)] = m
 	}
 
+	slicing := byStage["slicing"]
 	require.NotNil(t, slicing)
+
+	intake := byStage["intake"]
+	require.NotNil(t, intake)
+	assert.NotContains(t, intake, "folds_into")
+	assert.NotContains(t, intake, "fold_field")
+	assert.NotContains(t, intake, "fold_max")
+
 	assert.Equal(t, "solution_design", slicing["folds_into"])
 	assert.Equal(t, "slices", slicing["fold_field"])
 	assert.EqualValues(t, 1, slicing["fold_max"])

@@ -776,7 +776,12 @@ func gatePlanText(p map[string]any) string {
 			b.WriteString(", with a gate")
 
 			if into := str(s["folds_into"]); into != "" {
-				fmt.Fprintf(&b, " that folds into %s's gate while its %s has at most %.0f entries", into, str(s["fold_field"]), num(s["fold_max"]))
+				limit, unit := num(s["fold_max"]), "entries"
+				if limit == 1 {
+					unit = "entry"
+				}
+
+				fmt.Fprintf(&b, " that folds into %s's gate when both stages have the same policy and its %s has at most %.0f %s", into, str(s["fold_field"]), limit, unit)
 			}
 		}
 	}
@@ -793,10 +798,10 @@ func gatePlanText(p map[string]any) string {
 	return b.String()
 }
 
-// gateText renders a stage's gate: the body (the version on the sheet waits, the
-// reviewer's score, the artifacts folded into it shown below, the problems
-// its checks accepted them with) and the reply line that decides it, which
-// starts with its separator.
+// gateText renders a stage's gate: the body (the version on the sheet waits,
+// the reviewer's score, the artifacts folded into it shown below, the
+// problems its checks accepted them with) and the reply line that decides
+// it, which starts with its separator.
 func gateText(p map[string]any) (body, reply string) {
 	var replies []string
 
