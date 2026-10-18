@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slices 0 to 3 are implemented: slice 2 signs off ready cards, emits them and a playbook into CM, starts them in yolo mode and reports their run, and slice 3 adds the dialog stages (intake's questions, slicing, solution design, acceptance) with a responder policy per stage, the human and auto responders, reviewer runs with the critique loop, gates with slicing's folding into solution design, CM prompts, notes that reach later stages and assumptions with grounding's verdicts. Outcomes, lessons and the export's commit to a repository are slice 4; the export writes the bundle under the state directory.
+Status: agreed design, 2026-10-15. Slices 0 to 3 are implemented: slice 2 signs off ready cards, emits them and a playbook into CM, starts them in yolo mode and reports their run, and slice 3 adds the dialog stages (intake's questions, slicing, solution design, acceptance) with a responder policy per stage, the human and auto responders, reviewer runs with the critique loop, gates with slicing's folding into solution design, CM prompts, notes that reach later stages and assumptions with grounding's verdicts. A big need is worked piece by piece: slicing orders the slices, shared decisions settles what they share and collapses for one slice, design, grounding, acceptance and decomposition run once per slice, and readiness, one sign-off and one playbook cover every card. Outcomes, lessons and the export's commit to a repository are slice 4; the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -322,19 +322,21 @@ cited.
 The default pack. Personas: product owner (PO), system designer (SD), senior
 developer (DEV), tester (TST), reviewer (REV).
 
-| #  | Stage           | Persona | Consumes          | Produces                                                                                              | Gate      | Reviewer |
-| -- | --------------- | ------- | ----------------- | ----------------------------------------------------------------------------------------------------- | --------- | -------- |
-| 1  | Intake          | PO      | the need          | need: problem, value, scope in and out, measurable outcomes, the expected shape, reading the code      | `auto` by default; its questions go to a human | SD       |
-| 2  | Slicing         | PO      | need              | slices, each delivering standalone value; one slice is fine; reads the code                             | yes; folds into 3 when there is one slice | SD       |
-| 3  | Solution design | SD      | need, slices      | per slice: projects involved, decisions with rejected options and their basis, cross-project contracts; asks a question for each decision with real alternatives; reads the code | yes       | DEV      |
-| 4  | Grounding       | DEV     | design            | per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        | -        |
-| 5  | Acceptance      | DEV     | design, grounding | per slice: criteria checkable inside one repo; human and live checks split into manual steps         | `auto` by default | TST      |
-| 6  | Decomposition   | DEV     | all above         | draft cards with type and priority, `depends_on` per project, manual entries for human and live checks, a playbook title and order, and the setup for a project without a verify command or instruction file | no        | -        |
-| 7  | Readiness       | REV     | cards             | contract check per card; failures loop back to 6, three rounds max                                    | no        | -        |
-| 8  | Sign-off        | human   | everything        | approval; then emission                                                                               | yes       | -        |
-| -  | Outcomes        | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   | -        |
+| #  | Stage            | Persona | Consumes          | Produces                                                                                              | Gate      | Reviewer |
+| -- | ---------------- | ------- | ----------------- | ----------------------------------------------------------------------------------------------------- | --------- | -------- |
+| 1  | Intake           | PO      | the need          | need: problem, value, scope in and out, measurable outcomes, the expected shape, reading the code      | `auto` by default; its questions go to a human | SD       |
+| 2  | Slicing          | PO      | need              | slices in order, the thinnest working one first and riskier ones before polish, each delivering standalone value; one slice is fine; reads the code | yes; folds into 4's gate when there is one slice | SD       |
+| 3  | Shared decisions | SD      | need, slices      | the decisions every slice shares: tooling, conventions, platform, cross-slice contracts, cross-cutting qualities; asks a question for each decision with real alternatives; reads the code; collapses, unrun, with one slice | yes       | DEV      |
+| 4  | Solution design  | SD      | need, slices, shared decisions, earlier slices | once per slice: projects involved, decisions with rejected options and their basis, cross-project contracts; asks a question for each decision with real alternatives; reads the code | yes       | DEV      |
+| 5  | Grounding        | DEV     | the slice's design | once per slice, per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        | -        |
+| 6  | Acceptance       | DEV     | the slice's design, grounding | once per slice: criteria checkable inside one repo; human and live checks split into manual steps | `auto` by default | TST      |
+| 7  | Decomposition    | DEV     | all above, earlier slices' cards | once per slice: draft cards with type and priority, `depends_on` per project, manual entries for human and live checks, the order, and the setup for a project without a verify command or instruction file; the last slice's draft gives the playbook title | no        | -        |
+| 8  | Readiness        | REV     | every slice's cards | contract check per card; failures loop back to 7 for the slice that holds the card and every later slice, three rounds max | no        | -        |
+| 9  | Sign-off         | human   | everything        | approval; then emission of one playbook                                                                | yes       | -        |
+| -  | Outcomes         | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   | -        |
 
-The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign-off is the controller's step after readiness (see Emission). Every stage is a model run; a design the user already has goes in the need or an answer, and solution design adopts it.
+The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign-off is the controller's step after readiness (see Emission).
+Every stage is a model run, except a shared stage that collapses with one slice, which is recorded and not run; a design the user already has goes in the need or an answer, and solution design adopts it.
 
 - Intake states the shape it expects (slices, projects involved). When its
   run completes, the controller posts the gate plan: who answers each
@@ -343,9 +345,9 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   with one slice, and the `gate <stage> human|auto` reply that
   changes it, so the operator can change a policy before solution design
   spends anything.
-- Every stage that interviews (intake, slicing and solution design) reads the
-  code, so it states what the code answers as a finding and asks only what
-  neither the code nor the need settles.
+- Every stage that interviews (intake, slicing, shared decisions and solution
+  design) reads the code, so it states what the code answers as a finding and
+  asks only what neither the code nor the need settles.
 - The first stage with the code tools, intake in the default pack, ends -
   for a per-slice stage, its SL1 step ends - by telling the session what
   each target project lacks for an agent run: a verify command in CM (read
@@ -422,23 +424,27 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   gate policies are auto.
 - Reviewer runs are declared on every gated stage in the pack and skipped
   when its gate folds. Each reads as the role that works from the artifact
-  next: the system designer judges intake's need and the slices (can I
-  design from this?), the senior developer the design (can I build from
-  this?), and the tester acceptance (can I write the tests from this?).
-  Readiness is decomposition's reviewer and gets none. A one-slice need
-  costs ten runs when every review passes clean: intake and its review,
-  slicing, solution design and its review, grounding, acceptance and its
-  review, decomposition and readiness, and each review that leaves findings
-  open adds a builder round and a review of its revision, at most two of
-  each per reviewed step, plus one continuation run per question round and
-  one chat run per chat reply.
-- In default mode a one-slice need touches the human at the rounds of
-  intake, slicing and solution design (no limit when a human answers), the
-  solution design gate with slicing folded into it, and the sign-off. A
-  need that slices into several gets slicing's own gate as well, without
-  anyone classifying it. Intake's gate is `auto`: its reviewer's verdict
-  decides it, and it waits for a human only when the third review does not
-  pass, or after `gate intake human`.
+  next: the system designer judges intake's need and the slices (can I design
+  from this?), the senior developer the shared decisions and each slice's
+  design (can I build from this?), and the tester acceptance (can I write the
+  tests from this?). Readiness is decomposition's reviewer and gets none. A
+  one-slice need costs ten runs when every review passes clean: intake and
+  its review, slicing, solution design and its review, grounding, acceptance
+  and its review, decomposition and readiness, and each review that leaves
+  findings open adds a builder round and a review of its revision, at most
+  two of each per reviewed step, plus one continuation run per question round
+  and one chat run per chat reply. A need cut into n slices, n of two or
+  more, costs 7 + 6n runs on the same terms: slicing's own review, shared
+  decisions and its review, and design and its review, grounding, acceptance
+  and its review and decomposition once per slice.
+- In default mode a one-slice need touches the human at the rounds of intake,
+  slicing and solution design (no limit when a human answers), the solution
+  design gate with slicing folded into it, and the sign-off. A need that
+  slices into several gets slicing's own gate, the shared decisions' rounds
+  and gate, and the rounds and gate of each slice's design, without anyone
+  classifying it. Intake's gate is `auto`: its reviewer's verdict decides it,
+  and it waits for a human only when the third review does not pass, or after
+  `gate intake human`.
 - A cross-project contract is copied into the cards on both sides of the
   boundary.
 - Human-only and live-environment checks become manual playbook entries, never
@@ -687,57 +693,57 @@ or less than its floor left of the blueprint's) leaves its question to the
 stage too.
 
 **Assumptions are data.** Before it submits, a stage that declares the
-`assumptions` check (intake and solution design) posts its assumptions as
-the last tab of a round, labelled A1, A2, ... within the round; a chat that
-replaces the tab keeps an unchanged assumption's label and gives a new one
-a label the round never issued, so a decision the user made on a dropped
-assumption never lands on another. A human
-accepts each or turns it into a question: an accepted one is recorded on its
-round, whose closed snapshot is the record, and cited as `round<n>.A<k>`, the
-round's number and the label (`round2.A1` for A1 on round 2's tab); the stage
-states it with that tag as its basis, so it reads `confirmed`. It takes no
-question number: `Q<n>` counts only asked questions. One a
-blueprint holds as a `questions` row stays cited by that row's `Q<n>`, whose
-number stays taken. After one is turned into a question, a later round of
-the attempt must be posted before the stage may submit. Under the human policy
-every stated assumption must have a basis. Under `auto` each assumption is
-accepted automatically, logged on the round, and keeps the status its basis
-gives it, never `confirmed`; no auto round records an acceptance. The stage
-submits each assumption as a standalone sentence, or as
-`{"text": "<sentence>", "basis": "<tag>"}` when it rests on an answered
-question (`Q<n>`) or an accepted assumption (`round<n>.A<k>`). The check refuses
-a sentence that points at other text (the `dangling_references` list) or
-names an answered question or an accepted assumption (the basis carries it
-and the sentence states the fact, so no model prose says who answered), and
-a basis that is neither; the third failing submit is accepted with its
-problems kept in its data, and such a basis then reads as none. The
-controller numbers them A1, A2, ... across those stages in pipeline order,
-slice by slice, and gives every later stage that consumes a stating stage
-the list with the ids. An assumption starts with its basis's status:
-`confirmed` when a human answered the question or accepted the assumption,
-`assumed` when the responder answered it, `verified` with the responder's
-evidence when that answer was verified, and `unverified` without a basis. An
-auto answer's own `Q<n>` entry is listed only while no stated assumption in
-the latest stating artifacts rests on it; otherwise those that do carry its
-status, so an answer and its restatement are one entry. Every stated
-assumption resting on an answered question carries its answer too, a human's
-included, so a merged entry still shows the answer the responder gave. A later
-stage (grounding) submits verdicts, verified or contradicted with evidence, as
-new artifact data, never an update; a verdict sets the status and evidence. An
-unverified verdict, which the controller also accepts, returns the entry to
-its basis's status, so it never hides that a human confirmed it. A verdict
-counts only when it is newer than the assumptions it judges (the latest
-artifacts of the stating stages up to the assumption's own), so a re-run's
-assumptions read their basis's status until grounding judges them again. The
-sign-off (unverified, contradicted, assumed, confirmed, then verified), the
-playbook description and a single card's Context list every assumption with
-its latest status; each adds, for an assumed or confirmed one, who answered
-the question it rests on and its tag, and the answer, for every entry that
-carries one. A confirmed one resting on an accepted assumption reads
-"accepted at" the display name of the stage of the tab it was accepted on
-(`Intake`) instead, with no tag and no answer. When no stage stated any as data,
-as with an intake stored before assumptions were data, they show the text of
-intake's Assumptions section instead, without ids or statuses.
+`assumptions` check (intake, shared decisions and solution design) posts its
+assumptions as the last tab of a round, labelled A1, A2, ... within the
+round; a chat that replaces the tab keeps an unchanged assumption's label and
+gives a new one a label the round never issued, so a decision the user made
+on a dropped assumption never lands on another. A human accepts each or turns
+it into a question: an accepted one is recorded on its round, whose closed
+snapshot is the record, and cited as `round<n>.A<k>`, the round's number and
+the label (`round2.A1` for A1 on round 2's tab); the stage states it with
+that tag as its basis, so it reads `confirmed`. It takes no question number:
+`Q<n>` counts only asked questions. One a blueprint holds as a `questions`
+row stays cited by that row's `Q<n>`, whose number stays taken. After one is
+turned into a question, a later round of the attempt must be posted before
+the stage may submit. Under the human policy every stated assumption must
+have a basis. Under `auto` each assumption is accepted automatically, logged
+on the round, and keeps the status its basis gives it, never `confirmed`; no
+auto round records an acceptance. The stage submits each assumption as a
+standalone sentence, or as `{"text": "<sentence>", "basis": "<tag>"}` when it
+rests on an answered question (`Q<n>`) or an accepted assumption
+(`round<n>.A<k>`). The check refuses a sentence that points at other text
+(the `dangling_references` list) or names an answered question or an accepted
+assumption (the basis carries it and the sentence states the fact, so no
+model prose says who answered), and a basis that is neither; the third
+failing submit is accepted with its problems kept in its data, and such a
+basis then reads as none. The controller numbers them A1, A2, ... across
+those stages in pipeline order, slice by slice, and gives every later stage
+that consumes a stating stage the list with the ids. An assumption starts
+with its basis's status: `confirmed` when a human answered the question or
+accepted the assumption, `assumed` when the responder answered it, `verified`
+with the responder's evidence when that answer was verified, and `unverified`
+without a basis. An auto answer's own `Q<n>` entry is listed only while no
+stated assumption in the latest stating artifacts rests on it; otherwise
+those that do carry its status, so an answer and its restatement are one
+entry. Every stated assumption resting on an answered question carries its
+answer too, a human's included, so a merged entry still shows the answer the
+responder gave. A later stage (grounding) submits verdicts, verified or
+contradicted with evidence, as new artifact data, never an update; a verdict
+sets the status and evidence. An unverified verdict, which the controller
+also accepts, returns the entry to its basis's status, so it never hides that
+a human confirmed it. A verdict counts only when it is newer than the
+assumptions it judges (the latest artifacts of the stating stages up to the
+assumption's own), so a re-run's assumptions read their basis's status until
+grounding judges them again. The sign-off (unverified, contradicted, assumed,
+confirmed, then verified), the playbook description and a single card's
+Context list every assumption with its latest status; each adds, for an
+assumed or confirmed one, who answered the question it rests on and its tag,
+and the answer, for every entry that carries one. A confirmed one resting on
+an accepted assumption reads "accepted at" the display name of the stage of
+the tab it was accepted on (`Intake`) instead, with no tag and no answer.
+When no stage stated any as data, as with an intake stored before assumptions
+were data, they show the text of intake's Assumptions section instead,
+without ids or statuses.
 
 Later policy: `jira` (question posted as a comment; after two reminders
 without a reply it falls through to `auto`, logged as such).
@@ -748,7 +754,8 @@ The mode is chosen in the panel's new-session dialog and recorded on the
 blueprint.
 
 - **Default**: policies as the pack sets them. The embedded pack makes
-  intake, slicing and solution design `human` and every other stage `auto`;
+  intake, slicing, shared decisions and solution design `human` and every
+  other stage `auto`;
   intake's gate alone differs from its stage's policy: it is `auto`,
   decided by its reviewer's verdict. The sign-off waits for a human. A
   `gate <stage> human|auto` reply, listed in the gate plan posted after
@@ -776,7 +783,7 @@ starts are bounded by CM's per-card guardrails, not by the architect.
 | Group    | Tools                                                                                                   | Notes                                                                                                                                             |
 | -------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock the first time a run needs the trees: at the start of the first stage with the code tools (intake), or earlier, at a research stage's first leak-guard check that needs them, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. A repository with no commits checks out as an empty tree with no sha. `repo_info` returns the sha, instruction file presence, the project's verify command, whether the repository is empty and, to the stage that fetched the tree, the default branch. A reviewer whose pack entry names `code` gets the same tools, and can be the first to fetch the trees. |
-| research | `web_search`, `web_fetch` | Offered to the stages whose pack names the group (intake, slicing and solution design in the default pack) when the session's research settings name a provider the architect can build; otherwise the group is absent and the session says once, at the first such stage, that research is off. `web_search` asks the provider (Brave Search) for ten results: titles, URLs and snippets the model reads in that run only, since a run's stored messages keep only the query and the result count. `web_fetch` reads an http or https page from a public address: every connection's address is checked after the name resolves, redirects included (five at most), and no proxy is used; it reads at most 5 MiB in 20 seconds, keeps 48 KiB of text, turns HTML into readable text (the main or article element, without scripts, navigation or footers), takes text types as they are and refuses the rest. A page read is recorded as a `url` source and its result starts with the tag; a page with no readable text is a tool error, not a source. A leak guard checks every query and every URL's host labels, path and query and refuses, as a tool error naming the rule: a token with a path separator (acronym pairs like CI/CD and HTTP/1.1 pass) or a file extension (a `<name>.js` library passes), code punctuation (a URL path segment may carry a name's `(` or `=`, as in `Raft_(algorithm)`), a compound identifier the blueprint's checkouts declare (not a name of a package they depend on, and nothing in a lockfile), the root module path's owner or name (a nested module's compound name is a declared identifier), a target project's name or its repositories' owner or name, a ContextMatrix card id, and a query, or a URL path segment, query key or query value, over 160 characters; plain words and technology names pass. A URL's host labels get the name, module, identifier and card-id rules but not the shape rules, since a page can ask for a host that carries data; its path segments skip the path and file-name rules, which a URL's own syntax breaks; its query keys and values get every query rule. It reads the checkouts once per run, at the first check that needs them, checking them out first in a stage without the code tools, and refuses everything while it cannot read them. The responder shares its stage's tools. Every query and page read is a `research` event. A reviewer whose entry names `research` gets `web_fetch` alone behind the same guard, and never posts the research-off notice. |
+| research | `web_search`, `web_fetch` | Offered to the stages whose pack names the group (intake, slicing, shared decisions and solution design in the default pack) when the session's research settings name a provider the architect can build; otherwise the group is absent and the session says once, at the first such stage, that research is off. `web_search` asks the provider (Brave Search) for ten results: titles, URLs and snippets the model reads in that run only, since a run's stored messages keep only the query and the result count. `web_fetch` reads an http or https page from a public address: every connection's address is checked after the name resolves, redirects included (five at most), and no proxy is used; it reads at most 5 MiB in 20 seconds, keeps 48 KiB of text, turns HTML into readable text (the main or article element, without scripts, navigation or footers), takes text types as they are and refuses the rest. A page read is recorded as a `url` source and its result starts with the tag; a page with no readable text is a tool error, not a source. A leak guard checks every query and every URL's host labels, path and query and refuses, as a tool error naming the rule: a token with a path separator (acronym pairs like CI/CD and HTTP/1.1 pass) or a file extension (a `<name>.js` library passes), code punctuation (a URL path segment may carry a name's `(` or `=`, as in `Raft_(algorithm)`), a compound identifier the blueprint's checkouts declare (not a name of a package they depend on, and nothing in a lockfile), the root module path's owner or name (a nested module's compound name is a declared identifier), a target project's name or its repositories' owner or name, a ContextMatrix card id, and a query, or a URL path segment, query key or query value, over 160 characters; plain words and technology names pass. A URL's host labels get the name, module, identifier and card-id rules but not the shape rules, since a page can ask for a host that carries data; its path segments skip the path and file-name rules, which a URL's own syntax breaks; its query keys and values get every query rule. It reads the checkouts once per run, at the first check that needs them, checking them out first in a stage without the code tools, and refuses everything while it cannot read them. The responder shares its stage's tools. Every query and page read is a `research` event. A reviewer whose entry names `research` gets `web_fetch` alone behind the same guard, and never posts the research-off notice. |
 | cm       | `list_projects`, `list_cards`, `get_card`, `get_playbook` as `cm_`-prefixed reads | Offered to grounding and readiness over the session's MCP key, one MCP session per run, chat's bridge adapter on the architect's client with a `cm_` prefix and an allowlist that skips tools CM does not serve. No `agent_id` is sent, so CM keeps redacting unvetted imported text; `get_card` never attaches images; a credential embedded in a URL is removed from every result and error before the model or the record sees it, since CM returns project config as stored; every result carries the blueprint's ContextMatrix source tag. Creating cards and playbooks and starting runs are controller calls with the configured caller identity, never model tools. |
 | control  | `ask_questions`, `answer_chat`, `submit_artifact`                                          | `ask_questions` posts a round and ends the run: per question a tab title, the question, why it matters, options with a summary, pros, cons and source tags (only tags a tool result of this blueprint returned; the panel shows a page `web_fetch` read by its title (its address when it has none), linked to its address, and any other source by its identity), and the recommended position; a trailing "(recommended)" a model writes into an option title is cut and marks it. A stage that declares the `assumptions` check may add its assumptions as the round's last tab, or post the tab alone; any other stage's tab is refused. A round asks at most 10 questions of at most 6 options, 96 KiB in all, its assumptions included. A question already answered with the same options is refused; a changed option set makes a new question. Under `auto` its responder answers before the run ends. Questions are numbered `Q<n>` per blueprint. `answer_chat` replies in an open round's chat, at most 4000 characters, revising or adding questions under the same limits or replacing the assumptions tab, and ends the run. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
 
@@ -1255,7 +1262,7 @@ Ordered so a real card comes out as early as possible.
 5. **Later**: a gate inbox in CM's web UI;
    seeding a blueprint from an existing CM card, in the same adapter shape as
    the Jira seed; Jira seed and mirror (decide REST against Atlassian MCP then,
-   see open questions); composer; model selection via
+   see open questions); model selection via
    `selection`.
 
 ## Testing

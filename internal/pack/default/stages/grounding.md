@@ -1,9 +1,12 @@
 # Grounding
 
-Input: the need, the design, and a read-only checkout of each target
-project at its recorded commit.
+Input: the need, the shared decisions, the design of the slice the task
+names, the earlier slices' design, acceptance and cards, and a read-only
+checkout of each target project at its recorded commit. When the task names
+no slice, verify the design of every slice.
 
-For every target project, verify in the code what the design assumes:
+For every target project the design touches, verify in the code what it
+assumes:
 
 - the files, functions, types and patterns the design names, with the path
   and the symbol as they exist;
@@ -12,6 +15,10 @@ For every target project, verify in the code what the design assumes:
   repository documents (README, Makefile, CI);
 - the instruction file (AGENTS.md or CLAUDE.md) at the root;
 - anything the design assumes that the code contradicts.
+
+The earlier slices' cards are not built yet. What they will add is not in
+the code, so a design that relies on it is no contradiction; name the
+earlier card that delivers it instead.
 
 A missing verify command, a missing instruction file or an empty repository
 (repo_info marks it empty) is not a contradiction: decomposition plans that

@@ -68,7 +68,7 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 		ids = append(ids, s.ID)
 	}
 
-	assert.Equal(t, []string{"intake", "slicing", "solution_design", "grounding", "acceptance", "decomposition", "readiness"}, ids)
+	assert.Equal(t, []string{"intake", "slicing", "shared_decisions", "solution_design", "grounding", "acceptance", "decomposition", "readiness"}, ids)
 
 	acceptance, _ := p.Stage("acceptance")
 	assert.Equal(t, PolicyAuto, acceptance.Policy, "acceptance's gate is auto by default")
@@ -94,7 +94,7 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	assert.Equal(t, PolicyAuto, intake.GatePolicy, "intake's reviewer's verdict decides its gate")
 	assert.Equal(t, 3, intake.MaxQuestions)
 
-	next := map[string]string{"intake": "system_designer", "slicing": "system_designer", "solution_design": "senior_developer", "acceptance": "tester"}
+	next := map[string]string{"intake": "system_designer", "slicing": "system_designer", "shared_decisions": "senior_developer", "solution_design": "senior_developer", "acceptance": "tester"}
 
 	for id, persona := range next {
 		s, _ := p.Stage(id)
@@ -103,10 +103,26 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 		assert.Equal(t, []string{ToolCode, ToolResearch}, s.Reviewer.Tools, "%s's reviewer reads the code and opens cited pages", id)
 	}
 
-	for _, id := range []string{"intake", "slicing", "solution_design"} {
+	for _, id := range []string{"intake", "slicing", "shared_decisions", "solution_design"} {
 		s, _ := p.Stage(id)
 		assert.Contains(t, s.Tools, ToolResearch, "%s researches its questions when research is on", id)
 		assert.Contains(t, s.Tools, ToolCode, "%s reads the code before it asks", id)
+	}
+
+	shared, _ := p.Stage("shared_decisions")
+	assert.True(t, shared.Shared, "the shared decisions collapse with one slice")
+	assert.True(t, shared.Gate)
+	assert.Equal(t, PolicyHuman, shared.Policy)
+	assert.Equal(t, "system_designer", shared.Persona)
+	assert.Equal(t, []string{"intake", "slicing"}, shared.Consumes)
+	assert.Equal(t, []string{CheckAssumptions, CheckDecisions}, shared.Checks)
+
+	for _, id := range []string{"solution_design", "grounding", "acceptance", "decomposition"} {
+		s, _ := p.Stage(id)
+		assert.True(t, s.PerSlice, "%s runs once per slice", id)
+		assert.Equal(t, []string{"solution_design", "acceptance", "decomposition"}, s.EarlierSlices,
+			"%s reads every earlier slice's design, acceptance and cards", id)
+		assert.Contains(t, s.Consumes, "shared_decisions", "%s reads the shared decisions", id)
 	}
 
 	grounding, _ := p.Stage("grounding")
@@ -116,6 +132,8 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	assert.Equal(t, "decomposition", readiness.LoopsTo)
 	assert.Equal(t, 3, readiness.MaxRounds)
 	assert.Contains(t, readiness.Tools, ToolCode)
+	assert.False(t, readiness.PerSlice, "readiness judges every slice's cards at once")
+	assert.Contains(t, readiness.Consumes, "shared_decisions")
 
 	decomposition, _ := p.Stage("decomposition")
 	assert.Contains(t, decomposition.Checks, CheckCards)

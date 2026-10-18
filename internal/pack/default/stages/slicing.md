@@ -7,6 +7,12 @@ the normal case; cut more only where a part ships and pays off without the
 rest. Never cut by layer or by project: a slice spans every project it
 needs.
 
+Order the slices. The first is the thinnest version of the need that works
+end to end; then the slices that carry the most risk or the most unknowns,
+so they surface early; polish and extensions last. A later slice builds on
+the earlier ones, never the other way round. Say in the markdown why the
+order is what it is. The slices are named SL1, SL2, ... in that order.
+
 Read the code before you ask (repo_info, read, grep, glob). A fact the code
 settles, such as what already exists, the conventions in use or a choice
 already made, goes in as a finding with its source tag S<n> and is never a
@@ -26,9 +32,11 @@ round, answer with answer_chat, researching or reading the code first when
 the answer needs it, and revise or add questions when the point changes
 the round.
 
-Produce markdown with one `## <slice id>: <title>` section per slice: its
-value and the projects it touches. Submit with a data object
-`{"slices": [{"id": "SL1", "title": "<title>", "value": "<the value it delivers alone>", "projects": ["<name>"]}]}`.
+Produce markdown with one `## <slice id>: <title>` section per slice, in
+order: its value, the projects it touches and why it comes where it does.
+Submit with a data object
+`{"slices": [{"id": "SL1", "title": "<title>", "value": "<the value it delivers alone>", "projects": ["<name>"]}]}`,
+the slices in their order.
 
 When a reviewer's findings come back to you, each with an id such as R2,
 revise for them and add `"addressed": [{"finding": "<its id>", "note": "<one sentence on what you changed>"}]`

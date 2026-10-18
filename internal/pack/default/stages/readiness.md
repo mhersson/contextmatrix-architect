@@ -1,7 +1,6 @@
 # Readiness
 
-Input: the draft cards with the need, slices, design, grounding and
-acceptance; a read-only checkout of each target project.
+Input: every slice's cards, in slicing order, with the need, the slices, the shared decisions and each slice's design, grounding and acceptance; a read-only checkout of each target project.
 
 For every card, answer with the checkout open: could an agent with only this
 repository and this card finish it on the first attempt? Judge one
@@ -20,6 +19,11 @@ conventions.
 Compare each card with the open cards of its project through the cm_ tools:
 a card that duplicates an open card is not ready, and its finding names that
 card's id.
+
+Judge the cards of every slice together: a card that duplicates another
+slice's card, or that relies on work that neither the code nor a card before
+it in the playbook delivers, is not ready, and its finding names the card it
+collides with or lacks.
 
 Produce markdown with one `## <card id>: <title>` section per card holding
 `ready` or the findings that block it. Submit with a data object
