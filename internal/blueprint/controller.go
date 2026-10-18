@@ -80,6 +80,9 @@ type StartInput struct {
 	// Price is the session model's resolved price from CM; nil, or all four
 	// rates zero, means CM has none, and then a capped blueprint cannot run.
 	Price *protocol.ModelPrice
+	// ContextWindow is the session model's context length from CM; 0 when
+	// CM does not know it.
+	ContextWindow int
 	// MCPAPIKey lists CM's projects for the code stages.
 	MCPAPIKey string
 	// GitCredentialsToken is the bearer CM mints repository credentials for.
@@ -178,6 +181,7 @@ type session struct {
 	endpoint  protocol.LLMEndpoint
 	model     string
 	price     *protocol.ModelPrice
+	window    int
 	mcpKey    string
 	gitToken  string
 	searchKey string
@@ -302,7 +306,7 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 	}
 
 	sess := &session{
-		endpoint: in.Endpoint, model: in.Model, price: in.Price,
+		endpoint: in.Endpoint, model: in.Model, price: in.Price, window: in.ContextWindow,
 		mcpKey: in.MCPAPIKey, gitToken: in.GitCredentialsToken, searchKey: in.SearchAPIKey,
 	}
 	sess.audit = c.newAudit(sess.secrets()...)
@@ -318,6 +322,12 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 	// rate belongs to.
 	if sess.price == nil && bp.Price != nil && in.Model == bp.Model {
 		sess.price = bp.Price
+	}
+
+	// As with the price: a reopen whose start lost the window keeps the one
+	// the blueprint was created with, on that model only.
+	if sess.window == 0 && in.Model == bp.Model {
+		sess.window = bp.ContextWindow
 	}
 
 	c.mu.Lock()
@@ -398,7 +408,7 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 		now := c.opts.Now().UTC()
 		bp = store.Blueprint{
 			ID: in.ID, Projects: in.Projects, Mode: in.Mode, CostCapUSD: in.CostCapUSD,
-			Model: in.Model, Price: in.Price, State: string(StateNew), CreatedAt: now, UpdatedAt: now,
+			Model: in.Model, Price: in.Price, ContextWindow: in.ContextWindow, State: string(StateNew), CreatedAt: now, UpdatedAt: now,
 		}
 
 		if err := c.opts.Store.CreateBlueprint(ctx, bp); err != nil {
@@ -407,6 +417,7 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 
 		au.event(ctx, Event{Kind: EventCreated, BlueprintID: in.ID, Payload: map[string]any{
 			"projects": in.Projects, "mode": in.Mode, "cost_cap_usd": in.CostCapUSD, "model": in.Model, "priced": in.Price != nil,
+			"context_window": in.ContextWindow,
 		}})
 	case err != nil:
 		return store.Blueprint{}, fmt.Errorf("blueprint: start: %w", err)
@@ -680,8 +691,11 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 // runModel is the model a run uses and its price; price is nil when the run
 // is unpriced. override marks a per-persona override of the session model.
 type runModel struct {
-	name     string
-	price    *protocol.ModelPrice
+	name  string
+	price *protocol.ModelPrice
+	// window is the model's context window; 0 when CM sized none, as for an
+	// override.
+	window   int
 	override bool
 }
 
@@ -692,7 +706,7 @@ func (c *Controller) modelFor(sess *session, persona string) runModel {
 		return runModel{name: o, override: true}
 	}
 
-	return runModel{name: sess.model, price: sess.price}
+	return runModel{name: sess.model, price: sess.price, window: sess.window}
 }
 
 // minRunFloorUSD is the least a run needs left of the blueprint cap to

@@ -21,10 +21,13 @@ type Blueprint struct {
 	Model      string
 	// Price is the session model's resolved per-token price as CM sent it at
 	// creation; nil when CM had none.
-	Price     *protocol.ModelPrice
-	State     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Price *protocol.ModelPrice
+	// ContextWindow is the session model's context length as CM sent it at
+	// creation; 0 when CM did not know it.
+	ContextWindow int
+	State         string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // CreateBlueprint inserts a blueprint; a duplicate id is an error.
@@ -46,9 +49,9 @@ func (s *Store) CreateBlueprint(ctx context.Context, b Blueprint) error {
 	}
 
 	_, err = s.db.ExecContext(ctx, `INSERT INTO blueprints
-		(id, title, projects, mode, cost_cap_usd, model, price, state, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		b.ID, b.Title, string(projects), b.Mode, b.CostCapUSD, b.Model, price, b.State,
+		(id, title, projects, mode, cost_cap_usd, model, price, context_window, state, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		b.ID, b.Title, string(projects), b.Mode, b.CostCapUSD, b.Model, price, b.ContextWindow, b.State,
 		b.CreatedAt.Unix(), b.UpdatedAt.Unix())
 	if err != nil {
 		return fmt.Errorf("store: insert blueprint %s: %w", b.ID, err)
@@ -66,9 +69,9 @@ func (s *Store) GetBlueprint(ctx context.Context, id string) (Blueprint, error) 
 		createdAt, updatedAt int64
 	)
 
-	err := s.db.QueryRowContext(ctx, `SELECT id, title, projects, mode, cost_cap_usd, model, price, state, created_at, updated_at
+	err := s.db.QueryRowContext(ctx, `SELECT id, title, projects, mode, cost_cap_usd, model, price, context_window, state, created_at, updated_at
 		FROM blueprints WHERE id = ?`, id).
-		Scan(&b.ID, &b.Title, &projects, &b.Mode, &b.CostCapUSD, &b.Model, &price, &b.State, &createdAt, &updatedAt)
+		Scan(&b.ID, &b.Title, &projects, &b.Mode, &b.CostCapUSD, &b.Model, &price, &b.ContextWindow, &b.State, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Blueprint{}, ErrNotFound
 	}
