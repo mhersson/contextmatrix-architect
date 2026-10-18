@@ -465,6 +465,11 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		}
 
 		c.endRun(bg, runID, store.RunFailed, reason, usage)
+
+		if c.contextStop(bg, au, id, runID, store.RunKindStage, stageID, runErr) {
+			return stageStopped
+		}
+
 		c.setState(bg, id, StateFailed)
 		au.event(bg, Event{Kind: EventError, BlueprintID: id, RunID: runID, Payload: map[string]any{
 			"stage": stageID, "reason": reason, "message": runErr.Error(),

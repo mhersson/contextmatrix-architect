@@ -184,6 +184,8 @@ func (c *Controller) sideFailed(ctx context.Context, r *run, au audit, id, stage
 	case ctx.Err() != nil:
 		c.setState(bg, id, StateIdle)
 	default:
-		c.fail(bg, au, id, 0, err.Error())
+		if !c.contextStop(bg, au, id, 0, store.RunKindReviewer, stageID, err) {
+			c.fail(bg, au, id, 0, err.Error())
+		}
 	}
 }

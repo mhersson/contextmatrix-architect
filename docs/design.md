@@ -1214,9 +1214,12 @@ frames on the session's chat stream.
   estimated to reach the window itself (the first call carries all of it
   before compaction can act), is refused before any model call. A model
   whose real window is smaller than CM says fails on the provider's error
-  first. The window is stored with the blueprint, and a reopen whose start
-  carries none keeps it on the same model; a per-persona override runs on
-  the fallback.
+  first. A refused run fails like any failed run, its row ending `too_big`
+  at no cost, and its error names the biggest inputs of its task by step
+  name; a run the harness stops on a full window says so in plain words.
+  `continue` runs either again. The window is stored with the blueprint, and
+  a reopen whose start carries none keeps it on the same model; a
+  per-persona override runs on the fallback.
 - State dir: `architect.db`, `exports/<blueprint>/<time>/`,
   `workspaces/mirrors/<repo>/` and
   `workspaces/trees/<blueprint>/<project>/`, with a project's secondary
