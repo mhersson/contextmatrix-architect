@@ -1,6 +1,7 @@
 package blueprint
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -92,7 +93,50 @@ func slicedScript() stageScript {
 		"grounding":               bySlice("# Grounding"),
 		"acceptance":              bySlice("# Acceptance"),
 		"acceptance.review":       passing(),
+		"decomposition":           sliceCards(),
 	}
+}
+
+// sliceCards submits one alpha card per slice, D<n> for SL<n>, every later
+// one depending on D1; every draft carries the playbook's title.
+func sliceCards() func(context.Context, stage.Input) (stage.Output, error) {
+	return func(_ context.Context, in stage.Input) (stage.Output, error) {
+		n := cmp.Or(strings.TrimPrefix(sliceOf(in), "SL"), "1")
+		id := "D" + n
+
+		var deps []any
+		if n != "1" {
+			deps = []any{"D1"}
+		}
+
+		return done("# Cards "+sliceOf(in), draftOf("Export the reports", cardFor(id, nil, deps...))), nil
+	}
+}
+
+// cardFor is goodCards' alpha card as id, carrying criteria and depending
+// on deps.
+func cardFor(id string, criteria []any, deps ...any) map[string]any {
+	card := goodCards()["cards"].([]any)[0].(map[string]any)
+
+	card["id"], card["title"], card["depends_on"] = id, "Add export step "+id, append([]any{}, deps...)
+
+	if criteria != nil {
+		card["criteria"] = criteria
+	}
+
+	return card
+}
+
+// draftOf is a draft of cards in their order, with title.
+func draftOf(title string, cards ...map[string]any) map[string]any {
+	list, order := make([]any, 0, len(cards)), make([]any, 0, len(cards))
+
+	for _, c := range cards {
+		list = append(list, c)
+		order = append(order, c["id"])
+	}
+
+	return map[string]any{"title": title, "cards": list, "order": order}
 }
 
 // stepRuns lists, in order, the step of every stage run of the given stages
@@ -484,6 +528,10 @@ func TestSlices_ARecordFromBeforeSlicesRunsItsStagesOnce(t *testing.T) {
 
 	assert.Equal(t, []string{"grounding"}, stepRuns(runner, "solution_design", "grounding"), "grounding runs once, for the whole blueprint")
 	assert.Empty(t, inputsOf(runner, "shared_decisions"), "a record from before slices never runs the shared stage")
+
+	signoff, ok := rec.first(EventSignOff)
+	require.True(t, ok, "the cards stored under the plain id reach the sign-off")
+	assert.Equal(t, []string{"D1"}, signoff.Payload["order"])
 }
 
 // codeSlicedPack is the sliced test pack with the code tools on grounding,

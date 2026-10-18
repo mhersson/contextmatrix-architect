@@ -1132,8 +1132,10 @@ func (s *validatorState) round() int {
 // criterion must be carried by exactly one card of its project and every
 // manual check by a manual entry; acceptance data that does not decode is a
 // finding of its own. A draft that does not decode is refused without
-// spending a round.
-func (c *Controller) cardsValidator(sess *session, bp store.Blueprint) (func(context.Context, stage.Artifact) error, *validatorState) {
+// spending a round. A per-slice step's submit is checked inside the draft
+// of every earlier slice and itself, and must take no id an earlier slice
+// holds; the last slice's draft carries the playbook's title.
+func (c *Controller) cardsValidator(sess *session, bp store.Blueprint, st pipelineStep) (func(context.Context, stage.Artifact) error, *validatorState) {
 	state := &validatorState{}
 	lists := c.opts.Pack.Lists()
 
@@ -1148,12 +1150,47 @@ func (c *Controller) cardsValidator(sess *session, bp store.Blueprint) (func(con
 			return fmt.Errorf("the cards were not judged (%w); submit the same draft again", err)
 		}
 
-		problems := draftProblems(draft)
-		for _, f := range contract.Check(draft, lists, projects) {
+		earlier, last, err := c.earlierDrafts(ctx, bp.ID, st)
+		if err != nil {
+			return fmt.Errorf("the cards were not judged (%w); submit the same draft again", err)
+		}
+
+		drafts := make([]contract.Draft, 0, len(earlier)+1)
+		for _, e := range earlier {
+			drafts = append(drafts, e.draft)
+		}
+
+		prior := mergeDrafts(drafts)
+		merged := mergeDrafts(append(drafts, draft))
+
+		problems := draftProblems(draft, st.Slice == "" && len(draft.Cards) > 1)
+
+		if st.Slice != "" && last && len(merged.Cards) > 1 && strings.TrimSpace(draft.Title) == "" {
+			problems = append(problems, "the slices hold several cards, so the last slice's draft needs the playbook title")
+		}
+
+		problems = append(problems, collisions(earlier, draft)...)
+
+		// The earlier slices' cards are checked with this one, so depends_on
+		// and a project's setup reach them. A finding their draft has without
+		// this submit was theirs; any other, on whichever card, this submit
+		// brought, such as its setup naming an earlier slice's card.
+		baseline := map[string]int{}
+		for _, f := range contract.Check(prior, lists, projects) {
+			baseline[f.String()]++
+		}
+
+		for _, f := range contract.Check(merged, lists, projects) {
+			if baseline[f.String()] > 0 {
+				baseline[f.String()]--
+
+				continue
+			}
+
 			problems = append(problems, f.String())
 		}
 
-		acc, acceptanceID, found, err := c.acceptanceOf(ctx, bp.ID)
+		acc, acceptanceID, found, err := c.acceptanceOf(ctx, bp.ID, st.Slice)
 		if err != nil {
 			return fmt.Errorf("the cards were not judged (%w); submit the same draft again", err)
 		}
@@ -1199,15 +1236,17 @@ func (c *Controller) freshView(ctx context.Context, sess *session, bp store.Blue
 // draftProblems are the faults of the draft as a whole: it holds no cards,
 // several cards come without a playbook title, or its order does not list
 // every card and manual entry exactly once and nothing else; emission walks
-// the order as given.
-func draftProblems(d contract.Draft) []string {
+// the order as given. needsTitle is set for a draft that carries the
+// playbook's title: an unsliced one with two or more cards (a slice's draft
+// is judged for the title in cardsValidator).
+func draftProblems(d contract.Draft, needsTitle bool) []string {
 	if len(d.Cards) == 0 {
 		return []string{"the draft has no cards"}
 	}
 
 	var problems []string
 
-	if len(d.Cards) > 1 && strings.TrimSpace(d.Title) == "" {
+	if needsTitle && strings.TrimSpace(d.Title) == "" {
 		problems = append(problems, "the draft has several cards, so it needs a playbook title")
 	}
 
@@ -1216,16 +1255,7 @@ func draftProblems(d contract.Draft) []string {
 		seen[id]++
 	}
 
-	ids := make([]string, 0, len(d.Cards)+len(d.Manual))
-	for _, card := range d.Cards {
-		ids = append(ids, card.ID)
-	}
-
-	for _, m := range d.Manual {
-		ids = append(ids, m.ID)
-	}
-
-	for _, id := range ids {
+	for _, id := range draftIDs(d) {
 		switch seen[id] {
 		case 0:
 			problems = append(problems, id+" is missing from order")
@@ -1266,6 +1296,122 @@ func draftProblems(d contract.Draft) []string {
 	}
 
 	return problems
+}
+
+// sliceDraft is one slice's latest draft of cards.
+type sliceDraft struct {
+	slice string
+	draft contract.Draft
+}
+
+// earlierDrafts reads the latest draft of every slice before st's, in
+// slice order, and reports whether st's slice is the last; none and true
+// for an unsliced step.
+func (c *Controller) earlierDrafts(ctx context.Context, id string, st pipelineStep) ([]sliceDraft, bool, error) {
+	if st.Slice == "" {
+		return nil, true, nil
+	}
+
+	steps, pieces, err := c.steps(ctx, id)
+	if err != nil {
+		return nil, false, err
+	}
+
+	var out []sliceDraft
+
+	for _, s := range earlierSteps(steps, st) {
+		d, err := c.stepDraft(ctx, id, s.ID)
+		if err != nil {
+			return nil, false, err
+		}
+
+		out = append(out, sliceDraft{slice: s.Slice, draft: d})
+	}
+
+	return out, len(pieces) > 0 && pieces[len(pieces)-1].id == st.Slice, nil
+}
+
+// stepDraft reads the latest draft of a step that checks cards.
+func (c *Controller) stepDraft(ctx context.Context, id, key string) (contract.Draft, error) {
+	art, err := c.opts.Store.LatestArtifact(ctx, id, key)
+	if err != nil {
+		return contract.Draft{}, fmt.Errorf("blueprint: load the cards: %w", err)
+	}
+
+	var data map[string]any
+	if err := json.Unmarshal(art.Data, &data); err != nil {
+		return contract.Draft{}, fmt.Errorf("blueprint: decode the cards: %w", err)
+	}
+
+	return contract.ParseDraft(data)
+}
+
+// draftIDs lists a draft's card and manual entry ids, in that order.
+func draftIDs(d contract.Draft) []string {
+	ids := make([]string, 0, len(d.Cards)+len(d.Manual))
+
+	for _, card := range d.Cards {
+		ids = append(ids, card.ID)
+	}
+
+	for _, m := range d.Manual {
+		ids = append(ids, m.ID)
+	}
+
+	return ids
+}
+
+// collisions reports every card or manual entry id of d an earlier slice's
+// draft holds: ids run on across slices.
+func collisions(earlier []sliceDraft, d contract.Draft) []string {
+	held := map[string]string{}
+
+	for _, e := range earlier {
+		for _, id := range draftIDs(e.draft) {
+			held[id] = e.slice
+		}
+	}
+
+	var out []string
+
+	for _, id := range draftIDs(d) {
+		if slice, ok := held[id]; ok {
+			out = append(out, fmt.Sprintf("%s is already a card or manual entry of %s; ids run on across slices", id, slice))
+		}
+	}
+
+	return out
+}
+
+// mergeDrafts is the one playbook the slices' drafts make, in slice order:
+// their cards, manual entries and order one after another; for each project
+// and each setup field, the earliest slice's value that sets it; and the
+// last draft's title.
+func mergeDrafts(ds []contract.Draft) contract.Draft {
+	var out contract.Draft
+
+	for _, d := range ds {
+		out.Cards = append(out.Cards, d.Cards...)
+		out.Manual = append(out.Manual, d.Manual...)
+		out.Order = append(out.Order, d.Order...)
+
+		for name, s := range d.Setup {
+			if out.Setup == nil {
+				out.Setup = map[string]contract.Setup{}
+			}
+
+			cur := out.Setup[name]
+			cur.VerifyCommand = cmp.Or(cur.VerifyCommand, s.VerifyCommand)
+			cur.InstructionCard = cmp.Or(cur.InstructionCard, s.InstructionCard)
+			out.Setup[name] = cur
+		}
+	}
+
+	if len(ds) > 0 {
+		out.Title = ds[len(ds)-1].Title
+	}
+
+	return out
 }
 
 // artifactStopped reports whether an artifact's data carries the stopped

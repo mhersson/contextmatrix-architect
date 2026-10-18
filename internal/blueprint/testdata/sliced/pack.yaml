@@ -49,3 +49,11 @@ stages:
     reviewer: {persona: senior_developer, threshold: 4}
     per_slice: true
     earlier_slices: [solution_design, acceptance]
+  - id: decomposition
+    persona: senior_developer
+    produces: cards
+    consumes: [intake, slicing, shared_decisions, solution_design, grounding, acceptance]
+    tools: [code]
+    checks: [cards]
+    per_slice: true
+    earlier_slices: [solution_design, acceptance, decomposition]

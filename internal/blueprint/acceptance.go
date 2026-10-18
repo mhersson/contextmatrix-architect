@@ -173,14 +173,18 @@ type acceptance struct {
 }
 
 // acceptanceOf reads the criteria and manual checks of the latest artifact
-// of the stage that checks criteria; found is false when the pack has no
-// such stage or it has no artifact yet. Data that does not decode is not an
-// error: retrying cannot fix it, so it comes back as unreadable for the
-// contract to report. Only a store read fails.
-func (c *Controller) acceptanceOf(ctx context.Context, id string) (acc acceptance, stageID string, found bool, err error) {
+// of the stage that checks criteria, of slice, when that stage runs per
+// slice; found is false when the pack has no such stage or it has no
+// artifact yet. Data that does not decode is not an error: retrying cannot
+// fix it, so it comes back as unreadable for the contract to report. Only a
+// store read fails.
+func (c *Controller) acceptanceOf(ctx context.Context, id, slice string) (acc acceptance, stageID string, found bool, err error) {
 	for _, st := range c.opts.Pack.Stages {
 		if slices.Contains(st.Checks, pack.CheckCriteria) {
 			stageID = st.ID
+			if st.PerSlice {
+				stageID = pack.StepKey(st.ID, slice)
+			}
 
 			break
 		}

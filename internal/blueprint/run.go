@@ -571,7 +571,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	if slices.Contains(st.Checks, pack.CheckCards) {
 		var cards func(context.Context, stage.Artifact) error
 
-		cards, checks.cards = c.cardsValidator(sess, bp)
+		cards, checks.cards = c.cardsValidator(sess, bp, st)
 		validators = append(validators, cards)
 		in.Instructions += "\n\n# Card template\n\n" + c.opts.Pack.CardTemplate()
 	}

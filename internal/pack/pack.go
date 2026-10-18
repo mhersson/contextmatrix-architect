@@ -447,7 +447,9 @@ func validateStage(s Stage, seen map[string]Stage) error {
 // validateSlices checks the keys that repeat stages per slice: per-slice
 // stages are contiguous, follow the stage that checks slices, and neither
 // fold nor loop; earlier_slices names per-slice stages only; a shared stage
-// has a gate and sits between the slicing stage and the per-slice stages.
+// has a gate and sits between the slicing stage and the per-slice stages;
+// the stages that check cards and criteria both repeat per slice or neither
+// does.
 func validateSlices(stages []Stage) error {
 	slicing, first, last := -1, -1, -1
 
@@ -494,6 +496,16 @@ func validateSlices(stages []Stage) error {
 				return fmt.Errorf("pack: stage %q reads %q of earlier slices, which is not a per-slice stage", s.ID, id)
 			}
 		}
+	}
+
+	// The cards check reads the criteria of the cards' own scope, one slice's
+	// or the whole blueprint's, so both stages share it.
+	cards := slices.IndexFunc(stages, func(s Stage) bool { return slices.Contains(s.Checks, CheckCards) })
+	criteria := slices.IndexFunc(stages, func(s Stage) bool { return slices.Contains(s.Checks, CheckCriteria) })
+
+	if cards >= 0 && criteria >= 0 && stages[cards].PerSlice != stages[criteria].PerSlice {
+		return fmt.Errorf("pack: stage %q checks cards and stage %q checks criteria; both repeat per slice or neither does",
+			stages[cards].ID, stages[criteria].ID)
 	}
 
 	return nil

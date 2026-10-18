@@ -470,7 +470,9 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
   Per-slice stages are contiguous, follow the stage that checks slices and
   neither fold nor loop; `earlier_slices` names per-slice stages only; a
   shared stage has a gate and sits between the stage that checks slices and
-  the per-slice stages, and no fold lands on its gate. No stage id holds `@`,
+  the per-slice stages, and no fold lands on its gate; the stages that check
+  cards and criteria both repeat per slice or neither does, so cards are
+  checked against the criteria of their own scope. No stage id holds `@`,
   which joins a per-slice stage's id and its slice in the record.
   The loader refuses a pack that breaks one of these, and one whose `gate`
   is not true or false, such as a pack from before version 0.5 with `gate:
@@ -619,7 +621,14 @@ truth the lists are copied from. The mechanical rows run on every decomposition
 submit as the critique loop, against the project config read from CM again
 for that submit, so a fix made in CM during the run counts at the next
 submit; a submit made while CM cannot be read is refused without spending a
-round. The model-judged rows are the readiness stage.
+round. A per-slice decomposition's submit is checked inside the draft of every
+earlier slice plus itself: its `depends_on` may name an earlier slice's card of
+its project, a project's setup is the earliest slice's that sets each field, a
+finding the earlier slices' draft has without the submit is theirs and does not
+count while every other finding does, whichever card it names, and no card or
+manual entry id may repeat one an earlier slice holds. The last slice's draft
+carries the playbook's title once the slices hold two or more cards. The
+model-judged rows are the readiness stage.
 
 ## Interaction
 
@@ -762,8 +771,12 @@ holds.
 
 ## Emission
 
-Cards that pass readiness go to sign-off. Default and `auto` modes show the
-sign-off (the entries in playbook order with the card that also writes
+Cards that pass readiness go to sign-off. When decomposition ran per slice,
+the sign-off, preflight and emission read one draft: every slice's latest
+cards, manual entries and order in slice order, with each project's setup as
+the earliest slice that sets it gives it and the last slice's title, so the
+blueprint ends in one playbook across every project. Default and `auto` modes
+show the sign-off (the entries in playbook order with the card that also writes
 `AGENTS.md` marked, the playbook title, the assumptions and the preflight
 result) and wait: `approve` emits, and `reject <feedback>` stores the
 feedback and re-runs decomposition and readiness with it, the three

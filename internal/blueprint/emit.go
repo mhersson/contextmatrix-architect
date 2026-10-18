@@ -2,7 +2,6 @@ package blueprint
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -62,25 +61,43 @@ func (c *Controller) cardsStage() string {
 	return ""
 }
 
-// draft reads the cards the pipeline ended on: the latest artifact of the
-// stage that checks cards.
+// draft reads the cards the pipeline ended on: the latest draft of every
+// step of the stage that checks cards, merged into one playbook when that
+// stage ran per slice.
 func (c *Controller) draft(ctx context.Context, id string) (contract.Draft, error) {
 	stageID := c.cardsStage()
 	if stageID == "" {
 		return contract.Draft{}, errors.New("blueprint: the pack has no stage that checks cards")
 	}
 
-	art, err := c.opts.Store.LatestArtifact(ctx, id, stageID)
+	steps, _, err := c.steps(ctx, id)
 	if err != nil {
-		return contract.Draft{}, fmt.Errorf("blueprint: load the cards: %w", err)
+		return contract.Draft{}, err
 	}
 
-	var data map[string]any
-	if err := json.Unmarshal(art.Data, &data); err != nil {
-		return contract.Draft{}, fmt.Errorf("blueprint: decode the cards: %w", err)
+	var drafts []contract.Draft
+
+	for _, s := range steps {
+		if s.Stage.ID != stageID {
+			continue
+		}
+
+		d, err := c.stepDraft(ctx, id, s.ID)
+		if err != nil {
+			return contract.Draft{}, err
+		}
+
+		drafts = append(drafts, d)
 	}
 
-	return contract.ParseDraft(data)
+	switch len(drafts) {
+	case 0:
+		return contract.Draft{}, fmt.Errorf("blueprint: load the cards: %w", store.ErrNotFound)
+	case 1:
+		return drafts[0], nil
+	}
+
+	return mergeDrafts(drafts), nil
 }
 
 // emitted reports what emission has recorded: cards when every draft card

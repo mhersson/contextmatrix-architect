@@ -1550,7 +1550,7 @@ func TestDraftProblems_ManualEntriesAndTitle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, draftProblems(tt.draft))
+			assert.Equal(t, tt.want, draftProblems(tt.draft, len(tt.draft.Cards) > 1))
 		})
 	}
 }
