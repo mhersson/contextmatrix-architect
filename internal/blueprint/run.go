@@ -313,6 +313,8 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		version = latest.Version + 1
 	}
 
+	draftStage, draftSlice := pack.SplitStep(stageID)
+
 	in.Draft = func(f stage.DraftFrame) {
 		// A void draft is none: the next snapshot leaves it out.
 		if f.Void {
@@ -322,7 +324,9 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			return
 		}
 
-		c.live.draft(id, protocol.Draft{Stage: stageID, Version: version, Offset: f.Offset, Text: f.Text, Refused: f.Refused, Reason: f.Reason})
+		c.live.draft(id, protocol.Draft{
+			Stage: draftStage, Slice: draftSlice, Version: version, Offset: f.Offset, Text: f.Text, Refused: f.Refused, Reason: f.Reason,
+		})
 	}
 
 	out, runErr := c.opts.Runner.Run(withRun(runCtx, runID), in)

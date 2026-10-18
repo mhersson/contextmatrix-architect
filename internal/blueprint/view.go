@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
@@ -107,8 +109,22 @@ func (c *Controller) View(ctx context.Context, id string) (protocol.BlueprintVie
 		ID: bp.ID, Mode: bp.Mode, State: bp.State,
 		Seq:      uint64(rec.seq), //nolint:gosec // event ids are positive
 		Pipeline: c.pipeline(rec), Current: rec.current(), Open: rec.open(),
-		Cost: rec.cost(), Artifacts: c.artifactRefs(rec),
+		Cost: rec.cost(), Artifacts: c.artifactRefs(rec), Slices: rec.sliceList(),
 	}, nil
+}
+
+// sliceList is the blueprint's slices for the view, those shownPieces
+// gives: [] before slicing stores a version, for a record from before
+// slices, and on a pack with no per-slice stage, whose steps never repeat.
+func (rec record) sliceList() []protocol.BlueprintSlice {
+	shown := shownPieces(rec.steps, rec.pieces)
+	out := make([]protocol.BlueprintSlice, 0, len(shown))
+
+	for _, p := range shown {
+		out = append(out, protocol.BlueprintSlice{ID: p.id, Title: p.title})
+	}
+
+	return out
 }
 
 // record loads what a view of bp is built from. The sequence is read
@@ -467,16 +483,15 @@ func (rec record) signoffRecorded(version int) bool {
 	return slices.ContainsFunc(rec.signoffs, func(e store.Event) bool { return signoffVersion(e) == version })
 }
 
-// pipeline is one step per pack stage and, when the pack checks cards, the
-// sign-off and the board.
+// pipeline is one step per pipeline step, a per-slice stage once per slice,
+// and, when the pack checks cards, the sign-off and the board.
 func (c *Controller) pipeline(rec record) []protocol.PipelineStep {
-	stages := c.opts.Pack.Stages
-	steps := make([]protocol.PipelineStep, 0, len(stages)+2)
-	current := c.currentIndex(rec)
+	steps := make([]protocol.PipelineStep, 0, len(rec.steps)+2)
+	current := rec.currentIndex()
 
-	for i, st := range stages {
+	for i, st := range rec.steps {
 		step := protocol.PipelineStep{
-			Stage: st.ID, Persona: st.Persona, Gate: st.Gate, Policy: rec.policies[st.ID],
+			Stage: st.Stage.ID, Slice: st.Slice, Persona: st.Persona, Gate: st.Gate, Policy: rec.policies[st.Stage.ID],
 			Status: rec.stageStatus(st, i, current), Attempt: rec.attempt(st.ID),
 			LatestVersion: rec.latest(st.ID), CostUSD: rec.stageCost(st.ID),
 		}
@@ -499,21 +514,31 @@ func (c *Controller) pipeline(rec record) []protocol.PipelineStep {
 	return steps
 }
 
-// currentIndex is the index of the pack stage the pipeline stands at, the
-// number of stages once it ended, and -1 when the record cannot be placed.
-func (c *Controller) currentIndex(rec record) int {
+// currentIndex is the index of the step the pipeline stands at, the number
+// of steps once it ended, and -1 when the record cannot be placed.
+func (rec record) currentIndex() int {
 	if rec.pos.end {
-		return len(c.opts.Pack.Stages)
+		return len(rec.steps)
 	}
 
-	return slices.IndexFunc(c.opts.Pack.Stages, func(s pack.Stage) bool { return s.ID == rec.pos.stage })
+	return stepIndex(rec.steps, rec.pos.stage)
 }
 
-// stageStatus is the state of pack stage st at index i: done or folded
-// behind the current stage, pending after it, and at it what its live run,
-// open round, gate or last run says.
-func (rec record) stageStatus(st pack.Stage, i, current int) string {
+// stageStatus is the state of step st at index i: done or folded behind the
+// current step, pending after it, and at it what its live run, open round,
+// gate or last run says. A collapsed shared stage is skipped, and while a
+// decomposition chain runs the per-slice steps after it that it does not
+// run are done.
+func (rec record) stageStatus(st pipelineStep, i, current int) string {
+	chained, _ := pack.SplitStep(rec.pos.stage)
+
 	switch {
+	case st.Collapsed:
+		// Its collapse is a fold row at version 0, which is no fold.
+		return stepSkipped
+	case current >= 0 && i > current && rec.pos.chain && st.Slice != "" && st.Stage.ID != chained:
+		// A decomposition chain runs only the later slices' cards.
+		return stepDone
 	case current < 0 || i > current:
 		return stepPending
 	case i < current:
@@ -554,7 +579,7 @@ func (rec record) stageStatus(st pack.Stage, i, current int) string {
 
 // loopRound is a loop stage's round since the sign-off's latest rejection,
 // counting a run of it in flight.
-func (rec record) loopRound(st pack.Stage) int {
+func (rec record) loopRound(st pipelineStep) int {
 	latest, base := rec.latest(st.ID), 0
 
 	for _, g := range rec.gates[signoffStage] {
@@ -648,9 +673,10 @@ func (rec record) current() *protocol.CurrentRun {
 	}
 
 	f := live[len(live)-1]
+	stage, slice := pack.SplitStep(f.stage)
 
 	return &protocol.CurrentRun{
-		Stage: f.stage, Kind: f.kind, Persona: f.persona, Model: f.model, StartedAt: f.startedAt,
+		Stage: stage, Slice: slice, Kind: f.kind, Persona: f.persona, Model: f.model, StartedAt: f.startedAt,
 		Turns: f.turns, ToolCalls: f.toolCalls, Tokens: f.tokens,
 	}
 }
@@ -667,7 +693,7 @@ func (rec record) open() *protocol.OpenPrompt {
 	case rec.round > 0:
 		return &protocol.OpenPrompt{PromptID: roundPromptID(rec.round), Kind: promptRound}
 	case rec.pos.gate && !rec.pos.critique && rec.shown[rec.pos.stage][rec.pos.art.Version]:
-		return &protocol.OpenPrompt{PromptID: fmt.Sprintf("gate:%s:v%d", rec.pos.stage, rec.pos.art.Version), Kind: promptGate}
+		return &protocol.OpenPrompt{PromptID: GatePromptID(rec.pos.stage, rec.pos.art.Version), Kind: promptGate}
 	case rec.pos.end && rec.pos.ready && rec.signoffRecorded(rec.pos.art.Version):
 		if _, decided := rec.decision(signoffStage, rec.pos.art.Version); !decided {
 			return &protocol.OpenPrompt{PromptID: fmt.Sprintf("gate:signoff:v%d", rec.pos.art.Version), Kind: promptGate}
@@ -713,19 +739,22 @@ func (rec record) cost() protocol.BlueprintCost {
 	return out
 }
 
-// artifactRefs lists every version of every pack stage's artifact in pack
-// order, then the sign-offs shown and the board.
+// artifactRefs lists every version of every step's artifact in pipeline
+// order, then those of slices the newest slicing no longer has, then the
+// sign-offs shown and the board. A collapsed stage's versions, and a
+// dropped slice's, are superseded.
 func (c *Controller) artifactRefs(rec record) []protocol.ArtifactRef {
 	refs := make([]protocol.ArtifactRef, 0)
+	listed := map[string]bool{}
 
-	for _, st := range c.opts.Pack.Stages {
-		arts := rec.arts[st.ID]
+	for _, st := range rec.steps {
+		listed[st.ID] = true
+		refs = append(refs, rec.stepRefs(st, st.Collapsed)...)
+	}
 
-		for i, a := range arts {
-			ref := protocol.ArtifactRef{Stage: st.ID, Version: a.Version, CreatedAt: a.CreatedAt}
-			rec.decide(&ref, i == len(arts)-1)
-			ref.Review = rec.reviewOf(st, a.Version)
-			refs = append(refs, ref)
+	for _, key := range rec.droppedKeys(c.opts.Pack, listed) {
+		if st, ok := c.stepAt(key); ok {
+			refs = append(refs, rec.stepRefs(st, true)...)
 		}
 	}
 
@@ -738,24 +767,83 @@ func (c *Controller) artifactRefs(rec record) []protocol.ArtifactRef {
 	return refs
 }
 
-// decide sets a pack stage version's status and who decided its gate: a
-// rejection stays rejected, an older version or one a gates row records
-// superseded is superseded, and the newest is approved, folded, at its
-// gate, being reviewed or current. A failed review or builder round leaves
-// it current: the version stands unjudged.
-func (rec record) decide(ref *protocol.ArtifactRef, newest bool) {
-	g, found := rec.decision(ref.Stage, ref.Version)
+// stepRefs lists every version of st's artifact, oldest first; superseded
+// marks them all superseded.
+func (rec record) stepRefs(st pipelineStep, superseded bool) []protocol.ArtifactRef {
+	arts := rec.arts[st.ID]
+	out := make([]protocol.ArtifactRef, 0, len(arts))
+
+	for i, a := range arts {
+		ref := protocol.ArtifactRef{Stage: st.Stage.ID, Slice: st.Slice, Version: a.Version, CreatedAt: a.CreatedAt}
+		rec.decide(&ref, st.ID, i == len(arts)-1)
+
+		if superseded {
+			ref.Status = artSuperseded
+		}
+
+		ref.Review = rec.reviewOf(st, a.Version)
+		out = append(out, ref)
+	}
+
+	return out
+}
+
+// droppedKeys lists the per-slice step keys the record holds artifacts for
+// that are not listed: slices an older slicing had. In pack order, then
+// slice order.
+func (rec record) droppedKeys(pk *pack.Pack, listed map[string]bool) []string {
+	var out []string
+
+	for _, st := range pk.Stages {
+		if !st.PerSlice {
+			continue
+		}
+
+		var keys []string
+
+		for key := range rec.arts {
+			// A reviewer's verdicts are keyed <key>.review and travel with their step.
+			id, slice := pack.SplitStep(key)
+			if id == st.ID && slice != "" && !strings.Contains(slice, ".") && !listed[key] {
+				keys = append(keys, key)
+			}
+		}
+
+		slices.SortFunc(keys, func(a, b string) int {
+			return cmp.Or(cmp.Compare(sliceNumber(a), sliceNumber(b)), strings.Compare(a, b))
+		})
+		out = append(out, keys...)
+	}
+
+	return out
+}
+
+// sliceNumber is n of a step key's slice SL<n>; 0 when it has none.
+func sliceNumber(key string) int {
+	_, slice := pack.SplitStep(key)
+	n, _ := strconv.Atoi(strings.TrimPrefix(slice, "SL"))
+
+	return n
+}
+
+// decide sets the status of a version of key's artifact and who decided
+// its gate: a rejection stays rejected, an older version or one a gates row
+// records superseded is superseded, and the newest is approved, folded, at
+// its gate, being reviewed or current. A failed review or builder round
+// leaves it current: the version stands unjudged.
+func (rec record) decide(ref *protocol.ArtifactRef, key string, newest bool) {
+	g, found := rec.decision(key, ref.Version)
 	if found && (g.Decision == store.GateApprove || g.Decision == store.GateReject) {
 		at := g.DecidedAt
 		ref.DecidedAt, ref.DecidedBy = &at, decider(g)
 	}
 
-	gated := rec.pos.gate && rec.pos.stage == ref.Stage
+	gated := rec.pos.gate && rec.pos.stage == key
 
 	switch {
 	case found && g.Decision == store.GateReject:
 		ref.Status = artRejected
-	case !newest || rec.supersededByGate(ref.Stage, ref.Version):
+	case !newest || rec.supersededByGate(key, ref.Version):
 		ref.Status = artSuperseded
 	case found && g.Decision == store.GateApprove:
 		ref.Status = artApproved
@@ -786,7 +874,7 @@ func decider(g store.Gate) string {
 // addressed in it, with its note, only when that version listed its id. Each
 // review lists every finding its round judged; an earlier version's review is
 // never rewritten.
-func (rec record) reviewOf(st pack.Stage, version int) *protocol.ArtifactReview {
+func (rec record) reviewOf(st pipelineStep, version int) *protocol.ArtifactReview {
 	if st.Reviewer == nil {
 		return nil
 	}
@@ -823,7 +911,7 @@ func (rec record) reviewOf(st pack.Stage, version int) *protocol.ArtifactReview 
 		})
 	}
 
-	if settled(st, v) {
+	if settled(st.Stage, v) {
 		return out
 	}
 

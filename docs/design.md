@@ -143,11 +143,14 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   stage and version in place of its body. Its one-line note says what is
   known when it is stored: the persona that drew it, the findings a
   revision was given, a loop stage's round, or that its checks refused it
-  until round 3. Reviewer verdicts and gate decisions stay prose entries.
+  until round 3. A marker and a round's frame carry a per-slice step's
+  stage and its slice apart. Reviewer verdicts and gate decisions stay
+  prose entries.
   Each marker keeps a plain fallback line in `Content`, which a CM without
   markers shows instead.
   Rounds are `round:<n>` and their questions `Q<n>`, gates
-  `gate:<stage>:v<n>`, the sign-off `gate:signoff:v<n>`, and a stopped
+  `gate:<stage>:v<n>` (`gate:<stage>:<slice>:v<n>` for a per-slice step's),
+  the sign-off `gate:signoff:v<n>`, and a stopped
   emission or run start `emission:v<n>`.
   A gate the auto policy approves never leaves a prompt open, and the gate
   plan is plain text. A gate or the sign-off stays open across a reply that
@@ -288,7 +291,12 @@ stage's step for slice n, except a `policy` event's, which names the pack
 stage and covers every slice. `@` never appears in a stage id. So a slice's
 runs, artifacts, gates, questions, rounds and reviewer verdicts
 (`<stage>@SL<n>.review`) are its own. A record from before stages ran per
-slice holds plain ids only.
+slice holds plain ids only. Text a person reads (the transcript, the
+controller's hints and its own messages, and the export) names a per-slice
+step with its slice, as in "Solution design (SL2)", only on a blueprint with
+two or more slices; with one, nothing slice-related shows. A wrapped store
+error keeps the raw key, and so do payloads, the record and the models'
+tasks.
 
 Schema bumps are one-way: an older binary refuses a newer file.
 
@@ -997,14 +1005,17 @@ connection per session while browsers are subscribed and publishes the
 frames on the session's chat stream.
 
 - **View.** `View` builds it from the store and what is in flight: one step
-  per pack stage, plus `signoff` and `emission` when the pack checks cards.
+  per pipeline step, a per-slice stage once per slice with its slice named,
+  plus `signoff` and `emission` when the pack checks cards.
   Each step carries its persona, gate, policy (the gate policy for a gated
   stage), fold target, status (pending, running, reviewing, revising,
-  waiting, done, failed, folded or skipped), attempt, a loop stage's round of its maximum, latest version
+  waiting, done, failed, folded or skipped; a collapsed shared stage is
+  skipped), attempt, a loop stage's round of its maximum, latest version
   and cost. The view also carries the run in flight (stage, kind, persona,
   model, start, and the turns, tool calls and tokens its harness lines have
   counted), the open prompt (`round:<n>` of kind `round`,
-  `gate:<stage>:v<n>`, `gate:signoff:v<n>`, or `emission:v<n>` for a
+  `gate:<stage>:v<n>`, `gate:<stage>:<slice>:v<n>` for a per-slice gate,
+  `gate:signoff:v<n>`, or `emission:v<n>` for a
   stopped emission or run start), and the cost: the ledger plus the runs in
   flight, the blueprint and per-run caps, and whether every run was priced.
   While a round waits, its stage's step is waiting and no run is in
@@ -1029,12 +1040,22 @@ frames on the session's chat stream.
   marked addressed in that version, with its note, only when the revision
   listed its id: the builder's claim, which the next round's verdict on the
   same id checks. A run whose end is recorded counts in the ledger only.
+  The view lists the blueprint's slices, each `SL<n>` with its title in
+  slicing order: empty before slicing stores a version, for a record from
+  before slices and on a pack with no per-slice stage, one entry for a
+  one-slice blueprint. The run in flight and every artifact version name
+  their slice. A dropped slice's artifacts are listed after the steps';
+  they and a collapsed stage's stored versions read superseded. While a
+  decomposition chain runs, the per-slice steps after it that it does not
+  run read done.
   `Seq` is the id of the newest events row the view reflects, and every
   state change writes one. The view reads the store and memory only, so an
   ended session's blueprint has one while the architect is up. A record the
-  pack cannot place shows every step pending.
+  pack cannot place shows every step pending, and a collapsed shared stage
+  skipped.
 - **Artifacts.** `Artifact` returns one version's body, data and the
-  problems its checks accepted it with. The sign-off is a pseudo-artifact
+  problems its checks accepted it with; a per-slice stage's is asked for
+  with its slice. The sign-off is a pseudo-artifact
   per version recorded, its data the sign-off's payload. An emitting mode
   that approves a clean sign-off on its own records what it approved (a
   `signoff_auto` event after the approval, never shown in the transcript),
@@ -1047,8 +1068,9 @@ frames on the session's chat stream.
 - **Live stream.** `Subscribe` sends a snapshot of the view first. After
   every controller event, state change and harness line it sends a fresh
   snapshot, at most four a second. It sends an `artifact_stored` hint when
-  a stage's artifact, a sign-off or the board is stored or changes, and
-  each frame of the draft being written. Draft offsets count code points:
+  a stage's artifact, naming the slice of a per-slice stage's, a sign-off
+  or the board is stored or changes, and each frame of the draft being
+  written, which names its slice. Draft offsets count code points:
   offset 0 replaces, an offset equal to what the client holds appends, and
   any other is a gap the client drops until the next snapshot, which
   carries the whole draft. A snapshot without a draft means none is in
@@ -1058,7 +1080,9 @@ frames on the session's chat stream.
   loses its queued drafts and gets a snapshot next. Publishing never waits
   for a subscriber.
 - **Endpoints.** Signed `GET /blueprints/{id}`,
-  `GET /blueprints/{id}/artifacts/{stage}/{version}` and SSE
+  `GET /blueprints/{id}/artifacts/{stage}/{version}` with `?slice=SL<n>`
+  for a per-slice stage's (`SL[1-9][0-9]{0,2}`, otherwise 400; a slice the
+  record does not hold is 404) and SSE
   `GET /blueprints/{id}/live`, behind the same HMAC auth as `/logs` and
   outside the drain gate. They ignore unknown query parameters: CM signs a
   nonce into each read, so two reads of one URI never replay. A stage is
@@ -1119,7 +1143,7 @@ frames on the session's chat stream.
 
 - Go 1.27, `contextmatrix-harness` v0.26.0 (loop, llm client, jailed read
   tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.9.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.28.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.29.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
@@ -1196,6 +1220,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | A research setting (`off` or `search`, off by default) with the search provider and its key in CM's configuration, sent as `ArchitectStart.Research` (protocol v0.27.0) | research |
 | Panel: clicking the cost in the sheet header asks for a new cap and sends `cap <usd>` or `cap off` as a chat message hidden from the transcript | cost cap |
 | Panel: the review popover and the gate bar show the findings ledger (id, severity, the reviewer's status, the builder's claim beside it), and the tester persona has a display name (protocol v0.28.0) | reviewers |
+| Pin protocol v0.29.0, since `internal/chat` decodes `LogMarker` and `LogRound`; panel: slice tabs under the stage tabs and a grouped scale bar, only with two or more slices; the artifact proxy forwards `?slice=SL<n>`, checked against `^SL[1-9][0-9]{0,2}$`; the gate bar renders "Reject shared decisions" like any action; the new `shared_decisions` stage displays with tab "Shared", name "Shared decisions", title "Shared decisions", noun "shared decisions" and doing "settling the shared decisions" | slices |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

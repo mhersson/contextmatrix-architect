@@ -108,6 +108,19 @@ func actionsPayload(actions []gateAction) []any {
 	return out
 }
 
+// GatePromptID is the prompt id of key's gate for version: gate:<stage>:v<n>,
+// or gate:<stage>:<slice>:v<n> for a per-slice step. The view's open prompt
+// and the transcript's gate prompt carry it; a consumer matches the two by
+// equality and never parses it.
+func GatePromptID(key string, version int) string {
+	stageID, slice := pack.SplitStep(key)
+	if slice == "" {
+		return fmt.Sprintf("gate:%s:v%d", stageID, version)
+	}
+
+	return fmt.Sprintf("gate:%s:%s:v%d", stageID, slice, version)
+}
+
 // gateDecision is the latest decision on stageID's artifact version:
 // approve, reject, fold, or "" when none was made. A superseded row is
 // audit only and never read as one.
@@ -156,7 +169,7 @@ func (c *Controller) decide(ctx context.Context, au audit, id, stageID string, v
 		BlueprintID: id, Stage: stageID, Version: version, Decision: decision,
 		Feedback: au.text(feedback), Responder: responder, DecidedAt: c.opts.Now().UTC(),
 	}); err != nil {
-		c.fail(ctx, au, id, 0, fmt.Sprintf("gate %s: record the decision: %v", pack.StageName(stageID, false), err))
+		c.fail(ctx, au, id, 0, fmt.Sprintf("gate %s: record the decision: %v", c.stepName(ctx, id, stageID), err))
 
 		return false
 	}
@@ -256,7 +269,7 @@ func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint,
 		c.opts.Logger.Error("blueprint: read the gate's replies", "blueprint", bp.ID, "stage", out.stage, "error", au.text(err.Error()))
 		c.setState(ctx, bp.ID, StateIdle)
 		au.event(ctx, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
-			"stage": out.stage, "message": fmt.Sprintf("The replies %s's gate takes cannot be read from the record, so the gate is not shown: %v", pack.StageName(out.stage, false), err),
+			"stage": out.stage, "message": fmt.Sprintf("The replies %s's gate takes cannot be read from the record, so the gate is not shown: %v", c.stepName(ctx, bp.ID, out.stage), err),
 		}})
 
 		return
@@ -379,11 +392,11 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 
 	action, feedback, ok := matchAction(text, actions)
 	if !ok {
-		hint := fmt.Sprintf("Reply approve to go on, or reject <feedback> to run %s again with your feedback.", pack.StageName(out.stage, false))
+		hint := fmt.Sprintf("Reply approve to go on, or reject <feedback> to run %s again with your feedback.", c.stepName(ctx, bp.ID, out.stage))
 
 		for _, a := range actions {
 			if a.Target != "" && a.Target != out.stage {
-				hint += fmt.Sprintf(" Reply %s <feedback> to run %s and everything after it again.", a.Reply, pack.StageName(a.Target, false))
+				hint += fmt.Sprintf(" Reply %s <feedback> to run %s and everything after it again.", a.Reply, c.stepName(ctx, bp.ID, a.Target))
 			}
 		}
 

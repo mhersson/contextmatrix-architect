@@ -384,3 +384,66 @@ func TestReadiness_ARecordFromBeforeSlicesLoopsToThePlainStage(t *testing.T) {
 		stepRuns(runner, "decomposition", "readiness"), "the loop and the sign-off re-run the one plain step")
 	assert.Equal(t, 2, rec.count(EventSignOff))
 }
+
+func TestReadiness_AChainThroughAGatedTargetStopsAtEachGateAndGoesOn(t *testing.T) {
+	var rounds atomic.Int32
+
+	script := slicedScript()
+	script["decomposition.review"] = passing()
+	script["readiness"] = func(context.Context, stage.Input) (stage.Output, error) {
+		if rounds.Add(1) == 1 {
+			return done("# Not ready", readinessFor(false, "D1")), nil
+		}
+
+		return done("# Ready", readinessFor(true, "D1", "D2")), nil
+	}
+
+	c, _, runner, rec := newSliced(t, script)
+	gatedCards(c.opts.Pack)
+
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	approveUntil(t, c, rec, "decomposition@SL1")
+	approveUntil(t, c, rec, "decomposition@SL2")
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "approve-cards-SL2"))
+	c.Wait("BP1")
+
+	atChainGate := func() {
+		t.Helper()
+
+		g := lastGate(t, rec)
+		require.Equal(t, "decomposition@SL1", g.Payload["stage"])
+		require.Equal(t, 2, payloadInt(g.Payload["version"]), "the chain's new SL1 cards wait at their gate")
+
+		v := view(t, c)
+		assert.Equal(t, stepDone, sliceStep(t, v, "solution_design", "SL2").Status)
+		require.NotNil(t, v.Open)
+		assert.Equal(t, "gate:decomposition:SL1:v2", v.Open.PromptID)
+	}
+
+	atChainGate()
+
+	shown := len(rec.all(EventGate))
+
+	require.NoError(t, c.End(ctx, "BP1"))
+	c.Wait("BP1")
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+	assert.Len(t, rec.all(EventGate), shown+1, "the reopen shows the chain's gate again")
+	atChainGate()
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "approve-chain-SL1"))
+	c.Wait("BP1")
+	assert.Equal(t, "decomposition@SL2", lastGate(t, rec).Payload["stage"], "the next slice's cards follow, then their gate")
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "approve-chain-SL2"))
+	c.Wait("BP1")
+
+	assert.Equal(t, []string{
+		"decomposition@SL1", "decomposition@SL2", "readiness",
+		"decomposition@SL1", "decomposition@SL2", "readiness",
+	}, stepRuns(runner, "decomposition", "readiness"))
+	assert.Len(t, inputsOf(runner, "solution_design@SL2"), 1, "the chain runs no design again")
+	assert.True(t, rec.has(EventSignOff))
+}

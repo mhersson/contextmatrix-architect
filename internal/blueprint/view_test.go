@@ -191,6 +191,114 @@ func refOf(t *testing.T, v protocol.BlueprintView, stageID string, version int) 
 	return protocol.ArtifactRef{}
 }
 
+// newSlicedView is newViewController on the sliced test pack, in default
+// mode with no cap.
+func newSlicedView(t *testing.T) (*Controller, *store.Store) {
+	t.Helper()
+
+	c, st := newViewController(t, "default", 0)
+	c.opts.Pack = slicedPack(t)
+
+	return c, st
+}
+
+// gatedCards gives pk's decomposition, the loop's target, a reviewed gate a
+// human decides, in memory only: a pack may gate it, the sliced pack does
+// not.
+func gatedCards(pk *pack.Pack) *pack.Pack {
+	for i := range pk.Stages {
+		if pk.Stages[i].ID == "decomposition" {
+			pk.Stages[i].Gate, pk.Stages[i].GatePolicy = true, pack.PolicyHuman
+			pk.Stages[i].Reviewer = &pack.Reviewer{Persona: "senior_developer", Threshold: 4}
+		}
+	}
+
+	return pk
+}
+
+// chainAtGate leaves BP1 on the gated-cards pack mid-chain: readiness sent
+// SL1's cards back, and their new version, reviewed, waits at its gate.
+func chainAtGate(t *testing.T, c *Controller, st *store.Store) {
+	t.Helper()
+
+	gatedCards(c.opts.Pack)
+	throughSliced(t, st, "decomposition@SL2")
+	gateRow(t, st, "decomposition@SL1", 1, store.GateApprove, store.ResponderHuman, "")
+	gateRow(t, st, "decomposition@SL2", 1, store.GateApprove, store.ResponderHuman, "")
+	ran(t, st, "readiness", store.RunKindStage, 1, 1, 0.1)
+	put(t, st, "readiness", readinessFor(false, "D1"))
+	ran(t, st, "decomposition@SL1", store.RunKindStage, 2, 1, 0.1)
+	v := put(t, st, "decomposition@SL1", draftOf("", cardFor("D1", nil)))
+	put(t, st, reviewStage("decomposition@SL1"), map[string]any{"score": 5, "findings": []any{}, "version": v, "attempt": 2, "round": 1})
+	appendEvent(t, st, EventGate, map[string]any{"stage": "decomposition@SL1", "version": v})
+}
+
+// throughSliced completes BP1's steps on the sliced pack with two slices,
+// up to and including last: a done run, an artifact and, at a gate, the
+// human's approval.
+func throughSliced(t *testing.T, st *store.Store, last string) {
+	t.Helper()
+
+	data := map[string]map[string]any{
+		"slicing":           twoSlices(),
+		"decomposition@SL1": draftOf("", cardFor("D1", nil)),
+		"decomposition@SL2": draftOf("Export the reports", cardFor("D2", nil, "D1")),
+		"readiness":         readinessFor(true, "D1", "D2"),
+	}
+
+	gated := map[string]bool{
+		"slicing": true, "shared_decisions": true, "solution_design@SL1": true, "acceptance@SL1": true,
+		"solution_design@SL2": true, "acceptance@SL2": true,
+	}
+
+	for _, key := range []string{
+		"intake", "slicing", "shared_decisions",
+		"solution_design@SL1", "grounding@SL1", "acceptance@SL1", "decomposition@SL1",
+		"solution_design@SL2", "grounding@SL2", "acceptance@SL2", "decomposition@SL2", "readiness",
+	} {
+		ran(t, st, key, store.RunKindStage, 1, 1, 0.1)
+		v := put(t, st, key, data[key])
+
+		if gated[key] {
+			gateRow(t, st, key, v, store.GateApprove, store.ResponderHuman, "")
+		}
+
+		if key == last {
+			return
+		}
+	}
+}
+
+// sliceStep is the view's step of stage for slice.
+func sliceStep(t *testing.T, v protocol.BlueprintView, stage, slice string) protocol.PipelineStep {
+	t.Helper()
+
+	for _, s := range v.Pipeline {
+		if s.Stage == stage && s.Slice == slice {
+			return s
+		}
+	}
+
+	t.Fatalf("no step %s for %q in %+v", stage, slice, v.Pipeline)
+
+	return protocol.PipelineStep{}
+}
+
+// sliceRef is the view's ref of stage for slice at version.
+func sliceRef(t *testing.T, v protocol.BlueprintView, stage, slice string, version int) protocol.ArtifactRef {
+	t.Helper()
+
+	for _, r := range v.Artifacts {
+		if r.Stage == stage && r.Slice == slice && r.Version == version {
+			return r
+		}
+	}
+
+	t.Fatalf("no ref %s %q v%d in %+v", stage, slice, version, v.Artifacts)
+
+	return protocol.ArtifactRef{}
+}
+
 func TestView_AnUnknownBlueprintIsNotFound(t *testing.T) {
 	c, _ := newViewController(t, "default", 0)
 
@@ -692,6 +800,7 @@ func TestView_States(t *testing.T) {
 				r := refOf(t, v, "slicing", 1)
 				assert.Equal(t, artApproved, r.Status)
 				assert.Equal(t, byAutomatic, r.DecidedBy, "the reviewer's verdict decided it")
+				assert.Equal(t, []protocol.BlueprintSlice{}, v.Slices, "a pack with no per-slice stage repeats no step")
 			},
 		},
 		{
@@ -879,4 +988,153 @@ func TestView_AnUnplaceableRecordStillHasAView(t *testing.T) {
 	}
 
 	assert.Equal(t, artCurrent, refOf(t, v, "intake", 1).Status)
+}
+
+func TestView_Slices(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, c *Controller, st *store.Store)
+		check func(t *testing.T, v protocol.BlueprintView)
+	}{
+		{
+			name: "two slices tag every per-slice step and list the slices",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				throughSliced(t, st, "shared_decisions")
+				ran(t, st, "solution_design@SL1", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "solution_design@SL1", nil)
+				put(t, st, reviewStage("solution_design@SL1"), map[string]any{"score": 5, "findings": []any{}, "version": 1, "attempt": 1, "round": 1})
+				appendEvent(t, st, EventGate, map[string]any{"stage": "solution_design@SL1", "version": 1})
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				assert.Equal(t, []protocol.BlueprintSlice{{ID: "SL1", Title: "Ship the endpoint"}, {ID: "SL2", Title: "Show it in the UI"}}, v.Slices)
+				assert.Equal(t, stepDone, sliceStep(t, v, "shared_decisions", "").Status)
+				assert.Equal(t, stepWaiting, sliceStep(t, v, "solution_design", "SL1").Status)
+				assert.Equal(t, stepPending, sliceStep(t, v, "solution_design", "SL2").Status)
+				require.NotNil(t, v.Open)
+				assert.Equal(t, "gate:solution_design:SL1:v1", v.Open.PromptID)
+				assert.Equal(t, artAtGate, sliceRef(t, v, "solution_design", "SL1", 1).Status)
+				assert.Equal(t, 5, sliceRef(t, v, "solution_design", "SL1", 1).Review.Score, "a slice's review is its own")
+			},
+		},
+		{
+			name: "one slice skips the shared stage and still tags SL1",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				ran(t, st, "intake", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "intake", nil)
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", oneSlice())
+				gateRow(t, st, "slicing", 1, store.GateFold, store.ResponderAuto, "solution_design@SL1")
+				gateRow(t, st, "shared_decisions", 0, store.GateFold, store.ResponderAuto, "solution_design@SL1")
+				ran(t, st, "solution_design@SL1", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "solution_design@SL1", nil)
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				assert.Len(t, v.Slices, 1, "one slice is sent; consumers show nothing slice-related below two")
+				assert.Equal(t, stepSkipped, sliceStep(t, v, "shared_decisions", "").Status, "its collapse row at version 0 is not a fold")
+				assert.Equal(t, stepFolded, sliceStep(t, v, "slicing", "").Status)
+				assert.Equal(t, "solution_design", sliceStep(t, v, "slicing", "").FoldsInto)
+				sliceStep(t, v, "solution_design", "SL1")
+			},
+		},
+		{
+			name: "a record from before slices",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				for _, s := range []string{"intake", "slicing", "solution_design"} {
+					ran(t, st, s, store.RunKindStage, 1, 1, 0.1)
+					put(t, st, s, stageData(s))
+				}
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				assert.Equal(t, []protocol.BlueprintSlice{}, v.Slices, "no slices, though its slicing holds two")
+				assert.Empty(t, sliceStep(t, v, "solution_design", "").Slice)
+				assert.Equal(t, stepSkipped, sliceStep(t, v, "shared_decisions", "").Status)
+			},
+		},
+		{
+			name: "before slicing stores a version",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				ran(t, st, "intake", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "intake", nil)
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				assert.Equal(t, []protocol.BlueprintSlice{}, v.Slices)
+				assert.Equal(t, stepPending, sliceStep(t, v, "solution_design", "").Status)
+				assert.Equal(t, stepPending, sliceStep(t, v, "shared_decisions", "").Status, "nothing is skipped before slicing decides")
+			},
+		},
+		{
+			name: "a slice the newest slicing dropped",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				throughSliced(t, st, "solution_design@SL2")
+				ran(t, st, "slicing", store.RunKindStage, 2, 1, 0.1)
+				put(t, st, "slicing", oneSlice())
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				assert.Len(t, v.Slices, 1)
+				dropped := sliceRef(t, v, "solution_design", "SL2", 1)
+				assert.Equal(t, artSuperseded, dropped.Status)
+				assert.Equal(t, artSuperseded, sliceRef(t, v, "shared_decisions", "", 1).Status, "a collapsed stage's approved version")
+
+				last := v.Artifacts[len(v.Artifacts)-1]
+				assert.Equal(t, "SL2", last.Slice, "a dropped slice's artifacts follow the steps'")
+			},
+		},
+		{
+			name: "the chain shows the later slices' steps done",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				throughSliced(t, st, "decomposition@SL2")
+				ran(t, st, "readiness", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "readiness", readinessFor(false, "D1"))
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				assert.Equal(t, stepPending, sliceStep(t, v, "decomposition", "SL1").Status, "the chain starts at the slice that owns the card")
+				assert.Equal(t, stepDone, sliceStep(t, v, "solution_design", "SL2").Status, "the chain runs no design")
+				assert.Equal(t, stepPending, sliceStep(t, v, "decomposition", "SL2").Status)
+				assert.Equal(t, stepPending, sliceStep(t, v, "readiness", "").Status)
+			},
+		},
+		{
+			name:  "the chain at a gated target's gate shows the later slices' steps done",
+			setup: chainAtGate,
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				assert.Equal(t, stepWaiting, sliceStep(t, v, "decomposition", "SL1").Status)
+				require.NotNil(t, v.Open)
+				assert.Equal(t, "gate:decomposition:SL1:v2", v.Open.PromptID)
+				assert.Equal(t, stepDone, sliceStep(t, v, "solution_design", "SL2").Status, "the chain runs no design")
+				assert.Equal(t, stepPending, sliceStep(t, v, "decomposition", "SL2").Status)
+			},
+		},
+		{
+			name: "a rejection at the chain's gate keeps the chain",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				chainAtGate(t, c, st)
+				gateRow(t, st, "decomposition@SL1", 2, store.GateReject, store.ResponderHuman, "split D1")
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				assert.Equal(t, stepPending, sliceStep(t, v, "decomposition", "SL1").Status)
+				assert.Equal(t, stepDone, sliceStep(t, v, "solution_design", "SL2").Status)
+				assert.Equal(t, stepPending, sliceStep(t, v, "decomposition", "SL2").Status)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st := newSlicedView(t)
+			tt.setup(t, c, st)
+			tt.check(t, view(t, c))
+		})
+	}
+}
+
+func TestView_TheRunInFlightNamesItsSlice(t *testing.T) {
+	c, st := newSlicedView(t)
+	throughSliced(t, st, "solution_design@SL2")
+	flying(t, c, st, "grounding@SL2", store.RunKindStage, 1)
+
+	v := view(t, c)
+	require.NotNil(t, v.Current)
+	assert.Equal(t, "grounding", v.Current.Stage)
+	assert.Equal(t, "SL2", v.Current.Slice)
+	assert.Equal(t, stepRunning, sliceStep(t, v, "grounding", "SL2").Status)
 }

@@ -17,7 +17,7 @@ func TestArtifact_AStageVersion(t *testing.T) {
 
 	put(t, st, "intake", map[string]any{"slices": 1, "check_problems": []any{"A1: too vague"}})
 
-	art, err := c.Artifact(ctx, viewID, "intake", 1)
+	art, err := c.Artifact(ctx, viewID, "intake", "", 1)
 	require.NoError(t, err)
 	assert.Equal(t, "intake", art.Stage)
 	assert.Equal(t, 1, art.Version)
@@ -48,7 +48,7 @@ func TestArtifact_NotFound(t *testing.T) {
 		{"a second board", viewID, emissionStage, 2},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := c.Artifact(ctx, tt.id, tt.stage, tt.version)
+			_, err := c.Artifact(ctx, tt.id, tt.stage, "", tt.version)
 			require.ErrorIs(t, err, ErrNotFound)
 		})
 	}
@@ -61,7 +61,7 @@ func TestArtifact_TheSignoffIsItsLatestPayload(t *testing.T) {
 	appendEvent(t, st, EventSignOff, map[string]any{"version": 2, "order": []any{"D1", "D2"}})
 	appendEvent(t, st, EventSignOff, map[string]any{"version": 1, "order": []any{"D1"}, "warnings": []any{"reshown"}})
 
-	art, err := c.Artifact(context.Background(), viewID, signoffStage, 1)
+	art, err := c.Artifact(context.Background(), viewID, signoffStage, "", 1)
 	require.NoError(t, err)
 	assert.Equal(t, signoffStage, art.Stage)
 	assert.Equal(t, 1, art.Version)
@@ -85,7 +85,7 @@ func TestArtifact_TheBoard(t *testing.T) {
 		"repos":    []any{map[string]any{"project": "alpha", "compare_url": "https://example.com/compare"}},
 	})
 
-	art, err := c.Artifact(context.Background(), viewID, emissionStage, 1)
+	art, err := c.Artifact(context.Background(), viewID, emissionStage, "", 1)
 	require.NoError(t, err)
 
 	var b struct {
@@ -128,7 +128,7 @@ func TestArtifact_ASignoffShownThenApprovedAutomatically(t *testing.T) {
 	gateRow(t, st, signoffStage, 1, store.GateApprove, store.ResponderAuto, "")
 	appendEvent(t, st, EventSignOffAuto, map[string]any{"version": 1, "warnings": []any{}})
 
-	art, err := c.Artifact(ctx, viewID, signoffStage, 1)
+	art, err := c.Artifact(ctx, viewID, signoffStage, "", 1)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"version":1,"warnings":[]}`, string(art.Data), "the later record is the artifact")
 
@@ -144,4 +144,38 @@ func TestArtifact_ASignoffShownThenApprovedAutomatically(t *testing.T) {
 	}
 
 	assert.Equal(t, 1, refs, "one ref per version")
+}
+
+func TestArtifact_ASliceVersion(t *testing.T) {
+	c, st := newSlicedView(t)
+	ctx := context.Background()
+
+	put(t, st, "solution_design@SL2", map[string]any{"slices": []any{map[string]any{"id": "SL2"}}})
+
+	// The sign-off and the board exist, so only the slice refuses them.
+	appendEvent(t, st, EventSignOff, map[string]any{"version": 1})
+	appendEvent(t, st, EventEmitted, map[string]any{"cards": []any{}})
+
+	_, err := c.Artifact(ctx, viewID, signoffStage, "", 1)
+	require.NoError(t, err, "the sign-off is read without a slice")
+	_, err = c.Artifact(ctx, viewID, emissionStage, "", 1)
+	require.NoError(t, err, "the board is read without a slice")
+
+	art, err := c.Artifact(ctx, viewID, "solution_design", "SL2", 1)
+	require.NoError(t, err)
+	assert.Equal(t, "solution_design", art.Stage)
+	assert.Equal(t, "SL2", art.Slice)
+
+	for _, tc := range []struct{ name, stage, slice string }{
+		{"a slice the record does not hold", "solution_design", "SL3"},
+		{"a slice on a whole-blueprint stage", "slicing", "SL1"},
+		{"a slice on the sign-off", signoffStage, "SL1"},
+		{"a slice on the board", emissionStage, "SL1"},
+		{"a per-slice stage asked without its slice", "solution_design", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := c.Artifact(ctx, viewID, tc.stage, tc.slice, 1)
+			assert.ErrorIs(t, err, ErrNotFound)
+		})
+	}
 }

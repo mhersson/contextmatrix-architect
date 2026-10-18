@@ -46,16 +46,17 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		// A run that goes on from a round is no new start, so no divider.
 		switch str(p["segment"]) {
 		case blueprint.SegmentAnswers:
-			entry.Content = fmt.Sprintf("%s resumes with the answers to round %.0f.", runLabel(p), num(p["question_round"]))
+			entry.Content = fmt.Sprintf("%s resumes with the answers to round %.0f.", runLabel(p, e.Sliced), num(p["question_round"]))
 		case blueprint.SegmentChat:
-			entry.Content = fmt.Sprintf("%s answers the chat about round %.0f.", runLabel(p), num(p["question_round"]))
+			entry.Content = fmt.Sprintf("%s answers the chat about round %.0f.", runLabel(p, e.Sliced), num(p["question_round"]))
 		default:
-			entry.Content = fmt.Sprintf("%s started as %s.", runLabel(p), strings.ReplaceAll(str(p["persona"]), "_", " "))
+			entry.Content = fmt.Sprintf("%s started as %s.", runLabel(p, e.Sliced), strings.ReplaceAll(str(p["persona"]), "_", " "))
 
 			// A stage run's first round is a divider; its builder rounds, its
 			// reviews and its responders are not.
 			if kind := str(p["kind"]); (kind == "" || kind == store.RunKindStage) && num(p["round"]) <= 1 {
-				entry.Marker = &protocol.LogMarker{Kind: "stage", Stage: str(p["stage"]), Persona: str(p["persona"])}
+				stage, slice := pack.SplitStep(str(p["stage"]))
+				entry.Marker = &protocol.LogMarker{Kind: "stage", Stage: stage, Slice: slice, Persona: str(p["persona"])}
 			}
 		}
 	case blueprint.EventRound:
@@ -64,6 +65,9 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			return protocol.LogEntry{}, false
 		}
 
+		// Inside the architect a round's stage is its step's key; the wire splits it.
+		frame.Stage, frame.Slice = pack.SplitStep(frame.Stage)
+
 		left := str(p["change"]) == blueprint.ChangeLeft
 		entry.Type = "text"
 		entry.Content = roundText(n, frame, left)
@@ -71,10 +75,11 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventArtifact:
 		// A sheet reference: the body is on the sheet, never transcript text.
 		note := artifactNote(p)
+		stage, slice := pack.SplitStep(str(p["stage"]))
 		entry.Type = "text"
-		entry.Content = fmt.Sprintf("%s rev %.0f: %s.", pack.StageName(str(p["stage"]), false), num(p["version"]), note)
+		entry.Content = fmt.Sprintf("%s rev %.0f: %s.", pack.StageName(str(p["stage"]), e.Sliced), num(p["version"]), note)
 		entry.Marker = &protocol.LogMarker{
-			Kind: "artifact", Stage: str(p["stage"]), Version: int(num(p["version"])), Persona: str(p["persona"]), Note: note,
+			Kind: "artifact", Stage: stage, Slice: slice, Version: int(num(p["version"])), Persona: str(p["persona"]), Note: note,
 		}
 	case blueprint.EventStageEnded:
 		entry.Type = "system"
@@ -85,13 +90,13 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		}
 
 		if str(p["status"]) == store.RunAsked {
-			what := fmt.Sprintf("%s waits for the answers to round %.0f", runLabel(p), num(p["question_round"]))
+			what := fmt.Sprintf("%s waits for the answers to round %.0f", runLabel(p, e.Sliced), num(p["question_round"]))
 
 			switch chat, _ := p["chat"].(bool); {
 			case chat:
-				what = fmt.Sprintf("%s replied in round %.0f's chat", runLabel(p), num(p["question_round"]))
+				what = fmt.Sprintf("%s replied in round %.0f's chat", runLabel(p, e.Sliced), num(p["question_round"]))
 			case p["responder"] == true:
-				what = fmt.Sprintf("%s had the responder answer round %.0f", runLabel(p), num(p["question_round"]))
+				what = fmt.Sprintf("%s had the responder answer round %.0f", runLabel(p, e.Sliced), num(p["question_round"]))
 			}
 
 			entry.Content = fmt.Sprintf("%s (%s %.2f USD).", what, label, num(p["cost_usd"]))
@@ -99,7 +104,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			break
 		}
 
-		entry.Content = fmt.Sprintf("%s %s (%s %.2f USD).", runLabel(p), str(p["status"]), label, num(p["cost_usd"]))
+		entry.Content = fmt.Sprintf("%s %s (%s %.2f USD).", runLabel(p, e.Sliced), str(p["status"]), label, num(p["cost_usd"]))
 	case blueprint.EventNote:
 		entry.Type = "system"
 
@@ -111,9 +116,9 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		case num(p["round"]) > 0 && stage == "":
 			entry.Content = fmt.Sprintf("Noted. Round %.0f still waits for its answers in the question block; the stage's next run gets the note.", num(p["round"]))
 		case stage != "" && critique:
-			entry.Content = fmt.Sprintf("Noted. The review of %s, or its next builder round, runs again, and it and every run after it get the note.", pack.StageName(stage, false))
+			entry.Content = fmt.Sprintf("Noted. The review of %s, or its next builder round, runs again, and it and every run after it get the note.", pack.StageName(stage, e.Sliced))
 		case stage != "":
-			entry.Content = fmt.Sprintf("Noted. Stage %s runs again, and it and every stage after it get the note.", pack.StageName(stage, false))
+			entry.Content = fmt.Sprintf("Noted. Stage %s runs again, and it and every stage after it get the note.", pack.StageName(stage, e.Sliced))
 		case ended:
 			entry.Content = "Noted. The pipeline has ended, so no stage starts to get it."
 		case duringRun:
@@ -127,23 +132,23 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		}
 	case blueprint.EventSignOff:
 		entry.Type = "text"
-		body, reply := signoffText(p)
+		body, reply := signoffText(p, e.Sliced)
 		entry.Content = body + reply
 		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:signoff:v%.0f", num(p["version"])), body, p["actions"])
 	case blueprint.EventGate:
 		entry.Type = "text"
-		body, reply := gateText(p)
+		body, reply := gateText(p, e.Sliced)
 		entry.Content = body + reply
-		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:%s:v%.0f", str(p["stage"]), num(p["version"])), body, p["actions"])
+		entry.Prompt = actionsPrompt(blueprint.GatePromptID(str(p["stage"]), int(num(p["version"]))), body, p["actions"])
 	case blueprint.EventReview:
 		entry.Type = "system"
-		entry.Content = reviewText(p)
+		entry.Content = reviewText(p, e.Sliced)
 	case blueprint.EventDecided:
 		entry.Type = "system"
-		entry.Content = decidedText(p)
+		entry.Content = decidedText(p, e.Sliced)
 	case blueprint.EventAborted:
 		entry.Type = "system"
-		entry.Content = abortedText(p)
+		entry.Content = abortedText(p, e.Sliced)
 	case blueprint.EventExported:
 		files, _ := p["files"].(int)
 		entry.Type = "system"
@@ -166,7 +171,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = str(p["prompt"])
 
 		if strings.TrimSpace(entry.Content) == "" {
-			entry.Content = fmt.Sprintf("Stage %s takes your next message.", pack.StageName(str(p["stage"]), false))
+			entry.Content = fmt.Sprintf("Stage %s takes your next message.", pack.StageName(str(p["stage"]), e.Sliced))
 		}
 
 		entry.Prompt = resumePrompt(p)
@@ -178,10 +183,10 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = policyText(p)
 	case blueprint.EventCap:
 		entry.Type = "system"
-		entry.Content = capText(p)
+		entry.Content = capText(p, e.Sliced)
 	case blueprint.EventResume:
 		entry.Type = "system"
-		entry.Content = resumeText(p)
+		entry.Content = resumeText(p, e.Sliced)
 	case blueprint.EventGatePlan:
 		entry.Type = "text"
 		entry.Content = gatePlanText(p)
@@ -612,8 +617,8 @@ func stringsOf(v any) []string {
 
 // signoffText renders the sign-off: the body (the entries in playbook order,
 // the playbook and the preflight result) and the reply line that decides it,
-// which starts with its separator.
-func signoffText(p map[string]any) (body, reply string) {
+// which starts with its separator. sliced names a step's slice.
+func signoffText(p map[string]any, sliced bool) (body, reply string) {
 	var b strings.Builder
 
 	if auto, _ := p["auto_stopped"].(bool); auto {
@@ -665,7 +670,7 @@ func signoffText(p map[string]any) (body, reply string) {
 		b.WriteString("\nAssumptions, riskiest first:\n")
 
 		for _, a := range list {
-			fmt.Fprintf(&b, "- %s (%s) %s\n", str(a["id"]), assumptionStatus(a), str(a["text"]))
+			fmt.Fprintf(&b, "- %s (%s) %s\n", str(a["id"]), assumptionStatus(a, sliced), str(a["text"]))
 		}
 	case str(p["assumptions"]) != "":
 		// Intake's section text: a sign-off stored before assumptions were
@@ -724,7 +729,8 @@ func signoffText(p map[string]any) (body, reply string) {
 // assumptionStatus names an assumption's status with the source it rests on:
 // who answered the question, which one unless it is the entry's own id, and
 // the answer; any other status with its evidence and the answer it rests on.
-func assumptionStatus(a map[string]any) string {
+// sliced names the slice of the step it was accepted at.
+func assumptionStatus(a map[string]any, sliced bool) string {
 	status, basis, answer := str(a["status"]), str(a["basis"]), str(a["answer"])
 
 	var who string
@@ -736,7 +742,7 @@ func assumptionStatus(a map[string]any) string {
 		who = "confirmed by you"
 
 		if at := str(a["accepted"]); at != "" {
-			return who + ", accepted at " + pack.StageName(at, false)
+			return who + ", accepted at " + pack.StageName(at, sliced)
 		}
 	default:
 		if evidence := str(a["evidence"]); evidence != "" {
@@ -783,7 +789,7 @@ func policyText(p map[string]any) string {
 
 // capText renders a cap reply: the change it made and the stage it
 // resumes, or why it changed nothing.
-func capText(p map[string]any) string {
+func capText(p map[string]any, sliced bool) string {
 	if refused := str(p["refused"]); refused != "" {
 		return "Nothing changed: " + refused + ", or reply `cap off`."
 	}
@@ -806,7 +812,7 @@ func capText(p map[string]any) string {
 	}
 
 	if resumes := str(p["resumes"]); resumes != "" {
-		return text + "; resuming " + pack.StageName(resumes, false) + "."
+		return text + "; resuming " + pack.StageName(resumes, sliced) + "."
 	}
 
 	return text + "."
@@ -815,9 +821,9 @@ func capText(p map[string]any) string {
 // abortedText renders an abort: a stage whose run it cut runs again on
 // continue, while an abort that cut nothing, or the sign-off's emission or
 // run start, which approve resumes, leaves continue nothing to run.
-func abortedText(p map[string]any) string {
+func abortedText(p map[string]any, sliced bool) string {
 	if stage := str(p["stage"]); stage != "" && stage != "signoff" {
-		return "Abort requested. " + pack.StageName(stage, false) + " is canceled; reply `continue` to run it again. The blueprint is kept and can be reopened."
+		return "Abort requested. " + pack.StageName(stage, sliced) + " is canceled; reply `continue` to run it again. The blueprint is kept and can be reopened."
 	}
 
 	return "Abort requested. Any running stage is canceled; the blueprint is kept and can be reopened."
@@ -835,13 +841,13 @@ func stopsStage(p map[string]any) bool {
 
 // resumeText renders a resume reply: the stage it runs again, or that
 // nothing waits to resume and what runs.
-func resumeText(p map[string]any) string {
+func resumeText(p map[string]any, sliced bool) string {
 	if nothing, _ := p["nothing"].(bool); !nothing {
-		return "Resuming " + pack.StageName(str(p["stage"]), false) + "."
+		return "Resuming " + pack.StageName(str(p["stage"]), sliced) + "."
 	}
 
 	if running := str(p["running"]); running != "" {
-		return "Nothing is waiting to resume; " + pack.StageName(running, false) + " is running."
+		return "Nothing is waiting to resume; " + pack.StageName(running, sliced) + " is running."
 	}
 
 	return "Nothing is waiting to resume."
@@ -901,8 +907,8 @@ func gatePlanText(p map[string]any) string {
 // the reviewer's score and the critical findings it left open, the
 // artifacts folded into it shown below, the problems its checks accepted
 // them with) and the reply line that decides it, which starts with its
-// separator.
-func gateText(p map[string]any) (body, reply string) {
+// separator. sliced names a step's slice.
+func gateText(p map[string]any, sliced bool) (body, reply string) {
 	var replies []string
 
 	for _, a := range anyMaps(p["actions"]) {
@@ -917,12 +923,12 @@ func gateText(p map[string]any) (body, reply string) {
 	stage, version := str(p["stage"]), num(p["version"])
 	folded := anyMaps(p["folded"])
 
-	text := fmt.Sprintf("**Gate: %s, version %.0f.** Version %.0f is on the sheet and waits for your decision.", pack.StageName(stage, false), version, version)
+	text := fmt.Sprintf("**Gate: %s, version %.0f.** Version %.0f is on the sheet and waits for your decision.", pack.StageName(stage, sliced), version, version)
 
 	if len(folded) > 0 {
 		names := make([]string, 0, len(folded))
 		for _, f := range folded {
-			names = append(names, fmt.Sprintf("%s version %.0f", pack.StageName(str(f["stage"]), false), num(f["version"])))
+			names = append(names, fmt.Sprintf("%s version %.0f", pack.StageName(str(f["stage"]), sliced), num(f["version"])))
 		}
 
 		text += fmt.Sprintf(" It also judges %s, whose gate folded into this one, shown below.", strings.Join(names, " and "))
@@ -964,7 +970,7 @@ func gateText(p map[string]any) (body, reply string) {
 
 	if len(folded) > 0 {
 		for _, f := range folded {
-			text += fmt.Sprintf("\n\n**%s, version %.0f**\n\n%s", pack.StageName(str(f["stage"]), false), num(f["version"]), str(f["body"]))
+			text += fmt.Sprintf("\n\n**%s, version %.0f**\n\n%s", pack.StageName(str(f["stage"]), sliced), num(f["version"]), str(f["body"]))
 
 			if list := problemsList(f["problems"]); list != "" {
 				text += "\n\n" + list
@@ -996,8 +1002,8 @@ func problemsList(v any) string {
 
 // decidedText renders a decision at a stage's gate, a fold into a later
 // gate, or a decision at the sign-off; a decision without a stage is the
-// sign-off's.
-func decidedText(p map[string]any) string {
+// sign-off's. sliced names a step's slice.
+func decidedText(p map[string]any, sliced bool) string {
 	reject, auto := str(p["decision"]) == "reject", str(p["responder"]) == "auto"
 
 	if stage := str(p["stage"]); stage != "" && stage != "signoff" {
@@ -1006,15 +1012,15 @@ func decidedText(p map[string]any) string {
 			// A stage collapses only below two slices, so no name shows a slice.
 			return fmt.Sprintf("%s is skipped: %s settles what every slice shares.", pack.StageName(stage, false), pack.StageName(str(p["feedback"]), false))
 		case str(p["decision"]) == "fold":
-			return fmt.Sprintf("%s folds into %s's gate, which judges both.", pack.StageName(stage, false), pack.StageName(str(p["feedback"]), false))
+			return fmt.Sprintf("%s folds into %s's gate, which judges both.", pack.StageName(stage, sliced), pack.StageName(str(p["feedback"]), sliced))
 		case str(p["decision"]) == "superseded":
-			return fmt.Sprintf("%s runs again after %s.", pack.StageName(stage, false), pack.StageName(str(p["feedback"]), false))
+			return fmt.Sprintf("%s runs again after %s.", pack.StageName(stage, sliced), pack.StageName(str(p["feedback"]), sliced))
 		case reject:
-			return fmt.Sprintf("Rejected %s; it runs again with your feedback.", pack.StageName(stage, false))
+			return fmt.Sprintf("Rejected %s; it runs again with your feedback.", pack.StageName(stage, sliced))
 		case auto:
-			return fmt.Sprintf("%s passed its gate under the auto policy.", pack.StageName(stage, false))
+			return fmt.Sprintf("%s passed its gate under the auto policy.", pack.StageName(stage, sliced))
 		default:
-			return fmt.Sprintf("Approved %s.", pack.StageName(stage, false))
+			return fmt.Sprintf("Approved %s.", pack.StageName(stage, sliced))
 		}
 	}
 
@@ -1029,23 +1035,24 @@ func decidedText(p map[string]any) string {
 }
 
 // runLabel names a run in the panel: a stage, a stage's review, or the
-// responder answering for a stage.
-func runLabel(p map[string]any) string {
+// responder answering for a stage. sliced names a step's slice.
+func runLabel(p map[string]any, sliced bool) string {
 	switch str(p["kind"]) {
 	case store.RunKindReviewer:
-		return "Review of " + pack.StageName(str(p["stage"]), false)
+		return "Review of " + pack.StageName(str(p["stage"]), sliced)
 	case store.RunKindResponder:
-		return "The responder for " + pack.StageName(str(p["stage"]), false)
+		return "The responder for " + pack.StageName(str(p["stage"]), sliced)
 	default:
-		return "Stage " + pack.StageName(str(p["stage"]), false)
+		return "Stage " + pack.StageName(str(p["stage"]), sliced)
 	}
 }
 
 // reviewText renders a reviewer's verdict and its ledger: each finding's
 // id, severity and status, with the builder's claim beside a re-checked one.
-func reviewText(p map[string]any) string {
+// sliced names a step's slice.
+func reviewText(p map[string]any, sliced bool) string {
 	text := fmt.Sprintf("The reviewer scored %s version %.0f %.0f of 5 (passes at %.0f), round %.0f.",
-		pack.StageName(str(p["stage"]), false), num(p["version"]), num(p["score"]), num(p["threshold"]), num(p["round"]))
+		pack.StageName(str(p["stage"]), sliced), num(p["version"]), num(p["score"]), num(p["threshold"]), num(p["round"]))
 
 	text += openCriticalText(stringsOf(p["open_critical"]))
 

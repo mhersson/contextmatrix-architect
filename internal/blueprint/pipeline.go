@@ -35,8 +35,9 @@ type outcome struct {
 	// collapse, on an outcome that passes a shared stage that collapsed, is
 	// the fold at version 0 the caller records.
 	collapse *folding
-	// chain marks a loop target the loop stage or the sign-off sent back:
-	// every later slice's target runs after it, and no other step.
+	// chain marks a loop target the loop stage or the sign-off sent back,
+	// to run or at its gate: every later slice's target runs after it, and
+	// no other step.
 	chain    bool
 	end      bool
 	ready    bool
@@ -187,23 +188,33 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 					return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
 				}
 
-				return outcome{stage: st.ID, gate: true, critique: pending, art: art}, nil
+				// A gated loop target in the chain stays in it at its gate.
+				chain, err := c.chained(ctx, bp.ID, st)
+				if err != nil {
+					return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
+				}
+
+				return outcome{stage: st.ID, gate: true, critique: pending, chain: chain, art: art}, nil
 			case store.GateReject:
-				return outcome{stage: st.ID}, nil
+				chain, err := c.chained(ctx, bp.ID, st)
+				if err != nil {
+					return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
+				}
+
+				return outcome{stage: st.ID, chain: chain}, nil
 			}
 		}
 
 		// A loop target the loop stage or the sign-off sent back is followed
 		// by the next slice's, never by that slice's earlier steps. Only a
-		// per-slice step before the last slice has a next step, so only it
-		// reads the runs.
-		if loop, next := c.loopOf(st.Stage.ID), nextSliceStep(steps, st); loop != "" && next != "" {
-			runs, err := c.opts.Store.ListRuns(ctx, bp.ID)
+		// per-slice step before the last slice has a next step.
+		if next := nextSliceStep(steps, st); next != "" {
+			chain, err := c.chained(ctx, bp.ID, st)
 			if err != nil {
 				return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
 			}
 
-			if inChain(runs, completed, loop) {
+			if chain {
 				return outcome{stage: next, chain: true}, nil
 			}
 		}
@@ -781,7 +792,7 @@ func (c *Controller) writeAssumptions(ctx context.Context, b *strings.Builder, b
 	}
 
 	b.WriteString("## Assumptions so far\n\nEach with its id and latest status; a verdict names the id:\n\n")
-	b.WriteString(assumptionLines(list) + "\n\n")
+	b.WriteString(assumptionLines(list, c.sliced(ctx, bp.ID)) + "\n\n")
 
 	return nil
 }

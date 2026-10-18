@@ -630,6 +630,9 @@ type blueprintSummary struct {
 	// prose is the text of intake's Assumptions section, read only when no
 	// stage stated assumptions as data.
 	prose string
+	// sliced says the blueprint has two or more slices, so a step's name
+	// names its slice.
+	sliced bool
 }
 
 // summary reads the first stage's latest artifact, the need, and the
@@ -645,7 +648,10 @@ func (c *Controller) summary(ctx context.Context, id string) (blueprintSummary, 
 		return blueprintSummary{}, fmt.Errorf("load the assumptions: %w", err)
 	}
 
-	sum := blueprintSummary{problem: sectionText(art.Body, "Problem"), value: sectionText(art.Body, "Value"), assumptions: list}
+	sum := blueprintSummary{
+		problem: sectionText(art.Body, "Problem"), value: sectionText(art.Body, "Value"), assumptions: list,
+		sliced: c.sliced(ctx, id),
+	}
 
 	// An intake stored before assumptions were data keeps them in its body's
 	// Assumptions section; without it, a blueprint in flight across that
@@ -669,7 +675,7 @@ func (s blueprintSummary) description(id string) string {
 
 	switch {
 	case len(s.assumptions) > 0:
-		fmt.Fprintf(&b, "Assumptions, each with its latest status:\n%s\n\n", assumptionLines(s.assumptions))
+		fmt.Fprintf(&b, "Assumptions, each with its latest status:\n%s\n\n", assumptionLines(s.assumptions, s.sliced))
 	case s.prose != "":
 		fmt.Fprintf(&b, "Assumptions:\n%s\n\n", s.prose)
 	default:
@@ -691,7 +697,7 @@ func (s blueprintSummary) contextText() string {
 
 	switch {
 	case len(s.assumptions) > 0:
-		fmt.Fprintf(&b, "Blueprint assumptions, each with its latest status:\n%s", assumptionLines(s.assumptions))
+		fmt.Fprintf(&b, "Blueprint assumptions, each with its latest status:\n%s", assumptionLines(s.assumptions, s.sliced))
 	case s.prose != "":
 		fmt.Fprintf(&b, "Blueprint assumptions:\n%s", s.prose)
 	default:

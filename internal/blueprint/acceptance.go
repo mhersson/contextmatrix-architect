@@ -200,7 +200,7 @@ func (c *Controller) acceptanceOf(ctx context.Context, id, slice string) (acc ac
 	case errors.Is(err, store.ErrNotFound):
 		return acceptance{}, stageID, false, nil
 	case err != nil:
-		return acceptance{}, stageID, false, fmt.Errorf("read %s: %w", pack.StageName(stageID, false), err)
+		return acceptance{}, stageID, false, fmt.Errorf("read %s: %w", c.stepName(ctx, id, stageID), err)
 	}
 
 	var d acceptanceData

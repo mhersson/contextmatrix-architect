@@ -343,9 +343,10 @@ func signoffOrder(list []assumption) []assumption {
 
 // assumptionLines renders assumptions one per line for models and cards: the
 // id, the status with who answered the question it rests on or any
-// evidence, and the answer it rests on, then the sentence. The sign-off's
-// text entry formats its line from the event payload.
-func assumptionLines(list []assumption) string {
+// evidence, and the answer it rests on, then the sentence. sliced names the
+// slice of the step an assumption was accepted at. The sign-off's text entry
+// formats its line from the event payload.
+func assumptionLines(list []assumption, sliced bool) string {
 	lines := make([]string, 0, len(list))
 
 	// "the user", not "you": a card's reader is the agent.
@@ -355,7 +356,7 @@ func assumptionLines(list []assumption) string {
 		status := a.Status
 
 		if a.Status == assumptionConfirmed && a.AcceptedAt != "" {
-			status += " by the user, accepted at " + pack.StageName(a.AcceptedAt, false)
+			status += " by the user, accepted at " + pack.StageName(a.AcceptedAt, sliced)
 		} else if who, ok := backer[a.Status]; ok {
 			status += " by " + who
 			if a.Basis != a.ID {

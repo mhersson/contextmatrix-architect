@@ -150,13 +150,25 @@ func (c *Controller) steps(ctx context.Context, id string) ([]pipelineStep, []pi
 	return steps, pieces, nil
 }
 
-// sliced reports whether blueprint id runs per slice with two or more
-// slices, the only case in which text a person reads names a step's slice;
-// false when the record cannot be read.
-func (c *Controller) sliced(ctx context.Context, id string) bool {
-	_, pieces, err := c.steps(ctx, id)
+// shownPieces is the slices steps repeat per-slice stages for: pieces, or
+// none when no step carries a slice (before slicing stores a version, on a
+// record from before slices and on a pack with no per-slice stage). It is
+// the one answer to which slices show, in the view and in the names.
+func shownPieces(steps []pipelineStep, pieces []piece) []piece {
+	if !slices.ContainsFunc(steps, func(s pipelineStep) bool { return s.Slice != "" }) {
+		return nil
+	}
 
-	return err == nil && len(pieces) >= 2
+	return pieces
+}
+
+// sliced reports whether blueprint id runs per slice with two or more
+// slices (shownPieces), the only case in which text a person reads names a
+// step's slice; false when the record cannot be read.
+func (c *Controller) sliced(ctx context.Context, id string) bool {
+	steps, pieces, err := c.steps(ctx, id)
+
+	return err == nil && len(shownPieces(steps, pieces)) >= 2
 }
 
 // stepName is how key reads to a person on blueprint id: with its slice
@@ -328,6 +340,23 @@ func nextSliceStep(steps []pipelineStep, st pipelineStep) string {
 	}
 
 	return ""
+}
+
+// chained reports whether st, a loop target's step, runs in a chain its
+// loop stage or the sign-off started (inChain). A step no loop targets is
+// never chained, and reads no runs.
+func (c *Controller) chained(ctx context.Context, id string, st pipelineStep) (bool, error) {
+	loop := c.loopOf(st.Stage.ID)
+	if loop == "" {
+		return false, nil
+	}
+
+	runs, err := c.opts.Store.ListRuns(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("blueprint: list runs: %w", err)
+	}
+
+	return inChain(runs, st.ID, loop), nil
 }
 
 // loopOf is the loop stage that loops to stageID; "" when none does.

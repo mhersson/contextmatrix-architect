@@ -639,7 +639,7 @@ func TestAssumptions_AnAcceptedAssumptionReadsAsAcceptedAtItsStage(t *testing.T)
 	assert.Equal(t, "solution_design", payload["A2"]["accepted"])
 	assert.NotContains(t, payload["A3"], "accepted")
 
-	lines := assumptionLines(list)
+	lines := assumptionLines(list, false)
 
 	for text, stage := range map[string]string{"One region.": "Intake", "Two zones.": "Solution design"} {
 		status, _, _ := strings.Cut(lineWith(lines, text), text)

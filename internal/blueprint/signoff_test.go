@@ -1312,7 +1312,7 @@ func TestSignoff_AnAutomaticApprovalRecordsWhatItApproved(t *testing.T) {
 
 	version, _ := record.Payload["version"].(int)
 
-	art, err := c.Artifact(ctx, "BP1", signoffStage, version)
+	art, err := c.Artifact(ctx, "BP1", signoffStage, "", version)
 	require.NoError(t, err)
 	assert.Contains(t, string(art.Data), `"cards"`)
 
