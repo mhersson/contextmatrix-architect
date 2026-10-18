@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,6 +90,19 @@ func (r *recorder) line(_ string, p []byte) {
 	defer r.mu.Unlock()
 
 	r.lines = append(r.lines, bytes.Clone(p))
+}
+
+// shown is every harness line forwarded to the panel, oldest first.
+func (r *recorder) shown() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	out := make([]string, 0, len(r.lines))
+	for _, l := range r.lines {
+		out = append(out, string(l))
+	}
+
+	return out
 }
 
 func (r *recorder) kinds() []string {
@@ -2500,4 +2514,30 @@ func TestEnd_AnAbortWhileTheReopenWaitsWins(t *testing.T) {
 	need, err := st.LatestArtifact(ctx, "BP1", needStage)
 	require.NoError(t, err)
 	assert.Equal(t, 2, need.Version)
+}
+
+func TestRun_TheReplyARunEndsOnIsRecordedButNotShown(t *testing.T) {
+	c, st, _, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+		_, _ = in.Events.Write([]byte(`{"seq":1,"kind":"model_response","data":{"content":"reading the need"}}` + "\n"))
+		_, _ = fmt.Fprintf(in.Events, `{"seq":2,"kind":"model_response","data":{"content":"# Need restated",%q:true}}`+"\n", stage.FinalField)
+
+		return artifactOutput("# Need", in), nil
+	})
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	carries := func(text string) func(string) bool {
+		return func(l string) bool { return strings.Contains(l, text) }
+	}
+
+	assert.True(t, slices.ContainsFunc(rec.shown(), carries("reading the need")), "other model text is shown")
+	assert.False(t, slices.ContainsFunc(rec.shown(), carries("# Need restated")), "the final reply never reaches the panel")
+
+	stored, err := st.ListEventsOfKind(ctx, "BP1", EventHarness)
+	require.NoError(t, err)
+	assert.True(t, slices.ContainsFunc(stored, func(e store.Event) bool { return strings.Contains(string(e.Payload), "# Need restated") }),
+		"the record keeps it")
 }

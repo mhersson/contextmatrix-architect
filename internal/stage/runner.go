@@ -233,6 +233,8 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 
 	reg := tools.NewRegistry(append(builtins, in.Tools...)...)
 
+	watch := &replyWatch{LLM: r.NewLLM(in.Endpoint)}
+
 	sink := in.Events
 	if sink == nil {
 		sink = io.Discard
@@ -241,6 +243,8 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 	if drafts != nil {
 		sink = draftEvents{w: sink, drafts: drafts}
 	}
+
+	sink = finalEvents{w: sink, watch: watch}
 
 	emit := events.NewEmitter(nil, sink)
 
@@ -260,7 +264,7 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 		cfg.OnDelta = drafts.delta
 	}
 
-	client := r.NewLLM(in.Endpoint)
+	client := llm.LLM(watch)
 
 	res, err := harness.Run(ctx, client, reg, emit, in.Task, cfg)
 	if err == nil && res.Completed && res.CompletionArgs == nil {

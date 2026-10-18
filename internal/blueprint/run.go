@@ -759,7 +759,7 @@ func (s *harnessSink) Write(p []byte) (int, error) {
 
 	// A canceled run's harness reports the cancel as an error. It is
 	// audited, but the panel shows the cancel as the stage's end instead.
-	forward := (!s.isCanceled() || !isErrorLine(line)) && (!s.chat || !isChatEcho(line))
+	forward := (!s.isCanceled() || !isErrorLine(line)) && (!s.chat || !isChatEcho(line)) && !isFinalReply(line)
 
 	s.flight.count(line)
 	s.audit.harness(context.Background(), s.id, s.runID, line, forward)
@@ -883,4 +883,15 @@ func isChatEcho(line []byte) bool {
 	}
 
 	return ev.Kind == "model_response" || (ev.Kind == "tool_call" && ev.Data.Name == stage.AnswerChatName)
+}
+
+// isFinalReply reports the reply a run ends on (stage.FinalField): its
+// artifact, review or answer has its own transcript row.
+func isFinalReply(line []byte) bool {
+	var ev struct {
+		Kind string         `json:"kind"`
+		Data map[string]any `json:"data"`
+	}
+
+	return json.Unmarshal(line, &ev) == nil && ev.Kind == "model_response" && ev.Data[stage.FinalField] == true
 }

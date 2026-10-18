@@ -148,6 +148,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   prose entries.
   Each marker keeps a plain fallback line in `Content`, which a CM without
   markers shows instead.
+  The reply a run ends on, one that calls `submit_artifact` or calls no
+  tool, is kept in the record and the export but not shown: its sheet
+  reference, review or answer is the row. Other model text is shown.
   Rounds are `round:<n>` and their questions `Q<n>`, gates
   `gate:<stage>:v<n>` (`gate:<stage>:<slice>:v<n>` for a per-slice step's),
   the sign-off `gate:signoff:v<n>`, and a stopped
