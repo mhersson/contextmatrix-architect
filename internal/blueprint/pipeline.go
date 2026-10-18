@@ -57,7 +57,9 @@ type outcome struct {
 // the pipeline or re-runs its target, cards accepted with findings end it,
 // and otherwise the next step of the blueprint's pipeline follows. A loop
 // stage's verdict that sends cards back runs the earliest slice holding a
-// failing card, and every later slice's after it (the chain).
+// failing card, and every later slice's after it (the chain). A ready
+// verdict the sign-off rejected runs the step a typed rejection named, with
+// everything after it, or else the chain from the first slice.
 func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed string) (outcome, error) {
 	steps, _, err := c.steps(ctx, bp.ID)
 	if err != nil {
@@ -112,6 +114,15 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 
 			switch {
 			case ready && rejected:
+				target, err := c.signoffTarget(ctx, bp.ID, steps)
+				if err != nil {
+					return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
+				}
+
+				if target != "" {
+					return outcome{stage: target}, nil
+				}
+
 				return outcome{stage: targets[0].ID, chain: true}, nil
 			case ready:
 				return outcome{end: true, ready: true, art: art, round: art.Version - base}, nil

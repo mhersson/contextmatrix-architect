@@ -617,7 +617,8 @@ func stringsOf(v any) []string {
 
 // signoffText renders the sign-off: the body (the entries in playbook order,
 // the playbook and the preflight result) and the reply line that decides it,
-// which starts with its separator. sliced names a step's slice.
+// which starts with its separator. sliced names a step's slice, and lists
+// the typed rejections.
 func signoffText(p map[string]any, sliced bool) (body, reply string) {
 	var b strings.Builder
 
@@ -722,6 +723,16 @@ func signoffText(p map[string]any, sliced bool) (body, reply string) {
 	}
 
 	reply += ", or `reject <feedback>` to re-run decomposition with your feedback."
+
+	// Below two slices the typed replies name nothing a person was shown.
+	if typed := stringsOf(p["typed"]); sliced && len(typed) > 0 {
+		quoted := make([]string, 0, len(typed))
+		for _, t := range typed {
+			quoted = append(quoted, "`"+t+" <feedback>`")
+		}
+
+		reply += " Or reply " + strings.Join(quoted, ", ") + " to run that step and everything after it again."
+	}
 
 	return body, reply
 }
@@ -1025,6 +1036,8 @@ func decidedText(p map[string]any, sliced bool) string {
 	}
 
 	switch {
+	case reject && str(p["reruns"]) != "":
+		return fmt.Sprintf("Rejected. %s runs again with your feedback, and everything after it.", pack.StageName(str(p["reruns"]), sliced))
 	case reject:
 		return "Rejected. Decomposition runs again with your feedback."
 	case auto:

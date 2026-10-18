@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"unicode"
@@ -180,6 +181,11 @@ func (c *Controller) gateFeedback(ctx context.Context, id, stageID string) ([]st
 // makes the blueprint emitting, so a crash before emission ends leaves it
 // for the restart.
 func (c *Controller) decide(ctx context.Context, au audit, id, stageID string, version int, decision, feedback, responder, msgID string) bool {
+	return c.decideWith(ctx, au, id, stageID, version, decision, feedback, responder, msgID, nil)
+}
+
+// decideWith is decide with extra keys on the announcement.
+func (c *Controller) decideWith(ctx context.Context, au audit, id, stageID string, version int, decision, feedback, responder, msgID string, extra map[string]any) bool {
 	if _, err := c.opts.Store.AddGate(ctx, store.Gate{
 		BlueprintID: id, Stage: stageID, Version: version, Decision: decision,
 		Feedback: au.text(feedback), Responder: responder, DecidedAt: c.opts.Now().UTC(),
@@ -193,9 +199,12 @@ func (c *Controller) decide(ctx context.Context, au audit, id, stageID string, v
 		c.setState(ctx, id, StateEmitting)
 	}
 
-	au.event(ctx, Event{Kind: EventDecided, BlueprintID: id, Payload: map[string]any{
+	payload := map[string]any{
 		"stage": stageID, "decision": decision, "feedback": feedback, "responder": responder, "version": version, "message_id": msgID,
-	}})
+	}
+	maps.Copy(payload, extra)
+
+	au.event(ctx, Event{Kind: EventDecided, BlueprintID: id, Payload: payload})
 
 	return true
 }

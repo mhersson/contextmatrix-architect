@@ -847,6 +847,11 @@ func TestLogEntryFor_Markers(t *testing.T) {
 			ev(blueprint.EventStageStarted, map[string]any{"stage": "solution_design@SL1", "kind": "stage", "persona": "system_designer", "round": 1}),
 			"system", &protocol.LogMarker{Kind: "stage", Stage: "solution_design", Slice: "SL1", Persona: "system_designer"}, "Stage Solution design started",
 		},
+		{
+			"a typed sign-off rejection names what runs again",
+			slicedEv(blueprint.EventDecided, map[string]any{"stage": "signoff", "decision": "reject", "responder": "human", "version": 1, "reruns": "solution_design@SL2"}),
+			"system", nil, "Solution design (SL2)",
+		},
 	}
 
 	for _, tt := range tests {
@@ -862,6 +867,21 @@ func TestLogEntryFor_Markers(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLogEntryFor_ASignoffListsItsTypedRejections(t *testing.T) {
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Sliced: true, Payload: map[string]any{
+		"version": 1, "cards": []any{}, "order": []any{}, "typed": []any{"reject SL1", "reject SL2"},
+	}})
+	require.True(t, ok)
+	assert.Contains(t, entry.Content, "`reject SL2 <feedback>`")
+
+	// With one slice nothing slice-related shows.
+	entry, ok = logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
+		"version": 1, "cards": []any{}, "order": []any{}, "typed": []any{"reject SL1"},
+	}})
+	require.True(t, ok)
+	assert.NotContains(t, entry.Content, "SL1")
 }
 
 // With one slice nothing slice-related shows in the text; with two or more,

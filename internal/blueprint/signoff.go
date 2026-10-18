@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
+	"strings"
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/contract"
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -144,6 +148,13 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	payload["auto_stopped"] = auto
 	payload["actions"] = actionsPayload(signoffActions(len(pf.Warnings) > 0))
 
+	// The typed replies are never buttons; the transcript lists them.
+	if steps, _, err := c.steps(bg, bp.ID); err != nil {
+		c.opts.Logger.Warn("blueprint: sign-off typed rejections", "blueprint", bp.ID, "error", au.text(err.Error()))
+	} else {
+		payload["typed"] = typedReplies(typedRejects(steps))
+	}
+
 	c.setState(bg, bp.ID, StateWaiting)
 	au.event(bg, Event{Kind: EventSignOff, BlueprintID: bp.ID, Payload: payload})
 }
@@ -200,10 +211,158 @@ func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blue
 	return payload
 }
 
+// typedRejects are the sign-off's typed replies that reject one step and run
+// it, and everything after it, again: reject SL<n> <feedback> for slice n's
+// design, its first gated step, and reject <shared stage> <feedback> for a
+// shared stage that ran. They are matched as replies are but never offered
+// as buttons, and come in pipeline order.
+func typedRejects(steps []pipelineStep) []gateAction {
+	var out []gateAction
+
+	for _, s := range steps {
+		switch {
+		case s.Shared && !s.Collapsed:
+			out = append(out, gateAction{Reply: store.GateReject + " " + s.ID, Feedback: true, Decision: store.GateReject, Target: s.ID})
+		case firstGated(steps, s):
+			out = append(out, gateAction{Reply: store.GateReject + " " + s.Slice, Feedback: true, Decision: store.GateReject, Target: s.ID})
+		}
+	}
+
+	return out
+}
+
+// typedReplies lists the replies of actions, for the sign-off's payload.
+func typedReplies(actions []gateAction) []string {
+	out := make([]string, 0, len(actions))
+	for _, a := range actions {
+		out = append(out, a.Reply)
+	}
+
+	return out
+}
+
+// quotedReplies quotes each typed reply with its feedback placeholder.
+func quotedReplies(typed []gateAction) []string {
+	out := make([]string, 0, len(typed))
+	for _, a := range typed {
+		out = append(out, "`"+a.Reply+" <feedback>`")
+	}
+
+	return out
+}
+
+// stepWord matches the word a typed sign-off rejection names a slice by.
+var stepWord = regexp.MustCompile(`(?i)^SL[0-9]+$`)
+
+// typedWord is the word after reject in text, cut at the first `:`, `,`, `;`
+// or `.` a person may type after it, with a space before the feedback or
+// not, and whether it was cut; "" when text is not reject followed by a
+// word.
+func typedWord(text string) (string, bool) {
+	fields := strings.Fields(text)
+	if len(fields) < 2 || !strings.EqualFold(fields[0], store.GateReject) {
+		return "", false
+	}
+
+	i := strings.IndexAny(fields[1], ":,;.")
+	if i < 0 {
+		return fields[1], false
+	}
+
+	return fields[1][:i], true
+}
+
+// namesAStep reports a reply that is reject followed by a slice's or a
+// shared stage's name, punctuation after it or not: a typed rejection,
+// never read as a plain one.
+func (c *Controller) namesAStep(text string) bool {
+	word, _ := typedWord(text)
+	if word == "" {
+		return false
+	}
+
+	return stepWord.MatchString(word) || slices.ContainsFunc(c.opts.Pack.Stages, func(s pack.Stage) bool {
+		return s.Shared && strings.EqualFold(s.ID, word)
+	})
+}
+
+// typedNoteHint is the hint for a reply namesAStep reads as a typed
+// rejection that no typed reply took: one of typed with punctuation after
+// its step word or without feedback, or one naming no step of the
+// blueprint. listed are the typed replies text may name.
+func typedNoteHint(text string, typed, listed []gateAction) string {
+	word, glued := typedWord(text)
+
+	i := slices.IndexFunc(typed, func(a gateAction) bool { return strings.EqualFold(a.Reply, store.GateReject+" "+word) })
+
+	switch {
+	case i >= 0 && glued:
+		return "Reply `" + store.GateReject + " " + word + " <feedback>`, with a space after " + word + ", to run that step and everything after it again."
+	case i >= 0:
+		return "Say what to change: reply " + typed[i].Reply + " <feedback>."
+	default:
+		return typedHint(listed)
+	}
+}
+
+// typedHint is the hint for a typed rejection that names no step this
+// blueprint can run again; typed are the replies text may name.
+func typedHint(typed []gateAction) string {
+	if len(typed) == 0 {
+		return "Reply reject <feedback> to re-run the cards."
+	}
+
+	return "That names no step of this blueprint. Reply reject <feedback> to re-run the cards, or " +
+		strings.Join(quotedReplies(typed), ", ") + " to run that step and everything after it again."
+}
+
+// signoffTarget is the step a typed sign-off rejection runs again: the first
+// typed target whose latest version's latest decision is a rejection, which
+// only that reply records while the sign-off waits; "" for a plain
+// rejection. Each target stores a new version before the next sign-off, so
+// one stands at a time; should two, the earliest in the pipeline wins, and
+// its re-run runs the later one again too.
+func (c *Controller) signoffTarget(ctx context.Context, id string, steps []pipelineStep) (string, error) {
+	return c.rejectedTarget(ctx, id, typedRejects(steps))
+}
+
+// rejectStep rejects the sign-off for a typed target: the sign-off's
+// rejection first, naming what runs again, then a rejection of the
+// target's latest version, which gives its re-run the feedback and tells a
+// reopen what runs, then the later gated steps' versions superseded. A
+// crash between the two rejections leaves a plain one, which re-runs every
+// slice's cards with the feedback. The target runs again, with everything
+// after it. The caller holds the run slot.
+func (c *Controller) rejectStep(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, out outcome, target, feedback, msgID string) error {
+	au := sess.audit
+
+	// Read before anything is recorded, so a failed read records nothing.
+	art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, target)
+	if err != nil {
+		c.release(bp.ID, r)
+
+		return fmt.Errorf("blueprint: sign-off: read %s: %w", c.stepName(ctx, bp.ID, target), err)
+	}
+
+	if !c.decideWith(ctx, au, bp.ID, signoffStage, out.art.Version, store.GateReject, feedback, store.ResponderHuman, msgID, map[string]any{"reruns": target}) ||
+		!c.decide(ctx, au, bp.ID, target, art.Version, store.GateReject, feedback, store.ResponderHuman, msgID) ||
+		!c.supersedeAfter(ctx, au, bp.ID, target, msgID) {
+		c.release(bp.ID, r)
+
+		return nil
+	}
+
+	c.launch(runCtx, r, sess, bp, target)
+
+	return nil
+}
+
 // atReadyEnd handles a message after the pipeline ended ready, matching it to
 // the sign-off's replies as a stage's gate does. Undecided:
 // approve emits, reject with feedback re-runs the loop's target stage, from
-// its first slice's step.
+// its first slice's step. reject SL<n> <feedback> and reject <shared stage>
+// <feedback> run that step and everything after it again; one that names no
+// step of the blueprint is a note with a hint.
 // Approved with emission unfinished: approve resumes it, and other text is
 // a note with that hint, or without one when the record cannot be read.
 // Anything else is a note. The caller holds the run slot.
@@ -215,10 +374,31 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 		return err
 	}
 
-	action, feedback, matched := matchAction(text, signoffActions(false))
+	steps, pieces, err := c.steps(ctx, bp.ID)
+	if err != nil {
+		c.release(bp.ID, r)
+
+		return err
+	}
+
+	typed := typedRejects(steps)
+
+	// Below two slices, as sliced reads them, the typed replies still match,
+	// but no text names them: nothing slice-related shows.
+	listed := typed
+	if len(shownPieces(steps, pieces)) < 2 {
+		listed = nil
+	}
+
+	action, feedback, matched := matchAction(text, append(signoffActions(false), typed...))
 	approve := matched && action.Decision == store.GateApprove
-	reject := matched && action.Decision == store.GateReject
+	retarget := matched && action.Decision == store.GateReject && action.Target != ""
+	reject := matched && action.Decision == store.GateReject && action.Target == ""
 	note := noteEvent(bp.ID, text, msgID, signoffStage, false)
+
+	// The end artifact is a step's: a pack whose last stage runs per slice
+	// ends on a step key, which the pack's own lookup misses.
+	end, _ := c.stepAt(out.art.Stage)
 
 	switch decision {
 	case "":
@@ -233,25 +413,17 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 			c.release(bp.ID, r)
 
 			return nil
+		case (reject || retarget) && end.LoopsTo == "":
+			// A reopen reads a typed rejection's target from the loop stage's
+			// verdict too, so without a loop neither kind can re-run.
+			note.Payload["hint"] = "This pack's last stage loops to no stage, so a rejection cannot re-run it; start a new blueprint with a better design."
+		case retarget:
+			return c.rejectStep(ctx, runCtx, r, sess, bp, out, action.Target, feedback, msgID)
+		case reject && c.namesAStep(text):
+			note.Payload["hint"] = typedNoteHint(text, typed, listed)
 		case reject:
-			// The end artifact is a step's: a pack whose last stage runs per
-			// slice ends on a step key, which the pack's own lookup misses.
-			st, _ := c.stepAt(out.art.Stage)
-			if st.LoopsTo == "" {
-				note.Payload["hint"] = "This pack's last stage loops to no stage, so a rejection cannot re-run it; start a new blueprint with a better design."
-
-				break
-			}
-
-			steps, _, err := c.steps(ctx, bp.ID)
-			if err != nil {
-				c.release(bp.ID, r)
-
-				return err
-			}
-
 			if c.decide(ctx, sess.audit, bp.ID, signoffStage, out.art.Version, store.GateReject, feedback, store.ResponderHuman, msgID) {
-				c.launch(runCtx, r, sess, bp, loopTargets(steps, st.LoopsTo)[0].ID)
+				c.launch(runCtx, r, sess, bp, loopTargets(steps, end.LoopsTo)[0].ID)
 
 				return nil
 			}
@@ -263,6 +435,10 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 			note.Payload["hint"] = "Say what to change: reply reject <feedback>."
 		default:
 			note.Payload["hint"] = signoffHint
+
+			if len(listed) > 0 {
+				note.Payload["hint"] = signoffHint + " Or reply " + strings.Join(quotedReplies(listed), ", ") + " to run that step and everything after it again."
+			}
 		}
 	case store.GateApprove:
 		cards, complete, err := c.emitted(ctx, bp)
