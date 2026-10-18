@@ -519,8 +519,8 @@ func TestVerdictOf(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ready, findings := verdictOf(tt.art, tt.draft)
-			assert.Equal(t, tt.wantReady, ready)
+			findings, _ := cardVerdicts(tt.art, tt.draft)
+			assert.Equal(t, tt.wantReady, len(findings) == 0)
 			assert.Equal(t, tt.want, findings)
 		})
 	}

@@ -242,6 +242,105 @@ func consumedSteps(steps []pipelineStep, st pipelineStep) []pipelineStep {
 	return out
 }
 
+// loopTargets are the steps of stageID in order, one per slice or the one
+// step of an unsliced blueprint: a loop stage's targets when stageID is the
+// stage it loops to, and the cards stage's steps for the draft.
+func loopTargets(steps []pipelineStep, stageID string) []pipelineStep {
+	var out []pipelineStep
+
+	for _, s := range steps {
+		if s.Stage.ID == stageID {
+			out = append(out, s)
+		}
+	}
+
+	return out
+}
+
+// owningTarget is where a not-ready verdict sends the loop: the earliest
+// target whose cards include a failing one, or the first target when none
+// does, as for a verdict that judged no card. drafts holds each target's
+// card ids by its key.
+func owningTarget(targets []pipelineStep, drafts map[string][]string, failing []string) string {
+	for _, t := range targets {
+		if slices.ContainsFunc(drafts[t.ID], func(card string) bool { return slices.Contains(failing, card) }) {
+			return t.ID
+		}
+	}
+
+	return targets[0].ID
+}
+
+// inChain reports whether key's latest done stage run, a run of a loop
+// target, belongs to a chain loopStage's verdict or the sign-off started,
+// which goes on through every later slice's target. Walking back over the
+// done stage runs before it, every run of the target's stage is passed
+// over, whatever its slice: an earlier slice's run in the chain, or this
+// slice's own earlier run, as a gated target's re-run leaves. The first
+// run of another stage decides, and only loopStage's makes a chain. A
+// first pass, and one a gate or a rejection of a design started, reach the
+// target from its own slice's earlier steps instead.
+func inChain(runs []store.Run, key, loopStage string) bool {
+	target, _ := pack.SplitStep(key)
+
+	var done []store.Run
+
+	for _, r := range runs {
+		if r.Kind == store.RunKindStage && r.Status == store.RunDone {
+			done = append(done, r)
+		}
+	}
+
+	i := -1
+
+	for j, r := range done {
+		if r.Stage == key {
+			i = j
+		}
+	}
+
+	for ; i > 0; i-- {
+		switch before, _ := pack.SplitStep(done[i-1].Stage); before {
+		case loopStage:
+			return true
+		case target:
+			// A run of the target's stage: the run before it decides.
+		default:
+			return false
+		}
+	}
+
+	return false
+}
+
+// nextSliceStep is the step of st's stage for the slice after st's; "" for
+// the last slice.
+func nextSliceStep(steps []pipelineStep, st pipelineStep) string {
+	seen := false
+
+	for _, s := range steps {
+		switch {
+		case s.ID == st.ID:
+			seen = true
+		case seen && s.Stage.ID == st.Stage.ID:
+			return s.ID
+		}
+	}
+
+	return ""
+}
+
+// loopOf is the loop stage that loops to stageID; "" when none does.
+func (c *Controller) loopOf(stageID string) string {
+	for _, s := range c.opts.Pack.Stages {
+		if s.LoopsTo == stageID {
+			return s.ID
+		}
+	}
+
+	return ""
+}
+
 // writeSlice opens a per-slice task: the slice it works on, its title and
 // its place among the slices.
 func writeSlice(b *strings.Builder, pieces []piece, slice string) {

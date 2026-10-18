@@ -94,6 +94,7 @@ func slicedScript() stageScript {
 		"acceptance":              bySlice("# Acceptance"),
 		"acceptance.review":       passing(),
 		"decomposition":           sliceCards(),
+		"readiness":               returns("# Ready", readinessFor(true, "D1", "D2")),
 	}
 }
 

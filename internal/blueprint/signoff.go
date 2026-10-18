@@ -16,7 +16,7 @@ import (
 // the artifact the pipeline ended ready on, by version.
 const signoffStage = "signoff"
 
-const signoffHint = "Reply approve to emit the cards, or reject <feedback> to re-run decomposition with your feedback."
+const signoffHint = "Reply approve to emit the cards, or reject <feedback> to re-run the cards with your feedback."
 
 // emitsOnItsOwn reports whether a mode approves the sign-off itself.
 func emitsOnItsOwn(mode string) bool {
@@ -202,7 +202,8 @@ func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blue
 
 // atReadyEnd handles a message after the pipeline ended ready, matching it to
 // the sign-off's replies as a stage's gate does. Undecided:
-// approve emits, reject with feedback re-runs the loop's target stage.
+// approve emits, reject with feedback re-runs the loop's target stage, from
+// its first slice's step.
 // Approved with emission unfinished: approve resumes it, and other text is
 // a note with that hint, or without one when the record cannot be read.
 // Anything else is a note. The caller holds the run slot.
@@ -233,15 +234,24 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 
 			return nil
 		case reject:
-			st, _ := c.opts.Pack.Stage(out.art.Stage)
+			// The end artifact is a step's: a pack whose last stage runs per
+			// slice ends on a step key, which the pack's own lookup misses.
+			st, _ := c.stepAt(out.art.Stage)
 			if st.LoopsTo == "" {
 				note.Payload["hint"] = "This pack's last stage loops to no stage, so a rejection cannot re-run it; start a new blueprint with a better design."
 
 				break
 			}
 
+			steps, _, err := c.steps(ctx, bp.ID)
+			if err != nil {
+				c.release(bp.ID, r)
+
+				return err
+			}
+
 			if c.decide(ctx, sess.audit, bp.ID, signoffStage, out.art.Version, store.GateReject, feedback, store.ResponderHuman, msgID) {
-				c.launch(runCtx, r, sess, bp, st.LoopsTo)
+				c.launch(runCtx, r, sess, bp, loopTargets(steps, st.LoopsTo)[0].ID)
 
 				return nil
 			}

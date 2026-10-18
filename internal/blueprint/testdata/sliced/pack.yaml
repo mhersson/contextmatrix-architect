@@ -57,3 +57,9 @@ stages:
     checks: [cards]
     per_slice: true
     earlier_slices: [solution_design, acceptance, decomposition]
+  - id: readiness
+    persona: reviewer
+    produces: readiness
+    consumes: [intake, slicing, shared_decisions, solution_design, grounding, acceptance, decomposition]
+    loops_to: decomposition
+    max_rounds: 3

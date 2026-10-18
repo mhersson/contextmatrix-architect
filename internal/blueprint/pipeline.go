@@ -35,6 +35,9 @@ type outcome struct {
 	// collapse, on an outcome that passes a shared stage that collapsed, is
 	// the fold at version 0 the caller records.
 	collapse *folding
+	// chain marks a loop target the loop stage or the sign-off sent back:
+	// every later slice's target runs after it, and no other step.
+	chain    bool
 	end      bool
 	ready    bool
 	findings []string
@@ -51,7 +54,9 @@ type outcome struct {
 // after decides what follows completed from the stored artifacts; an empty
 // completed means no stage has completed yet. A loop stage's verdict ends
 // the pipeline or re-runs its target, cards accepted with findings end it,
-// and otherwise the next step of the blueprint's pipeline follows.
+// and otherwise the next step of the blueprint's pipeline follows. A loop
+// stage's verdict that sends cards back runs the earliest slice holding a
+// failing card, and every later slice's after it (the chain).
 func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed string) (outcome, error) {
 	steps, _, err := c.steps(ctx, bp.ID)
 	if err != nil {
@@ -84,14 +89,20 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 		}
 
 		if st.LoopsTo != "" {
-			// The loop stage judges its target's cards; its round is its
+			// The loop stage judges every target step's cards; its round is its
 			// artifact version less the version the sign-off last rejected.
-			target, err := c.opts.Store.LatestArtifact(ctx, bp.ID, st.LoopsTo)
+			targets := loopTargets(steps, st.LoopsTo)
+			if len(targets) == 0 {
+				return outcome{}, fmt.Errorf("blueprint: after %s: the pipeline has no %s", completed, pack.StageName(st.LoopsTo, false))
+			}
+
+			drafts, ids, err := c.targetCards(ctx, bp.ID, targets)
 			if err != nil {
 				return outcome{}, fmt.Errorf("blueprint: after %s: the judged %s: %w", completed, st.LoopsTo, err)
 			}
 
-			ready, findings := verdictOf(art, cardIDs(target))
+			findings, failing := cardVerdicts(art, ids)
+			ready := len(findings) == 0
 
 			base, rejected, err := c.rejection(ctx, bp.ID, art.Version)
 			if err != nil {
@@ -100,13 +111,13 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 
 			switch {
 			case ready && rejected:
-				return outcome{stage: st.LoopsTo}, nil
+				return outcome{stage: targets[0].ID, chain: true}, nil
 			case ready:
 				return outcome{end: true, ready: true, art: art, round: art.Version - base}, nil
 			case art.Version-base >= st.MaxRounds:
 				return outcome{end: true, findings: findings, art: art, round: art.Version - base}, nil
 			default:
-				return outcome{stage: st.LoopsTo}, nil
+				return outcome{stage: owningTarget(targets, drafts, failing), chain: true}, nil
 			}
 		}
 
@@ -179,6 +190,21 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 				return outcome{stage: st.ID, gate: true, critique: pending, art: art}, nil
 			case store.GateReject:
 				return outcome{stage: st.ID}, nil
+			}
+		}
+
+		// A loop target the loop stage or the sign-off sent back is followed
+		// by the next slice's, never by that slice's earlier steps. Only a
+		// per-slice step before the last slice has a next step, so only it
+		// reads the runs.
+		if loop, next := c.loopOf(st.Stage.ID), nextSliceStep(steps, st); loop != "" && next != "" {
+			runs, err := c.opts.Store.ListRuns(ctx, bp.ID)
+			if err != nil {
+				return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
+			}
+
+			if inChain(runs, completed, loop) {
+				return outcome{stage: next, chain: true}, nil
 			}
 		}
 
@@ -1459,10 +1485,11 @@ func cardIDs(a store.Artifact) []string {
 	return ids
 }
 
-// verdictOf reads a loop stage's per-card verdicts against the draft it
-// judged: ready only when it judged at least one card, every draft card is
-// among them, and every card it judged is ready and carries no finding.
-func verdictOf(a store.Artifact, draft []string) (bool, []string) {
+// cardVerdicts reads a loop stage's per-card verdicts against the draft it
+// judged: each finding, and the cards it did not pass (a finding, not
+// ready, or not judged). A verdict that judged no card is one finding and
+// fails no card. The verdict is ready only when it has no finding.
+func cardVerdicts(a store.Artifact, draft []string) (findings, failing []string) {
 	var data struct {
 		Cards []struct {
 			ID       string   `json:"id"`
@@ -1472,10 +1499,8 @@ func verdictOf(a store.Artifact, draft []string) (bool, []string) {
 	}
 
 	if len(a.Data) == 0 || json.Unmarshal(a.Data, &data) != nil || len(data.Cards) == 0 {
-		return false, []string{"the stage reported no cards"}
+		return []string{"the stage reported no cards"}, nil
 	}
-
-	var findings []string
 
 	judged := map[string]bool{}
 
@@ -1485,6 +1510,8 @@ func verdictOf(a store.Artifact, draft []string) (bool, []string) {
 		if card.Ready && len(card.Findings) == 0 {
 			continue
 		}
+
+		failing = append(failing, card.ID)
 
 		for _, f := range card.Findings {
 			findings = append(findings, card.ID+": "+f)
@@ -1498,8 +1525,30 @@ func verdictOf(a store.Artifact, draft []string) (bool, []string) {
 	for _, id := range draft {
 		if !judged[id] {
 			findings = append(findings, id+": not judged")
+			failing = append(failing, id)
 		}
 	}
 
-	return len(findings) == 0, findings
+	return findings, failing
+}
+
+// targetCards reads the card ids of every target step's latest artifact:
+// by step key, and all of them in step order.
+func (c *Controller) targetCards(ctx context.Context, id string, targets []pipelineStep) (map[string][]string, []string, error) {
+	by := map[string][]string{}
+
+	var all []string
+
+	for _, t := range targets {
+		art, err := c.opts.Store.LatestArtifact(ctx, id, t.ID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read %s: %w", t.ID, err)
+		}
+
+		ids := cardIDs(art)
+		by[t.ID] = ids
+		all = append(all, ids...)
+	}
+
+	return by, all, nil
 }

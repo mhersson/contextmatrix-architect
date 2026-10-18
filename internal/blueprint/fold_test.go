@@ -31,6 +31,14 @@ func twoSlices() map[string]any {
 	return d
 }
 
+func threeSlices() map[string]any {
+	d := twoSlices()
+	d["slices"] = append(d["slices"].([]any),
+		map[string]any{"id": "SL3", "title": "Mail the exports", "value": "teams get them unasked", "projects": []any{"alpha"}})
+
+	return d
+}
+
 // gateRows lists a blueprint's decisions as stage@version:decision, oldest
 // first.
 func gateRows(t *testing.T, st *store.Store) []string {

@@ -77,11 +77,7 @@ func (c *Controller) draft(ctx context.Context, id string) (contract.Draft, erro
 
 	var drafts []contract.Draft
 
-	for _, s := range steps {
-		if s.Stage.ID != stageID {
-			continue
-		}
-
+	for _, s := range loopTargets(steps, stageID) {
 		d, err := c.stepDraft(ctx, id, s.ID)
 		if err != nil {
 			return contract.Draft{}, err
