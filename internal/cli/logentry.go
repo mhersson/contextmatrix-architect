@@ -774,6 +774,10 @@ func gatePlanText(p map[string]any) string {
 
 		if gate, _ := s["gate"].(bool); gate {
 			b.WriteString(", with a gate")
+
+			if into := str(s["folds_into"]); into != "" {
+				fmt.Fprintf(&b, " that folds into %s's gate while its %s has at most %.0f entries", into, str(s["fold_field"]), num(s["fold_max"]))
+			}
 		}
 	}
 
@@ -789,7 +793,7 @@ func gatePlanText(p map[string]any) string {
 	return b.String()
 }
 
-// gateText renders a stage's gate: the body (the artifact above waits, the
+// gateText renders a stage's gate: the body (the version on the sheet waits, the
 // reviewer's score, the artifacts folded into it shown below, the problems
 // its checks accepted them with) and the reply line that decides it, which
 // starts with its separator.
@@ -808,7 +812,7 @@ func gateText(p map[string]any) (body, reply string) {
 	stage, version := str(p["stage"]), num(p["version"])
 	folded := anyMaps(p["folded"])
 
-	text := fmt.Sprintf("**Gate: %s, version %.0f.** The artifact above waits for your decision.", stage, version)
+	text := fmt.Sprintf("**Gate: %s, version %.0f.** Version %.0f is on the sheet and waits for your decision.", stage, version, version)
 
 	if len(folded) > 0 {
 		names := make([]string, 0, len(folded))
@@ -836,7 +840,7 @@ func gateText(p map[string]any) (body, reply string) {
 
 		switch {
 		case revised:
-			text += fmt.Sprintf(" The reviewer scored %s version %.0f at %.0f of 5 (passes at %.0f); its findings, in the review above, went back for one revision, and the artifact above is the revised version, not reviewed again.",
+			text += fmt.Sprintf(" The reviewer scored %s version %.0f at %.0f of 5 (passes at %.0f); its findings, in the review above, went back for one revision, and the version on the sheet is the revision, not reviewed again.",
 				stage, num(v["judged"]), num(v["score"]), num(v["threshold"]))
 		case passed:
 			text += fmt.Sprintf(" The reviewer scored it %.0f of 5 (passes at %.0f)%s.", num(v["score"]), num(v["threshold"]), findings)

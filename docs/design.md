@@ -297,9 +297,10 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
 
 - Intake states the shape it expects (slices, projects involved). When its
   run completes, the controller posts the gate plan: who answers each
-  stage's questions and decides its gate, and the `gate <stage> human|auto`
-  reply that changes it, so the operator can change a policy before
-  solution design spends anything.
+  stage's questions and decides its gate, for a gate that folds the gate
+  it folds into and when, and the `gate <stage> human|auto` reply that
+  changes it, so the operator can change a policy before solution design
+  spends anything.
 - Every stage that interviews (intake, slicing and solution design) reads the
   code, so it states what the code answers as a finding and asks only what
   neither the code nor the need settles.
@@ -337,7 +338,7 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   again, and `reject slicing <feedback>` runs slicing and everything after
   it again and records the design version it replaces as `superseded`, an
   audit row that decides nothing. The folded gate shows slicing's artifact
-  and refers to the design posted above it, as every gate does, and it
+  and refers to the design on the sheet, as every gate does, and it
   waits for a human while either stage's policy is human; it approves both
   on its own only when both are auto.
 - Reviewer runs are declared on every gated stage in the pack and skipped

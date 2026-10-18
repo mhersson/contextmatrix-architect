@@ -175,3 +175,28 @@ func TestSetPolicy_AnOpenRoundKeepsItsResponder(t *testing.T) {
 	require.Len(t, qs, 1)
 	assert.Equal(t, store.ResponderHuman, qs[0].Responder, "the human the round was put to answered it")
 }
+
+func TestGatePlan_NamesWhereAGateFolds(t *testing.T) {
+	c, _, _, rec, _ := newDialog(t, dialogScript())
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	rec.waitFor(t, EventGatePlan)
+
+	plan, ok := rec.first(EventGatePlan)
+	require.True(t, ok)
+
+	var slicing map[string]any
+
+	for _, s := range plan.Payload["stages"].([]any) {
+		if m := s.(map[string]any); m["stage"] == "slicing" {
+			slicing = m
+		}
+	}
+
+	require.NotNil(t, slicing)
+	assert.Equal(t, "solution_design", slicing["folds_into"])
+	assert.Equal(t, "slices", slicing["fold_field"])
+	assert.EqualValues(t, 1, slicing["fold_max"])
+}

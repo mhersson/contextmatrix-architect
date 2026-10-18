@@ -31,10 +31,10 @@ func TestLogEntryFor(t *testing.T) {
 		{"gate plan", blueprint.Event{Kind: blueprint.EventGatePlan, BlueprintID: "S1", Payload: map[string]any{
 			"stages": []any{
 				map[string]any{"stage": "intake", "policy": "human", "gate": false},
-				map[string]any{"stage": "shape", "policy": "auto", "gate": true},
+				map[string]any{"stage": "shape", "policy": "auto", "gate": true, "folds_into": "solution_design", "fold_field": "slices", "fold_max": 1},
 			},
 			"signoff": "human",
-		}}, "text", []string{"intake: human", "shape: auto", "gate <stage> human", "gate <stage> auto"}, false},
+		}}, "text", []string{"intake: human", "shape: auto", "solution_design", "gate <stage> human", "gate <stage> auto"}, false},
 		{"setup gaps", blueprint.Event{Kind: blueprint.EventSetupGaps, BlueprintID: "S1", Payload: map[string]any{"projects": []any{
 			map[string]any{"project": "alpha", "has_verify": false, "has_instruction_file": false, "empty": true},
 			map[string]any{"project": "beta", "has_verify": true, "has_instruction_file": false, "empty": false},

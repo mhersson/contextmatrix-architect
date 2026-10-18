@@ -203,7 +203,15 @@ func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.B
 			return
 		}
 
-		stages = append(stages, map[string]any{"stage": st.ID, "policy": policy, "gate": st.Gate})
+		entry := map[string]any{"stage": st.ID, "policy": policy, "gate": st.Gate}
+
+		if st.Fold != nil {
+			if into := c.foldTarget(st.ID); into != "" {
+				entry["folds_into"], entry["fold_field"], entry["fold_max"] = into, st.Fold.Field, st.Fold.Max
+			}
+		}
+
+		stages = append(stages, entry)
 	}
 
 	payload := map[string]any{"stages": stages}
