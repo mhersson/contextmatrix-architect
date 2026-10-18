@@ -875,6 +875,14 @@ func gatePlanText(p map[string]any) string {
 				fmt.Fprintf(&b, " that folds into %s's gate when both stages have the same gate policy and its %s has at most %.0f %s", pack.StageName(into, false), str(s["fold_field"]), limit, unit)
 			}
 		}
+
+		if perSlice, _ := s["per_slice"].(bool); perSlice {
+			b.WriteString(", once per slice")
+		}
+
+		if shared, _ := s["shared"].(bool); shared {
+			b.WriteString(", skipped with one slice, whose design then settles it")
+		}
 	}
 
 	switch str(p["signoff"]) {
@@ -994,6 +1002,9 @@ func decidedText(p map[string]any) string {
 
 	if stage := str(p["stage"]); stage != "" && stage != "signoff" {
 		switch {
+		case str(p["decision"]) == "fold" && num(p["version"]) == 0:
+			// A stage collapses only below two slices, so no name shows a slice.
+			return fmt.Sprintf("%s is skipped: %s settles what every slice shares.", pack.StageName(stage, false), pack.StageName(str(p["feedback"]), false))
 		case str(p["decision"]) == "fold":
 			return fmt.Sprintf("%s folds into %s's gate, which judges both.", pack.StageName(stage, false), pack.StageName(str(p["feedback"]), false))
 		case str(p["decision"]) == "superseded":

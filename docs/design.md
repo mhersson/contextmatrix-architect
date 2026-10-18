@@ -72,7 +72,7 @@ Settled during design. Each has its reason so it is not re-litigated.
 | Everything is logged                                      | Every run's full transcript (less web search result lists) and an append-only event log. The append-only tables are never updated or deleted. The export is a complete audit record, less the web search result lists the next row keeps out. |
 | Search result lists are never stored                      | The search provider's terms forbid storing or caching results beyond transient use, and no storage rights are bought. The model sees a list in the run that searched; transcripts, events and exports keep the query and the result count. The pages `web_fetch` reads are the recorded sources, so a claim cites a page the architect read itself. A deliberate, permanent exception, with no switch to record lists. |
 | A playbook for several cards, a bare card for one         | Manual entries are the only way to express human and live checks across cards. A one-card playbook would end in a merged PR on a playbook branch plus a second PR to main; a bare card ends in one PR to the default branch. The `emissions` table is the blueprint's handle in CM either way. |
-| Fixed stage list, no composer; size is never estimated    | Every stage earns its place even for an infrastructure request; cheap stages collapse rather than skip. Gates fold and the playbook decision falls out of counts in the artifacts (slices, cards), so a need is never classified small or big up front. Evidence for skippable stages comes from Outcomes, which does not exist yet. |
+| Fixed stage list, repeated per slice; no composer; size is never estimated | Every stage earns its place for any need. Stages the pack marks per slice repeat once per slice, so slicing's count decides how much runs. A stage with nothing to do collapses: it is recorded but not run, as the shared decisions stage is for one slice. Gates fold and the playbook decision falls out of counts in the artifacts (slices, cards), so a need is never classified small or big up front. Evidence for skippable stages comes from Outcomes, which does not exist yet. |
 | Personas attached to stages, no agent system              | Roles are prompt text in the pack. The composer-and-agents machinery of AI-DLC is a second decision engine the first one has not earned.                         |
 | Reviewers read from the next role's seat and keep a findings ledger | A reviewer that trusts the builder's notes passes artifacts the next role cannot use. Each gated artifact is judged by the role that works from it next, with the code and the pages it cites to check claims, and told to refute rather than confirm. Findings keep their id through the attempt and every revision is reviewed again, so a finding is fixed only when the reviewer sees it fixed in the artifact, never on the builder's word; an open critical finding fails the review whatever the score. |
 | Jira out of v1, in as one later slice                     | The pipeline is exercised on the operator's own projects first. The adapter shape (seed in, mirror out, never state) keeps later integration small, provided sources carry kinds from day one. |
@@ -209,9 +209,10 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
 - **Critique loop inside a stage.** On submit, the mechanical checks run
   inside the run: a failing submit is returned to the model as the tool
   result and it submits again. The third failing submit is accepted: cards
-  with their findings, and the pipeline stops and reports; any other stage's
-  artifact as it is, with the problems the checks still found kept in its
-  data, shown at its gate and given to its reviewer. When the stage has a
+  with their findings, and the pipeline stops and reports, as it does for
+  slicing with no slices; any other stage's artifact as it is, with the
+  problems the checks still found kept in its data, shown at its gate and
+  given to its reviewer. When the stage has a
   gate that does not fold, the reviewer the pack declares for it then judges
   the accepted artifact, given its own persona, the stage's inputs, the
   questions the stage got answered, the assumptions so far, the gate
@@ -272,7 +273,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, whether it passed, its findings ledger with ids, severities, statuses and the reviewer's notes, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes, or at the responder's answer under auto, or at the answer for one asked alone before rounds; an assumption a human accepted on a tab is recorded on its round, not here |
-| gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded), feedback, responder (human, auto), decided at |
+| gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded; a fold at version 0 records a stage that collapsed), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted, each web search result list replaced by its query and result count |
 | events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning; every change of the blueprint's state is a `state` row, stored and never sent to the panel; every web search and page read is a `research` event (the query and result count, the URL and source tag, or the rule that refused it), and a session that runs a research stage without research says so once in a `research_off` event; a round is its `round` snapshots, the newest per round number winning |
 | sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage; a page `web_fetch` read is a `url` source versioned by the sha256 of its text, its title on its `research` event |
@@ -330,7 +331,8 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
 - Intake states the shape it expects (slices, projects involved). When its
   run completes, the controller posts the gate plan: who answers each
   stage's questions and who decides its gate, for a gate that folds the gate
-  it folds into and when, and the `gate <stage> human|auto` reply that
+  it folds into and when, which stages repeat per slice and which collapses
+  with one slice, and the `gate <stage> human|auto` reply that
   changes it, so the operator can change a policy before solution design
   spends anything.
 - Every stage that interviews (intake, slicing and solution design) reads the
@@ -343,7 +345,10 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   blocks. Decomposition plans it as setup, and the user may set the verify
   command in CM meanwhile; the next decomposition submit reads it.
 - Slicing's submit is checked: at least one slice, each named SL1, SL2, ...
-  in its order, with a title and only the blueprint's target projects.
+  in its order, with a title and only the blueprint's target projects. A
+  version with no slices, which only a third failing submit stores, ends the
+  pipeline not ready, before its gate, with the problems its check found, so
+  no per-slice stage runs for it; a blueprint from before slices goes on.
 - A stage the pack marks `per_slice` runs once per slice of slicing's newest
   version, in slicing's order: every per-slice stage for SL1, then every one
   for SL2, and so on. The n-th slice is SL<n>, whatever slicing's data calls
@@ -358,6 +363,15 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   floor reads every slice's runs of its stage. A blueprint whose record ran
   a per-slice stage under its plain id, from before stages repeated per
   slice, keeps running them once for the whole blueprint.
+- A stage the pack marks `shared` settles what every slice shares, between
+  slicing and the per-slice stages, behind its own gate. With fewer than two
+  slices it collapses: it never runs, and the step after it follows. The
+  collapse is recorded each time the pipeline passes the stage, never on a
+  reopen, as a `fold` decision at version 0 naming the first slice's design.
+  That design settles the shared decisions too, and every task that would
+  read them says so. Slicing's gate then folds into SL1's design gate, so a
+  one-slice need still has one design gate. No fold lands on a shared
+  stage's gate, and a blueprint from before slices never runs one.
 - Solution design's submit is checked: it has slices, every slice of slicing
   among them; every decision has a chosen option, a rejected option and a
   basis (`Q<n>`, `round<n>.A<k>`, `S<n>` or `assumption`); and every

@@ -82,12 +82,14 @@ func bySlice(title string) func(context.Context, stage.Input) (stage.Output, err
 // every review passing.
 func slicedScript() stageScript {
 	return stageScript{
-		"intake":                 returns("# Need", nil),
-		"slicing":                returns("# Slices", twoSlices()),
-		"slicing.review":         passing(),
-		"solution_design":        bySlice("# Design"),
-		"solution_design.review": passing(),
-		"grounding":              bySlice("# Grounding"),
+		"intake":                  returns("# Need", nil),
+		"slicing":                 returns("# Slices", twoSlices()),
+		"slicing.review":          passing(),
+		"shared_decisions":        returns("# Shared decisions", nil),
+		"shared_decisions.review": passing(),
+		"solution_design":         bySlice("# Design"),
+		"solution_design.review":  passing(),
+		"grounding":               bySlice("# Grounding"),
 	}
 }
 
@@ -197,7 +199,7 @@ func keysIn(steps []pipelineStep, stages ...string) []string {
 }
 
 func TestConsumedSteps(t *testing.T) {
-	steps := stepsOf(slicedPack(t), []piece{{id: "SL1"}, {id: "SL2"}, {id: "SL3"}})
+	steps := stepsOf(slicedPack(t), []piece{{id: "SL1"}, {id: "SL2"}, {id: "SL3"}}, false)
 
 	keys := func(st pipelineStep) []string {
 		return keysIn(consumedSteps(steps, st), "intake", "slicing", "solution_design", "grounding")
@@ -458,6 +460,7 @@ func TestSlices_ARecordFromBeforeSlicesRunsItsStagesOnce(t *testing.T) {
 	c.Wait("BP1")
 
 	assert.Equal(t, []string{"grounding"}, stepRuns(runner, "solution_design", "grounding"), "grounding runs once, for the whole blueprint")
+	assert.Empty(t, inputsOf(runner, "shared_decisions"), "a record from before slices never runs the shared stage")
 }
 
 // codeSlicedPack is the sliced test pack with the code tools on grounding,

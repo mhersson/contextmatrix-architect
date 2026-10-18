@@ -101,6 +101,34 @@ func sliceIDs(art store.Artifact) []string {
 	return ids
 }
 
+// noSlices reports whether slicing's version art ends blueprint id's
+// pipeline because it holds no slices, and the findings it ends with: the
+// problems the bounded check accepted it with or, when none are stored,
+// that it holds none. Without slices no per-slice stage gets one, and a run
+// under its plain id would read the record as one from before slices for
+// good. A record from before slices is not stopped: it never ran a stage
+// per slice.
+func (c *Controller) noSlices(ctx context.Context, id string, art store.Artifact) ([]string, bool, error) {
+	if len(piecesOf(art)) > 0 {
+		return nil, false, nil
+	}
+
+	runs, err := c.opts.Store.ListRuns(ctx, id)
+	if err != nil {
+		return nil, false, fmt.Errorf("list runs: %w", err)
+	}
+
+	if unsliced(c.opts.Pack, runs) {
+		return nil, false, nil
+	}
+
+	if problems := problemsOf(art); len(problems) > 0 {
+		return problems, true, nil
+	}
+
+	return []string{c.stepName(ctx, id, art.Stage) + " holds no slices, so nothing after it runs."}, true, nil
+}
+
 // slicedBy is the id of the run that built the latest artifact of a slicing
 // stageID consumes, 0 when there is none. Run ids rise, so a question with a
 // higher run id was asked about the slices as they are now.

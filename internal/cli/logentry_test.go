@@ -92,6 +92,12 @@ func TestLogEntryFor(t *testing.T) {
 		{"gate plan with a gate of its own policy", blueprint.Event{Kind: blueprint.EventGatePlan, BlueprintID: "S1", Payload: map[string]any{
 			"stages": []any{map[string]any{"stage": "intake", "policy": "human", "gate": true, "gate_policy": "auto"}},
 		}}, "text", []string{"Intake: human; its gate is auto"}, false},
+		{"gate plan with per-slice and shared stages", blueprint.Event{Kind: blueprint.EventGatePlan, BlueprintID: "S1", Payload: map[string]any{
+			"stages": []any{
+				map[string]any{"stage": "shared_decisions", "policy": "human", "gate": true, "shared": true},
+				map[string]any{"stage": "solution_design", "policy": "human", "gate": true, "per_slice": true},
+			},
+		}}, "text", []string{"Shared decisions: human, with a gate, skipped with one slice", "Solution design: human, with a gate, once per slice"}, false},
 		{"setup gaps", blueprint.Event{Kind: blueprint.EventSetupGaps, BlueprintID: "S1", Payload: map[string]any{"projects": []any{
 			map[string]any{"project": "alpha", "has_verify": false, "has_instruction_file": false, "empty": true},
 			map[string]any{"project": "beta", "has_verify": true, "has_instruction_file": false, "empty": false},
@@ -807,6 +813,11 @@ func TestLogEntryFor_Markers(t *testing.T) {
 			"a gate decision stays a prose row",
 			ev(blueprint.EventDecided, map[string]any{"stage": "solution_design", "decision": "approve", "responder": "human", "version": 2}),
 			"system", nil, "Approved Solution design",
+		},
+		{
+			"a collapse names the step that settles it, without its slice",
+			ev(blueprint.EventDecided, map[string]any{"stage": "shared_decisions", "decision": "fold", "feedback": "solution_design@SL1", "responder": "auto", "version": 0}),
+			"system", nil, "Shared decisions is skipped: Solution design settles",
 		},
 	}
 

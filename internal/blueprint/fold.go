@@ -110,7 +110,8 @@ func (c *Controller) foldsInto(ctx context.Context, bp store.Blueprint, st pipel
 
 // recordFold records a fold as a decision on the folded stage's version, so
 // a later policy change cannot unfold it; false when it could not be stored,
-// which fails the blueprint.
+// which fails the blueprint. A collapse is a fold at version 0, which no
+// artifact holds.
 func (c *Controller) recordFold(ctx context.Context, au audit, id string, f *folding) bool {
 	return c.decide(ctx, au, id, f.stage, f.version, store.GateFold, f.into, store.ResponderAuto, "")
 }

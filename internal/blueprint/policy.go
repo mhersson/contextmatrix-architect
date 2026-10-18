@@ -407,8 +407,10 @@ func (c *Controller) resolvePolicy(bp store.Blueprint, events []store.Event, sta
 
 // postGatePlan tells the session, once the first stage has completed, who
 // answers each model stage's questions and decides its gate; a gated
-// stage's entry carries its gate policy. A policy that cannot be read skips
-// the plan: it is advice, and every question and gate reads the policy again.
+// stage's entry carries its gate policy, and the entries say which stages
+// repeat per slice and which collapses with one slice. A policy that cannot
+// be read skips the plan: it is advice, and every question and gate reads
+// the policy again.
 func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.Blueprint) {
 	events, err := c.opts.Store.ListEventsOfKind(ctx, bp.ID, EventPolicy)
 	if err != nil {
@@ -445,9 +447,19 @@ func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.B
 		}
 
 		if st.Fold != nil {
-			if into := foldTarget(steps, st.ID); into != "" {
+			// An entry is a pack stage, so it names the stage its fold lands
+			// on, not a slice's step of it.
+			if into, _ := pack.SplitStep(foldTarget(steps, st.ID)); into != "" {
 				entry["folds_into"], entry["fold_field"], entry["fold_max"] = into, st.Fold.Field, st.Fold.Max
 			}
+		}
+
+		if st.PerSlice {
+			entry["per_slice"] = true
+		}
+
+		if st.Shared {
+			entry["shared"] = true
 		}
 
 		stages = append(stages, entry)

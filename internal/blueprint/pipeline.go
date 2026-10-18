@@ -32,6 +32,9 @@ type outcome struct {
 	gate     bool
 	critique bool
 	fold     *folding
+	// collapse, on an outcome that passes a shared stage that collapsed, is
+	// the fold at version 0 the caller records.
+	collapse *folding
 	end      bool
 	ready    bool
 	findings []string
@@ -113,6 +116,20 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 			return outcome{end: true, findings: findingsOf(art), art: art, round: maxContractRounds}, nil
 		}
 
+		// Slicing that holds no slices ends a fresh blueprint as cards stopped
+		// at the contract cap do, before its gate or fold: no per-slice stage
+		// may run under its plain id.
+		if completed == c.opts.Pack.SlicingStage() {
+			findings, stop, err := c.noSlices(ctx, bp.ID, art)
+			if err != nil {
+				return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
+			}
+
+			if stop {
+				return outcome{end: true, findings: findings, art: art}, nil
+			}
+		}
+
 		// A gated stage's artifact waits at its gate: approved, what follows
 		// it runs; rejected, the stage runs again.
 		if st.Gate {
@@ -168,8 +185,18 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 		last = art
 	}
 
+	var collapse *folding
+
+	for from < len(steps) && steps[from].Collapsed {
+		if collapse == nil {
+			collapse = &folding{stage: steps[from].ID, into: foldTarget(steps, steps[from].ID)}
+		}
+
+		from++
+	}
+
 	if from < len(steps) {
-		return outcome{stage: steps[from].ID, fold: fold}, nil
+		return outcome{stage: steps[from].ID, fold: fold, collapse: collapse}, nil
 	}
 
 	return outcome{end: true, ready: true, art: last}, nil
@@ -630,6 +657,12 @@ func (c *Controller) advance(ctx context.Context, sess *session, bp store.Bluepr
 		return "", outcome{}
 	}
 
+	// A collapse is an audit row, recorded when a live step passes the stage
+	// and never on a reopen: the step list alone keeps the stage from running.
+	if out.collapse != nil && !c.recordFold(ctx, sess.audit, bp.ID, out.collapse) {
+		return "", outcome{}
+	}
+
 	switch {
 	case out.end:
 		c.report(ctx, sess, bp, out)
@@ -893,6 +926,12 @@ func (c *Controller) writeInputs(ctx context.Context, b *strings.Builder, bp sto
 	}
 
 	for _, in := range consumedSteps(steps, st) {
+		if in.Collapsed {
+			fmt.Fprintf(b, "## %s\n\nNot run for this blueprint: the design settles what every slice shares.\n\n", in.ID)
+
+			continue
+		}
+
 		art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, in.ID)
 		if err != nil {
 			return fmt.Errorf("blueprint: %s for %s: input %s: %w", what, st.ID, in.ID, err)

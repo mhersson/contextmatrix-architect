@@ -21,6 +21,9 @@ type pipelineStep struct {
 	pack.Stage
 	ID    string
 	Slice string
+	// Collapsed marks a shared stage that does not run: fewer than two
+	// slices, or a record from before slices. It is recorded, never run.
+	Collapsed bool
 }
 
 // piece is one slice of slicing's newest version: SL<n> by its position,
@@ -67,7 +70,8 @@ func unsliced(pk *pack.Pack, runs []store.Run) bool {
 // stepsOf is the pipeline the pack gives pieces: its stages in order, the
 // per-slice ones repeated for every piece, all of one slice's steps before
 // the next slice's. Without pieces the per-slice stages are one step each.
-func stepsOf(pk *pack.Pack, pieces []piece) []pipelineStep {
+// collapse marks the shared stages collapsed.
+func stepsOf(pk *pack.Pack, pieces []piece, collapse bool) []pipelineStep {
 	var (
 		out   []pipelineStep
 		group []pack.Stage
@@ -94,7 +98,7 @@ func stepsOf(pk *pack.Pack, pieces []piece) []pipelineStep {
 
 		flush()
 
-		out = append(out, pipelineStep{Stage: st, ID: st.ID})
+		out = append(out, pipelineStep{Stage: st, ID: st.ID, Collapsed: collapse && st.Shared})
 	}
 
 	flush()
@@ -106,15 +110,19 @@ func stepsOf(pk *pack.Pack, pieces []piece) []pipelineStep {
 // it repeats per-slice stages for: slicing's newest version's, or none
 // before slicing stores one and on a record from before stages ran per
 // slice. slicing is the newest artifact of the pack's slicing stage, nil
-// when there is none.
+// when there is none. A shared stage collapses with fewer than two pieces,
+// and on a record from before slices.
 func blueprintSteps(pk *pack.Pack, runs []store.Run, slicing *store.Artifact) ([]pipelineStep, []piece) {
-	if slicing == nil || unsliced(pk, runs) {
-		return stepsOf(pk, nil), nil
+	switch {
+	case slicing == nil:
+		return stepsOf(pk, nil, false), nil
+	case unsliced(pk, runs):
+		return stepsOf(pk, nil, true), nil
 	}
 
 	pieces := piecesOf(*slicing)
 
-	return stepsOf(pk, pieces), pieces
+	return stepsOf(pk, pieces, len(pieces) < 2), pieces
 }
 
 // steps reads blueprint id's pipeline from the store.

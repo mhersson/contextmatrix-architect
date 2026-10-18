@@ -1,0 +1,391 @@
+package blueprint
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"sync/atomic"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/mhersson/contextmatrix-architect/internal/stage"
+	"github.com/mhersson/contextmatrix-architect/internal/store"
+)
+
+func TestBlueprintSteps_ASharedStageCollapsesBelowTwoSlices(t *testing.T) {
+	pk := slicedPack(t)
+
+	stepsFor := func(runs []store.Run, data map[string]any) []pipelineStep {
+		t.Helper()
+
+		var art *store.Artifact
+
+		if data != nil {
+			raw, err := json.Marshal(data)
+			require.NoError(t, err)
+
+			art = &store.Artifact{Stage: "slicing", Version: 1, Data: raw}
+		}
+
+		steps, _ := blueprintSteps(pk, runs, art)
+
+		return steps
+	}
+
+	collapsed := func(runs []store.Run, data map[string]any) bool {
+		t.Helper()
+
+		steps := stepsFor(runs, data)
+
+		return steps[stepIndex(steps, "shared_decisions")].Collapsed
+	}
+
+	assert.False(t, collapsed(nil, nil), "before slicing stores a version nothing is decided")
+	assert.True(t, collapsed(nil, oneSlice()))
+	assert.False(t, collapsed(nil, twoSlices()))
+	assert.True(t, collapsed([]store.Run{{Stage: "solution_design", Kind: store.RunKindStage}}, twoSlices()), "a record from before slices never runs it")
+
+	empty := map[string]any{"slices": []any{}}
+	assert.True(t, collapsed(nil, empty), "a slicing with no slices collapses it")
+	assert.Equal(t, []string{"solution_design", "grounding"}, keysIn(stepsFor(nil, empty), "solution_design", "grounding"),
+		"and its per-slice stages are plain steps")
+}
+
+func TestShared_TwoSlicesRunItBeforeTheFirstSlice(t *testing.T) {
+	c, st, runner, _ := newSliced(t, slicedScript())
+	driveIn(t, c, autoStart("BP1"))
+
+	assert.Equal(t, []string{"shared_decisions", "solution_design@SL1", "grounding@SL1", "solution_design@SL2", "grounding@SL2"},
+		stepRuns(runner, "shared_decisions", "solution_design", "grounding"))
+
+	design2 := inputsOf(runner, "solution_design@SL2")
+	require.Len(t, design2, 1)
+	assert.Contains(t, design2[0].Task, "# Shared decisions", "every slice reads the shared decisions")
+	assert.NotContains(t, gateRows(t, st), "shared_decisions@0:fold")
+}
+
+func TestShared_OneSliceCollapsesIntoTheFirstSliceDesign(t *testing.T) {
+	script := slicedScript()
+	script["slicing"] = returns("# Slices", oneSlice())
+
+	c, st, runner, rec := newSliced(t, script)
+	drive(t, c, "BP1")
+
+	assert.Empty(t, inputsOf(runner, "shared_decisions"), "a collapsed stage never runs")
+	assert.Equal(t, []string{"slicing@1:fold", "shared_decisions@0:fold"}, gateRows(t, st),
+		"slicing folds, and the collapse is a fold at version 0")
+
+	decided := rec.all(EventDecided)
+	require.Len(t, decided, 2)
+	assert.Equal(t, "solution_design@SL1", decided[1].Payload["feedback"], "the collapse names the step that settles the shared decisions")
+
+	gate := lastGate(t, rec)
+	assert.Equal(t, "solution_design@SL1", gate.Payload["stage"], "one design gate judges the slicing too")
+	assert.Equal(t, []string{"approve", "reject", "reject slicing"}, gateReplies(gate))
+}
+
+func TestShared_TheCollapseIsRecordedOnceAcrossAReopen(t *testing.T) {
+	script := slicedScript()
+	script["slicing"] = returns("# Slices", oneSlice())
+
+	st := slicedStore(t)
+	c, _, _ := newSlicedOn(t, st, script)
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	require.NoError(t, c.End(ctx, "BP1"))
+
+	c2, _, _ := newSlicedOn(t, st, script)
+	require.NoError(t, c2.Start(ctx, startInput("BP1")))
+	c2.Wait("BP1")
+	require.NoError(t, c2.Message(ctx, "BP1", "approve", "m2"))
+	c2.Wait("BP1")
+
+	assert.Equal(t, 1, collapseRows(t, st), "a reopen and the steps after it record no second collapse")
+}
+
+// collapseRows counts the collapse rows of the shared stage.
+func collapseRows(t *testing.T, st *store.Store) int {
+	t.Helper()
+
+	n := 0
+
+	for _, row := range gateRows(t, st) {
+		if row == "shared_decisions@0:fold" {
+			n++
+		}
+	}
+
+	return n
+}
+
+func TestShared_AReopenThatRerunsTheFirstSliceDesignRecordsNoSecondCollapse(t *testing.T) {
+	var calls atomic.Int32
+
+	entered := make(chan struct{})
+
+	script := slicedScript()
+	script["slicing"] = returns("# Slices", oneSlice())
+	script["solution_design"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-ctx.Done()
+
+			return stage.Output{}, ctx.Err()
+		}
+
+		return done("# Design "+sliceOf(in), nil), nil
+	}
+
+	c, st, runner, rec := newSliced(t, script)
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	receive(t, entered, "SL1's design")
+	require.NoError(t, c.End(ctx, "BP1"))
+	c.Wait("BP1")
+
+	// The record's last completed step is slicing, so the reopen passes the
+	// collapsed stage again on its way to SL1's design.
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	require.Len(t, inputsOf(runner, "solution_design@SL1"), 2, "the design the End cut runs again")
+	assert.Equal(t, "solution_design@SL1", lastGate(t, rec).Payload["stage"])
+	assert.Equal(t, 1, collapseRows(t, st))
+}
+
+func TestShared_ANoteThatRerunsTheFirstSliceDesignRecordsNoSecondCollapse(t *testing.T) {
+	var failed atomic.Bool
+
+	script := slicedScript()
+	script["slicing"] = returns("# Slices", oneSlice())
+	script["solution_design"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		if !failed.Swap(true) {
+			return stage.Output{}, errors.New("model unavailable")
+		}
+
+		return done("# Design "+sliceOf(in), nil), nil
+	}
+
+	c, st, runner, rec := newSliced(t, script)
+	drive(t, c, "BP1")
+
+	require.NoError(t, c.Message(context.Background(), "BP1", "try again", "m2"))
+	c.Wait("BP1")
+
+	require.Len(t, inputsOf(runner, "solution_design@SL1"), 2, "the note runs the failed design again")
+	assert.Equal(t, "solution_design@SL1", lastGate(t, rec).Payload["stage"])
+	assert.Equal(t, 1, collapseRows(t, st))
+}
+
+func TestShared_AReSliceToOneSliceCollapsesIt(t *testing.T) {
+	var cuts atomic.Int32
+
+	script := slicedScript()
+	script["slicing"] = func(context.Context, stage.Input) (stage.Output, error) {
+		if cuts.Add(1) == 1 {
+			return done("# Slices", twoSlices()), nil
+		}
+
+		return done("# Slices", oneSlice()), nil
+	}
+
+	c, st, runner, rec := newSliced(t, script)
+	drive(t, c, "BP1")
+	require.Equal(t, "slicing", lastGate(t, rec).Payload["stage"], "two slices give slicing its own gate")
+
+	require.NoError(t, c.Message(context.Background(), "BP1", "reject one slice is enough", "m2"))
+	c.Wait("BP1")
+
+	assert.Empty(t, inputsOf(runner, "shared_decisions"))
+	assert.Contains(t, gateRows(t, st), "shared_decisions@0:fold")
+	assert.Equal(t, 1, collapseRows(t, st), "only the pass after the re-slice collapses it")
+	assert.Equal(t, "solution_design@SL1", lastGate(t, rec).Payload["stage"])
+}
+
+func TestShared_AReSliceFromOneSliceToOneRecordsItsPassAgain(t *testing.T) {
+	script := slicedScript()
+	script["slicing"] = returns("# Slices", oneSlice())
+
+	c, st, runner, rec := newSliced(t, script)
+	drive(t, c, "BP1")
+	require.Equal(t, "solution_design@SL1", lastGate(t, rec).Payload["stage"])
+
+	require.NoError(t, c.Message(context.Background(), "BP1", "reject slicing name the export first", "m2"))
+	c.Wait("BP1")
+
+	require.Len(t, inputsOf(runner, "slicing"), 2, "slicing ran again")
+	assert.Empty(t, inputsOf(runner, "shared_decisions"))
+	assert.Equal(t, 2, collapseRows(t, st), "each live pass of the collapsed stage is recorded")
+	assert.Equal(t, "solution_design@SL1", lastGate(t, rec).Payload["stage"])
+}
+
+func TestShared_AReSliceToTwoSlicesRunsIt(t *testing.T) {
+	var cuts atomic.Int32
+
+	script := slicedScript()
+	script["slicing"] = func(context.Context, stage.Input) (stage.Output, error) {
+		if cuts.Add(1) == 1 {
+			return done("# Slices", oneSlice()), nil
+		}
+
+		return done("# Slices", twoSlices()), nil
+	}
+
+	c, _, runner, rec := newSliced(t, script)
+	drive(t, c, "BP1")
+	require.Equal(t, "solution_design@SL1", lastGate(t, rec).Payload["stage"])
+
+	require.NoError(t, c.Message(context.Background(), "BP1", "reject slicing keep the schedule apart", "m2"))
+	c.Wait("BP1")
+	require.Equal(t, "slicing", lastGate(t, rec).Payload["stage"])
+
+	approveUntil(t, c, rec, "shared_decisions")
+	assert.Len(t, inputsOf(runner, "shared_decisions"), 1, "with two slices the shared stage runs")
+}
+
+func TestShared_TheGatePlanSaysWhatRepeatsAndWhatCollapses(t *testing.T) {
+	c, _, _, rec := newSliced(t, slicedScript())
+	drive(t, c, "BP1")
+
+	plan, ok := rec.first(EventGatePlan)
+	require.True(t, ok)
+
+	entries := map[string]map[string]any{}
+
+	for _, e := range anyList(plan.Payload["stages"]) {
+		m := e.(map[string]any)
+		entries[m["stage"].(string)] = m
+	}
+
+	assert.Equal(t, true, entries["shared_decisions"]["shared"])
+	assert.Equal(t, true, entries["solution_design"]["per_slice"])
+	assert.NotContains(t, entries["intake"], "per_slice")
+	assert.Equal(t, "solution_design", entries["slicing"]["folds_into"], "slicing folds into the first slice's design, never into the shared stage")
+}
+
+func TestShared_AGatePlanAfterSlicingNamesThePackStageSlicingFoldsInto(t *testing.T) {
+	c, st, _, rec := newSliced(t, slicedScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	for _, data := range []map[string]any{oneSlice(), twoSlices()} {
+		raw, err := json.Marshal(data)
+		require.NoError(t, err)
+
+		_, err = st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: "slicing", Body: "# Slices", Data: raw})
+		require.NoError(t, err)
+
+		c.postGatePlan(ctx, sessionOf(t, c, "BP1"), bp)
+
+		plans := rec.all(EventGatePlan)
+		require.NotEmpty(t, plans)
+
+		entries := map[string]map[string]any{}
+
+		for _, e := range anyList(plans[len(plans)-1].Payload["stages"]) {
+			m := e.(map[string]any)
+			entries[m["stage"].(string)] = m
+		}
+
+		assert.Equal(t, "solution_design", entries["slicing"]["folds_into"],
+			"the plan names pack stages: never a slice's step and never the shared stage")
+	}
+}
+
+func TestShared_ASlicingWithNoSlicesEndsThePipelineWithItsProblems(t *testing.T) {
+	empty := map[string]any{"slices": []any{}}
+
+	script := slicedScript()
+	// The model keeps submitting no slices; the bounded check refuses twice
+	// and accepts the third as it is.
+	script["slicing"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		for range maxContractRounds {
+			if err := in.Validate(ctx, stage.Artifact{Body: "# Slices", Data: empty}); err == nil {
+				return done("# Slices", empty), nil
+			}
+		}
+
+		return stage.Output{}, errors.New("the slices check never accepted the submit")
+	}
+
+	c, st, runner, rec := newSliced(t, script)
+	drive(t, c, "BP1")
+
+	report, ok := rec.first(EventReport)
+	require.True(t, ok, "the pipeline ends at slicing")
+	assert.Equal(t, false, report.Payload["ready"])
+	assert.Equal(t, sliceProblems(empty, []string{"alpha"}), report.Payload["findings"], "the end carries the problems slicing was accepted with")
+	assert.Empty(t, stepRuns(runner, "shared_decisions", "solution_design", "grounding"), "no later stage runs, under any key")
+	assert.Empty(t, gateRows(t, st), "slicing folds into no design")
+
+	calls := runner.calls()
+
+	require.NoError(t, c.Message(context.Background(), "BP1", "go on", "m2"))
+	c.Wait("BP1")
+
+	assert.Equal(t, calls, runner.calls(), "a message after the end starts no run")
+
+	note, ok := rec.first(EventNote)
+	require.True(t, ok)
+	assert.Equal(t, true, note.Payload["ended"])
+}
+
+func TestAfter_ASlicingWithNoSlices(t *testing.T) {
+	stored := problem("slicing", "no_slices", "slicing needs at least one slice")
+
+	tests := []struct {
+		name string
+		// before are the plain runs of per-slice stages before slicing's: a
+		// record from before slices.
+		before []string
+		data   map[string]any
+		end    bool
+		// finding is in the only finding of an end.
+		finding string
+	}{
+		{name: "a fresh blueprint ends with the problems its check accepted", data: map[string]any{"slices": []any{}, problemsKey: []any{stored}}, end: true, finding: stored},
+		{name: "one with no stored problems ends with the controller's", data: map[string]any{"slices": []any{}}, end: true, finding: "Slicing"},
+		{name: "a record from before slices goes on as it did", before: []string{"solution_design"}, data: map[string]any{"slices": []any{}, problemsKey: []any{stored}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, _, _ := newSliced(t, slicedScript())
+			ctx := context.Background()
+			require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+			for _, s := range append([]string{"intake"}, tt.before...) {
+				ran(t, st, s, store.RunKindStage, 1, 1, 0.1)
+				put(t, st, s, nil)
+			}
+
+			ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+			put(t, st, "slicing", tt.data)
+
+			bp, err := st.GetBlueprint(ctx, "BP1")
+			require.NoError(t, err)
+
+			out, err := c.after(ctx, bp, "slicing")
+			require.NoError(t, err)
+			assert.Equal(t, tt.end, out.end)
+
+			if !tt.end {
+				assert.Equal(t, "solution_design", out.stage, "the plain design follows, as before slices")
+
+				return
+			}
+
+			assert.False(t, out.ready)
+			require.Len(t, out.findings, 1)
+			assert.Contains(t, out.findings[0], tt.finding)
+		})
+	}
+}
