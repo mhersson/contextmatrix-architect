@@ -123,7 +123,10 @@ func (c *Controller) launchStep(ctx context.Context, r *run, sess *session, bp s
 					c.postGatePlan(context.WithoutCancel(ctx), sess, bp)
 				}
 
-				if stageID == c.checkoutStage() {
+				// Only the checkout stage's first step reports: a later
+				// slice's step of it reads the same trees.
+				checkout, slice := pack.SplitStep(stageID)
+				if checkout == c.checkoutStage() && (slice == "" || slice == sliceID(1)) {
 					c.reportSetup(ctx, sess, bp)
 				}
 			}
@@ -157,7 +160,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		c.live.touch(id)
 	}()
 
-	st, ok := c.opts.Pack.Stage(stageID)
+	st, ok := c.stepAt(stageID)
 	if !ok {
 		c.fail(bg, au, id, 0, fmt.Sprintf("unknown stage %q", stageID))
 
@@ -310,6 +313,8 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		version = latest.Version + 1
 	}
 
+	draftStage, draftSlice := pack.SplitStep(stageID)
+
 	in.Draft = func(f stage.DraftFrame) {
 		// A void draft is none: the next snapshot leaves it out.
 		if f.Void {
@@ -319,7 +324,9 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			return
 		}
 
-		c.live.draft(id, protocol.Draft{Stage: stageID, Version: version, Offset: f.Offset, Text: f.Text, Refused: f.Refused, Reason: f.Reason})
+		c.live.draft(id, protocol.Draft{
+			Stage: draftStage, Slice: draftSlice, Version: version, Offset: f.Offset, Text: f.Text, Refused: f.Refused, Reason: f.Reason,
+		})
 	}
 
 	out, runErr := c.opts.Runner.Run(withRun(runCtx, runID), in)
@@ -473,7 +480,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 // submit with the card template, and the states of its checks. The closer
 // ends the run's CM session; it is a no-op without cm tools and never nil
 // when err is nil.
-func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blueprint, runID int64, st pack.Stage) (stage.Input, stageChecks, func(), error) {
+func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blueprint, runID int64, st pipelineStep) (stage.Input, stageChecks, func(), error) {
 	noop := func() {}
 
 	task, err := c.taskFor(context.WithoutCancel(ctx), bp, st)
@@ -483,7 +490,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 
 	in := stage.Input{
 		Stage: st.ID, Persona: c.opts.Pack.Persona(st.Persona),
-		Instructions: c.opts.Pack.Instructions(st.ID), Task: task,
+		Instructions: c.opts.Pack.Instructions(st.Stage.ID), Task: task,
 	}
 
 	// Checked before any checkout, so a server without the tool source fails
@@ -526,7 +533,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	}
 
 	if slices.Contains(st.Tools, pack.ToolResearch) {
-		if c.researchOn(sess, st) {
+		if c.researchOn(sess, st.Stage) {
 			guard := c.researchGuard(sess, bp, st.ID, facts)
 			ledger := researchLedger{c: c, au: sess.audit, id: bp.ID, stage: st.ID}
 
@@ -568,7 +575,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	if slices.Contains(st.Checks, pack.CheckCards) {
 		var cards func(context.Context, stage.Artifact) error
 
-		cards, checks.cards = c.cardsValidator(sess, bp)
+		cards, checks.cards = c.cardsValidator(sess, bp, st)
 		validators = append(validators, cards)
 		in.Instructions += "\n\n# Card template\n\n" + c.opts.Pack.CardTemplate()
 	}

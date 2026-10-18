@@ -31,6 +31,14 @@ func twoSlices() map[string]any {
 	return d
 }
 
+func threeSlices() map[string]any {
+	d := twoSlices()
+	d["slices"] = append(d["slices"].([]any),
+		map[string]any{"id": "SL3", "title": "Mail the exports", "value": "teams get them unasked", "projects": []any{"alpha"}})
+
+	return d
+}
+
 // gateRows lists a blueprint's decisions as stage@version:decision, oldest
 // first.
 func gateRows(t *testing.T, st *store.Store) []string {
@@ -553,6 +561,8 @@ func TestSlicesValidator(t *testing.T) {
 		}, want: "slice_id"},
 		{name: "no title", slices: []any{map[string]any{"id": "SL1", "title": " ", "projects": []any{"alpha"}}}, want: "slice_title"},
 		{name: "a project the blueprint does not target", slices: []any{map[string]any{"id": "SL1", "title": "a", "projects": []any{"beta"}}}, want: "slice_project"},
+		{name: "an id out of slicing's order", slices: []any{map[string]any{"id": "SL2", "title": "a", "projects": []any{"alpha"}}}, want: "slice_id"},
+		{name: "an id of another form", slices: []any{map[string]any{"id": "S1", "title": "a", "projects": []any{"alpha"}}}, want: "slice_id"},
 	}
 
 	for _, tt := range tests {

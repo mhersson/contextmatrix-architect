@@ -1,11 +1,20 @@
 # Decomposition
 
-Input: the need, the slices, the design, grounding and acceptance; a read-only
-checkout of each target project.
+Input: the need, the slices, the shared decisions, and for the slice the
+task names its design, grounding and acceptance; the earlier slices'
+design, acceptance and cards; a read-only checkout of each target project.
 
 Write the cards an autonomous agent will complete, one deliverable each,
 sized for one pull request and at most two planner subtasks. Follow the card
-template exactly; it is appended to these instructions. Rules:
+template exactly; it is appended to these instructions.
+
+Write the cards of the slice the task names, and only those; when the task
+names no slice, write every slice's. An earlier slice's cards exist
+already: never repeat one, and where this slice builds on one, depend on it
+within its project. Card and manual entry ids run on after the highest an
+earlier slice uses.
+
+Rules:
 
 - Title starts with an imperative verb. Type `bug` only for a real defect;
   only a `bug` card's title opens with a bug verb such as fix or repair.
@@ -47,9 +56,13 @@ Setup is work the cards carry, never a reason to stop. Read repo_info:
 - An empty repository has no files yet. `where` lists only paths that
   exist, so its cards name the files they create in the Where section and
   leave `where` empty.
+- A project an earlier slice already set up keeps that setup: its verify
+  command and its instruction card hold for this slice's cards too, and
+  every card of the project depends on that instruction card.
 
 Submit with the body as a short summary and a data object
 `{"title": "<playbook title, needed for two or more cards>", "cards": [{"id": "D1", "project": "<name>", "title": "...", "type": "feature", "priority": "medium", "labels": [], "skills": [], "depends_on": [], "body": "<markdown from the template>", "where": [{"path": "...", "symbol": "..."}], "criteria": ["AC1"]}], "manual": [{"id": "M1", "text": "<the check a human does>", "criteria": ["MC1"]}], "order": ["D1", "M1", "D2"], "setup": {"<project>": {"verify_command": "<only when the project declares none>", "instruction_card": "<only when the repository has no instruction file>"}}}`.
+The last slice's draft gives the playbook title for every slice's cards; an earlier slice may leave `title` empty. `order` lists this slice's cards and manual entries; the playbook takes the slices in their order.
 Leave `skills` empty to inherit the project's default task skills.
 A rejected submit lists what failed the contract; fix the cards and submit
 again. A submit refused because ContextMatrix could not be read was not

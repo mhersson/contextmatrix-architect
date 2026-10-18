@@ -8,6 +8,7 @@ import (
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -205,18 +206,20 @@ func (h *liveHub) touch(id string) {
 	}
 }
 
-// stored hints that stage's version was stored or changed; the draft it
-// replaces ends.
-func (h *liveHub) stored(id, stage string, version int) {
+// stored hints that key's version was stored or changed; the draft it
+// replaces ends. The frame names key's stage and slice apart.
+func (h *liveHub) stored(id, key string, version int) {
+	stage, slice := pack.SplitStep(key)
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if d := h.drafts[id]; d != nil && d.Stage == stage && d.Version == version {
+	if d := h.drafts[id]; d != nil && d.Stage == stage && d.Slice == slice && d.Version == version {
 		delete(h.drafts, id)
 	}
 
 	if f := h.feeds[id]; f != nil {
-		h.broadcastLocked(id, f, protocol.LiveFrame{Type: frameStored, Stage: stage, Version: version})
+		h.broadcastLocked(id, f, protocol.LiveFrame{Type: frameStored, Stage: stage, Slice: slice, Version: version})
 	}
 }
 
@@ -304,13 +307,13 @@ func (h *liveHub) pushLocked(id string, f *feed, s *subscriber, fr protocol.Live
 // applies it: offset 0 replaces, an offset equal to cur's length in code
 // points appends, and any other is a gap, reported as not ok.
 func applyDraft(cur *protocol.Draft, d protocol.Draft) (*protocol.Draft, bool) {
-	next := protocol.Draft{Stage: d.Stage, Version: d.Version, Text: d.Text, Refused: d.Refused, Reason: d.Reason}
+	next := protocol.Draft{Stage: d.Stage, Slice: d.Slice, Version: d.Version, Text: d.Text, Refused: d.Refused, Reason: d.Reason}
 
 	if d.Offset == 0 {
 		return &next, true
 	}
 
-	if cur == nil || cur.Stage != d.Stage || cur.Version != d.Version || d.Offset != len([]rune(cur.Text)) {
+	if cur == nil || cur.Stage != d.Stage || cur.Slice != d.Slice || cur.Version != d.Version || d.Offset != len([]rune(cur.Text)) {
 		return nil, false
 	}
 

@@ -10,7 +10,6 @@ import (
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
-	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 	"github.com/mhersson/contextmatrix-harness/llm"
@@ -148,7 +147,7 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion) (p
 			// The stage still runs and decides, so this is not the blueprint's failure.
 			au.event(bg, Event{Kind: EventError, BlueprintID: iv.bp.ID, RunID: iv.runID, Payload: map[string]any{
 				"stage": stageID, "reason": "responder_refused",
-				"message": fmt.Sprintf("The responder for %s did not run: %s. The stage decides Q%d itself.", pack.StageName(stageID), refused.reason, q.Number),
+				"message": fmt.Sprintf("The responder for %s did not run: %s. The stage decides Q%d itself.", c.stepName(bg, iv.bp.ID, stageID), refused.reason, q.Number),
 			}})
 		}
 
@@ -199,7 +198,7 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion) (p
 // need, the asking stage's inputs, the gate feedback the asking attempt
 // addresses, the user's notes, every answer so far and the question with its
 // options and context.
-func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st pack.Stage, attempt int, q protocol.RoundQuestion) (string, error) {
+func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st pipelineStep, attempt int, q protocol.RoundQuestion) (string, error) {
 	var b strings.Builder
 
 	if err := c.writeInputs(ctx, &b, bp, st, true, "responder task"); err != nil {

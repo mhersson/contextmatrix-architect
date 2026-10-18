@@ -259,7 +259,7 @@ func TestDraftProblems_ADependencyComesFirst(t *testing.T) {
 		Order: []string{"D2", "D1"},
 	}
 
-	assert.Equal(t, []string{"D2 comes before its dependency D1 in order"}, draftProblems(d))
+	assert.Equal(t, []string{"D2 comes before its dependency D1 in order"}, draftProblems(d, len(d.Cards) > 1))
 }
 
 func TestDraftProblems_AMissingCardIsNotAlsoOutOfOrder(t *testing.T) {
@@ -269,7 +269,7 @@ func TestDraftProblems_AMissingCardIsNotAlsoOutOfOrder(t *testing.T) {
 		Order: []string{"D1"},
 	}
 
-	assert.Equal(t, []string{"D2 is missing from order"}, draftProblems(d))
+	assert.Equal(t, []string{"D2 is missing from order"}, draftProblems(d, len(d.Cards) > 1))
 }
 
 func yoloInput(id string) StartInput {

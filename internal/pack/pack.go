@@ -61,6 +61,28 @@ const (
 	responderInstructions = "responder"
 )
 
+// stepSeparator joins a per-slice stage's id and its slice in a step key;
+// no stage id holds it.
+const stepSeparator = "@"
+
+// StepKey names one step of a blueprint's pipeline in its record: a
+// whole-blueprint stage by its id, a per-slice stage's step for one slice
+// as <stage>@<slice>.
+func StepKey(stageID, slice string) string {
+	if slice == "" {
+		return stageID
+	}
+
+	return stageID + stepSeparator + slice
+}
+
+// SplitStep is StepKey's inverse; slice is "" for a whole-blueprint key.
+func SplitStep(key string) (stageID, slice string) {
+	stageID, slice, _ = strings.Cut(key, stepSeparator)
+
+	return stageID, slice
+}
+
 // Fold lets a gate fold into the next gated stage's gate: when the stage's
 // data array Field holds at most Max entries and both gates have the same
 // gate policy, the next gate and its reviewer judge both artifacts.
@@ -116,6 +138,19 @@ type Stage struct {
 	// reports failures, at most MaxRounds times.
 	LoopsTo   string `yaml:"loops_to"`
 	MaxRounds int    `yaml:"max_rounds"`
+	// PerSlice repeats the stage once per slice of the newest version of the
+	// stage that checks slices, in its order: every per-slice stage for SL1,
+	// then for SL2. Per-slice stages are contiguous and follow that stage.
+	PerSlice bool `yaml:"per_slice"`
+	// EarlierSlices names per-slice stages whose latest artifact for every
+	// earlier slice a per-slice stage also reads, so later slices build on
+	// what earlier ones settled.
+	EarlierSlices []string `yaml:"earlier_slices"`
+	// Shared marks the stage that settles what every slice shares. It sits
+	// between the stage that checks slices and the per-slice stages, and with
+	// fewer than two slices it collapses: recorded, never run, its decisions
+	// settled by the first slice's design.
+	Shared bool `yaml:"shared"`
 }
 
 type manifest struct {
@@ -216,9 +251,13 @@ func load(fsys fs.FS) (*Pack, error) {
 
 	p.Stages = m.Stages
 
+	if err := validateSlices(p.Stages); err != nil {
+		return nil, err
+	}
+
 	for i, s := range p.Stages {
-		if s.Fold != nil && !slices.ContainsFunc(p.Stages[i+1:], func(t Stage) bool { return t.Gate }) {
-			return nil, fmt.Errorf("pack: stage %q folds, but no later stage has a gate to fold into", s.ID)
+		if s.Fold != nil && !slices.ContainsFunc(p.Stages[i+1:], func(t Stage) bool { return t.Gate && !t.Shared }) {
+			return nil, fmt.Errorf("pack: stage %q folds, but no later stage has a gate to fold into (a shared stage's gate takes no fold)", s.ID)
 		}
 	}
 
@@ -351,6 +390,10 @@ func validateStage(s Stage, seen map[string]Stage) error {
 		return fmt.Errorf("pack: stage id %q has a dot, which names a stage's review", s.ID)
 	}
 
+	if strings.Contains(s.ID, stepSeparator) {
+		return fmt.Errorf("pack: stage id %q has an %s, which joins a per-slice stage's id and its slice", s.ID, stepSeparator)
+	}
+
 	if _, dup := seen[s.ID]; dup {
 		return fmt.Errorf("pack: duplicate stage %q", s.ID)
 	}
@@ -396,6 +439,73 @@ func validateStage(s Stage, seen map[string]Stage) error {
 		if s.MaxRounds <= 0 {
 			return fmt.Errorf("pack: stage %q: loops_to needs a positive max_rounds", s.ID)
 		}
+	}
+
+	return nil
+}
+
+// validateSlices checks the keys that repeat stages per slice: per-slice
+// stages are contiguous, follow the stage that checks slices, and neither
+// fold nor loop; earlier_slices names per-slice stages only; a shared stage
+// has a gate and sits between the slicing stage and the per-slice stages;
+// the stages that check cards and criteria both repeat per slice or neither
+// does.
+func validateSlices(stages []Stage) error {
+	slicing, first, last := -1, -1, -1
+
+	for i, s := range stages {
+		if slicing < 0 && slices.Contains(s.Checks, CheckSlices) {
+			slicing = i
+		}
+
+		if !s.PerSlice {
+			continue
+		}
+
+		if last >= 0 && last != i-1 {
+			return fmt.Errorf("pack: per-slice stage %q is apart from the other per-slice stages; they run together, once per slice", s.ID)
+		}
+
+		if first < 0 {
+			first = i
+		}
+
+		last = i
+	}
+
+	for i, s := range stages {
+		switch {
+		case s.PerSlice && s.Shared:
+			return fmt.Errorf("pack: stage %q is both per_slice and shared", s.ID)
+		case s.PerSlice && (slicing < 0 || i <= slicing):
+			return fmt.Errorf("pack: per-slice stage %q needs an earlier stage that checks slices", s.ID)
+		case s.PerSlice && s.Fold != nil:
+			return fmt.Errorf("pack: per-slice stage %q cannot fold", s.ID)
+		case s.PerSlice && s.LoopsTo != "":
+			return fmt.Errorf("pack: per-slice stage %q cannot loop; a stage after the per-slice stages loops to one", s.ID)
+		case len(s.EarlierSlices) > 0 && !s.PerSlice:
+			return fmt.Errorf("pack: stage %q reads earlier slices but is not per_slice", s.ID)
+		case s.Shared && !s.Gate:
+			return fmt.Errorf("pack: shared stage %q needs a gate", s.ID)
+		case s.Shared && (slicing < 0 || i <= slicing || first < 0 || i > first):
+			return fmt.Errorf("pack: shared stage %q sits between the stage that checks slices and the per-slice stages", s.ID)
+		}
+
+		for _, id := range s.EarlierSlices {
+			if !slices.ContainsFunc(stages, func(t Stage) bool { return t.ID == id && t.PerSlice }) {
+				return fmt.Errorf("pack: stage %q reads %q of earlier slices, which is not a per-slice stage", s.ID, id)
+			}
+		}
+	}
+
+	// The cards check reads the criteria of the cards' own scope, one slice's
+	// or the whole blueprint's, so both stages share it.
+	cards := slices.IndexFunc(stages, func(s Stage) bool { return slices.Contains(s.Checks, CheckCards) })
+	criteria := slices.IndexFunc(stages, func(s Stage) bool { return slices.Contains(s.Checks, CheckCriteria) })
+
+	if cards >= 0 && criteria >= 0 && stages[cards].PerSlice != stages[criteria].PerSlice {
+		return fmt.Errorf("pack: stage %q checks cards and stage %q checks criteria; both repeat per slice or neither does",
+			stages[cards].ID, stages[criteria].ID)
 	}
 
 	return nil
@@ -463,6 +573,19 @@ func validateDialog(s Stage) error {
 	return nil
 }
 
+// SlicingStage is the id of the first stage that checks slices, whose newest
+// version decides how often the per-slice stages run; "" when the pack has
+// none.
+func (p *Pack) SlicingStage() string {
+	for _, s := range p.Stages {
+		if slices.Contains(s.Checks, CheckSlices) {
+			return s.ID
+		}
+	}
+
+	return ""
+}
+
 // Stage returns the stage with id.
 func (p *Pack) Stage(id string) (Stage, bool) {
 	for _, s := range p.Stages {
@@ -494,16 +617,26 @@ func (p *Pack) ReviewInstructions() string { return p.review }
 // the pack has none, and then an auto question returns to its stage.
 func (p *Pack) ResponderInstructions() string { return p.responder }
 
-// StageName is how a stage id reads to a person: underscores become spaces
-// and the first letter is upper case. A pack has no title field, and a raw id
-// is what a typed command and the record keep.
-func StageName(id string) string {
-	words := strings.ReplaceAll(id, "_", " ")
+// StageName is how a stage id or a step key reads to a person: underscores
+// become spaces and the first letter is upper case. A per-slice step names
+// its slice, as in "Solution design (SL2)", only when sliced says the
+// blueprint has two or more slices; with one, nothing slice-related shows.
+// A pack has no title field, and a raw id is what a typed command, the
+// record and the models keep.
+func StageName(id string, sliced bool) string {
+	stageID, slice := SplitStep(id)
+
+	words := strings.ReplaceAll(stageID, "_", " ")
 	if words == "" {
 		return ""
 	}
 
 	r, size := utf8.DecodeRuneInString(words)
+	name := string(unicode.ToUpper(r)) + words[size:]
 
-	return string(unicode.ToUpper(r)) + words[size:]
+	if sliced && slice != "" {
+		name += " (" + slice + ")"
+	}
+
+	return name
 }

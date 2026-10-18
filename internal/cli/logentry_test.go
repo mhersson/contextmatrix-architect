@@ -92,6 +92,12 @@ func TestLogEntryFor(t *testing.T) {
 		{"gate plan with a gate of its own policy", blueprint.Event{Kind: blueprint.EventGatePlan, BlueprintID: "S1", Payload: map[string]any{
 			"stages": []any{map[string]any{"stage": "intake", "policy": "human", "gate": true, "gate_policy": "auto"}},
 		}}, "text", []string{"Intake: human; its gate is auto"}, false},
+		{"gate plan with per-slice and shared stages", blueprint.Event{Kind: blueprint.EventGatePlan, BlueprintID: "S1", Payload: map[string]any{
+			"stages": []any{
+				map[string]any{"stage": "shared_decisions", "policy": "human", "gate": true, "shared": true},
+				map[string]any{"stage": "solution_design", "policy": "human", "gate": true, "per_slice": true},
+			},
+		}}, "text", []string{"Shared decisions: human, with a gate, skipped with one slice", "Solution design: human, with a gate, once per slice"}, false},
 		{"setup gaps", blueprint.Event{Kind: blueprint.EventSetupGaps, BlueprintID: "S1", Payload: map[string]any{"projects": []any{
 			map[string]any{"project": "alpha", "has_verify": false, "has_instruction_file": false, "empty": true},
 			map[string]any{"project": "beta", "has_verify": true, "has_instruction_file": false, "empty": false},
@@ -484,6 +490,11 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 			"stage": "signoff", "prompt": "Emission is stopped; reply approve to resume it.", "resume": "emission", "version": 3,
 		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Kind: "gate", Actions: []protocol.LogAction{{Label: "Resume emission", Reply: "approve"}}}},
 		{"any other error", blueprint.Event{Kind: blueprint.EventError, Payload: map[string]any{"message": "cost cap"}}, "stderr", nil},
+		{"a slice's gate", blueprint.Event{Kind: blueprint.EventGate, Payload: map[string]any{
+			"stage": "solution_design@SL2", "version": 1, "actions": []any{
+				map[string]any{"label": "Approve", "reply": "approve", "feedback": false},
+			},
+		}}, "text", &protocol.LogPrompt{ID: "gate:solution_design:SL2:v1", Kind: "gate", Actions: []protocol.LogAction{{Label: "Approve", Reply: "approve"}}}},
 	}
 
 	for _, tt := range tests {
@@ -755,6 +766,14 @@ func TestLogEntryFor_Markers(t *testing.T) {
 		return blueprint.Event{Kind: kind, BlueprintID: "S1", Payload: p}
 	}
 
+	// slicedEv is ev on a blueprint with two or more slices.
+	slicedEv := func(kind string, p map[string]any) blueprint.Event {
+		e := ev(kind, p)
+		e.Sliced = true
+
+		return e
+	}
+
 	sheet := func(stage string, version int, persona, note string) *protocol.LogMarker {
 		return &protocol.LogMarker{Kind: "artifact", Stage: stage, Version: version, Persona: persona, Note: note}
 	}
@@ -808,6 +827,31 @@ func TestLogEntryFor_Markers(t *testing.T) {
 			ev(blueprint.EventDecided, map[string]any{"stage": "solution_design", "decision": "approve", "responder": "human", "version": 2}),
 			"system", nil, "Approved Solution design",
 		},
+		{
+			"a collapse names the step that settles it, without its slice",
+			ev(blueprint.EventDecided, map[string]any{"stage": "shared_decisions", "decision": "fold", "feedback": "solution_design@SL1", "responder": "auto", "version": 0}),
+			"system", nil, "Shared decisions is skipped: Solution design settles",
+		},
+		{
+			"a slice's stage divider names its slice",
+			slicedEv(blueprint.EventStageStarted, map[string]any{"stage": "solution_design@SL2", "kind": "stage", "persona": "system_designer", "round": 1}),
+			"system", &protocol.LogMarker{Kind: "stage", Stage: "solution_design", Slice: "SL2", Persona: "system_designer"}, "Solution design (SL2)",
+		},
+		{
+			"a slice's sheet reference opens its slice",
+			slicedEv(blueprint.EventArtifact, map[string]any{"stage": "acceptance@SL1", "version": 1, "body": "# Acceptance", "persona": "senior_developer", "round": 1, "revised_for": 0}),
+			"text", &protocol.LogMarker{Kind: "artifact", Stage: "acceptance", Slice: "SL1", Version: 1, Persona: "senior_developer", Note: "Drawn by senior developer"}, "Acceptance (SL1) rev 1",
+		},
+		{
+			"one slice's marker still carries its slice, which its text does not name",
+			ev(blueprint.EventStageStarted, map[string]any{"stage": "solution_design@SL1", "kind": "stage", "persona": "system_designer", "round": 1}),
+			"system", &protocol.LogMarker{Kind: "stage", Stage: "solution_design", Slice: "SL1", Persona: "system_designer"}, "Stage Solution design started",
+		},
+		{
+			"a typed sign-off rejection names what runs again",
+			slicedEv(blueprint.EventDecided, map[string]any{"stage": "signoff", "decision": "reject", "responder": "human", "version": 1, "reruns": "solution_design@SL2"}),
+			"system", nil, "Solution design (SL2)",
+		},
 	}
 
 	for _, tt := range tests {
@@ -818,10 +862,51 @@ func TestLogEntryFor_Markers(t *testing.T) {
 			assert.Equal(t, tt.want, entry.Marker)
 			assert.Contains(t, entry.Content, tt.carries, "the fallback line")
 
-			for _, body := range []string{"# Design", "# Slices", "# Ready", "# Cards"} {
+			for _, body := range []string{"# Design", "# Slices", "# Ready", "# Cards", "# Acceptance"} {
 				assert.NotContains(t, entry.Content, body, "an artifact's body is no transcript text")
 			}
 		})
+	}
+}
+
+func TestLogEntryFor_ASignoffListsItsTypedRejections(t *testing.T) {
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Sliced: true, Payload: map[string]any{
+		"version": 1, "cards": []any{}, "order": []any{}, "typed": []any{"reject SL1", "reject SL2"},
+	}})
+	require.True(t, ok)
+	assert.Contains(t, entry.Content, "`reject SL2 <feedback>`")
+
+	// With one slice nothing slice-related shows.
+	entry, ok = logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
+		"version": 1, "cards": []any{}, "order": []any{}, "typed": []any{"reject SL1"},
+	}})
+	require.True(t, ok)
+	assert.NotContains(t, entry.Content, "SL1")
+}
+
+// With one slice nothing slice-related shows in the text; with two or more,
+// a per-slice step's text names its slice. The marker carries the slice
+// either way: CM hides it below two.
+func TestLogEntryFor_ABlueprintWithOneSliceNamesNoSlice(t *testing.T) {
+	for _, e := range []blueprint.Event{
+		{Kind: blueprint.EventStageStarted, Payload: map[string]any{"stage": "solution_design@SL1", "kind": "stage", "persona": "system_designer", "round": 1}},
+		{Kind: blueprint.EventArtifact, Payload: map[string]any{"stage": "solution_design@SL1", "version": 1, "body": "# Design", "persona": "system_designer", "round": 1, "revised_for": 0}},
+		{Kind: blueprint.EventGate, Payload: map[string]any{"stage": "solution_design@SL1", "version": 1, "actions": []any{}}},
+		{Kind: blueprint.EventDecided, Payload: map[string]any{"stage": "solution_design@SL1", "decision": "approve", "responder": "human", "version": 1}},
+		{Kind: blueprint.EventReview, Payload: map[string]any{"stage": "solution_design@SL1", "version": 1, "score": 5, "threshold": 4, "findings": []any{}, "round": 1}},
+	} {
+		e.BlueprintID = "S1"
+
+		entry, ok := logEntryFor(e)
+		require.True(t, ok)
+		assert.Contains(t, entry.Content, "Solution design", e.Kind)
+		assert.NotContains(t, entry.Content, "SL1", "%s: with one slice nothing slice-related shows", e.Kind)
+
+		e.Sliced = true
+
+		entry, ok = logEntryFor(e)
+		require.True(t, ok)
+		assert.Contains(t, entry.Content, "Solution design (SL1)", "%s: with two or more the slice is named", e.Kind)
 	}
 }
 
@@ -970,6 +1055,23 @@ func roundPayloadForTest() map[string]any {
 	return p
 }
 
+func TestLogEntry_ASliceRoundNamesItsSlice(t *testing.T) {
+	p := roundPayloadForTest()
+	p["frame"].(map[string]any)["stage"] = "solution_design@SL2"
+
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRound, BlueprintID: "BP1", Payload: p})
+	require.True(t, ok)
+	require.NotNil(t, entry.Prompt)
+	require.NotNil(t, entry.Prompt.Round)
+	assert.Equal(t, "solution_design", entry.Prompt.Round.Stage)
+	assert.Equal(t, "SL2", entry.Prompt.Round.Slice)
+}
+
+func TestGatePromptID(t *testing.T) {
+	assert.Equal(t, "gate:solution_design:SL2:v3", blueprint.GatePromptID("solution_design@SL2", 3))
+	assert.Equal(t, "gate:slicing:v1", blueprint.GatePromptID("slicing", 1))
+}
+
 func TestLogEntry_ASegmentStartIsNoDivider(t *testing.T) {
 	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "BP1", Payload: map[string]any{
 		"stage": "intake", "kind": "stage", "round": 1.0, "segment": blueprint.SegmentAnswers, "question_round": 2.0,
@@ -980,14 +1082,14 @@ func TestLogEntry_ASegmentStartIsNoDivider(t *testing.T) {
 
 func TestAssumptionStatus_AnAcceptedAssumptionNamesItsStageNotATag(t *testing.T) {
 	for _, basis := range []string{"round2.A1", "Q5"} {
-		got := assumptionStatus(map[string]any{"id": "A1", "status": "confirmed", "basis": basis, "accepted": "solution_design"})
+		got := assumptionStatus(map[string]any{"id": "A1", "status": "confirmed", "basis": basis, "accepted": "solution_design"}, false)
 
 		assert.Contains(t, got, "accepted at Solution design")
 		assert.NotContains(t, got, basis)
 		assert.NotContains(t, got, "Accepted")
 	}
 
-	answered := assumptionStatus(map[string]any{"id": "A1", "status": "confirmed", "basis": "Q1", "answer": "ops"})
+	answered := assumptionStatus(map[string]any{"id": "A1", "status": "confirmed", "basis": "Q1", "answer": "ops"}, false)
 	assert.Contains(t, answered, "Q1")
 	assert.Contains(t, answered, "ops")
 	assert.NotContains(t, answered, "accepted at")

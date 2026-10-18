@@ -2,7 +2,6 @@ package blueprint
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -62,25 +61,39 @@ func (c *Controller) cardsStage() string {
 	return ""
 }
 
-// draft reads the cards the pipeline ended on: the latest artifact of the
-// stage that checks cards.
+// draft reads the cards the pipeline ended on: the latest draft of every
+// step of the stage that checks cards, merged into one playbook when that
+// stage ran per slice.
 func (c *Controller) draft(ctx context.Context, id string) (contract.Draft, error) {
 	stageID := c.cardsStage()
 	if stageID == "" {
 		return contract.Draft{}, errors.New("blueprint: the pack has no stage that checks cards")
 	}
 
-	art, err := c.opts.Store.LatestArtifact(ctx, id, stageID)
+	steps, _, err := c.steps(ctx, id)
 	if err != nil {
-		return contract.Draft{}, fmt.Errorf("blueprint: load the cards: %w", err)
+		return contract.Draft{}, err
 	}
 
-	var data map[string]any
-	if err := json.Unmarshal(art.Data, &data); err != nil {
-		return contract.Draft{}, fmt.Errorf("blueprint: decode the cards: %w", err)
+	var drafts []contract.Draft
+
+	for _, s := range loopTargets(steps, stageID) {
+		d, err := c.stepDraft(ctx, id, s.ID)
+		if err != nil {
+			return contract.Draft{}, err
+		}
+
+		drafts = append(drafts, d)
 	}
 
-	return contract.ParseDraft(data)
+	switch len(drafts) {
+	case 0:
+		return contract.Draft{}, fmt.Errorf("blueprint: load the cards: %w", store.ErrNotFound)
+	case 1:
+		return drafts[0], nil
+	}
+
+	return mergeDrafts(drafts), nil
 }
 
 // emitted reports what emission has recorded: cards when every draft card
@@ -617,6 +630,9 @@ type blueprintSummary struct {
 	// prose is the text of intake's Assumptions section, read only when no
 	// stage stated assumptions as data.
 	prose string
+	// sliced says the blueprint has two or more slices, so a step's name
+	// names its slice.
+	sliced bool
 }
 
 // summary reads the first stage's latest artifact, the need, and the
@@ -632,7 +648,10 @@ func (c *Controller) summary(ctx context.Context, id string) (blueprintSummary, 
 		return blueprintSummary{}, fmt.Errorf("load the assumptions: %w", err)
 	}
 
-	sum := blueprintSummary{problem: sectionText(art.Body, "Problem"), value: sectionText(art.Body, "Value"), assumptions: list}
+	sum := blueprintSummary{
+		problem: sectionText(art.Body, "Problem"), value: sectionText(art.Body, "Value"), assumptions: list,
+		sliced: c.sliced(ctx, id),
+	}
 
 	// An intake stored before assumptions were data keeps them in its body's
 	// Assumptions section; without it, a blueprint in flight across that
@@ -656,7 +675,7 @@ func (s blueprintSummary) description(id string) string {
 
 	switch {
 	case len(s.assumptions) > 0:
-		fmt.Fprintf(&b, "Assumptions, each with its latest status:\n%s\n\n", assumptionLines(s.assumptions))
+		fmt.Fprintf(&b, "Assumptions, each with its latest status:\n%s\n\n", assumptionLines(s.assumptions, s.sliced))
 	case s.prose != "":
 		fmt.Fprintf(&b, "Assumptions:\n%s\n\n", s.prose)
 	default:
@@ -678,7 +697,7 @@ func (s blueprintSummary) contextText() string {
 
 	switch {
 	case len(s.assumptions) > 0:
-		fmt.Fprintf(&b, "Blueprint assumptions, each with its latest status:\n%s", assumptionLines(s.assumptions))
+		fmt.Fprintf(&b, "Blueprint assumptions, each with its latest status:\n%s", assumptionLines(s.assumptions, s.sliced))
 	case s.prose != "":
 		fmt.Fprintf(&b, "Blueprint assumptions:\n%s", s.prose)
 	default:

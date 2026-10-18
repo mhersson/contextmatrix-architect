@@ -68,3 +68,35 @@ func TestWrite_RendersEveryPart(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o640), info.Mode().Perm())
 }
+
+func TestWrite_NamesAStepsSliceOnlyWithTwoOrMoreSlices(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		sliced bool
+		key    string
+		want   string
+		absent string
+	}{
+		{name: "two or more slices", sliced: true, key: "solution_design@SL2", want: "Solution design (SL2)"},
+		{name: "one slice", key: "solution_design@SL1", want: "Solution design", absent: "SL1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			_, err := Write(dir, Bundle{
+				Blueprint: store.Blueprint{ID: "BP1"},
+				Runs:      []store.Run{{ID: 1, Stage: tc.key, Kind: store.RunKindStage, Status: store.RunDone}},
+				Sliced:    tc.sliced,
+			})
+			require.NoError(t, err)
+
+			raw, err := os.ReadFile(filepath.Join(dir, "blueprint.md"))
+			require.NoError(t, err)
+			assert.Contains(t, string(raw), tc.want)
+
+			if tc.absent != "" {
+				assert.NotContains(t, string(raw), tc.absent)
+			}
+		})
+	}
+}

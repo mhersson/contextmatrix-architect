@@ -10,7 +10,6 @@ import (
 
 	"github.com/mhersson/contextmatrix-harness/redact"
 
-	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -21,6 +20,10 @@ type Event struct {
 	RunID       int64
 	Time        time.Time
 	Payload     map[string]any
+	// Sliced is set on the way to the sink and never stored: the blueprint
+	// runs per slice with two or more slices, so text a person reads names
+	// a per-slice step's slice.
+	Sliced bool
 }
 
 // Event kinds.
@@ -177,6 +180,8 @@ func (a audit) event(ctx context.Context, e Event) {
 	}
 
 	if a.c.opts.Sink != nil {
+		// The caller's cancel must not hide the slices from the sink.
+		e.Sliced = a.c.sliced(context.WithoutCancel(ctx), e.BlueprintID)
 		a.c.opts.Sink(e)
 	}
 
@@ -214,7 +219,7 @@ func (a audit) artifact(ctx context.Context, id, stageID, body string, data map[
 	if data != nil {
 		b, err := json.Marshal(a.maskFields(data))
 		if err != nil {
-			return 0, fmt.Errorf("blueprint: encode %s artifact data: %w", pack.StageName(stageID), err)
+			return 0, fmt.Errorf("blueprint: encode %s artifact data: %w", a.c.stepName(ctx, id, stageID), err)
 		}
 
 		raw = b
@@ -224,7 +229,7 @@ func (a audit) artifact(ctx context.Context, id, stageID, body string, data map[
 		BlueprintID: id, Stage: stageID, Body: a.text(body), Data: raw,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("blueprint: store %s artifact: %w", pack.StageName(stageID), err)
+		return 0, fmt.Errorf("blueprint: store %s artifact: %w", a.c.stepName(ctx, id, stageID), err)
 	}
 
 	return version, nil

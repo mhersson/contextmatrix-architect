@@ -445,7 +445,7 @@ func TestGate_AnApprovedLaterVersionIsNotCalledRejected(t *testing.T) {
 			bp, err := st.GetBlueprint(ctx, "BP1")
 			require.NoError(t, err)
 
-			shape, ok := c.opts.Pack.Stage("shape")
+			shape, ok := c.stepAt("shape")
 			require.True(t, ok)
 
 			task, err := c.taskFor(ctx, bp, shape)

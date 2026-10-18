@@ -33,7 +33,7 @@ type Controller interface {
 	// View, Artifact and Subscribe serve CM's blueprint pane; the blueprint
 	// id is the session id.
 	View(ctx context.Context, id string) (protocol.BlueprintView, error)
-	Artifact(ctx context.Context, id, stage string, version int) (protocol.BlueprintArtifact, error)
+	Artifact(ctx context.Context, id, stage, slice string, version int) (protocol.BlueprintArtifact, error)
 	Subscribe(ctx context.Context, id string) (<-chan protocol.LiveFrame, error)
 }
 

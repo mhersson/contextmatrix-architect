@@ -417,14 +417,16 @@ func TestObserve_HintsAndDraftEnds(t *testing.T) {
 		name    string
 		event   Event
 		stage   string
+		slice   string
 		version int
 	}{
-		{"a stored artifact", Event{Kind: EventArtifact, Payload: map[string]any{"stage": "intake", "version": 2}}, "intake", 2},
-		{"a sign-off", Event{Kind: EventSignOff, Payload: map[string]any{"version": float64(3)}}, signoffStage, 3},
-		{"an automatic sign-off", Event{Kind: EventSignOffAuto, Payload: map[string]any{"version": 1}}, signoffStage, 1},
-		{"the emitted board", Event{Kind: EventEmitted}, emissionStage, 1},
-		{"a watch state", Event{Kind: EventWatchState}, emissionStage, 1},
-		{"the watch's end", Event{Kind: EventWatchEnded}, emissionStage, 1},
+		{"a stored artifact", Event{Kind: EventArtifact, Payload: map[string]any{"stage": "intake", "version": 2}}, "intake", "", 2},
+		{"a slice's stored artifact", Event{Kind: EventArtifact, Payload: map[string]any{"stage": "solution_design@SL2", "version": 1}}, "solution_design", "SL2", 1},
+		{"a sign-off", Event{Kind: EventSignOff, Payload: map[string]any{"version": float64(3)}}, signoffStage, "", 3},
+		{"an automatic sign-off", Event{Kind: EventSignOffAuto, Payload: map[string]any{"version": 1}}, signoffStage, "", 1},
+		{"the emitted board", Event{Kind: EventEmitted}, emissionStage, "", 1},
+		{"a watch state", Event{Kind: EventWatchState}, emissionStage, "", 1},
+		{"the watch's end", Event{Kind: EventWatchEnded}, emissionStage, "", 1},
 	}
 
 	for _, tc := range hints {
@@ -447,6 +449,7 @@ func TestObserve_HintsAndDraftEnds(t *testing.T) {
 			frames := framesUntil(t, ch, func(f protocol.LiveFrame) bool { return f.Type == frameStored })
 			last := frames[len(frames)-1]
 			assert.Equal(t, tc.stage, last.Stage)
+			assert.Equal(t, tc.slice, last.Slice)
 			assert.Equal(t, tc.version, last.Version)
 		})
 	}
@@ -621,4 +624,37 @@ func TestRun_AReviewDraftsNothing(t *testing.T) {
 	require.NotEmpty(t, reviews)
 	assert.Nil(t, reviews[0].Draft)
 	assert.NotNil(t, inputsOf(runner, "shape")[0].Draft)
+}
+
+func TestRun_ASliceRunsDraftCarriesItsSlice(t *testing.T) {
+	script := slicedScript()
+	script["grounding"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		in.Draft(stage.DraftFrame{Offset: 0, Text: "# Gr"})
+
+		return done("# Grounding "+sliceOf(in), nil), nil
+	}
+
+	c, _, _, _ := newSliced(t, script)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	require.NoError(t, c.Start(ctx, autoStart("BP1")))
+
+	ch, err := c.Subscribe(ctx, "BP1")
+	require.NoError(t, err)
+
+	var drafts []protocol.Draft
+
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	framesUntil(t, ch, func(f protocol.LiveFrame) bool {
+		if f.Type == frameDraft {
+			drafts = append(drafts, *f.Draft)
+		}
+
+		return f.Type == frameStored && f.Stage == "grounding" && f.Slice == "SL1"
+	})
+
+	require.NotEmpty(t, drafts)
+	assert.Equal(t, "grounding", drafts[0].Stage)
+	assert.Equal(t, "SL1", drafts[0].Slice)
 }

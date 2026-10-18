@@ -25,6 +25,9 @@ var stagePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 // versionPattern accepts only the canonical decimal form of a version.
 var versionPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 
+// slicePattern accepts a per-slice stage's slice as CM forwards it.
+var slicePattern = regexp.MustCompile(`^SL[1-9][0-9]{0,2}$`)
+
 // handleView serves the blueprint's view. Query parameters are ignored:
 // CM signs a nonce into each read so two reads of one URI never replay.
 func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +58,14 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	art, err := s.ctl.Artifact(r.Context(), id, stageID, version)
+	slice := r.URL.Query().Get("slice")
+	if slice != "" && !slicePattern.MatchString(slice) {
+		webhookcore.WriteError(w, http.StatusBadRequest, protocol.CodeInvalidField, "invalid slice")
+
+		return
+	}
+
+	art, err := s.ctl.Artifact(r.Context(), id, stageID, slice, version)
 	if !s.readOK(w, id, "artifact", err) {
 		return
 	}

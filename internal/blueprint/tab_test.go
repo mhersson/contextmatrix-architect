@@ -207,7 +207,7 @@ func TestTab_AnAcceptanceTagIsABasisTheUserConfirmed(t *testing.T) {
 	bp, err := st.GetBlueprint(ctx, "BP1")
 	require.NoError(t, err)
 
-	intake, ok := c.opts.Pack.Stage("intake")
+	intake, ok := c.stepAt("intake")
 	require.True(t, ok)
 
 	au := c.newAudit()
@@ -313,10 +313,10 @@ func TestTab_ARerunOfTheStageIsToldItsAcceptances(t *testing.T) {
 	bp, err := st.GetBlueprint(ctx, "BP1")
 	require.NoError(t, err)
 
-	intake, ok := c.opts.Pack.Stage("intake")
+	intake, ok := c.stepAt("intake")
 	require.True(t, ok)
 
-	grounding, ok := c.opts.Pack.Stage("grounding")
+	grounding, ok := c.stepAt("grounding")
 	require.True(t, ok)
 
 	// A chat run answered last; the run that posted the round accepted it.
@@ -347,7 +347,7 @@ func TestTab_AnOlderAcceptanceRowStaysItsBasis(t *testing.T) {
 	bp, err := st.GetBlueprint(ctx, "BP1")
 	require.NoError(t, err)
 
-	intake, ok := c.opts.Pack.Stage("intake")
+	intake, ok := c.stepAt("intake")
 	require.True(t, ok)
 
 	// An older close recorded A1 as the answered question Q5.
@@ -474,7 +474,7 @@ func TestTab_UnderHumanEveryStatedAssumptionNeedsABasis(t *testing.T) {
 	bp, err := st.GetBlueprint(ctx, "BP1")
 	require.NoError(t, err)
 
-	intake, ok := c.opts.Pack.Stage("intake")
+	intake, ok := c.stepAt("intake")
 	require.True(t, ok)
 
 	poster := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", nil)
@@ -503,7 +503,7 @@ func TestTab_AConvertedAssumptionMustBeAskedFirst(t *testing.T) {
 	bp, err := st.GetBlueprint(ctx, "BP1")
 	require.NoError(t, err)
 
-	intake, ok := c.opts.Pack.Stage("intake")
+	intake, ok := c.stepAt("intake")
 	require.True(t, ok)
 
 	au := c.newAudit()

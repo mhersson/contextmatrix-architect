@@ -149,11 +149,11 @@ func (s *stubController) View(_ context.Context, _ string) (protocol.BlueprintVi
 	return s.view, s.viewErr
 }
 
-func (s *stubController) Artifact(_ context.Context, id, stageID string, version int) (protocol.BlueprintArtifact, error) {
+func (s *stubController) Artifact(_ context.Context, id, stageID, slice string, version int) (protocol.BlueprintArtifact, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.artCalls = append(s.artCalls, fmt.Sprintf("%s|%s|%d", id, stageID, version))
+	s.artCalls = append(s.artCalls, fmt.Sprintf("%s|%s|%s|%d", id, stageID, slice, version))
 
 	return s.art, s.artErr
 }
@@ -811,9 +811,13 @@ func TestArtifact_Route(t *testing.T) {
 		code int
 		call string
 	}{
-		{name: "a version", path: "/blueprints/BP1/artifacts/solution_design/2", code: http.StatusOK, call: "BP1|solution_design|2"},
-		{name: "with a nonce", path: "/blueprints/BP1/artifacts/signoff/1?nonce=X", code: http.StatusOK, call: "BP1|signoff|1"},
-		{name: "not found", path: "/blueprints/BP1/artifacts/emission/1", err: blueprint.ErrNotFound, code: http.StatusNotFound, call: "BP1|emission|1"},
+		{name: "a version", path: "/blueprints/BP1/artifacts/solution_design/2", code: http.StatusOK, call: "BP1|solution_design||2"},
+		{name: "with a nonce", path: "/blueprints/BP1/artifacts/signoff/1?nonce=X", code: http.StatusOK, call: "BP1|signoff||1"},
+		{name: "not found", path: "/blueprints/BP1/artifacts/emission/1", err: blueprint.ErrNotFound, code: http.StatusNotFound, call: "BP1|emission||1"},
+		{name: "a slice", path: "/blueprints/BP1/artifacts/solution_design/2?slice=SL2", code: http.StatusOK, call: "BP1|solution_design|SL2|2"},
+		{name: "a slice beside a nonce", path: "/blueprints/BP1/artifacts/solution_design/2?nonce=X&slice=SL12", code: http.StatusOK, call: "BP1|solution_design|SL12|2"},
+		{name: "a slice of another form", path: "/blueprints/BP1/artifacts/solution_design/2?slice=S2", code: http.StatusBadRequest},
+		{name: "slice zero", path: "/blueprints/BP1/artifacts/solution_design/2?slice=SL0", code: http.StatusBadRequest},
 		{name: "a dotted stage", path: "/blueprints/BP1/artifacts/design.review/1", code: http.StatusBadRequest},
 		{name: "version zero", path: "/blueprints/BP1/artifacts/intake/0", code: http.StatusBadRequest},
 		{name: "a signed version", path: "/blueprints/BP1/artifacts/intake/+2", code: http.StatusBadRequest},

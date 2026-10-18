@@ -3,7 +3,10 @@ package blueprint
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -108,6 +111,19 @@ func actionsPayload(actions []gateAction) []any {
 	return out
 }
 
+// GatePromptID is the prompt id of key's gate for version: gate:<stage>:v<n>,
+// or gate:<stage>:<slice>:v<n> for a per-slice step. The view's open prompt
+// and the transcript's gate prompt carry it; a consumer matches the two by
+// equality and never parses it.
+func GatePromptID(key string, version int) string {
+	stageID, slice := pack.SplitStep(key)
+	if slice == "" {
+		return fmt.Sprintf("gate:%s:v%d", stageID, version)
+	}
+
+	return fmt.Sprintf("gate:%s:%s:v%d", stageID, slice, version)
+}
+
 // gateDecision is the latest decision on stageID's artifact version:
 // approve, reject, fold, or "" when none was made. A superseded row is
 // audit only and never read as one.
@@ -126,6 +142,19 @@ func (c *Controller) gateDecision(ctx context.Context, id, stageID string, versi
 	}
 
 	return d, nil
+}
+
+// supersededAt reports whether a gates row records stageID's version
+// superseded, as the view reads it.
+func (c *Controller) supersededAt(ctx context.Context, id, stageID string, version int) (bool, error) {
+	gates, err := c.opts.Store.ListGates(ctx, id, stageID)
+	if err != nil {
+		return false, fmt.Errorf("blueprint: list gates: %w", err)
+	}
+
+	return slices.ContainsFunc(gates, func(g store.Gate) bool {
+		return g.Version == version && g.Decision == store.GateSuperseded
+	}), nil
 }
 
 // gateFeedback is the feedback of every rejection at stageID's gate, oldest
@@ -152,11 +181,16 @@ func (c *Controller) gateFeedback(ctx context.Context, id, stageID string) ([]st
 // makes the blueprint emitting, so a crash before emission ends leaves it
 // for the restart.
 func (c *Controller) decide(ctx context.Context, au audit, id, stageID string, version int, decision, feedback, responder, msgID string) bool {
+	return c.decideWith(ctx, au, id, stageID, version, decision, feedback, responder, msgID, nil)
+}
+
+// decideWith is decide with extra keys on the announcement.
+func (c *Controller) decideWith(ctx context.Context, au audit, id, stageID string, version int, decision, feedback, responder, msgID string, extra map[string]any) bool {
 	if _, err := c.opts.Store.AddGate(ctx, store.Gate{
 		BlueprintID: id, Stage: stageID, Version: version, Decision: decision,
 		Feedback: au.text(feedback), Responder: responder, DecidedAt: c.opts.Now().UTC(),
 	}); err != nil {
-		c.fail(ctx, au, id, 0, fmt.Sprintf("gate %s: record the decision: %v", pack.StageName(stageID), err))
+		c.fail(ctx, au, id, 0, fmt.Sprintf("gate %s: record the decision: %v", c.stepName(ctx, id, stageID), err))
 
 		return false
 	}
@@ -165,9 +199,12 @@ func (c *Controller) decide(ctx context.Context, au audit, id, stageID string, v
 		c.setState(ctx, id, StateEmitting)
 	}
 
-	au.event(ctx, Event{Kind: EventDecided, BlueprintID: id, Payload: map[string]any{
+	payload := map[string]any{
 		"stage": stageID, "decision": decision, "feedback": feedback, "responder": responder, "version": version, "message_id": msgID,
-	}})
+	}
+	maps.Copy(payload, extra)
+
+	au.event(ctx, Event{Kind: EventDecided, BlueprintID: id, Payload: payload})
 
 	return true
 }
@@ -179,7 +216,7 @@ func (c *Controller) decide(ctx context.Context, au audit, id, stageID string, v
 // that still does not pass after the attempt's rounds, the gate is shown and
 // the chain stops.
 func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Blueprint, out outcome) (string, outcome) {
-	st, _ := c.opts.Pack.Stage(out.stage)
+	st, _ := c.stepAt(out.stage)
 
 	v, found, err := c.gateReview(ctx, bp.ID, st, out.art)
 	if err != nil {
@@ -256,7 +293,7 @@ func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint,
 		c.opts.Logger.Error("blueprint: read the gate's replies", "blueprint", bp.ID, "stage", out.stage, "error", au.text(err.Error()))
 		c.setState(ctx, bp.ID, StateIdle)
 		au.event(ctx, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
-			"stage": out.stage, "message": fmt.Sprintf("The replies %s's gate takes cannot be read from the record, so the gate is not shown: %v", pack.StageName(out.stage), err),
+			"stage": out.stage, "message": fmt.Sprintf("The replies %s's gate takes cannot be read from the record, so the gate is not shown: %v", c.stepName(ctx, bp.ID, out.stage), err),
 		}})
 
 		return
@@ -281,7 +318,7 @@ func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint,
 		payload["problems"] = problems
 	}
 
-	st, _ := c.opts.Pack.Stage(out.stage)
+	st, _ := c.stepAt(out.stage)
 
 	v, found, err := c.gateReview(ctx, bp.ID, st, out.art)
 
@@ -368,7 +405,9 @@ func (c *Controller) resumeGate(ctx context.Context, r *run, sess *session, bp s
 // rejection and runs the stage again, and any other text is a note with a
 // hint. Approving a gate approves every stage folded into it; reject <stage>
 // <feedback> rejects a folded stage, which runs again with everything after
-// it. The caller holds the run slot.
+// it. At a slice's design gate, reject <shared stage> <feedback> rejects the
+// shared decisions, which run again with every slice, and the versions they
+// replace are recorded superseded. The caller holds the run slot.
 func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, out outcome, text, msgID string) error {
 	actions, folded, err := c.gateActions(ctx, bp.ID, out.stage)
 	if err != nil {
@@ -379,11 +418,11 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 
 	action, feedback, ok := matchAction(text, actions)
 	if !ok {
-		hint := fmt.Sprintf("Reply approve to go on, or reject <feedback> to run %s again with your feedback.", pack.StageName(out.stage))
+		hint := fmt.Sprintf("Reply approve to go on, or reject <feedback> to run %s again with your feedback.", c.stepName(ctx, bp.ID, out.stage))
 
 		for _, a := range actions {
 			if a.Target != "" && a.Target != out.stage {
-				hint += fmt.Sprintf(" Reply %s <feedback> to run %s and everything after it again.", a.Reply, pack.StageName(a.Target))
+				hint += fmt.Sprintf(" Reply %s <feedback> to run %s and everything after it again.", a.Reply, c.stepName(ctx, bp.ID, a.Target))
 			}
 		}
 
@@ -401,14 +440,26 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 	}
 
 	if action.Decision == store.GateReject {
-		// The rejection lands on the stage that runs again: the gate's own,
-		// or a stage folded into it.
-		version := out.art.Version
+		// The rejection lands on the step that runs again: the gate's own, a
+		// stage folded into it, or a shared stage. A shared stage's own gate
+		// rejects it as any gate rejects its own stage.
+		version, shared := out.art.Version, false
 
 		for _, f := range folded {
 			if f.Stage == action.Target {
 				version = f.Version
 			}
+		}
+
+		if st, ok := c.stepAt(action.Target); ok && st.Shared && action.Target != out.stage {
+			art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, action.Target)
+			if err != nil {
+				c.release(bp.ID, r)
+
+				return fmt.Errorf("blueprint: gate: read %s: %w", c.stepName(ctx, bp.ID, action.Target), err)
+			}
+
+			version, shared = art.Version, true
 		}
 
 		if !c.decide(ctx, sess.audit, bp.ID, action.Target, version, store.GateReject, feedback, store.ResponderHuman, msgID) {
@@ -418,9 +469,17 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 		}
 
 		// Recorded after the reject, which alone drives the re-run, so a
-		// crash between the two loses only this audit row.
-		if action.Target != out.stage &&
-			!c.decide(ctx, sess.audit, bp.ID, out.stage, out.art.Version, store.GateSuperseded, action.Target, store.ResponderHuman, msgID) {
+		// crash between them loses only audit rows.
+		recorded := true
+
+		switch {
+		case shared:
+			recorded = c.supersedeAfter(ctx, sess.audit, bp.ID, action.Target, msgID)
+		case action.Target != out.stage:
+			recorded = c.decide(ctx, sess.audit, bp.ID, out.stage, out.art.Version, store.GateSuperseded, action.Target, store.ResponderHuman, msgID)
+		}
+
+		if !recorded {
 			c.release(bp.ID, r)
 
 			return nil
@@ -448,6 +507,65 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 	c.proceed(ctx, runCtx, r, sess, bp, out.stage)
 
 	return nil
+}
+
+// supersedeAfter records superseded, naming target, on the latest version
+// of every gated step after target whose latest decision is no rejection
+// and that no row records superseded yet: the versions a re-run from target
+// replaces, each recorded once. Audit rows only, so the view shows them
+// replaced before they are; false when one could not be stored, which fails
+// the blueprint.
+func (c *Controller) supersedeAfter(ctx context.Context, au audit, id, target, msgID string) bool {
+	failed := func(err error) bool {
+		c.fail(ctx, au, id, 0, fmt.Sprintf("record what %s replaces: %v", c.stepName(ctx, id, target), err))
+
+		return false
+	}
+
+	steps, _, err := c.steps(ctx, id)
+	if err != nil {
+		return failed(err)
+	}
+
+	i := stepIndex(steps, target)
+	if i < 0 {
+		return true
+	}
+
+	for _, s := range steps[i+1:] {
+		if !s.Gate {
+			continue
+		}
+
+		art, err := c.opts.Store.LatestArtifact(ctx, id, s.ID)
+
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			continue
+		case err != nil:
+			return failed(fmt.Errorf("read %s: %w", c.stepName(ctx, id, s.ID), err))
+		}
+
+		d, err := c.gateDecision(ctx, id, s.ID, art.Version)
+		if err != nil {
+			return failed(err)
+		}
+
+		marked, err := c.supersededAt(ctx, id, s.ID, art.Version)
+		if err != nil {
+			return failed(err)
+		}
+
+		if d == store.GateReject || marked {
+			continue
+		}
+
+		if !c.decide(ctx, au, id, s.ID, art.Version, store.GateSuperseded, target, store.ResponderHuman, msgID) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // proceed runs or awaits what follows completed on the run slot r, which

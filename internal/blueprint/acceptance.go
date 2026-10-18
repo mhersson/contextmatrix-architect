@@ -39,8 +39,10 @@ func (c *Controller) criteriaValidator(bp store.Blueprint, stageID string) (func
 }
 
 // criteriaProblems checks acceptance: slices, every slice of a consumed
-// slicing among them; every criterion with a unique id, a target project
-// and text; every manual check with a unique id and text.
+// slicing among them, or a per-slice acceptance's own slice alone; every
+// criterion with a unique id, a target project and text; every manual check
+// with a unique id and text. A per-slice acceptance takes no id an earlier
+// slice's holds.
 func (c *Controller) criteriaProblems(ctx context.Context, bp store.Blueprint, stageID string, data map[string]any) ([]string, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
@@ -50,6 +52,11 @@ func (c *Controller) criteriaProblems(ctx context.Context, bp store.Blueprint, s
 	var d acceptanceData
 	if err := json.Unmarshal(raw, &d); err != nil {
 		return []string{problem("acceptance", "shape", "the data is not slices of criteria: "+err.Error())}, nil
+	}
+
+	taken, err := c.takenIDs(ctx, bp.ID, stageID)
+	if err != nil {
+		return nil, err
 	}
 
 	var out []string
@@ -74,6 +81,8 @@ func (c *Controller) criteriaProblems(ctx context.Context, bp store.Blueprint, s
 			switch {
 			case id == "" || ids[id]:
 				out = append(out, problem(strings.TrimSpace(s.ID+" "+id), "criterion_id", "a criterion needs an id of its own"))
+			case taken[id] != "":
+				out = append(out, problem(id, "criterion_id", taken[id]+" already holds this id; ids run on across slices"))
 			case !slices.Contains(bp.Projects, cr.Project):
 				out = append(out, problem(id, "criterion_project", fmt.Sprintf("%q is not a target project of this blueprint", cr.Project)))
 			}
@@ -88,8 +97,11 @@ func (c *Controller) criteriaProblems(ctx context.Context, bp store.Blueprint, s
 		for _, m := range s.Manual {
 			id := strings.TrimSpace(m.ID)
 
-			if id == "" || ids[id] {
+			switch {
+			case id == "" || ids[id]:
 				out = append(out, problem(strings.TrimSpace(s.ID+" "+id), "manual_id", "a manual check needs an id of its own"))
+			case taken[id] != "":
+				out = append(out, problem(id, "manual_id", taken[id]+" already holds this id; ids run on across slices"))
 			}
 
 			if strings.TrimSpace(m.Text) == "" {
@@ -100,12 +112,56 @@ func (c *Controller) criteriaProblems(ctx context.Context, bp store.Blueprint, s
 		}
 	}
 
-	missing, err := c.missingSlices(ctx, bp, stageID, present)
+	missing, err := c.sliceCoverage(ctx, bp, stageID, present)
 	if err != nil {
 		return nil, err
 	}
 
 	return append(out, missing...), nil
+}
+
+// takenIDs maps every criterion and manual check id the earlier slices'
+// latest acceptance holds to its slice; nil for a step that is no slice's.
+func (c *Controller) takenIDs(ctx context.Context, id, key string) (map[string]string, error) {
+	st, ok := c.stepAt(key)
+	if !ok || st.Slice == "" {
+		return nil, nil
+	}
+
+	steps, _, err := c.steps(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	taken := map[string]string{}
+
+	for _, s := range earlierSteps(steps, st) {
+		art, err := c.opts.Store.LatestArtifact(ctx, id, s.ID)
+
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			continue
+		case err != nil:
+			return nil, fmt.Errorf("read %s: %w", c.stepName(ctx, id, s.ID), err)
+		}
+
+		var d acceptanceData
+		if json.Unmarshal(art.Data, &d) != nil {
+			continue
+		}
+
+		for _, sl := range d.Slices {
+			for _, cr := range sl.Criteria {
+				taken[strings.TrimSpace(cr.ID)] = s.Slice
+			}
+
+			for _, m := range sl.Manual {
+				taken[strings.TrimSpace(m.ID)] = s.Slice
+			}
+		}
+	}
+
+	return taken, nil
 }
 
 // acceptance is what the latest acceptance artifact defines for the
@@ -117,14 +173,18 @@ type acceptance struct {
 }
 
 // acceptanceOf reads the criteria and manual checks of the latest artifact
-// of the stage that checks criteria; found is false when the pack has no
-// such stage or it has no artifact yet. Data that does not decode is not an
-// error: retrying cannot fix it, so it comes back as unreadable for the
-// contract to report. Only a store read fails.
-func (c *Controller) acceptanceOf(ctx context.Context, id string) (acc acceptance, stageID string, found bool, err error) {
+// of the stage that checks criteria, of slice, when that stage runs per
+// slice; found is false when the pack has no such stage or it has no
+// artifact yet. Data that does not decode is not an error: retrying cannot
+// fix it, so it comes back as unreadable for the contract to report. Only a
+// store read fails.
+func (c *Controller) acceptanceOf(ctx context.Context, id, slice string) (acc acceptance, stageID string, found bool, err error) {
 	for _, st := range c.opts.Pack.Stages {
 		if slices.Contains(st.Checks, pack.CheckCriteria) {
 			stageID = st.ID
+			if st.PerSlice {
+				stageID = pack.StepKey(st.ID, slice)
+			}
 
 			break
 		}
@@ -140,7 +200,7 @@ func (c *Controller) acceptanceOf(ctx context.Context, id string) (acc acceptanc
 	case errors.Is(err, store.ErrNotFound):
 		return acceptance{}, stageID, false, nil
 	case err != nil:
-		return acceptance{}, stageID, false, fmt.Errorf("read %s: %w", pack.StageName(stageID), err)
+		return acceptance{}, stageID, false, fmt.Errorf("read %s: %w", c.stepName(ctx, id, stageID), err)
 	}
 
 	var d acceptanceData

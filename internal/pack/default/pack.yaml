@@ -1,5 +1,5 @@
 name: default
-version: "0.14"
+version: "0.15"
 stages:
   - id: intake
     persona: product_owner
@@ -21,39 +21,58 @@ stages:
     gate: true
     fold: {field: slices, max: 1}
     reviewer: {persona: system_designer, threshold: 4, tools: [code, research]}
-  - id: solution_design
+  - id: shared_decisions
     persona: system_designer
-    produces: design
+    produces: shared_decisions
     consumes: [intake, slicing]
     tools: [code, research]
     checks: [assumptions, decisions]
     policy: human
     gate: true
+    shared: true
+    max_questions: 5
+    reviewer: {persona: senior_developer, threshold: 4, tools: [code, research]}
+  - id: solution_design
+    persona: system_designer
+    produces: design
+    consumes: [intake, slicing, shared_decisions]
+    tools: [code, research]
+    checks: [assumptions, decisions]
+    policy: human
+    gate: true
+    per_slice: true
+    earlier_slices: [solution_design, acceptance, decomposition]
     max_questions: 5
     reviewer: {persona: senior_developer, threshold: 4, tools: [code, research]}
   - id: grounding
     persona: senior_developer
     produces: grounding
-    consumes: [intake, slicing, solution_design]
+    consumes: [intake, slicing, shared_decisions, solution_design]
     tools: [code, cm]
+    per_slice: true
+    earlier_slices: [solution_design, acceptance, decomposition]
   - id: acceptance
     persona: senior_developer
     produces: acceptance
-    consumes: [intake, slicing, solution_design, grounding]
+    consumes: [intake, slicing, shared_decisions, solution_design, grounding]
     checks: [criteria]
+    per_slice: true
+    earlier_slices: [solution_design, acceptance, decomposition]
     policy: auto
     gate: true
     reviewer: {persona: tester, threshold: 4, tools: [code, research]}
   - id: decomposition
     persona: senior_developer
     produces: cards
-    consumes: [intake, slicing, solution_design, grounding, acceptance]
+    consumes: [intake, slicing, shared_decisions, solution_design, grounding, acceptance]
     tools: [code]
     checks: [cards]
+    per_slice: true
+    earlier_slices: [solution_design, acceptance, decomposition]
   - id: readiness
     persona: reviewer
     produces: readiness
-    consumes: [intake, slicing, solution_design, grounding, acceptance, decomposition]
+    consumes: [intake, slicing, shared_decisions, solution_design, grounding, acceptance, decomposition]
     tools: [code, cm]
     loops_to: decomposition
     max_rounds: 3

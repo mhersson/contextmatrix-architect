@@ -9,6 +9,7 @@ import (
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -40,9 +41,10 @@ type boardCard struct {
 // version shown or recorded as approved automatically, its data the
 // sign-off's payload; or the board (emission, version 1) once the cards
 // exist. The need as typed and the reviewer verdicts are not served here:
-// verdicts travel in the view. ErrNotFound for an unknown blueprint, stage
-// or version.
-func (c *Controller) Artifact(ctx context.Context, id, stageID string, version int) (protocol.BlueprintArtifact, error) {
+// verdicts travel in the view. slice names a per-slice stage's slice;
+// ErrNotFound for an unknown blueprint, stage or version, and for a slice
+// the record or the stage does not hold.
+func (c *Controller) Artifact(ctx context.Context, id, stageID, slice string, version int) (protocol.BlueprintArtifact, error) {
 	if _, err := c.opts.Store.GetBlueprint(ctx, id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return protocol.BlueprintArtifact{}, ErrNotFound
@@ -52,6 +54,8 @@ func (c *Controller) Artifact(ctx context.Context, id, stageID string, version i
 	}
 
 	switch {
+	case slice != "" && (stageID == signoffStage || stageID == emissionStage):
+		return protocol.BlueprintArtifact{}, ErrNotFound
 	case stageID == signoffStage:
 		return c.signoffArtifact(ctx, id, version)
 	case stageID == emissionStage && version == 1:
@@ -60,11 +64,12 @@ func (c *Controller) Artifact(ctx context.Context, id, stageID string, version i
 		return protocol.BlueprintArtifact{}, ErrNotFound
 	}
 
-	if _, ok := c.opts.Pack.Stage(stageID); !ok {
+	key := pack.StepKey(stageID, slice)
+	if _, ok := c.stepAt(key); !ok {
 		return protocol.BlueprintArtifact{}, ErrNotFound
 	}
 
-	a, err := c.opts.Store.GetArtifact(ctx, id, stageID, version)
+	a, err := c.opts.Store.GetArtifact(ctx, id, key, version)
 	if errors.Is(err, store.ErrNotFound) {
 		return protocol.BlueprintArtifact{}, ErrNotFound
 	}
@@ -74,7 +79,7 @@ func (c *Controller) Artifact(ctx context.Context, id, stageID string, version i
 	}
 
 	return protocol.BlueprintArtifact{
-		Stage: a.Stage, Version: a.Version, Body: a.Body, Data: a.Data, CheckProblems: problemsOf(a),
+		Stage: stageID, Slice: slice, Version: a.Version, Body: a.Body, Data: a.Data, CheckProblems: problemsOf(a),
 	}, nil
 }
 

@@ -614,7 +614,7 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 		return errors.New("blueprint: export: no export directory configured")
 	}
 
-	bundle := export.Bundle{Blueprint: bp, Transcripts: map[int64]json.RawMessage{}}
+	bundle := export.Bundle{Blueprint: bp, Transcripts: map[int64]json.RawMessage{}, Sliced: c.sliced(ctx, bp.ID)}
 
 	if bundle.Runs, err = c.opts.Store.ListRuns(ctx, id); err != nil {
 		return fmt.Errorf("blueprint: export: %w", err)
@@ -717,12 +717,14 @@ type runBudget struct {
 // capStop is a stage the blueprint cost cap stopped: a run of it refused, or
 // cut short at what the blueprint had left. floor is set when what is left
 // is below the floor the next run needs; unpriced is the refusal of a model
-// without a price, which keeps its own text.
+// without a price, which keeps its own text. sliced says the blueprint has
+// two or more slices, so the stop's text names the step's slice.
 type capStop struct {
 	stage         string
 	capUSD, spent float64
 	floor         float64
 	unpriced      string
+	sliced        bool
 }
 
 // Error is the stop's message, which says how to go on.
@@ -731,7 +733,7 @@ func (s *capStop) Error() string {
 		return s.unpriced
 	}
 
-	return "The " + s.shortfall() + "; " + pack.StageName(s.stage) + " stopped. Raise the cap by clicking the cost in the header (or reply `cap <usd>`) and it continues."
+	return "The " + s.shortfall() + "; " + pack.StageName(s.stage, s.sliced) + " stopped. Raise the cap by clicking the cost in the header (or reply `cap <usd>`) and it continues."
 }
 
 // reason is why a responder the blueprint cap refused did not run: the
@@ -820,12 +822,12 @@ func (c *Controller) runCap(ctx context.Context, bp store.Blueprint, kind, stage
 		return runBudget{}, fmt.Errorf("cost lookup failed: %w", err)
 	}
 
-	stop := &capStop{stage: stageID, capUSD: capUSD, spent: spent}
+	stop := &capStop{stage: stageID, capUSD: capUSD, spent: spent, sliced: c.sliced(ctx, bp.ID)}
 
 	if m.price == nil {
 		stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q has no price, so the cap cannot bind; pick a priced model, or reply `cap off` to lift the cap", capUSD, m.name)
 		if m.override {
-			stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q, the configured override for stage %s, has no price (CM prices only the session model), so the cap cannot bind; drop the override, or reply `cap off` to lift the cap", capUSD, m.name, pack.StageName(stageID))
+			stop.unpriced = fmt.Sprintf("cost cap %.2f USD is set but model %q, the configured override for stage %s, has no price (CM prices only the session model), so the cap cannot bind; drop the override, or reply `cap off` to lift the cap", capUSD, m.name, pack.StageName(stageID, stop.sliced))
 		}
 
 		return runBudget{refused: stop}, nil
@@ -858,7 +860,8 @@ func (c *Controller) runCap(ctx context.Context, bp store.Blueprint, kind, stage
 
 // runFloor is what a run of kind on stageID needs left of the blueprint cap
 // to start: the median cost of the blueprint's done runs of that kind and
-// stage, never below minRunFloorUSD.
+// stage, never below minRunFloorUSD. A per-slice step's floor reads every
+// slice's runs of its stage.
 func (c *Controller) runFloor(ctx context.Context, id, kind, stageID string) (float64, error) {
 	runs, err := c.opts.Store.ListRuns(ctx, id)
 	if err != nil {
@@ -868,7 +871,7 @@ func (c *Controller) runFloor(ctx context.Context, id, kind, stageID string) (fl
 	var costs []float64
 
 	for _, r := range runs {
-		if r.Status == store.RunDone && r.Kind == kind && r.Stage == stageID {
+		if r.Status == store.RunDone && r.Kind == kind && sameStage(r.Stage, stageID) {
 			costs = append(costs, r.Usage.CostUSD)
 		}
 	}
@@ -889,6 +892,14 @@ func (c *Controller) runFloor(ctx context.Context, id, kind, stageID string) (fl
 	return max(minRunFloorUSD, median), nil
 }
 
+// sameStage reports whether two record keys name steps of one pack stage.
+func sameStage(a, b string) bool {
+	x, _ := pack.SplitStep(a)
+	y, _ := pack.SplitStep(b)
+
+	return x == y
+}
+
 // capStopAfter is the cap stop of a run of kind on stageID cut short at what
 // the blueprint cap capUSD it started under had left, as the ledger stands
 // once the run has ended.
@@ -898,7 +909,7 @@ func (c *Controller) capStopAfter(ctx context.Context, id string, capUSD float64
 		return nil, fmt.Errorf("cost lookup failed: %w", err)
 	}
 
-	stop := &capStop{stage: stageID, capUSD: capUSD, spent: spent}
+	stop := &capStop{stage: stageID, capUSD: capUSD, spent: spent, sliced: c.sliced(ctx, id)}
 
 	if leftCents(capUSD, spent) > 0 {
 		if stop.floor, err = c.runFloor(ctx, id, kind, stageID); err != nil {

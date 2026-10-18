@@ -57,15 +57,16 @@ type verdict struct {
 
 // assumptions lists the blueprint's assumptions with the latest status of
 // each. The stated ones come from the latest artifact of every stage that
-// checks assumptions, numbered A1, A2, ... in pack order and then submit
-// order, so a number stays put while those artifacts do. Every auto answer
-// follows as Q<n>, resting on itself, unless a stated one rests on it and so
-// carries its status and the answer. Each starts with its basis's status
-// (basisStatus). Verdicts come from every stage's latest artifact, a later
-// stage's winning; one naming no listed assumption is ignored. A verdict
-// applies only when its artifact was stored after the latest artifact of
-// every stating stage up to the assumption's own: ids are positional, so an
-// older verdict would judge whatever sentence holds the id now.
+// checks assumptions, numbered A1, A2, ... in pipeline order, slice by
+// slice, and then submit order, so a number stays put while those artifacts
+// do. Every auto answer follows as Q<n>, resting on itself, unless a stated
+// one rests on it and so carries its status and the answer. Each starts with
+// its basis's status (basisStatus). Verdicts come from every stage's latest
+// artifact, a later stage's winning; one naming no listed assumption is
+// ignored. A verdict applies only when its artifact was stored after the
+// latest artifact of every stating stage up to the assumption's own: ids are
+// positional, so an older verdict would judge whatever sentence holds the id
+// now.
 func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, error) {
 	all, err := c.opts.Store.ListArtifacts(ctx, id)
 	if err != nil {
@@ -73,6 +74,11 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 	}
 
 	questions, err := c.opts.Store.ListQuestions(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("blueprint: assumptions: %w", err)
+	}
+
+	steps, _, err := c.steps(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("blueprint: assumptions: %w", err)
 	}
@@ -113,9 +119,9 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 		named  = map[string]bool{}
 	)
 
-	for _, st := range c.opts.Pack.Stages {
+	for _, st := range steps {
 		i, ok := latest[st.ID]
-		if !ok || !slices.Contains(st.Checks, pack.CheckAssumptions) {
+		if st.Collapsed || !ok || !slices.Contains(st.Checks, pack.CheckAssumptions) {
 			continue
 		}
 
@@ -164,9 +170,9 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 		source = append(source, -1)
 	}
 
-	for _, st := range c.opts.Pack.Stages {
+	for _, st := range steps {
 		i, ok := latest[st.ID]
-		if !ok {
+		if st.Collapsed || !ok {
 			continue
 		}
 
@@ -337,9 +343,10 @@ func signoffOrder(list []assumption) []assumption {
 
 // assumptionLines renders assumptions one per line for models and cards: the
 // id, the status with who answered the question it rests on or any
-// evidence, and the answer it rests on, then the sentence. The sign-off's
-// text entry formats its line from the event payload.
-func assumptionLines(list []assumption) string {
+// evidence, and the answer it rests on, then the sentence. sliced names the
+// slice of the step an assumption was accepted at. The sign-off's text entry
+// formats its line from the event payload.
+func assumptionLines(list []assumption, sliced bool) string {
 	lines := make([]string, 0, len(list))
 
 	// "the user", not "you": a card's reader is the agent.
@@ -349,7 +356,7 @@ func assumptionLines(list []assumption) string {
 		status := a.Status
 
 		if a.Status == assumptionConfirmed && a.AcceptedAt != "" {
-			status += " by the user, accepted at " + pack.StageName(a.AcceptedAt)
+			status += " by the user, accepted at " + pack.StageName(a.AcceptedAt, sliced)
 		} else if who, ok := backer[a.Status]; ok {
 			status += " by " + who
 			if a.Basis != a.ID {
@@ -424,7 +431,7 @@ func (c *Controller) assumptionsValidator(bp store.Blueprint) (func(context.Cont
 // states an assumption without a basis while st's policy, read at submit,
 // is human, or that comes before an assumption the user turned into a
 // question on a round of the attempt has no later round of the attempt posted.
-func (c *Controller) tabValidator(bp store.Blueprint, st pack.Stage, attempt int) (func(context.Context, stage.Artifact) error, *validatorState) {
+func (c *Controller) tabValidator(bp store.Blueprint, st pipelineStep, attempt int) (func(context.Context, stage.Artifact) error, *validatorState) {
 	return boundedValidator("assumptions tab", func(ctx context.Context, a stage.Artifact) ([]string, error) {
 		policy, err := c.policy(ctx, bp, st.ID)
 		if err != nil {
