@@ -458,7 +458,7 @@ func TestReview_AHumanGateShowsTheVerdict(t *testing.T) {
 	assert.Nil(t, judged[0].Interviewer)
 	assert.Equal(t, c.opts.Pack.Persona("reviewer"), judged[0].Persona)
 	assert.Equal(t, c.opts.Pack.ReviewInstructions(), judged[0].Instructions)
-	assert.Empty(t, judged[0].Tools, "a reviewer gets no tools")
+	assert.Empty(t, judged[0].Tools, "a reviewer the pack gives no tools gets none")
 
 	stored, err := st.LatestArtifact(ctx, "BP1", "shape.review")
 	require.NoError(t, err)

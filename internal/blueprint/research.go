@@ -216,6 +216,11 @@ const (
 		"Search result lists are not kept after this run; the pages you fetch are, so fetch what you will cite before you ask. " +
 		"Queries use plain words and technology names: the leak guard refuses paths, file names, code, the project's own identifiers and names, and card ids.\n\n"
 	researchOffTask = "Research is off for this session: there are no web tools, so options rest on your own knowledge and the code; say so instead of citing a web source.\n\n"
+
+	reviewerResearchOnTask = "Web: web_fetch reads a public page, such as a source the artifact cites, so you can check a claim against it; its result starts with the source tag. There is no web search. " +
+		"The leak guard refuses a URL whose host, path or query holds the project's own identifiers or names or a card id, whose path or query holds code, " +
+		"or whose query holds a path or a file name; a file name in the page's own path passes.\n\n"
+	reviewerResearchOffTask = "Research is off for this session: there are no web tools, so judge a cited web source by what the artifact and its inputs say of it, and say where you could not check one.\n\n"
 )
 
 // sessionResearch is the search provider a start's research settings name,

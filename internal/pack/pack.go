@@ -71,10 +71,13 @@ type Fold struct {
 
 // Reviewer is the run that judges a gated stage's artifact before its gate:
 // Persona plays it, and a score below Threshold, 1 to 5, or a critical
-// finding left open sends the stage back for another round.
+// finding left open sends the stage back for another round. Tools names
+// its tool groups: "code", and "research", which gives a reviewer
+// web_fetch alone, to open what the artifact cites.
 type Reviewer struct {
-	Persona   string `yaml:"persona"`
-	Threshold int    `yaml:"threshold"`
+	Persona   string   `yaml:"persona"`
+	Threshold int      `yaml:"threshold"`
+	Tools     []string `yaml:"tools"`
 }
 
 // Stage is one unit of work in the pipeline: one model run, and the gate
@@ -437,6 +440,12 @@ func validateDialog(s Stage) error {
 			return fmt.Errorf("pack: stage %q: the reviewer needs a persona", s.ID)
 		case r.Threshold < 1 || r.Threshold > 5:
 			return fmt.Errorf("pack: stage %q: the reviewer's threshold must be 1 to 5", s.ID)
+		}
+
+		for _, tool := range r.Tools {
+			if tool != ToolCode && tool != ToolResearch {
+				return fmt.Errorf("pack: stage %q: the reviewer's tool group %q is not code or research", s.ID, tool)
+			}
 		}
 	}
 

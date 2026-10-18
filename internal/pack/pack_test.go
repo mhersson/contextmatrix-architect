@@ -249,6 +249,8 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "card checks without card.md", stage: "    tools: [code]\n    checks: [cards]\n", files: map[string]string{"card.md": ""}, want: "card.md"},
 		{name: "card checks without code tools", stage: "    checks: [cards]\n", want: "tools: [code]"},
 		{name: "a reviewer without review instructions", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4}\n", want: "stages/review.md"},
+		{name: "a reviewer with the cm tools", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4, tools: [cm]}\n", files: map[string]string{"stages/review.md": "x"}, want: "not code or research"},
+		{name: "a reviewer with an unknown tool group", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4, tools: [shell]}\n", files: map[string]string{"stages/review.md": "x"}, want: "not code or research"},
 		{name: "a reserved stage id", stage: "  - id: review\n    persona: po\n", files: map[string]string{"stages/review.md": "x"}, want: "reserved"},
 		{name: "a dot in a stage id", stage: "  - id: s1.review\n    persona: po\n", files: map[string]string{"stages/s1.review.md": "x"}, want: "dot"},
 	}
@@ -364,4 +366,13 @@ func TestLoad_GatePolicy(t *testing.T) {
 
 	s3, _ := p.Stage("s3")
 	assert.Empty(t, s3.GatePolicy, "a stage without a gate has no gate policy")
+}
+
+func TestLoad_ReviewerTools(t *testing.T) {
+	p, err := load(packFS("    gate: true\n    reviewer: {persona: po, threshold: 4, tools: [code, research]}\n", map[string]string{"stages/review.md": "judge it"}))
+	require.NoError(t, err)
+
+	s1, _ := p.Stage("s1")
+	require.NotNil(t, s1.Reviewer)
+	assert.Equal(t, []string{ToolCode, ToolResearch}, s1.Reviewer.Tools)
 }

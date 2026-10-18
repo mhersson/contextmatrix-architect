@@ -7,7 +7,7 @@ stages:
     policy: human
     gate: true
     gate_policy: auto
-    reviewer: {persona: system_designer, threshold: 4}
+    reviewer: {persona: system_designer, threshold: 4, tools: [code, research]}
   - id: plan
     persona: senior_developer
     produces: plan

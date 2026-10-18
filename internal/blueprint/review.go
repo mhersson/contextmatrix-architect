@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/mhersson/contextmatrix-harness/llm"
+	"github.com/mhersson/contextmatrix-harness/tools"
 
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
+	"github.com/mhersson/contextmatrix-architect/internal/research"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
@@ -627,11 +630,11 @@ func (c *Controller) writeNewNotes(ctx context.Context, b *strings.Builder, id s
 }
 
 // runReviewer judges a gated stage's artifact with the pack's reviewer: its
-// persona, the review instructions and reviewTask, never the builder's
-// transcript, and no tools. The verdict, with its ledger, is stored as the
-// next <stage>.review artifact and announced, and the blueprint is idle
-// until the next step sets its state. false when the run did not complete,
-// which is reported.
+// persona, the review instructions, the tool groups its pack entry names and
+// reviewTask, never the builder's transcript. The verdict, with its ledger,
+// is stored as the next <stage>.review artifact and announced, and the
+// blueprint is idle until the next step sets its state. false when the run
+// did not complete, which is reported.
 func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp store.Blueprint, st pack.Stage, art store.Artifact, attempt int) (review, bool) {
 	bg := context.Background()
 	au := sess.audit
@@ -658,11 +661,18 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 		return review{}, false
 	}
 
+	ts, lead, err := c.reviewerTools(ctx, sess, bp, st)
+	if err != nil {
+		c.sideFailed(ctx, r, au, bp.ID, st.ID, err)
+
+		return review{}, false
+	}
+
 	out, err := c.runSide(ctx, r, sess, bp, sideRun{
 		kind: store.RunKindReviewer, stage: st.ID, persona: st.Reviewer.Persona, attempt: attempt, round: number,
 		in: stage.Input{
 			Stage: reviewStage(st.ID), Persona: c.opts.Pack.Persona(st.Reviewer.Persona),
-			Instructions: c.opts.Pack.ReviewInstructions(), Task: task,
+			Instructions: c.opts.Pack.ReviewInstructions(), Task: lead + task, Tools: ts,
 			Validate: func(_ context.Context, a stage.Artifact) error {
 				_, err := parseReview(a.Data, prior, threshold, art.Version)
 
@@ -782,4 +792,47 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pack
 	fmt.Fprintf(&b, "Score it from 1 to 5; %d or more passes, unless a critical finding is left open, which fails it whatever the score.\n", st.Reviewer.Threshold)
 
 	return b.String(), nil
+}
+
+// reviewerTools gives a reviewer run the tool groups its pack entry names:
+// the code tools over the blueprint's checkouts, and from the research
+// group web_fetch alone while the session has research on, behind the same
+// leak guard as the stage's research. The text returned opens its task.
+// It never posts the research-off notice: the session's first stage does.
+func (c *Controller) reviewerTools(ctx context.Context, sess *session, bp store.Blueprint, st pack.Stage) ([]tools.Tool, string, error) {
+	var (
+		ts    []tools.Tool
+		lead  string
+		facts *codeFacts
+	)
+
+	if slices.Contains(st.Reviewer.Tools, pack.ToolCode) {
+		var err error
+		if facts, err = c.prepareCode(ctx, sess, bp, st.ID); err != nil {
+			return nil, "", err
+		}
+
+		ts = stage.CodeTools(facts.root, facts.repos)
+		lead = checkoutLines(facts)
+	}
+
+	if slices.Contains(st.Reviewer.Tools, pack.ToolResearch) {
+		if sess.searcher == nil || c.opts.Fetch == nil {
+			return ts, reviewerResearchOffTask + lead, nil
+		}
+
+		guard := c.researchGuard(sess, bp, st.ID, facts)
+		ledger := researchLedger{c: c, au: sess.audit, id: bp.ID, stage: st.ID}
+
+		ts = append(ts, fetchOnly(research.Tools(sess.searcher, c.opts.Fetch, guard, ledger))...)
+		lead = reviewerResearchOnTask + lead
+	}
+
+	return ts, lead, nil
+}
+
+// fetchOnly keeps web_fetch of the research tools: a reviewer opens what
+// the artifact cites and searches nothing.
+func fetchOnly(ts []tools.Tool) []tools.Tool {
+	return slices.DeleteFunc(ts, func(t tools.Tool) bool { return t.Name() != research.FetchToolName })
 }
