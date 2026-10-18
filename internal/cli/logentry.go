@@ -143,7 +143,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = decidedText(p)
 	case blueprint.EventAborted:
 		entry.Type = "system"
-		entry.Content = "Abort requested. Any running stage is canceled; the blueprint is kept and can be reopened."
+		entry.Content = "Abort requested. Any running stage is canceled; reply `continue` to run it again. The blueprint is kept and can be reopened."
 	case blueprint.EventExported:
 		files, _ := p["files"].(int)
 		entry.Type = "system"
@@ -151,6 +151,10 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventError:
 		entry.Type = "stderr"
 		entry.Content = str(p["message"])
+
+		if stopsStage(p) {
+			entry.Content = strings.TrimSuffix(entry.Content, ".") + ". Reply `continue` to run it again."
+		}
 
 		// A prompt rides a text frame, so a stop that offers approve is one.
 		if prompt := resumePrompt(p); prompt != nil {
@@ -175,6 +179,9 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventCap:
 		entry.Type = "system"
 		entry.Content = capText(p)
+	case blueprint.EventResume:
+		entry.Type = "system"
+		entry.Content = resumeText(p)
 	case blueprint.EventGatePlan:
 		entry.Type = "text"
 		entry.Content = gatePlanText(p)
@@ -803,6 +810,30 @@ func capText(p map[string]any) string {
 	}
 
 	return text + "."
+}
+
+// stopsStage reports an error that is a stage run's own stop, which
+// continue runs again: it names the stage and why the run ended, and is
+// neither a cap stop, whose message says to raise the cap, nor a responder
+// refused inside a run that goes on.
+func stopsStage(p map[string]any) bool {
+	reason := str(p["reason"])
+
+	return str(p["stage"]) != "" && reason != "" && reason != "responder_refused" && str(p["cap"]) == ""
+}
+
+// resumeText renders a resume reply: the stage it runs again, or that
+// nothing waits to resume and what runs.
+func resumeText(p map[string]any) string {
+	if nothing, _ := p["nothing"].(bool); !nothing {
+		return "Resuming " + pack.StageName(str(p["stage"])) + "."
+	}
+
+	if running := str(p["running"]); running != "" {
+		return "Nothing is waiting to resume; " + pack.StageName(running) + " is running."
+	}
+
+	return "Nothing is waiting to resume."
 }
 
 // gatePlanText renders the gate plan: who answers each stage's questions

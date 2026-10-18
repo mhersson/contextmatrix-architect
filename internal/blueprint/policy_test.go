@@ -36,6 +36,11 @@ func TestParseCommand(t *testing.T) {
 		{text: "cap four"},
 		{text: "cap 4 now"},
 		{text: "cap 1e3"},
+		{text: "resume", name: CommandResume},
+		{text: " Continue ", name: CommandResume},
+		{text: "RESUME", name: CommandResume},
+		{text: "continue with the plan"},
+		{text: "resume the old plan"},
 		{text: "gate intake"},
 		{text: "gate intake sometimes"},
 		{text: "Gate it behind a feature flag"},
@@ -759,4 +764,460 @@ func TestSetCap_ARunCutShortAfterAChangeNamesTheCapItStartedUnder(t *testing.T) 
 	ev, ok := rec.first(EventError)
 	require.True(t, ok)
 	assert.InDelta(t, 4.0, ev.Payload["cap_usd"], 1e-9, "shape started under the raised cap")
+}
+
+// stopsFirst is fn, except that the first run match selects stops: it
+// fails, or, given started, it closes started and runs until it is
+// canceled.
+func stopsFirst(match func(stage.Input) bool, started chan struct{}, fn func(context.Context, stage.Input) (stage.Output, error)) func(context.Context, stage.Input) (stage.Output, error) {
+	var stopped atomic.Bool
+
+	return func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if !match(in) || !stopped.CompareAndSwap(false, true) {
+			return fn(ctx, in)
+		}
+
+		if started == nil {
+			return stage.Output{Result: harness.Result{Reason: "error"}}, errors.New("provider down")
+		}
+
+		close(started)
+		<-ctx.Done()
+
+		return stage.Output{}, ctx.Err()
+	}
+}
+
+func anyRun(stage.Input) bool { return true }
+
+func continuationRun(in stage.Input) bool { return in.History != nil && !in.Chat }
+
+func chatRun(in stage.Input) bool { return in.Chat }
+
+// nth selects the nth run it is asked about.
+func nth(n int32) func(stage.Input) bool {
+	var seen atomic.Int32
+
+	return func(stage.Input) bool { return seen.Add(1) == n }
+}
+
+// stopAt runs start, which starts the run stopsFirst stops, aborts that run
+// once it started when started is set, and waits until nothing runs.
+func stopAt(t *testing.T, c *Controller, started chan struct{}, start func()) {
+	t.Helper()
+
+	start()
+
+	if started != nil {
+		signalled(t, started)
+		require.NoError(t, c.Abort(context.Background(), "BP1", "m-abort"))
+	}
+
+	c.Wait("BP1")
+}
+
+// stateTheNeed starts BP1 and states its need.
+func stateTheNeed(t *testing.T, c *Controller) {
+	t.Helper()
+
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+}
+
+// resumesOnce sends continue at BP1's stop of stageID, then again, and checks
+// that the stopped run, a run of runs, ran once more and that neither stored
+// a note.
+func resumesOnce(t *testing.T, c *Controller, runner *fakeRunner, rec *recorder, stageID, runs string) {
+	t.Helper()
+
+	ctx := context.Background()
+	before := len(inputsOf(runner, runs))
+	notes := rec.count(EventNote)
+
+	require.NoError(t, c.Resume(ctx, "BP1", "m-continue"))
+	c.Wait("BP1")
+	require.NoError(t, c.Resume(ctx, "BP1", "m-again"))
+	c.Wait("BP1")
+
+	assert.Len(t, inputsOf(runner, runs), before+1, "the stopped run runs once")
+	assert.Equal(t, notes, rec.count(EventNote), "resume stores no note")
+
+	events := rec.all(EventResume)
+	require.Len(t, events, 2)
+	assert.Equal(t, stageID, events[0].Payload["stage"])
+	assert.Equal(t, "m-continue", events[0].Payload["message_id"])
+	assert.NotContains(t, events[0].Payload, "nothing")
+	assert.Equal(t, true, events[1].Payload["nothing"], "nothing waits once it ran")
+}
+
+func TestResume_RunsAFailedOrAbortedStopOnceWithoutANote(t *testing.T) {
+	question := roundQ("Deploy", "Helm or Kustomize?", "Helm", "Kustomize")
+
+	gatedStop := func(stopped func(stageScript, chan struct{})) func(*testing.T, chan struct{}) (*Controller, *store.Store, *fakeRunner, *recorder) {
+		return func(t *testing.T, started chan struct{}) (*Controller, *store.Store, *fakeRunner, *recorder) {
+			t.Helper()
+
+			script := gatedScript()
+			stopped(script, started)
+
+			c, st, runner, rec := newGated(t, script)
+			stopAt(t, c, started, func() { stateTheNeed(t, c) })
+
+			return c, st, runner, rec
+		}
+	}
+
+	kinds := []struct {
+		name string
+		// stage is the stopped stage; runs is the runner stage of the run
+		// that runs again.
+		stage, runs string
+		// stop leaves BP1 idle at the stop: the run fails, or, given
+		// started, is aborted.
+		stop  func(t *testing.T, started chan struct{}) (*Controller, *store.Store, *fakeRunner, *recorder)
+		check func(t *testing.T, st *store.Store, runner *fakeRunner)
+	}{
+		{
+			name: "a model stage", stage: "shape", runs: "shape",
+			stop: gatedStop(func(s stageScript, started chan struct{}) {
+				s["shape"] = stopsFirst(anyRun, started, s["shape"])
+			}),
+		},
+		{
+			name: "a review", stage: "shape", runs: "shape.review",
+			stop: gatedStop(func(s stageScript, started chan struct{}) {
+				s["shape.review"] = stopsFirst(anyRun, started, s["shape.review"])
+			}),
+			check: func(t *testing.T, _ *store.Store, runner *fakeRunner) {
+				t.Helper()
+				assert.Len(t, inputsOf(runner, "shape"), 1, "the review runs, not the stage it judges")
+			},
+		},
+		{
+			name: "a builder round", stage: "shape", runs: "shape",
+			stop: gatedStop(func(s stageScript, started chan struct{}) {
+				s["shape.review"] = reviews(2, 5)
+				s["shape"] = stopsFirst(nth(2), started, s["shape"])
+			}),
+		},
+		{
+			name: "a revision", stage: "shape", runs: "shape",
+			stop: gatedStop(func(s stageScript, started chan struct{}) {
+				s["shape.review"] = verdicts(scored(4, "name the owner"))
+				s["shape"] = stopsFirst(nth(2), started, s["shape"])
+			}),
+			check: func(t *testing.T, _ *store.Store, runner *fakeRunner) {
+				t.Helper()
+				assert.Len(t, inputsOf(runner, "shape.review"), 1, "the revision goes to its gate unreviewed")
+			},
+		},
+		{
+			name: "a round's continuation", stage: "intake", runs: "intake",
+			stop: func(t *testing.T, started chan struct{}) (*Controller, *store.Store, *fakeRunner, *recorder) {
+				t.Helper()
+
+				c, st, runner, rec := newController(t, stopsFirst(continuationRun, started, asks("# Need", question)))
+				stopAt(t, c, started, func() {
+					stateTheNeed(t, c)
+					c.Wait("BP1")
+					answerRound(t, c, "BP1", 1, true, pick(1, 1))
+				})
+
+				return c, st, runner, rec
+			},
+			check: func(t *testing.T, _ *store.Store, runner *fakeRunner) {
+				t.Helper()
+
+				runs := inputsOf(runner, "intake")
+				assert.NotNil(t, runs[len(runs)-1].History, "it goes on from the round's conversation")
+			},
+		},
+		{
+			name: "a round's chat run", stage: "intake", runs: "intake",
+			stop: func(t *testing.T, started chan struct{}) (*Controller, *store.Store, *fakeRunner, *recorder) {
+				t.Helper()
+
+				replied := make(chan struct{})
+				close(replied)
+
+				fn := chatting([]stage.RoundQuestion{question}, stage.ChatAnswer{Reply: "Helm keeps it in one chart."}, make(chan struct{}, 4), replied)
+				c, st, runner, rec := newController(t, stopsFirst(chatRun, started, fn))
+				stopAt(t, c, started, func() {
+					stateTheNeed(t, c)
+					c.Wait("BP1")
+					require.NoError(t, c.Message(context.Background(), "BP1", "Why Helm?", "m2"))
+				})
+
+				return c, st, runner, rec
+			},
+			check: func(t *testing.T, _ *store.Store, runner *fakeRunner) {
+				t.Helper()
+
+				runs := inputsOf(runner, "intake")
+				assert.True(t, runs[len(runs)-1].Chat, "the chat run runs again")
+			},
+		},
+		{
+			name: "an intake before its first artifact, its need stored", stage: "intake", runs: "intake",
+			stop: func(t *testing.T, started chan struct{}) (*Controller, *store.Store, *fakeRunner, *recorder) {
+				t.Helper()
+
+				c, st, runner, rec := newController(t, stopsFirst(anyRun, started, artifactRun("# Need")))
+				stopAt(t, c, started, func() { stateTheNeed(t, c) })
+
+				return c, st, runner, rec
+			},
+			check: func(t *testing.T, st *store.Store, _ *fakeRunner) {
+				t.Helper()
+
+				arts, err := st.ListArtifacts(context.Background(), "BP1")
+				require.NoError(t, err)
+
+				var needs int
+
+				for _, a := range arts {
+					if a.Stage == needStage {
+						needs++
+					}
+				}
+
+				assert.Equal(t, 1, needs, "it runs on the stored need; no new version")
+			},
+		},
+	}
+
+	for _, k := range kinds {
+		for _, abort := range []bool{false, true} {
+			how := "failed"
+			if abort {
+				how = "aborted"
+			}
+
+			t.Run(k.name+" that "+how, func(t *testing.T) {
+				var started chan struct{}
+				if abort {
+					started = make(chan struct{})
+				}
+
+				c, st, runner, rec := k.stop(t, started)
+				resumesOnce(t, c, runner, rec, k.stage, k.runs)
+
+				if k.check != nil {
+					k.check(t, st, runner)
+				}
+			})
+		}
+	}
+}
+
+func TestResume_RunsACapStopOnceWithoutANote(t *testing.T) {
+	tests := []struct {
+		name        string
+		stage, runs string
+		setup       func(t *testing.T) (*Controller, *store.Store, *fakeRunner, *recorder)
+	}{
+		{
+			name: "a stage the cap refused, the cap since above its floor", stage: "shape", runs: "shape",
+			setup: func(t *testing.T) (*Controller, *store.Store, *fakeRunner, *recorder) {
+				t.Helper()
+
+				c, st, runner, rec := shapeRefused(t, gatedScript())
+				require.NoError(t, st.SetBlueprintCostCap(context.Background(), "BP1", 4))
+
+				return c, st, runner, rec
+			},
+		},
+		{
+			name: "a run the old cap cut short after a raise", stage: "intake", runs: "intake",
+			setup: cutShortAfterARaise,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, runner, rec := tt.setup(t)
+			require.Equal(t, []string{tt.stage}, capStops(t, st), "the setup ends on a cap stop")
+
+			resumesOnce(t, c, runner, rec, tt.stage, tt.runs)
+			assert.Equal(t, []string{tt.stage}, capStops(t, st), "the cap covers the run")
+		})
+	}
+}
+
+func TestResume_ACapStopTheCapStillCannotCoverStopsAgain(t *testing.T) {
+	c, st, runner, rec := shapeRefused(t, gatedScript())
+
+	require.NoError(t, c.Resume(context.Background(), "BP1", "m-continue"))
+	c.Wait("BP1")
+
+	assert.Empty(t, inputsOf(runner, "shape"), "the run meets the cap check again")
+	assert.Equal(t, []string{"shape", "shape"}, capStops(t, st), "and is refused again")
+
+	ev, ok := rec.first(EventResume)
+	require.True(t, ok)
+	assert.Equal(t, "shape", ev.Payload["stage"])
+}
+
+func TestResume_StartsNothingWhereNothingIsStopped(t *testing.T) {
+	question := roundQ("Deploy", "Helm or Kustomize?", "Helm", "Kustomize")
+
+	tests := []struct {
+		name string
+		// setup leaves BP1 with no run in flight.
+		setup func(t *testing.T) (*Controller, *fakeRunner, *recorder)
+		check func(t *testing.T, c *Controller)
+	}{
+		{
+			name: "no need yet",
+			setup: func(t *testing.T) (*Controller, *fakeRunner, *recorder) {
+				t.Helper()
+
+				c, _, runner, rec := newController(t, artifactRun("# Need"))
+				require.NoError(t, c.Start(context.Background(), startInput("BP1")))
+
+				return c, runner, rec
+			},
+		},
+		{
+			name: "a round that waits for answers",
+			setup: func(t *testing.T) (*Controller, *fakeRunner, *recorder) {
+				t.Helper()
+
+				c, _, runner, rec := newController(t, asks("# Need", question))
+				drive(t, c, "BP1")
+
+				return c, runner, rec
+			},
+			check: func(t *testing.T, c *Controller) {
+				t.Helper()
+				assert.Empty(t, latestRound(t, c, "BP1", 1).Frame.Chat, "a command is never chat about the round")
+			},
+		},
+		{
+			name: "an open gate",
+			setup: func(t *testing.T) (*Controller, *fakeRunner, *recorder) {
+				t.Helper()
+
+				c, _, runner, rec := newGated(t, gatedScript())
+				drive(t, c, "BP1")
+				require.True(t, rec.has(EventGate))
+
+				return c, runner, rec
+			},
+		},
+		{
+			name: "the sign-off",
+			setup: func(t *testing.T) (*Controller, *fakeRunner, *recorder) {
+				t.Helper()
+
+				c, _, runner, rec, _ := newPipeline(t, happyScript())
+				drive(t, c, "BP1")
+				require.True(t, rec.has(EventSignOff))
+
+				return c, runner, rec
+			},
+		},
+		{
+			name: "an ended pipeline",
+			setup: func(t *testing.T) (*Controller, *fakeRunner, *recorder) {
+				t.Helper()
+
+				c, st, runner, rec := newController(t, artifactRun("# Need"))
+				drive(t, c, "BP1")
+
+				_, err := st.LatestArtifact(context.Background(), "BP1", "intake")
+				require.NoError(t, err)
+
+				return c, runner, rec
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, runner, rec := tt.setup(t)
+			before := runner.calls()
+
+			require.NoError(t, c.Resume(context.Background(), "BP1", "m-continue"))
+			c.Wait("BP1")
+
+			assert.Equal(t, before, runner.calls(), "no run starts")
+			assert.False(t, rec.has(EventNote), "resume stores no note")
+
+			events := rec.all(EventResume)
+			require.Len(t, events, 1)
+			assert.Equal(t, true, events[0].Payload["nothing"])
+			require.Contains(t, events[0].Payload, "running")
+			assert.Empty(t, events[0].Payload["running"], "nothing runs")
+			assert.Equal(t, false, events[0].Payload["during_run"])
+			assert.Equal(t, "m-continue", events[0].Payload["message_id"])
+			assert.NotContains(t, events[0].Payload, "stage")
+
+			if tt.check != nil {
+				tt.check(t, c)
+			}
+		})
+	}
+}
+
+func TestResume_DuringARunStartsNothing(t *testing.T) {
+	started, held := make(chan struct{}), make(chan struct{})
+
+	c, _, runner, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+		close(started)
+		<-held
+
+		return artifactOutput("# Need", in), nil
+	})
+	release := closer(t, held)
+
+	stateTheNeed(t, c)
+	signalled(t, started)
+
+	require.NoError(t, c.Resume(context.Background(), "BP1", "m-continue"))
+
+	events := rec.all(EventResume)
+	require.Len(t, events, 1)
+	assert.Equal(t, true, events[0].Payload["nothing"])
+	assert.Equal(t, "intake", events[0].Payload["running"])
+	assert.Equal(t, true, events[0].Payload["during_run"])
+
+	release()
+	c.Wait("BP1")
+
+	assert.Equal(t, 1, runner.calls(), "only the run in flight ran")
+	assert.False(t, rec.has(EventNote))
+}
+
+func TestResume_ASessionThatIsNotAttachedIsNotFound(t *testing.T) {
+	c, _, runner, rec := newController(t, stopsFirst(anyRun, nil, artifactRun("# Need")))
+	ctx := context.Background()
+
+	stateTheNeed(t, c)
+	c.Wait("BP1")
+	require.NoError(t, c.End(ctx, "BP1"))
+
+	require.ErrorIs(t, c.Resume(ctx, "BP1", "m-continue"), ErrNotFound)
+	assert.Equal(t, 1, runner.calls())
+	assert.False(t, rec.has(EventResume))
+}
+
+func TestMessage_StillRetriesAFailedStageWithANote(t *testing.T) {
+	script := gatedScript()
+	script["shape"] = stopsFirst(anyRun, nil, script["shape"])
+
+	c, _, runner, rec := newGated(t, script)
+	drive(t, c, "BP1")
+	require.Len(t, inputsOf(runner, "shape"), 1)
+
+	require.NoError(t, c.Message(context.Background(), "BP1", "go on", "m2"))
+	c.Wait("BP1")
+
+	assert.Len(t, inputsOf(runner, "shape"), 2, "the message runs the failed stage again")
+
+	note, ok := rec.first(EventNote)
+	require.True(t, ok)
+	assert.Equal(t, "shape", note.Payload["retries"])
+	assert.False(t, rec.has(EventResume))
 }

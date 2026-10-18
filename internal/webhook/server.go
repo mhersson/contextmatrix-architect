@@ -27,6 +27,7 @@ type Controller interface {
 	Export(ctx context.Context, id, msgID string) error
 	SetPolicy(ctx context.Context, id, stageID, policy, msgID string) error
 	SetCap(ctx context.Context, id, value, msgID string) error
+	Resume(ctx context.Context, id, msgID string) error
 	End(ctx context.Context, id string) error
 
 	// View, Artifact and Subscribe serve CM's blueprint pane; the blueprint

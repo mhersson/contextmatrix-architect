@@ -31,6 +31,9 @@ func TestLogEntryFor(t *testing.T) {
 		{"a cap raise that resumes a stage", blueprint.Event{Kind: blueprint.EventCap, BlueprintID: "S1", Payload: map[string]any{
 			"from": 2.0, "to": 4.0, "resumes": "solution_design",
 		}}, "system", []string{"$2.00", "$4.00", "Solution design"}, false},
+		{"a resume that runs a stopped stage", blueprint.Event{Kind: blueprint.EventResume, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "solution_design", "message_id": "m1",
+		}}, "system", []string{"Solution design"}, false},
 		{"gate plan", blueprint.Event{Kind: blueprint.EventGatePlan, BlueprintID: "S1", Payload: map[string]any{
 			"stages": []any{
 				map[string]any{"stage": "intake", "policy": "human", "gate": false},

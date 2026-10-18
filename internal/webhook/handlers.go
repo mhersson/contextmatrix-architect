@@ -154,6 +154,8 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 			err = s.ctl.SetPolicy(ctx, p.SessionID, args[0], args[1], p.MessageID)
 		case blueprint.CommandCap:
 			err = s.ctl.SetCap(ctx, p.SessionID, args[0], p.MessageID)
+		case blueprint.CommandResume:
+			err = s.ctl.Resume(ctx, p.SessionID, p.MessageID)
 		default:
 			err = s.ctl.Message(ctx, p.SessionID, p.Content, p.MessageID)
 		}

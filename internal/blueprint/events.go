@@ -66,6 +66,9 @@ const (
 	// EventCap records a cap <usd>|off reply: the cap it changed from and to
 	// and the stage it resumes, or why it changed nothing.
 	EventCap = "cap"
+	// EventResume records a resume or continue reply: the stopped stage it
+	// runs again, or that nothing waits to resume and the stage running.
+	EventResume = "resume"
 	// EventGatePlan lists, once the first stage has completed, who answers
 	// each stage's questions and decides its gate.
 	EventGatePlan = "gate_plan"

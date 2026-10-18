@@ -89,7 +89,7 @@ context window; never use film references.
 CM chat panel (the only client)
      |  internal/webhook (backendkit webhookcore + logbridge:
      |  session start, /message, /logs SSE, end-session, the blueprint view, artifacts and live SSE)
-     |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, cap <usd>|off, outcomes, lesson decision
+     |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, cap <usd>|off, resume|continue, outcomes, lesson decision
      |  events out: stage progress, tool calls, questions, gates, cost
 controller (internal/blueprint)     blueprint state machine, gates, responder policy, cost cap
      |
@@ -191,8 +191,8 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   last answer arrived meanwhile closes once it ends. The reply reaches the panel only in the round's
   chat; the chat run's text and its `answer_chat` call stay in the record.
   A chat run that fails or is aborted leaves its messages until the user
-  writes or answers again: the chat runs again, or the continuation of the
-  answered round gets them.
+  writes, answers again or replies `continue`: the chat runs again, or the
+  continuation of the answered round gets them.
   Under `auto` a responder run answers each question inside the asking run
   (see Interaction), every assumption on the tab is accepted, the round is
   shown answered and read-only, and the stage continues at once.
@@ -790,6 +790,7 @@ Replies the server understands, besides a round's structured answers:
 | `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition with the feedback. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
 | `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round or gate keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
 | `cap <usd>`, `cap off`        | Sets the blueprint's cost cap (see below); CM sends it when the person clicks the cost in the sheet header. Exactly two words, the amount one plain decimal number, so an answer that starts with "cap" stays an answer. Works while a stage runs. |
+| `resume`, `continue`          | Runs the stopped stage again once, as a retry message would but storing no note (see below); a stage the cap stopped runs too and meets the cap again. The whole message, case ignored, so an answer that starts with either word stays an answer. While a run is in flight, or where nothing is stopped (an open gate, a round waiting for answers, the sign-off, an ended pipeline, no need yet), nothing starts and the panel says so. Each reply is a `resume` event with the stage it runs again, or with `nothing` and the stage `running`, if any. |
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
 | `lessons`                     | Lists lessons and their state.                                          |
@@ -829,7 +830,8 @@ Replies the server understands, besides a round's structured answers:
   start, end or refusal of the stage's runs must be that cap stop, and the
   event records the stage it resumes ("Cost cap raised from $2.00 to
   $4.00; resuming Readiness."). A cap at or below the stop's resumes
-  nothing, nor does any change at another stop, which waits for a message.
+  nothing, nor does any change at another stop, which waits for a message
+  or `continue`.
 - Reopening a session makes CM send a start for it; a stage interrupted by a
   server restart is re-run from its inputs, or from its stored conversation
   when it went on from a round (below), and a stage whose inputs were stored
@@ -856,14 +858,18 @@ Replies the server understands, besides a round's structured answers:
   round the pipeline went past without its answers, as when the run that
   posted it never recorded its end, is collapsed in the panel, and its stage
   runs again as any stage cut short does. An aborted stage waits for the
-  next message, as below.
+  next message or `continue`, as below.
 - After a later stage fails or is aborted, the next message is logged as a
   note and re-runs that stage; after a continuation, one of intake included,
   fails or is aborted, the next message is a note and runs it again from the
   same conversation; after a review or a builder round, a revision round
   included, fails or is aborted, the next message is a note and runs it
   again; after intake fails or is aborted, the next message is the need
-  again and intake re-runs on it. A pipeline stopped by the card contract or
+  again and intake re-runs on it. `resume` or `continue` runs each of these
+  again as that message would but stores no note, and runs intake on the
+  need already stored. An abort and a stage run's failure tell the user to
+  reply `continue`; a cap stop tells them to raise the cap. A pipeline
+  stopped by the card contract or
   by readiness's rounds is not re-run; the user starts a new blueprint with
   a better design.
 - From slice 4, a project may opt into automatic export in config: a target
@@ -1062,7 +1068,7 @@ internal/cm          MCP client: the project list, the stage read tools, and the
 internal/outcomes    outcomes stage and lessons
 internal/export      markdown rendering into the state directory
 internal/config
-internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate and cap commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
+internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, resume and continue commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
 ```
 
 ## Changes needed in CM
