@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"time"
 
 	"github.com/mhersson/contextmatrix-harness/events"
@@ -76,6 +77,15 @@ type Output struct {
 	Result   harness.Result
 }
 
+// Transient marks a tool whose results the model reads in its run but the
+// record never keeps. When Run returns, each of the tool's results in
+// Output.Result.Messages is what Stored makes of it. Stored returns a result
+// it did not produce unchanged, and one it already made unchanged too, so a
+// resumed history passes through again as it was stored.
+type Transient interface {
+	Stored(result string) string
+}
+
 // Runner runs stages. NewLLM builds the client per run; tests inject a fake.
 type Runner struct {
 	NewLLM func(protocol.LLMEndpoint) llm.LLM
@@ -91,8 +101,73 @@ func NewRunner() *Runner {
 	return &Runner{NewLLM: ClientFor}
 }
 
-// Run executes one stage and returns its artifact.
+// Run executes one stage and returns its artifact. On every return its
+// messages are as the record keeps them: see Transient.
 func (r *Runner) Run(ctx context.Context, in Input) (Output, error) {
+	out, err := r.run(ctx, in)
+	out.Result.Messages = recorded(out.Result.Messages, in.Tools)
+
+	return out, err
+}
+
+// recorded is msgs with every transient tool's results as the tool stores
+// them. A tool message answers the calls of the assistant message before
+// it, so a call id a model reuses in a later turn is told apart. msgs itself
+// is never changed: the requests already sent share it.
+func recorded(msgs []llm.Message, ts []tools.Tool) []llm.Message {
+	transient := map[string]Transient{}
+
+	for _, t := range ts {
+		if tr, ok := t.(Transient); ok {
+			transient[t.Name()] = tr
+		}
+	}
+
+	if len(transient) == 0 {
+		return msgs
+	}
+
+	var (
+		out   []llm.Message
+		calls map[string]Transient
+	)
+
+	for i, m := range msgs {
+		if m.Role != "tool" {
+			calls = map[string]Transient{}
+
+			for _, tc := range m.ToolCalls {
+				if tr, ok := transient[tc.Function.Name]; ok {
+					calls[tc.ID] = tr
+				}
+			}
+
+			continue
+		}
+
+		tr, ok := calls[m.ToolCallID]
+		if !ok {
+			continue
+		}
+
+		if stored := tr.Stored(m.Content); stored != m.Content {
+			if out == nil {
+				out = slices.Clone(msgs)
+			}
+
+			out[i].Content = stored
+		}
+	}
+
+	if out == nil {
+		return msgs
+	}
+
+	return out
+}
+
+// run is Run before the record's view of the messages.
+func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 	// The registry keeps the last tool under a name, so a clash would silently
 	// replace a built-in.
 	for _, t := range in.Tools {

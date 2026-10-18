@@ -57,6 +57,9 @@ type codeFacts struct {
 	root     string
 	repos    []stage.RepoFacts
 	projects map[string]contract.Project
+	// listed is every project ContextMatrix lists, for the card id prefixes
+	// the leak guard refuses.
+	listed []cm.Project
 }
 
 // tree is one repository of a target project and the tree it is checked
@@ -209,6 +212,7 @@ func (c *Controller) prepareCode(ctx context.Context, sess *session, bp store.Bl
 	// Every tree is named before anything is fetched, so a bad name fails
 	// the stage without a checkout.
 	facts := &codeFacts{root: c.opts.Workspace.TreeRoot(bp.ID)}
+	facts.listed = projects
 	owners := map[string]string{}
 	verifies := map[string]string{}
 

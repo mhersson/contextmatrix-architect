@@ -705,3 +705,134 @@ func TestRun_FragmentsWithinOneIntervalCoalesce(t *testing.T) {
 	assert.Len(t, frames, 2, "the first fragment opens the draft and the submit flushes the rest")
 	assert.Equal(t, body, applied(t, frames))
 }
+
+// lookupTool is transient: the record keeps its result's first line.
+type lookupTool struct{}
+
+func (lookupTool) Name() string { return "lookup" }
+
+func (lookupTool) Schema() llm.Tool {
+	return llm.Tool{Type: "function", Function: llm.ToolFunction{Name: "lookup", Parameters: json.RawMessage(`{"type":"object","properties":{}}`)}}
+}
+
+func (lookupTool) Execute(context.Context, map[string]any) (tools.Result, error) {
+	return tools.Result{Text: "lookup: 2 hits\n\nhit one\nhit two"}, nil
+}
+
+func (lookupTool) Stored(result string) string {
+	head, _, _ := strings.Cut(result, "\n")
+	if !strings.HasPrefix(head, "lookup:") {
+		return result
+	}
+
+	return head
+}
+
+// lookalikeTool is not transient, though its result looks like lookup's.
+type lookalikeTool struct{}
+
+func (lookalikeTool) Name() string { return "lookalike" }
+
+func (lookalikeTool) Schema() llm.Tool {
+	return llm.Tool{Type: "function", Function: llm.ToolFunction{Name: "lookalike", Parameters: json.RawMessage(`{"type":"object","properties":{}}`)}}
+}
+
+func (lookalikeTool) Execute(context.Context, map[string]any) (tools.Result, error) {
+	return tools.Result{Text: "lookup: not transient\n\nbody"}, nil
+}
+
+// toolResult is the content of the last tool message answering id.
+func toolResult(msgs []llm.Message, id string) (string, bool) {
+	content, found := "", false
+
+	for _, m := range msgs {
+		if m.Role == "tool" && m.ToolCallID == id {
+			content, found = m.Content, true
+		}
+	}
+
+	return content, found
+}
+
+func TestRun_KeepsTransientResultsOutOfTheRecord(t *testing.T) {
+	f := &fakeLLM{responses: []llm.Response{
+		{ToolCalls: []llm.ToolCall{toolCall("c1", "lookup", `{}`), toolCall("c2", "lookup", `{}`), toolCall("c3", "lookalike", `{}`)}, FinishReason: "tool_calls"},
+		{ToolCalls: []llm.ToolCall{toolCall("c4", "submit_artifact", `{"body":"# Need"}`)}, FinishReason: "tool_calls"},
+	}}
+
+	var events bytes.Buffer
+
+	in := baseInput(&events)
+	in.Tools = []tools.Tool{lookupTool{}, lookalikeTool{}}
+
+	out, err := runnerWith(f).Run(context.Background(), in)
+	require.NoError(t, err)
+
+	for _, id := range []string{"c1", "c2"} {
+		got, ok := toolResult(out.Result.Messages, id)
+		require.True(t, ok, id)
+		assert.Equal(t, "lookup: 2 hits", got, id)
+	}
+
+	got, ok := toolResult(out.Result.Messages, "c3")
+	require.True(t, ok)
+	assert.Equal(t, "lookup: not transient\n\nbody", got, "a tool that is not transient keeps its result")
+
+	// The model read the whole result in its run.
+	require.Len(t, f.requests, 2)
+
+	seen, ok := toolResult(f.requests[1].Messages, "c1")
+	require.True(t, ok)
+	assert.Contains(t, seen, "hit one")
+
+	assert.NotContains(t, events.String(), "hit one", "harness events carry a result's length, never its text")
+}
+
+func TestRun_KeepsTransientResultsOutOfARunWithoutAnArtifact(t *testing.T) {
+	f := &fakeLLM{responses: []llm.Response{
+		{ToolCalls: []llm.ToolCall{toolCall("c1", "lookup", `{}`)}, FinishReason: "tool_calls"},
+	}}
+
+	in := baseInput(&bytes.Buffer{})
+	in.Tools = []tools.Tool{lookupTool{}}
+
+	out, err := runnerWith(f).Run(context.Background(), in)
+	require.ErrorIs(t, err, ErrNoArtifact)
+
+	got, ok := toolResult(out.Result.Messages, "c1")
+	require.True(t, ok)
+	assert.Equal(t, "lookup: 2 hits", got)
+}
+
+func TestRun_PassesARecordedHistoryThroughUnchanged(t *testing.T) {
+	history := []llm.Message{
+		{Role: "user", Content: "the task"},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{toolCall("c0", "lookup", `{}`)}},
+		{Role: "tool", ToolCallID: "c0", Content: "lookup: 2 hits"},
+		// A model that reuses a call id: this c0 is lookalike's, so its
+		// result stays whole.
+		{Role: "assistant", ToolCalls: []llm.ToolCall{toolCall("c0", "lookalike", `{}`)}},
+		{Role: "tool", ToolCallID: "c0", Content: "lookup: not transient\n\nbody"},
+	}
+
+	f := &fakeLLM{responses: []llm.Response{
+		{ToolCalls: []llm.ToolCall{toolCall("c9", "submit_artifact", `{"body":"# Need"}`)}, FinishReason: "tool_calls"},
+	}}
+
+	in := baseInput(&bytes.Buffer{})
+	in.Tools = []tools.Tool{lookupTool{}, lookalikeTool{}}
+	in.History = history
+
+	out, err := runnerWith(f).Run(context.Background(), in)
+	require.NoError(t, err)
+
+	var results []string
+
+	for _, m := range out.Result.Messages {
+		if m.Role == "tool" && m.ToolCallID == "c0" {
+			results = append(results, m.Content)
+		}
+	}
+
+	assert.Equal(t, []string{"lookup: 2 hits", "lookup: not transient\n\nbody"}, results)
+}

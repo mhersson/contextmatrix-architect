@@ -65,10 +65,11 @@ Settled during design. Each has its reason so it is not re-litigated.
 | Not built on `contextmatrix-agent`; `backendkit` only for the CM-facing side | The agent is shaped for card work in a container, and nothing under its `internal/` is importable. backendkit's `webhookcore` and `logbridge` are the chat-backend protocol the architect speaks towards CM, so they are used for exactly that and nothing else. |
 | CM's chat panel is the only client                        | The architect implements CM's chat-backend protocol as a third backend kind, so CM's existing panel is where the need is stated, questions and gates are answered, and side operations (export, outcomes, lessons) are requested by reply. Same look and feel, session list, auth and browser for free. No UI, no CLI beyond `contextmatrix-architect serve` and the `config defaults` and `config validate` helpers contextmatrix-setup drives, no client API. |
 | One controller process                                    | `contextmatrix-architect serve` alone owns the store, the workspaces and the harness runs, and every session originates in CM. One record, one place code is checked out, no laptop copy of anything. |
-| Provisioned by CM, like the agent and chat backends      | Every blueprint is a CM session. The start payload delivers the LLM endpoint, the MCP key, the model and a git-credentials token. The architect's own config holds no secret but the backend HMAC key, and there is no CM-less mode. |
+| Provisioned by CM, like the agent and chat backends      | Every blueprint is a CM session. The start payload delivers the LLM endpoint, the MCP key, the model, a git-credentials token and, when research is on, the search provider and its key. The architect's own config holds no secret but the backend HMAC key, and there is no CM-less mode. |
 | Questions block inside the run; no persisted resume       | Nobody walks away from a blueprint for days. A blocking `ask_human` keeps one transcript, and the prompt cache warm when the reply comes within the provider's cache lifetime. A crash re-runs the open stage from stored artifacts, a builder round from the transcript it resumed. |
 | SQLite is the record; markdown is a rendering             | One store for artifacts, gates, transcripts, audit and cost. Committing per-stage markdown into code repos bloats them fast; an opt-in automatic export serves teams that review in pull requests. |
-| Everything is logged                                      | Every run's full transcript and an append-only event log. The append-only tables are never updated or deleted. The export is a complete audit record.           |
+| Everything is logged                                      | Every run's full transcript (less web search result lists) and an append-only event log. The append-only tables are never updated or deleted. The export is a complete audit record, less the web search result lists the next row keeps out. |
+| Search result lists are never stored                      | The search provider's terms forbid storing or caching results beyond transient use, and no storage rights are bought. The model sees a list in the run that searched; transcripts, events and exports keep the query and the result count. The pages `web_fetch` reads are the recorded sources, so a claim cites a page the architect read itself. A deliberate, permanent exception, with no switch to record lists. |
 | A playbook for several cards, a bare card for one         | Manual entries are the only way to express human and live checks across cards. A one-card playbook would end in a merged PR on a playbook branch plus a second PR to main; a bare card ends in one PR to the default branch. The `emissions` table is the blueprint's handle in CM either way. |
 | Fixed stage list, no composer; size is never estimated    | Every stage earns its place even for an infrastructure request; cheap stages collapse rather than skip. Gates fold and the playbook decision falls out of counts in the artifacts (slices, cards), so a need is never classified small or big up front. Evidence for skippable stages comes from Outcomes, which does not exist yet. |
 | Personas attached to stages, no agent system              | Roles are prompt text in the pack. The composer-and-agents machinery of AI-DLC is a second decision engine the first one has not earned.                         |
@@ -95,7 +96,8 @@ stage runner (internal/stage)       one harness.Run per round: persona + stage p
      |                              pack rules + lessons + tool set + output schema
      |-- code tools      read-only tree per project from a bare mirror, at a recorded sha;
      |                   harness read/grep/glob jailed to it; repo_info
-     |-- research tools  web_fetch
+     |-- research tools  web_search, web_fetch behind the leak guard;
+     |                   public addresses only
      |-- cm tools        read-only MCP reads for grounding and readiness:
      |                   cm_list_projects, cm_list_cards, cm_get_card, cm_get_playbook
      |-- control tools   ask_human (blocking), submit_artifact (terminal)
@@ -158,7 +160,7 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   Interaction), and its answer is the tool result.
 - **A run ends on `submit_artifact`**, a terminal tool carrying the markdown
   body and the stage's structured yaml block. The controller stores the
-  artifact and the full transcript.
+  artifact and the full transcript (less web search result lists).
 - **Critique loop inside a stage.** On submit, the mechanical checks run
   inside the run: a failing submit is returned to the model as the tool
   result and it submits again. The third failing submit is accepted: cards
@@ -209,9 +211,9 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, findings, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once, at the answer |
 | gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded), feedback, responder (human, auto), decided at |
-| transcripts   | append-only: run, full message history as JSON, redacted                                                                     |
-| events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning; every change of the blueprint's state is a `state` row, stored and never sent to the panel |
-| sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage |
+| transcripts   | append-only: run, full message history as JSON, redacted, each web search result list replaced by its query and result count |
+| events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning; every change of the blueprint's state is a `state` row, stored and never sent to the panel; every web search and page read is a `research` event (the query and result count, the URL and source tag, or the rule that refused it), and a session that runs a research stage without research says so once in a `research_off` event |
+| sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage; a page `web_fetch` read is a `url` source versioned by the sha256 of its text, its title on its `research` event |
 | ledger        | per-run cost rows summed per blueprint                                                                                        |
 | emissions     | append-only: blueprint, kind (card, playbook, run), the draft card id, project, CM id, created at; one row per blueprint, kind and draft id |
 | outcomes      | per emitted card: final state, review attempts, parked reason, cost, finding text, proposed lesson                            |
@@ -232,7 +234,9 @@ with its source id (`S7`). Claims in artifact sections the pack marks as
 grounded carry a tag: `[S7]` for a source, `[Q3]` for an answered question,
 `[assumption]` for a decision nobody grounded. An untagged claim in a grounded
 section fails the mechanical check. Sign-off re-reads `sources` and flags every
-repo whose default branch moved since the checkout.
+repo whose default branch moved since the checkout. A web search result is a
+lead, not a source: it carries no tag, and only a page `web_fetch` read is
+cited.
 
 ## Stages
 
@@ -243,7 +247,7 @@ developer (DEV), reviewer (REV).
 | -- | --------------- | ------- | ----------------- | ----------------------------------------------------------------------------------------------------- | --------- |
 | 1  | Intake          | PO      | the need          | need: problem, value, scope in and out, measurable outcomes, the expected shape                       | questions |
 | 2  | Slicing         | PO      | need              | slices, each delivering standalone value; one slice is fine                                           | yes; folds into 3 when there is one slice |
-| 3  | Solution design | SD      | need, slices      | per slice: projects involved, decisions with rejected options and their basis, cross-project contracts; asks a question for each decision with real alternatives, and checks the code out | yes       |
+| 3  | Solution design | SD      | need, slices      | per slice: projects involved, decisions with rejected options and their basis, cross-project contracts; asks a question for each decision with real alternatives, and reads the code, checking it out when no earlier stage has | yes       |
 | 4  | Grounding       | DEV     | design            | per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        |
 | 5  | Acceptance      | DEV     | design, grounding | per slice: criteria checkable inside one repo; human and live checks split into manual steps         | `auto` by default |
 | 6  | Decomposition   | DEV     | all above         | draft cards with type and priority, `depends_on` per project, manual entries for human and live checks, a playbook title and order, and the setup for a project without a verify command or instruction file | no        |
@@ -258,7 +262,7 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   stage's questions and decides its gate, and the `gate <stage> human|auto`
   reply that changes it, so the operator can change a policy before
   solution design spends anything.
-- The first stage that checks the code out, solution design in the default
+- The first stage with the code tools, solution design in the default
   pack, ends by telling the session what each target project lacks for an
   agent run: a verify command in CM (read again then), an instruction file
   at the root, or any commit. None of it blocks. Decomposition plans it as
@@ -595,8 +599,8 @@ starts are bounded by CM's per-card guardrails, not by the architect.
 
 | Group    | Tools                                                                                                   | Notes                                                                                                                                             |
 | -------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock at the start of the first stage with the code tools (solution design), and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. A repository with no commits checks out as an empty tree with no sha. `repo_info` returns the sha, instruction file presence, the project's verify command, whether the repository is empty and, to the stage that fetched the tree, the default branch. |
-| research | `web_fetch`                                                                                             | Readable text, recorded as a source. A search provider is deferred.                                                                               |
+| code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock the first time a run needs the trees: at the start of the first stage with the code tools (solution design), or earlier, at a research stage's first leak-guard check that needs them, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. A repository with no commits checks out as an empty tree with no sha. `repo_info` returns the sha, instruction file presence, the project's verify command, whether the repository is empty and, to the stage that fetched the tree, the default branch. |
+| research | `web_search`, `web_fetch` | Offered to the stages whose pack names the group (intake, slicing and solution design in the default pack) when the session's research settings name a provider the architect can build; otherwise the group is absent and the session says once, at the first such stage, that research is off. `web_search` asks the provider (Brave Search) for ten results: titles, URLs and snippets the model reads in that run only, since a run's stored messages keep only the query and the result count. `web_fetch` reads an http or https page from a public address: every connection's address is checked after the name resolves, redirects included (five at most), and no proxy is used; it reads at most 5 MiB in 20 seconds, keeps 48 KiB of text, turns HTML into readable text (the main or article element, without scripts, navigation or footers), takes text types as they are and refuses the rest. A page read is recorded as a `url` source and its result starts with the tag; a page with no readable text is a tool error, not a source. A leak guard checks every query and every URL's host labels, path and query and refuses, as a tool error naming the rule: a token with a path separator (acronym pairs like CI/CD and HTTP/1.1 pass) or a file extension (a `<name>.js` library passes), code punctuation (a URL path segment may carry a name's `(` or `=`, as in `Raft_(algorithm)`), a compound identifier the blueprint's checkouts declare (not a name of a package they depend on, and nothing in a lockfile), the root module path's owner or name (a nested module's compound name is a declared identifier), a target project's name or its repositories' owner or name, a ContextMatrix card id, and a query, or a URL path segment, query key or query value, over 160 characters; plain words and technology names pass. A URL's host labels get the name, module, identifier and card-id rules but not the shape rules, since a page can ask for a host that carries data; its path segments skip the path and file-name rules, which a URL's own syntax breaks; its query keys and values get every query rule. It reads the checkouts once per run, at the first check that needs them, checking them out first in a stage without the code tools, and refuses everything while it cannot read them. The responder shares its stage's tools. Every query and page read is a `research` event. |
 | cm       | `list_projects`, `list_cards`, `get_card`, `get_playbook` as `cm_`-prefixed reads | Offered to grounding and readiness over the session's MCP key, one MCP session per run, chat's bridge adapter on the architect's client with a `cm_` prefix and an allowlist that skips tools CM does not serve. No `agent_id` is sent, so CM keeps redacting unvetted imported text; `get_card` never attaches images; a credential embedded in a URL is removed from every result and error before the model or the record sees it, since CM returns project config as stored; every result carries the blueprint's ContextMatrix source tag. Creating cards and playbooks and starting runs are controller calls with the configured caller identity, never model tools. |
 | control  | `ask_human`, `submit_artifact`                                                                          | `ask_human` blocks: question, options, the recommended option's position and context in; a trailing "(recommended)" a model writes into an option is cut, and marks that option when no position is given and no other option carries one; the answer out as the tool result, starting with the question's number (`Q<n>: <answer>`) so a design can cite it as a basis; an auto answer's result adds a line that the responder gave it for the user, an assumption and not the user's choice. Questions are numbered `Q<n>` per blueprint. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
 
@@ -850,17 +854,21 @@ frames on the session's chat stream.
   `svc.sh`. It is configured in CM as a backend of kind `architect` with its
   URL and an HMAC key, exactly like the other two.
 - **Provisioned per session by CM.** The start payload carries the LLM
-  endpoint, the MCP key, the model and the git-credentials token. The
-  architect holds none of these in config or env, and refuses a start without
-  the endpoint, as the chat backend does.
+  endpoint, the MCP key, the model, the git-credentials token and, with
+  research on, the search provider and key (`ArchitectStart.Research`; none
+  means research is off). The architect holds none of these in config or
+  env, and refuses a start without the endpoint, as the chat backend does.
 - **Code.** The server checks out each target project's repo from the URL CM
   reports, into its own workspace cache, with credentials fetched per repo from
   CM. Nothing is checked out on a client.
 - **Container needs.** A Go binary image with ripgrep on the path (the
   harness grep and glob tools exec it), no Docker socket, a volume for the
   state directory (the image sets `XDG_STATE_HOME=/var/lib`, so the default
-  state directory is that volume), and outbound access to CM, the LLM endpoint
-  and the git host. Env: the CM base URL and the backend HMAC key.
+  state directory is that volume), and outbound access to CM, the LLM endpoint,
+  the git host and, with research on, the search provider and the public web;
+  `web_fetch` dials pages directly and never uses an egress proxy, since its
+  address check must see the page's own address. Env: the CM base URL and the
+  backend HMAC key.
 - **Host needs.** As a user service the same binary needs ripgrep on the
   service's PATH. `state_dir` defaults to the XDG state directory, which
   `svc.sh` whitelists and creates. `serve` logs a
@@ -924,7 +932,7 @@ internal/stage       stage runner: prompt assembly, tool sets, output schema, cr
 internal/contract    card contract checks, mechanical and model-judged
 internal/store       SQLite: schema, append-only tables, queries
 internal/code        workspace checkout and repo_info
-internal/research    web_fetch
+internal/research    web_search and web_fetch, the leak guard, the public-only fetcher, the search provider
 internal/cm          MCP client: the project list, the stage read tools, and the card, playbook and run calls emission makes
 internal/outcomes    outcomes stage and lessons
 internal/export      markdown rendering into the state directory
@@ -944,6 +952,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | CM re-sends the start to an architect session after the architect restarts: on a 404 `not_found` for a message (then re-sends the message once), and when the log stream ends | slice 2 |
 | Panel: question and gate prompts (`LogEntry.Prompt`, protocol v0.24.0, with their own text, kind and recommended option from v0.25.0) rendered as buttons; the gate plan stays text, and lesson prompts reuse the same shape | slice 3 (lessons slice 4) |
 | Panel: the blueprint pane (scale bar, sheet, transcript markers), read through CM proxies of the architect's signed view and artifact endpoints, with its live stream relayed on the session's chat stream (protocol v0.26.0) | blueprint UI |
+| A research setting (`off` or `search`, off by default) with the search provider and its key in CM's configuration, sent as `ArchitectStart.Research` (protocol v0.27.0) | research |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |
@@ -978,7 +987,7 @@ Ordered so a real card comes out as early as possible.
 5. **Later**: a gate inbox in CM's web UI;
    seeding a blueprint from an existing CM card, in the same adapter shape as
    the Jira seed; Jira seed and mirror (decide REST against Atlassian MCP then,
-   see open questions); search provider; composer; model selection via
+   see open questions); composer; model selection via
    `selection`.
 
 ## Testing
@@ -1013,6 +1022,5 @@ Ordered so a real card comes out as early as possible.
   credential should be provisioned by CM, which already holds the Jira site and
   token, rather than configured on the architect. Auth for a headless service
   decides it; verify at the Jira slice.
-- Web search provider and its data-handling terms.
 - Data handling: code and ticket content go through the LLM endpoint. Personal
   data in tickets needs a policy before the Jira slice.

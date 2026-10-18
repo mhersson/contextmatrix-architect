@@ -43,6 +43,9 @@ type fakeWorkspace struct {
 	// noAgents leaves AGENTS.md out of every tree.
 	noAgents bool
 
+	// extra adds files to every tree.
+	extra map[string]string
+
 	mu      sync.Mutex
 	calls   []checkoutCall
 	removed []string
@@ -96,8 +99,15 @@ func (w *fakeWorkspace) Checkout(ctx context.Context, blueprintID, name, repoURL
 		delete(files, "AGENTS.md")
 	}
 
+	maps.Copy(files, w.extra)
+
 	for name, body := range files {
-		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(name)), []byte(body), 0o600); err != nil {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			return code.Checkout{}, err
+		}
+
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			return code.Checkout{}, err
 		}
 	}

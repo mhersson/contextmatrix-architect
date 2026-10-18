@@ -27,8 +27,11 @@ var defaultFS embed.FS
 const (
 	ToolCode = "code"
 	// ToolCM is the read-only ContextMatrix tool group.
-	ToolCM     = "cm"
-	CheckCards = "cards"
+	ToolCM = "cm"
+	// ToolResearch is web_search and web_fetch, offered when the session's
+	// research setting is on.
+	ToolResearch = "research"
+	CheckCards   = "cards"
 	// CheckAssumptions checks a submit's assumptions: standalone sentences,
 	// each basis an answered question, and no sentence naming one.
 	CheckAssumptions = "assumptions"
@@ -94,7 +97,8 @@ type Stage struct {
 	// input, in the order they are presented.
 	Consumes []string `yaml:"consumes"`
 	// Tools names the tool groups the run gets: "code" is the read-only
-	// checkout tools plus repo_info, "cm" the read-only ContextMatrix tools.
+	// checkout tools plus repo_info, "cm" the read-only ContextMatrix tools,
+	// "research" web_search and web_fetch when the session has research on.
 	Tools []string `yaml:"tools"`
 	// Checks names the mechanical checks run on every submit; "cards" is the
 	// card contract.
@@ -353,7 +357,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	}
 
 	for _, tool := range s.Tools {
-		if tool != ToolCode && tool != ToolCM {
+		if tool != ToolCode && tool != ToolCM && tool != ToolResearch {
 			return fmt.Errorf("pack: stage %q: unknown tool group %q", s.ID, tool)
 		}
 	}

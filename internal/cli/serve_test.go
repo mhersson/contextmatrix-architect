@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,23 +32,42 @@ const (
 	e2eLLMKey = "sk-or-0123456789"
 )
 
-// fakeLLM answers the intake with one submit_artifact call.
-type fakeLLM struct{ calls int }
+// e2eSearchKey is the session's search key. The fake model writes it into
+// the artifact, so only the architect's masking keeps it off the panel.
+const e2eSearchKey = "brave-e2e-key-0123456789"
 
-func (f *fakeLLM) Send(_ context.Context, _ llm.Request) (llm.Response, error) {
-	return f.respond(), nil
+// fakeLLM answers the intake with one submit_artifact call and records the
+// tools each request offers.
+type fakeLLM struct {
+	mu    sync.Mutex
+	calls int
+	tools [][]string
 }
 
-func (f *fakeLLM) SendStream(_ context.Context, _ llm.Request, _ func(llm.Delta)) (llm.Response, error) {
-	return f.respond(), nil
+func (f *fakeLLM) Send(_ context.Context, req llm.Request) (llm.Response, error) {
+	return f.respond(req), nil
 }
 
-func (f *fakeLLM) respond() llm.Response {
+func (f *fakeLLM) SendStream(_ context.Context, req llm.Request, _ func(llm.Delta)) (llm.Response, error) {
+	return f.respond(req), nil
+}
+
+func (f *fakeLLM) respond(req llm.Request) llm.Response {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	f.calls++
+
+	names := make([]string, 0, len(req.Tools))
+	for _, t := range req.Tools {
+		names = append(names, t.Function.Name)
+	}
+
+	f.tools = append(f.tools, names)
 
 	return llm.Response{FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{{
 		ID: "c1", Type: "function",
-		Function: llm.FunctionCall{Name: "submit_artifact", Arguments: `{"body":"# Need\n\nRun alpha on Kubernetes with ` + e2eLLMKey + `.","data":{"slices":1}}`},
+		Function: llm.FunctionCall{Name: "submit_artifact", Arguments: `{"body":"# Need\n\nRun alpha on Kubernetes with ` + e2eLLMKey + ` and ` + e2eSearchKey + `.","data":{"slices":1}}`},
 	}}}
 }
 
@@ -84,7 +104,8 @@ func TestServe_EndToEnd(t *testing.T) {
 		ReplaySkew: 5 * time.Minute, ReplayCacheSize: 100, MessageDedupTTL: time.Minute, MessageDedupCacheSize: 100,
 	}
 
-	runner := &stage.Runner{NewLLM: func(protocol.LLMEndpoint) llm.LLM { return &fakeLLM{} }}
+	model := &fakeLLM{}
+	runner := &stage.Runner{NewLLM: func(protocol.LLMEndpoint) llm.LLM { return model }}
 
 	srv, cleanup, err := buildServer(context.Background(), cfg, testLogger(t), runner)
 	require.NoError(t, err)
@@ -97,7 +118,10 @@ func TestServe_EndToEnd(t *testing.T) {
 	resp := post(t, ts.Client(), ts.URL+"/chat/start", protocol.ChatStartPayload{
 		SessionID: "S1", Model: "test/model", MCPAPIKey: "mcp", GitCredentialsToken: "S1.mac",
 		LLMEndpoint: &protocol.LLMEndpoint{Type: "openrouter", APIKey: e2eLLMKey},
-		Architect:   &protocol.ArchitectStart{Projects: []string{"alpha"}, Mode: "default"},
+		Architect: &protocol.ArchitectStart{
+			Projects: []string{"alpha"}, Mode: "default",
+			Research: &protocol.ResearchStart{Provider: "brave", APIKey: e2eSearchKey},
+		},
 	})
 	require.Equal(t, http.StatusAccepted, resp.StatusCode)
 
@@ -166,7 +190,13 @@ func TestServe_EndToEnd(t *testing.T) {
 		idle = sawArtifact && entry.Type == "status" && entry.Content == "idle"
 
 		assert.NotContains(t, entry.Content, e2eLLMKey, "the API key never reaches the panel")
+		assert.NotContains(t, entry.Content, e2eSearchKey, "the search key never reaches the panel")
 	}
+
+	model.mu.Lock()
+	require.NotEmpty(t, model.tools)
+	assert.Subset(t, model.tools[0], []string{"web_search", "web_fetch"}, "intake researches when CM sends research settings")
+	model.mu.Unlock()
 
 	assert.Contains(t, types, "system", "stage boundaries are system entries")
 	assert.Contains(t, types, "tool_call", "harness tool calls stream through the bridge")

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mhersson/contextmatrix-harness/tools"
@@ -22,6 +23,7 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/code"
 	"github.com/mhersson/contextmatrix-architect/internal/export"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
+	"github.com/mhersson/contextmatrix-architect/internal/research"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
@@ -86,6 +88,10 @@ type StartInput struct {
 	MCPAPIKey string
 	// GitCredentialsToken is the bearer CM mints repository credentials for.
 	GitCredentialsToken string
+	// SearchProvider and SearchAPIKey are the session's research settings;
+	// an empty provider means research is off.
+	SearchProvider string
+	SearchAPIKey   string
 }
 
 // Runner runs one stage. internal/stage implements it; tests fake it.
@@ -149,6 +155,11 @@ type Options struct {
 	// disables cm stages: such a stage then fails with a clear error before
 	// any checkout.
 	CMTools func(ctx context.Context, mcpAPIKey, tag string) ([]tools.Tool, func(), error)
+	// Search builds a session's search provider from its research settings,
+	// and Fetch reads the pages web_fetch is given. Either nil leaves
+	// research off for every session.
+	Search func(provider, apiKey string) (research.Searcher, error)
+	Fetch  research.PageFetcher
 	// ExportDir is where export bundles are written, one directory per
 	// blueprint and time; empty refuses export.
 	ExportDir string
@@ -168,17 +179,24 @@ type Options struct {
 // session is an attached CM session: the provisioned endpoint, model and
 // keys, and the audit writer that masks the session's secrets.
 type session struct {
-	endpoint protocol.LLMEndpoint
-	model    string
-	price    *protocol.ModelPrice
-	mcpKey   string
-	gitToken string
+	endpoint  protocol.LLMEndpoint
+	model     string
+	price     *protocol.ModelPrice
+	mcpKey    string
+	gitToken  string
+	searchKey string
+	// searcher is the session's search provider: nil when research is off,
+	// and researchOff then says why.
+	searcher    research.Searcher
+	researchOff string
+	// offNoted is set once the session has said research is off.
+	offNoted atomic.Bool
 	audit    audit
 }
 
 // secrets are the session's secrets, masked in every record and tool result.
 func (s *session) secrets() []string {
-	return []string{s.endpoint.APIKey, s.mcpKey, s.gitToken}
+	return []string{s.endpoint.APIKey, s.mcpKey, s.gitToken, s.searchKey}
 }
 
 // run holds a blueprint's run slot: a run in flight, or a caller deciding
@@ -280,9 +298,10 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 
 	sess := &session{
 		endpoint: in.Endpoint, model: in.Model, price: in.Price,
-		mcpKey: in.MCPAPIKey, gitToken: in.GitCredentialsToken,
+		mcpKey: in.MCPAPIKey, gitToken: in.GitCredentialsToken, searchKey: in.SearchAPIKey,
 	}
 	sess.audit = c.newAudit(sess.secrets()...)
+	sess.searcher, sess.researchOff = c.sessionResearch(in, sess.audit)
 
 	bp, err := c.openBlueprint(ctx, in, sess.audit)
 	if err != nil {

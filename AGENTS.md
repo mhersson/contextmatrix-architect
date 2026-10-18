@@ -13,10 +13,10 @@ specification and must stay true at HEAD.
 
 - Never runs cards, never writes code. Reads code through disposable
   read-only checkouts.
-- Holds no secret but the backend HMAC key. The LLM endpoint, MCP key and
-  git-credentials token arrive in every session start from CM and live in
-  memory only. There is no CM-less mode.
-- Every action is logged: full transcripts and an append-only event log.
+- Holds no secret but the backend HMAC key. The LLM endpoint, MCP key,
+  git-credentials token and search key arrive in every session start from CM
+  and live in memory only. There is no CM-less mode.
+- Every action is logged: full transcripts (less web search result lists) and an append-only event log.
   The append-only tables (events, transcripts, artifacts, gates, emissions, questions) are never updated
   or deleted.
 
@@ -27,10 +27,11 @@ specification and must stay true at HEAD.
 - `internal/config` - koanf config: file, then `CONTEXTMATRIX_ARCHITECT_*` env.
 - `internal/webhook` - CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export and gate commands that `internal/blueprint` recognises; serves the blueprint view, artifacts and live stream.
 - `internal/export` - renders a blueprint's stored record as a markdown bundle in the state directory.
-- `internal/blueprint` - controller: blueprint state machine, stage chaining, responder policies and the gate reply, the auto responder, gates at any stage and their folding, reviewer rounds, code stage preparation, the readiness loop, reply handling (answers, the need, notes delivered to later runs), abort and export, numbered questions, assumptions, events, sign-off, emission and the run watch, the blueprint view and the runs in flight, and the live stream of views and drafts.
-- `internal/stage` - one harness run: persona + instructions + the ask_human and submit_artifact tools, plus per-run tool sets (the code tools and `repo_info`), submit validation, and the draft of the artifact body as it streams.
+- `internal/blueprint` - controller: blueprint state machine, stage chaining, responder policies and the gate reply, the auto responder, gates at any stage and their folding, reviewer rounds, code stage preparation, the readiness loop, reply handling (answers, the need, notes delivered to later runs), abort and export, numbered questions, assumptions, events, sign-off, emission and the run watch, the blueprint view and the runs in flight, the live stream of views and drafts, the research tools for research stages, their ledger and the guard's terms, and the research-off notice.
+- `internal/stage` - one harness run: persona + instructions + the ask_human and submit_artifact tools, plus per-run tool sets (the code tools and `repo_info`), submit validation, and the draft of the artifact body as it streams, and transient tool results kept out of the record.
 - `internal/pack` - pipeline packs: stages, personas, instructions, lists.yaml and card.md; the default pack is embedded.
-- `internal/code` - read-only mirrors and per-blueprint trees for the code stages; repo facts.
+- `internal/code` - read-only mirrors and per-blueprint trees for the code stages; repo facts; the names a checkout declares, for the leak guard.
+- `internal/research` - web research: the `web_search` and `web_fetch` tools, the leak guard that refuses code-shaped and project-specific text in search queries and URLs, the fetcher that reads public pages only, as readable text, and the search provider (Brave).
 - `internal/cm` - MCP client to ContextMatrix: list_projects, the read-only `cm_` tools stage runs get, and typed card, playbook and run calls.
 - `internal/contract` - the card contract: lists data and the mechanical checks.
 - `internal/store` - SQLite: blueprints, stage runs, artifacts, transcripts, events, sources, gates, emissions, questions.
