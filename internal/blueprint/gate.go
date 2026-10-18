@@ -222,8 +222,8 @@ func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Bluep
 }
 
 // allAuto reports whether stageID and every stage folded into its gate are
-// under the auto policy now: a folded gate stays a human's while any stage
-// it judges is.
+// under the auto gate policy now: a folded gate stays a human's while any
+// stage it judges has a human gate policy.
 func (c *Controller) allAuto(ctx context.Context, bp store.Blueprint, stageID string, folded []store.Artifact) (bool, error) {
 	stages := []string{stageID}
 	for _, f := range folded {
@@ -231,7 +231,7 @@ func (c *Controller) allAuto(ctx context.Context, bp store.Blueprint, stageID st
 	}
 
 	for _, id := range stages {
-		policy, err := c.policy(ctx, bp, id)
+		policy, err := c.gatePolicy(ctx, bp, id)
 		if err != nil {
 			return false, err
 		}

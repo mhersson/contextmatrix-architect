@@ -77,7 +77,8 @@ type record struct {
 	// when none waits.
 	round      int
 	roundStage string
-	policies   map[string]string
+	// policies is each stage's gate policy, its question policy when it has no gate.
+	policies map[string]string
 }
 
 // View is where blueprint id stands: the pipeline's steps, the run in
@@ -191,7 +192,7 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 	}
 
 	for _, st := range c.opts.Pack.Stages {
-		if rec.policies[st.ID], err = c.resolvePolicy(bp, replies, st.ID); err != nil {
+		if rec.policies[st.ID], err = c.resolvePolicy(bp, replies, st.ID, true); err != nil {
 			return record{}, err
 		}
 	}

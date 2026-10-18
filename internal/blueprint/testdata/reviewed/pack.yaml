@@ -1,0 +1,14 @@
+name: reviewed
+version: "1"
+stages:
+  - id: intake
+    persona: product_owner
+    produces: need
+    policy: human
+    gate: true
+    gate_policy: auto
+    reviewer: {persona: system_designer, threshold: 4}
+  - id: plan
+    persona: senior_developer
+    produces: plan
+    consumes: [intake]

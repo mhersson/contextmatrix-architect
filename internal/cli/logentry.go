@@ -855,10 +855,16 @@ func gatePlanText(p map[string]any) string {
 	b.WriteString("**Gate plan.** Who answers each stage's questions and decides its gate:")
 
 	for _, s := range anyMaps(p["stages"]) {
-		fmt.Fprintf(&b, "\n- %s: %s", pack.StageName(str(s["stage"])), str(s["policy"]))
+		policy := str(s["policy"])
+
+		fmt.Fprintf(&b, "\n- %s: %s", pack.StageName(str(s["stage"])), policy)
 
 		if gate, _ := s["gate"].(bool); gate {
-			b.WriteString(", with a gate")
+			if gp := str(s["gate_policy"]); gp != "" && gp != policy {
+				fmt.Fprintf(&b, "; its gate is %s", gp)
+			} else {
+				b.WriteString(", with a gate")
+			}
 
 			if into := str(s["folds_into"]); into != "" {
 				limit, unit := num(s["fold_max"]), "entries"
@@ -866,7 +872,7 @@ func gatePlanText(p map[string]any) string {
 					unit = "entry"
 				}
 
-				fmt.Fprintf(&b, " that folds into %s's gate when both stages have the same policy and its %s has at most %.0f %s", pack.StageName(into), str(s["fold_field"]), limit, unit)
+				fmt.Fprintf(&b, " that folds into %s's gate when both stages have the same gate policy and its %s has at most %.0f %s", pack.StageName(into), str(s["fold_field"]), limit, unit)
 			}
 		}
 	}

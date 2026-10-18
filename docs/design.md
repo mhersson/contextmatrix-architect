@@ -304,7 +304,7 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
 
 - Intake states the shape it expects (slices, projects involved). When its
   run completes, the controller posts the gate plan: who answers each
-  stage's questions and decides its gate, for a gate that folds the gate
+  stage's questions and who decides its gate, for a gate that folds the gate
   it folds into and when, and the `gate <stage> human|auto` reply that
   changes it, so the operator can change a policy before solution design
   spends anything.
@@ -332,7 +332,7 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   not decode (`criteria_unreadable`) or defines no criterion
   (`criteria_empty`) is a contract finding, not a stalled run.
 - A gate folds when the pack's condition on its artifact holds and the gate
-  it folds into has the same policy: the slicing gate folds into the
+  it folds into has the same gate policy: the slicing gate folds into the
   solution design gate when there is exactly one slice. Folding is decided
   by the artifact, never by an estimate of size, and is recorded as a `fold`
   decision when the pipeline passes slicing, so a later policy change cannot
@@ -346,8 +346,8 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   it again and records the design version it replaces as `superseded`, an
   audit row that decides nothing. The folded gate shows slicing's artifact
   and refers to the design on the sheet, as every gate does, and it
-  waits for a human while either stage's policy is human; it approves both
-  on its own only when both are auto.
+  waits for a human while either stage's gate policy is human; it approves
+  both on its own only when both gate policies are auto.
 - Reviewer runs are declared on every gated stage in the pack and skipped
   when its gate folds. The default pack declares them for slicing, solution
   design and acceptance; readiness is decomposition's reviewer and gets
@@ -375,8 +375,9 @@ A pack is a directory:
 
 ```
 pack.yaml          stage order; per stage: persona, consumes,
-                   produces, tools, checks, the responder policy for its questions and
-                   gate (human, or auto by default), the gate, its fold condition, the
+                   produces, tools, checks, the responder policy for its questions
+                   (human, or auto by default) and for its gate (`gate_policy`,
+                   the same by default), the gate, its fold condition, the
                    reviewer's persona and threshold, the auto responder's question cap, loop target
                    and rounds
 personas/*.md      role text, one file per persona
@@ -402,8 +403,9 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
   pack from before version 0.5 with `gate: questions`.
 - No include mechanism. Each file stands alone; shared text is duplicated. If
   that hurts, build-time expansion comes later.
-- A stage's responder policy comes from the pack; the mode and the
-  blueprint's `gate` replies override it (see Interaction).
+- A stage's responder policies, for its questions and its gate, come from
+  the pack; the mode and the blueprint's `gate` replies override both (see
+  Interaction).
 - A lesson that extends a list lands as a pack overlay stored in SQLite and
   applied at load time, so a lesson never needs a code change.
 - Pack prose is never tested. Tests check only that a pack parses and that
@@ -547,12 +549,14 @@ round. The model-judged rows are the readiness stage.
 
 ## Interaction
 
-Every stage has one responder policy for its questions and its gate. It
-resolves, first match winning, from the blueprint's latest
-`gate <stage> human|auto` reply, then the mode (every mode but default
-makes it `auto`), then the pack. A stage that declares the `assumptions`
-check records what it decides itself as data, and every responder answer is
-recorded as an assumption; only these reach the sign-off and the cards.
+Every stage has a responder policy for its questions and one for its gate.
+Both resolve, first match winning, from the blueprint's latest
+`gate <stage> human|auto` reply, which sets both, then the mode (every mode
+but default makes both `auto`), then the pack: the stage's `policy` for its
+questions, and its `gate_policy` for its gate, which defaults to `policy`.
+A stage that declares the `assumptions` check records what it decides
+itself as data, and every responder answer is recorded as an assumption;
+only these reach the sign-off and the cards.
 
 | Policy  | Questions                                                                                   | Gates                                                                 |
 | ------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -895,9 +899,9 @@ frames on the session's chat stream.
 
 - **View.** `View` builds it from the store and what is in flight: one step
   per pack stage, plus `signoff` and `emission` when the pack checks cards.
-  Each step carries its persona, gate, policy, fold target, status
-  (pending, running, reviewing, revising, waiting, done, failed, folded or
-  skipped), attempt, a loop stage's round of its maximum, latest version
+  Each step carries its persona, gate, policy (the gate policy for a gated
+  stage), fold target, status (pending, running, reviewing, revising,
+  waiting, done, failed, folded or skipped), attempt, a loop stage's round of its maximum, latest version
   and cost. The view also carries the run in flight (stage, kind, persona,
   model, start, and the turns, tool calls and tokens its harness lines have
   counted), the open prompt (`round:<n>` of kind `round`,

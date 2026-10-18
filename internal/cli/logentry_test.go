@@ -89,6 +89,9 @@ func TestLogEntryFor(t *testing.T) {
 			},
 			"signoff": "human",
 		}}, "text", []string{"Intake: human", "Shape: auto", "Solution design", "gate <stage> human", "gate <stage> auto"}, false},
+		{"gate plan with a gate of its own policy", blueprint.Event{Kind: blueprint.EventGatePlan, BlueprintID: "S1", Payload: map[string]any{
+			"stages": []any{map[string]any{"stage": "intake", "policy": "human", "gate": true, "gate_policy": "auto"}},
+		}}, "text", []string{"Intake: human; its gate is auto"}, false},
 		{"setup gaps", blueprint.Event{Kind: blueprint.EventSetupGaps, BlueprintID: "S1", Payload: map[string]any{"projects": []any{
 			map[string]any{"project": "alpha", "has_verify": false, "has_instruction_file": false, "empty": true},
 			map[string]any{"project": "beta", "has_verify": true, "has_instruction_file": false, "empty": false},

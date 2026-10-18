@@ -63,7 +63,7 @@ const (
 
 // Fold lets a gate fold into the next gated stage's gate: when the stage's
 // data array Field holds at most Max entries and both gates have the same
-// policy, the next gate and its reviewer judge both artifacts.
+// gate policy, the next gate and its reviewer judge both artifacts.
 type Fold struct {
 	Field string `yaml:"field"`
 	Max   int    `yaml:"max"`
@@ -83,15 +83,19 @@ type Stage struct {
 	ID       string `yaml:"id"`
 	Persona  string `yaml:"persona"`
 	Produces string `yaml:"produces"`
-	// Policy is who answers the stage's questions and decides its gate,
-	// "human" or "auto"; a model stage without one is auto. The mode and the
-	// blueprint's gate replies override it.
+	// Policy is who answers the stage's questions, "human" or "auto", and
+	// decides its gate unless GatePolicy says otherwise; a model stage
+	// without one is auto. The mode and the blueprint's gate replies
+	// override both.
 	Policy string `yaml:"policy"`
 	// Gate stops the pipeline after the stage for approve or reject. A gated
 	// stage declares a Reviewer and may fold into the next gate.
-	Gate     bool      `yaml:"gate"`
-	Fold     *Fold     `yaml:"fold"`
-	Reviewer *Reviewer `yaml:"reviewer"`
+	Gate bool `yaml:"gate"`
+	// GatePolicy is who decides the gate, "human" or "auto". It defaults to
+	// Policy, so only a stage whose gate differs from its questions sets it.
+	GatePolicy string    `yaml:"gate_policy"`
+	Fold       *Fold     `yaml:"fold"`
+	Reviewer   *Reviewer `yaml:"reviewer"`
 	// MaxQuestions caps the questions one attempt of the stage may ask, its
 	// builder rounds included; 0 is no cap.
 	MaxQuestions int `yaml:"max_questions"`
@@ -181,6 +185,10 @@ func load(fsys fs.FS) (*Pack, error) {
 
 		if s.Policy == "" {
 			s.Policy = PolicyAuto
+		}
+
+		if s.Gate && s.GatePolicy == "" {
+			s.GatePolicy = s.Policy
 		}
 
 		seen[s.ID] = *s
@@ -397,6 +405,16 @@ func validateDialog(s Stage) error {
 	case "", PolicyHuman, PolicyAuto:
 	default:
 		return fmt.Errorf("pack: stage %q: unknown policy %q", s.ID, s.Policy)
+	}
+
+	switch s.GatePolicy {
+	case "", PolicyHuman, PolicyAuto:
+	default:
+		return fmt.Errorf("pack: stage %q: unknown gate_policy %q", s.ID, s.GatePolicy)
+	}
+
+	if s.GatePolicy != "" && !s.Gate {
+		return fmt.Errorf("pack: stage %q has a gate_policy but no gate", s.ID)
 	}
 
 	if s.MaxQuestions < 0 {
