@@ -27,14 +27,20 @@ const (
 	EventCreated      = "blueprint_created"
 	EventReopened     = "blueprint_reopened"
 	EventStageStarted = "stage_started"
-	EventQuestion     = "question"
-	EventAnswer       = "answer"
-	EventArtifact     = "artifact"
-	EventStageEnded   = "stage_ended"
-	EventNote         = "note"
-	EventAborted      = "aborted"
-	EventExported     = "exported"
-	EventError        = "error"
+	// EventQuestion is a question asked alone, in a record from before rounds;
+	// question numbers continue after them.
+	EventQuestion = "question"
+	EventAnswer   = "answer"
+	// EventRound is one snapshot of a question round, the whole round each
+	// time: as posted, after answers, chat or a revision, and when closed.
+	// The newest snapshot of a round number is the round.
+	EventRound      = "round"
+	EventArtifact   = "artifact"
+	EventStageEnded = "stage_ended"
+	EventNote       = "note"
+	EventAborted    = "aborted"
+	EventExported   = "exported"
+	EventError      = "error"
 	// EventAwaitInput says a stopped emission or run start waits for
 	// approve; the payload carries stage signoff and the prompt to show.
 	EventAwaitInput = "await_input"
@@ -94,10 +100,6 @@ const (
 	// EventReview is a reviewer's verdict on a stage's artifact: the score,
 	// the threshold that passes, the findings and the round.
 	EventReview = "review"
-	// EventReshow publishes an open question again after a reply CM's panel
-	// took as its answer but the architect took as a command. The payload
-	// carries the original event's kind and payload.
-	EventReshow = "reshow"
 	// EventDecided records a decision at a stage's gate or the sign-off, by a
 	// human or the auto policy, or a stage's fold into a later gate.
 	EventDecided = "decided"

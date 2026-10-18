@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -93,6 +94,30 @@ func (l researchLedger) Page(ctx context.Context, page research.Page) (string, e
 	}
 
 	return src.Tag(), nil
+}
+
+// sourceTitles maps the tag of every page web_fetch read to the page's
+// title, from the research events that recorded the reads.
+func (c *Controller) sourceTitles(ctx context.Context, id string) (map[string]string, error) {
+	events, err := c.opts.Store.ListEventsOfKind(ctx, id, EventResearch)
+	if err != nil {
+		return nil, fmt.Errorf("blueprint: read the research events: %w", err)
+	}
+
+	out := map[string]string{}
+
+	for _, e := range events {
+		var p struct {
+			Tag   string `json:"tag"`
+			Title string `json:"title"`
+		}
+
+		if json.Unmarshal(e.Payload, &p) == nil && p.Tag != "" && p.Title != "" {
+			out[p.Tag] = p.Title
+		}
+	}
+
+	return out, nil
 }
 
 // researchGuard is the leak guard of one run of stageID. It reads its
@@ -190,7 +215,7 @@ const (
 		"Research a question with real alternatives before you ask it. Cite and quote only pages you fetched, never a search result or its snippet. " +
 		"Search result lists are not kept after this run; the pages you fetch are, so fetch what you will cite before you ask. " +
 		"Queries use plain words and technology names: the leak guard refuses paths, file names, code, the project's own identifiers and names, and card ids.\n\n"
-	researchOffTask = "Research is off for this session: there are no web tools, so options rest on your own knowledge; say so instead of citing a web source.\n\n"
+	researchOffTask = "Research is off for this session: there are no web tools, so options rest on your own knowledge and the code; say so instead of citing a web source.\n\n"
 )
 
 // sessionResearch is the search provider a start's research settings name,

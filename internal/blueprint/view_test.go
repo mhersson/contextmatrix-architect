@@ -254,26 +254,6 @@ func TestView_States(t *testing.T) {
 		check func(t *testing.T, v protocol.BlueprintView)
 	}{
 		{
-			name: "asking",
-			setup: func(t *testing.T, c *Controller, st *store.Store) {
-				flying(t, c, st, "intake", store.RunKindStage, 1)
-
-				c.mu.Lock()
-				c.runs[viewID] = &run{answer: make(chan reply, 1), question: 4, stage: "intake"}
-				c.mu.Unlock()
-				t.Cleanup(func() { c.mu.Lock(); delete(c.runs, viewID); c.mu.Unlock() })
-			},
-			check: func(t *testing.T, v protocol.BlueprintView) {
-				assert.Equal(t, stepWaiting, stepOf(t, v, "intake").Status)
-				assert.Equal(t, stepPending, stepOf(t, v, "slicing").Status)
-				assert.Equal(t, &protocol.OpenPrompt{PromptID: "Q4", Kind: promptQuestion}, v.Open)
-				require.NotNil(t, v.Current)
-				assert.Equal(t, "intake", v.Current.Stage)
-				assert.Equal(t, store.RunKindStage, v.Current.Kind)
-				assert.Equal(t, "product_owner", v.Current.Persona)
-			},
-		},
-		{
 			name: "at gate",
 			setup: func(t *testing.T, c *Controller, st *store.Store) {
 				through(t, c, st, "intake")

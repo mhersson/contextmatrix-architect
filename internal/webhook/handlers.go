@@ -140,15 +140,21 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
-	switch name, args := blueprint.ParseCommand(p.Content); name {
-	case blueprint.CommandAbort:
-		err = s.ctl.Abort(ctx, p.SessionID, p.MessageID)
-	case blueprint.CommandExport:
-		err = s.ctl.Export(ctx, p.SessionID, p.MessageID)
-	case blueprint.CommandGate:
-		err = s.ctl.SetPolicy(ctx, p.SessionID, args[0], args[1], p.MessageID)
-	default:
-		err = s.ctl.Message(ctx, p.SessionID, p.Content, p.MessageID)
+	if p.Round != nil {
+		// Content is only the readable summary of a structured reply; it is
+		// never parsed as a command.
+		err = s.ctl.Reply(ctx, p.SessionID, *p.Round, p.MessageID)
+	} else {
+		switch name, args := blueprint.ParseCommand(p.Content); name {
+		case blueprint.CommandAbort:
+			err = s.ctl.Abort(ctx, p.SessionID, p.MessageID)
+		case blueprint.CommandExport:
+			err = s.ctl.Export(ctx, p.SessionID, p.MessageID)
+		case blueprint.CommandGate:
+			err = s.ctl.SetPolicy(ctx, p.SessionID, args[0], args[1], p.MessageID)
+		default:
+			err = s.ctl.Message(ctx, p.SessionID, p.Content, p.MessageID)
+		}
 	}
 
 	switch {

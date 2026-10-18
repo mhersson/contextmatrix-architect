@@ -50,8 +50,8 @@ const (
 
 // Open prompt kinds, as the prompts themselves name them.
 const (
-	promptQuestion = "question"
-	promptGate     = "gate"
+	promptGate  = "gate"
+	promptRound = "round"
 )
 
 // record is what one view is built from: the blueprint's stored record,
@@ -73,11 +73,11 @@ type record struct {
 	pos      outcome
 	last     store.Run
 	flights  []flightView
-	// question is the open question's number and asking its stage; 0 and ""
-	// when none is open.
-	question int
-	asking   string
-	policies map[string]string
+	// round is the open round's number and roundStage its stage; 0 and ""
+	// when none waits.
+	round      int
+	roundStage string
+	policies   map[string]string
 }
 
 // View is where blueprint id stands: the pipeline's steps, the run in
@@ -204,11 +204,14 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 		rec.pos, rec.last = outcome{}, store.Run{}
 	}
 
-	c.mu.Lock()
-	if r := c.runs[bp.ID]; r != nil && r.answer != nil {
-		rec.question, rec.asking = r.question, r.stage
+	place, found, err := c.roundAt(ctx, bp.ID)
+	if err != nil {
+		return record{}, err
 	}
-	c.mu.Unlock()
+
+	if found && !place.state.Frame.Closed {
+		rec.round, rec.roundStage = place.state.Number, place.state.Frame.Stage
+	}
 
 	return rec, nil
 }
@@ -496,7 +499,7 @@ func (c *Controller) currentIndex(rec record) int {
 
 // stageStatus is the state of pack stage st at index i: done or folded
 // behind the current stage, pending after it, and at it what its live run,
-// open question, gate or last run says.
+// open round, gate or last run says.
 func (rec record) stageStatus(st pack.Stage, i, current int) string {
 	switch {
 	case current < 0 || i > current:
@@ -509,10 +512,6 @@ func (rec record) stageStatus(st pack.Stage, i, current int) string {
 		return stepDone
 	}
 
-	if rec.question > 0 && rec.asking == st.ID {
-		return stepWaiting
-	}
-
 	if f, ok := rec.flightOf(st.ID); ok {
 		switch {
 		case f.kind == store.RunKindReviewer:
@@ -522,6 +521,10 @@ func (rec record) stageStatus(st pack.Stage, i, current int) string {
 		default:
 			return stepRunning
 		}
+	}
+
+	if rec.round > 0 && rec.roundStage == st.ID {
+		return stepWaiting
 	}
 
 	switch {
@@ -640,17 +643,17 @@ func (rec record) current() *protocol.CurrentRun {
 	}
 }
 
-// open is the prompt that waits for the operator: the open question, a
-// shown gate or the shown sign-off, undecided, or a stopped emission or run
-// start, which approve resumes.
+// open is the prompt that waits for the operator: the open round, a shown
+// gate or the shown sign-off, undecided, or a stopped emission or run start,
+// which approve resumes.
 func (rec record) open() *protocol.OpenPrompt {
 	if rec.waitsToResume() {
 		return &protocol.OpenPrompt{PromptID: fmt.Sprintf("emission:v%d", signoffVersion(*rec.resume)), Kind: promptGate}
 	}
 
 	switch {
-	case rec.question > 0:
-		return &protocol.OpenPrompt{PromptID: fmt.Sprintf("Q%d", rec.question), Kind: promptQuestion}
+	case rec.round > 0:
+		return &protocol.OpenPrompt{PromptID: roundPromptID(rec.round), Kind: promptRound}
 	case rec.pos.gate && !rec.pos.critique && rec.shown[rec.pos.stage][rec.pos.art.Version]:
 		return &protocol.OpenPrompt{PromptID: fmt.Sprintf("gate:%s:v%d", rec.pos.stage, rec.pos.art.Version), Kind: promptGate}
 	case rec.pos.end && rec.pos.ready && rec.signoffRecorded(rec.pos.art.Version):

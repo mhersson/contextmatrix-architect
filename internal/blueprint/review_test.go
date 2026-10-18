@@ -163,7 +163,7 @@ func TestReview_AHumanGateShowsTheVerdict(t *testing.T) {
 	assert.Contains(t, judged[0].Task, "# Shape", "the reviewer judges the artifact")
 	assert.Contains(t, judged[0].Task, "# Need", "with the stage's inputs")
 	assert.Nil(t, judged[0].History, "never the builder's transcript")
-	assert.Nil(t, judged[0].Asker)
+	assert.Nil(t, judged[0].Interviewer)
 	assert.Equal(t, c.opts.Pack.Persona("reviewer"), judged[0].Persona)
 	assert.Equal(t, c.opts.Pack.ReviewInstructions(), judged[0].Instructions)
 	assert.Empty(t, judged[0].Tools, "a reviewer gets no tools")
@@ -910,7 +910,7 @@ func TestReview_ACritiqueWithoutAReviewerFailsTheBlueprint(t *testing.T) {
 			bp, err := st.GetBlueprint(ctx, "BP1")
 			require.NoError(t, err)
 
-			assert.False(t, c.critique(ctx, &run{}, &session{audit: c.newAudit()}, bp, stageID))
+			assert.Equal(t, stageStopped, c.critique(ctx, &run{}, &session{audit: c.newAudit()}, bp, stageID))
 			assert.True(t, rec.has(EventError))
 			assert.Equal(t, string(StateFailed), stateOf(t, st, "BP1"))
 			assert.Zero(t, runner.calls())
@@ -924,9 +924,11 @@ func TestReview_TheReviewerGetsTheAnswersAndTheGateFeedback(t *testing.T) {
 	script := gatedScript()
 	script["shape"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
 		if shapes.Add(1) == 1 {
-			if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Which store?"}); err != nil {
+			if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Store", "Which store?")}}); err != nil {
 				return stage.Output{}, err
 			}
+
+			return askedOutput(in), nil
 		}
 
 		return done("# Shape", nil), nil
@@ -936,8 +938,8 @@ func TestReview_TheReviewerGetsTheAnswersAndTheGateFeedback(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
-	require.NoError(t, c.Message(ctx, "BP1", "keep it in Postgres", "m2"))
+	c.Wait("BP1")
+	answerRound(t, c, "BP1", 1, true, own(1, "keep it in Postgres"))
 	c.Wait("BP1")
 	require.True(t, rec.has(EventGate))
 
@@ -951,126 +953,6 @@ func TestReview_TheReviewerGetsTheAnswersAndTheGateFeedback(t *testing.T) {
 	assert.Contains(t, judged[1].Task, "name the owner", "the feedback the attempt addresses")
 }
 
-func TestReview_ARoundRunAgainGetsTheAnswersOfTheRoundCutShort(t *testing.T) {
-	var shapes atomic.Int32
-
-	answered := make(chan struct{})
-
-	script := gatedScript()
-	script["shape.review"] = reviews(2, 5)
-	script["shape"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		if shapes.Add(1) == 2 {
-			if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Which store?"}); err != nil {
-				return stage.Output{}, err
-			}
-
-			close(answered)
-			<-ctx.Done()
-
-			return stage.Output{}, ctx.Err()
-		}
-
-		return done("# Shape", nil), nil
-	}
-
-	c, _, runner, rec := newGated(t, script)
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
-	require.NoError(t, c.Message(ctx, "BP1", "keep it in Postgres", "m2"))
-	signalled(t, answered)
-	require.NoError(t, c.Abort(ctx, "BP1", "m3"))
-	c.Wait("BP1")
-
-	require.NoError(t, c.Message(ctx, "BP1", "go on", "m4"))
-	c.Wait("BP1")
-
-	rounds := inputsOf(runner, "shape")
-	require.Len(t, rounds, 3)
-	assert.NotEmpty(t, rounds[2].History, "the round resumes the conversation that built the artifact")
-	assert.Contains(t, rounds[2].Task, "keep it in Postgres", "with the answer that conversation never saw")
-	assert.True(t, rec.has(EventGate))
-}
-
-func TestReview_ARoundsQuestionLeftOpenComesBackBeforeTheRoundRunsAgain(t *testing.T) {
-	var shapes atomic.Int32
-
-	script := gatedScript()
-	script["shape.review"] = reviews(2, 5)
-	script["shape"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		if shapes.Add(1) == 2 {
-			_, err := in.Asker.Ask(ctx, stage.Question{Text: "Which store?"})
-
-			return stage.Output{}, err
-		}
-
-		return done("# Shape", nil), nil
-	}
-
-	c, _, runner, rec := newGated(t, script)
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
-	require.NoError(t, c.End(ctx, "BP1"))
-	c.Wait("BP1")
-
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	rec.waitFor(t, EventReshow)
-	require.NoError(t, c.Message(ctx, "BP1", "keep it in Postgres", "m2"))
-	c.Wait("BP1")
-
-	rounds := inputsOf(runner, "shape")
-	require.Len(t, rounds, 3)
-	assert.NotEmpty(t, rounds[2].History, "the round resumes the conversation that built the artifact")
-	assert.Contains(t, rounds[2].Task, "Which store?")
-	assert.Contains(t, rounds[2].Task, "keep it in Postgres", "with the answer to the question it left open")
-	assert.True(t, rec.has(EventGate))
-}
-
-func TestReview_TheQuestionCapCountsTheAttempt(t *testing.T) {
-	var shapes atomic.Int32
-
-	refused := make(chan error, 1)
-
-	script := gatedScript()
-	script["shape.review"] = reviews(2, 5)
-	script["shape"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		n := shapes.Add(1)
-		_, err := in.Asker.Ask(ctx, stage.Question{Text: fmt.Sprintf("Question %d?", n)})
-
-		switch {
-		case n == 2:
-			refused <- err
-		case err != nil:
-			return stage.Output{}, err
-		}
-
-		return done("# Shape", nil), nil
-	}
-
-	c, _, _, rec := newGated(t, script)
-	c.opts.Pack.Stages[1].MaxQuestions = 1
-
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
-	require.NoError(t, c.Message(ctx, "BP1", "Postgres", "m2"))
-
-	select {
-	case err := <-refused:
-		require.Error(t, err, "the builder round's question is past the attempt's cap")
-	case <-time.After(5 * time.Second):
-		t.Fatal("the builder round's question was put to the human")
-	}
-
-	c.Wait("BP1")
-	assert.Equal(t, 1, rec.count(EventQuestion))
-	assert.True(t, rec.has(EventGate))
-}
-
 func TestReview_ACompletedReviewLeavesTheBlueprintIdle(t *testing.T) {
 	c, st, _, _ := newGated(t, gatedScript())
 	ctx := context.Background()
@@ -1080,6 +962,6 @@ func TestReview_ACompletedReviewLeavesTheBlueprintIdle(t *testing.T) {
 	bp, err := st.GetBlueprint(ctx, "BP1")
 	require.NoError(t, err)
 
-	require.True(t, c.critique(ctx, &run{}, &session{audit: c.newAudit()}, bp, "shape"))
+	require.Equal(t, stageStored, c.critique(ctx, &run{}, &session{audit: c.newAudit()}, bp, "shape"))
 	assert.Equal(t, string(StateIdle), stateOf(t, st, "BP1"), "the step after the review sets its own state")
 }

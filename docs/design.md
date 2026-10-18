@@ -28,7 +28,8 @@ commit and an `approve`.
 | blueprint     | The product for one need: artifacts, decisions, cards and playbook order. Lands in CM as a playbook, or one card. |
 | stage         | One unit of AI work producing one artifact. Runs as one or more short harness runs.                 |
 | gate          | A decision point after a stage: approve, or reject with feedback.                                   |
-| question      | Something a stage cannot decide alone, raised through `ask_human`.                                  |
+| question      | Something a stage cannot decide alone, asked in a round.                                            |
+| round         | The questions a stage asks together, and its assumptions as the last tab: one tab each in the session, answered in one sitting or in batches, stored until every question has an answer and every assumption a decision. |
 | responder     | Who answers a question or decides a gate: a human in the CM session, or the AI (`auto`).            |
 | persona       | The role a run plays: product owner, system designer, senior developer, reviewer.                   |
 | pack          | A team's stages, personas, gate policies, checks and card template. Data, not code.                 |
@@ -66,7 +67,7 @@ Settled during design. Each has its reason so it is not re-litigated.
 | CM's chat panel is the only client                        | The architect implements CM's chat-backend protocol as a third backend kind, so CM's existing panel is where the need is stated, questions and gates are answered, and side operations (export, outcomes, lessons) are requested by reply. Same look and feel, session list, auth and browser for free. No UI, no CLI beyond `contextmatrix-architect serve` and the `config defaults` and `config validate` helpers contextmatrix-setup drives, no client API. |
 | One controller process                                    | `contextmatrix-architect serve` alone owns the store, the workspaces and the harness runs, and every session originates in CM. One record, one place code is checked out, no laptop copy of anything. |
 | Provisioned by CM, like the agent and chat backends      | Every blueprint is a CM session. The start payload delivers the LLM endpoint, the MCP key, the model, a git-credentials token and, when research is on, the search provider and its key. The architect's own config holds no secret but the backend HMAC key, and there is no CM-less mode. |
-| Questions block inside the run; no persisted resume       | Nobody walks away from a blueprint for days. A blocking `ask_human` keeps one transcript, and the prompt cache warm when the reply comes within the provider's cache lifetime. A crash re-runs the open stage from stored artifacts, a builder round from the transcript it resumed. |
+| Questions in stored rounds; a stage resumes its stored conversation | A big need takes a long interview, answered in one sitting or in batches over days. Posting a round ends the run, so nothing waits in memory and End, a reopen or a restart loses nothing; once every question has an answer and every assumption a decision the stage resumes the conversation that asked, with the answers as its next message, so the model keeps its reasoning, and the prompt cache is warm when the answer comes quickly. |
 | SQLite is the record; markdown is a rendering             | One store for artifacts, gates, transcripts, audit and cost. Committing per-stage markdown into code repos bloats them fast; an opt-in automatic export serves teams that review in pull requests. |
 | Everything is logged                                      | Every run's full transcript (less web search result lists) and an append-only event log. The append-only tables are never updated or deleted. The export is a complete audit record, less the web search result lists the next row keeps out. |
 | Search result lists are never stored                      | The search provider's terms forbid storing or caching results beyond transient use, and no storage rights are bought. The model sees a list in the run that searched; transcripts, events and exports keep the query and the result count. The pages `web_fetch` reads are the recorded sources, so a claim cites a page the architect read itself. A deliberate, permanent exception, with no switch to record lists. |
@@ -100,7 +101,9 @@ stage runner (internal/stage)       one harness.Run per round: persona + stage p
      |                   public addresses only
      |-- cm tools        read-only MCP reads for grounding and readiness:
      |                   cm_list_projects, cm_list_cards, cm_get_card, cm_get_playbook
-     |-- control tools   ask_human (blocking), submit_artifact (terminal)
+     |-- control tools   ask_questions (posts a round, ends the run),
+     |                   answer_chat (replies in a round's chat, ends the run),
+     |                   submit_artifact (terminal)
      |
 store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions, gates,
                                     transcripts, events, sources, ledger, emissions,
@@ -111,16 +114,25 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   adapter: `internal/webhook`, CM's chat-backend protocol. CM starts a session
   with a payload, the user's messages arrive on `/message`, events stream back
   as log entries over SSE and the panel renders them as messages and tool
-  calls. A question or gate a human answers is a text entry carrying a
-  prompt (`LogEntry.Prompt`): actions, each a label and the exact reply
-  text, which the panel shows as buttons, the markdown staying the readable
-  fallback. A question's prompt also carries its own text, the entry without
-  its option list and reply line, and the kind `question`; each option is an
-  action whose label and reply are the full option, the recommended one
-  flagged. A gate's, the sign-off's, a stopped emission's or a run start's
-  prompt carries the entry without its reply instruction as its text, and
-  the kind `gate`. A click sends the reply as an ordinary message, so the
+  calls. A gate a human answers is a text entry carrying a prompt
+  (`LogEntry.Prompt`): actions, each a label and the exact reply text, which
+  the panel shows as buttons, the markdown staying the readable fallback. A
+  gate's, the sign-off's, a stopped emission's or a run start's prompt
+  carries the entry without its reply instruction as its text, and the kind
+  `gate`. A click sends the reply as an ordinary message, so the
   architect's reply parsing is the same for a click and a typed answer.
+  A stage asks in rounds: a round is a text
+  entry whose prompt has the kind `round`, the id `round:<n>` and the round
+  itself (`LogPrompt.Round`: each question's number, title, text, why it
+  matters, options with summary, pros, cons and sources, the recommended
+  one, whether its stage researched (`research_off` set when it did not),
+  and the answers stored so far). It is published again with the same
+  id whenever it changes, closed once its stage resumes, and the panel
+  shows the newest frame. Its reply carries the answers
+  (`MessagePayload.Round`); the reply's content is only a readable summary,
+  never parsed as a command. A reply carries every answer the panel holds
+  and replaces per question, and a reply for a round that takes no answers
+  stores nothing and says so.
   Round 1 of each attempt of a stage run is a stage divider
   (`LogEntry.Marker` of kind `stage`, a system entry), and a stored
   artifact is a sheet reference (kind `artifact`, a text entry) to that
@@ -130,37 +142,65 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   until round 3. Reviewer verdicts and gate decisions stay prose entries.
   Each marker keeps a plain fallback line in `Content`, which a CM without
   markers shows instead.
-  Questions are `Q<n>`, gates `gate:<stage>:v<n>`, the sign-off
-  `gate:signoff:v<n>`, and a stopped emission or run start `emission:v<n>`.
-  An auto answer or a gate the auto policy approves never leaves a prompt
-  open, and the gate plan is plain text. The panel takes any later message
-  as a free-text prompt's answer, so after a reply the architect takes as a
-  command while a question is open (`export` or a gate reply), the question
-  is published again with the same id, text, kind and actions. A gate or the
-  sign-off stays open across a reply that matches none of its actions, so it
-  is never published again.
+  Rounds are `round:<n>` and their questions `Q<n>`, gates
+  `gate:<stage>:v<n>`, the sign-off `gate:signoff:v<n>`, and a stopped
+  emission or run start `emission:v<n>`.
+  A gate the auto policy approves never leaves a prompt open, and the gate
+  plan is plain text. A gate or the sign-off stays open across a reply that
+  matches none of its actions, so it is never published again.
 - **Every blueprint is a CM session, started by CM.** The start payload is the
   `ChatStartPayload` with its `architect` block: the architect takes its LLM
   endpoint (fail-closed, no local fallback), MCP key, model and
   git-credentials token, and ignores `resume` and the worker image. It reopens
   the blueprint by id and runs no container. An end-session call detaches the
-  client; the blueprint persists. A message that arrives after the need, while
-  no question is open, and that decides no open gate is logged as a note,
-  never dropped. Every model run that starts later, reviewer runs included,
-  gets every note so far in its task, with the stage that was open when it
-  came, except a bare `approve` or `reject`; a builder round that resumes a
+  client; the blueprint persists. A message that arrives after the need,
+  while no human's round waits (then it is chat about the round), and that
+  decides no open gate is logged as a note, never dropped. Every model run
+  that starts later, reviewer runs included, gets every note so far in its
+  task, with the stage that was open when it came, except a bare `approve`
+  or `reject`; a builder round that resumes a
   conversation gets the notes that conversation has not seen. Entries
   published before CM's consumer connects, or while it is reconnecting, are
   retained on the server and replayed to it once, ahead of live entries.
-- **A question blocks the run.** `ask_human` is an ordinary tool: under the
-  stage's `human` policy its execution waits until the attached client
-  answers, and the model's run continues with the answer as the tool result.
-  No model is running while a human thinks; the run is parked on a channel.
-  Under `auto` a responder run answers inside the tool call (see
-  Interaction), and its answer is the tool result.
+- **A round ends the run.** `ask_questions` stores the round, numbers it
+  `round:<n>` and its questions `Q<n>` after every question so far, shows it,
+  and ends the harness run with the status `asked`. No model runs and nothing waits in memory while a human thinks.
+  Answers sent in batches are stored as they come. Once every question has
+  an answer and every assumption on its tab a decision the round closes,
+  each answer and each accepted assumption is recorded in `questions`, and a
+  continuation runs: a stage run of the same attempt and builder round that
+  resumes the stored conversation of the run that asked, or of the chat run
+  that replied last, with the answers, the chat it has not answered and the
+  notes that conversation has not seen as its next message. It may ask a
+  follow-up round. Without that conversation a first build starts over in
+  its attempt, given every answered question, and a builder round is run
+  again by its critique. A message while a human's round waits is chat
+  about it: it is stored on the round, and a chat run, a stage run of the
+  same attempt and builder round, resumes the stored conversation with the
+  messages it has not seen and replies with `answer_chat`. It may revise a
+  question or add one; a question whose options change loses its answer,
+  and the others keep theirs. It may also replace the assumptions tab with
+  a non-empty list (an empty or non-list value is a tool error; leaving the key out keeps the tab); an
+  assumption whose text is unchanged keeps its label and its decision, and
+  a new one takes a label the round never issued. Messages
+  written while a chat run runs are answered by the next, and a round whose
+  last answer arrived meanwhile closes once it ends. The reply reaches the panel only in the round's
+  chat; the chat run's text and its `answer_chat` call stay in the record.
+  A chat run that fails or is aborted leaves its messages until the user
+  writes or answers again: the chat runs again, or the continuation of the
+  answered round gets them.
+  Under `auto` a responder run answers each question inside the asking run
+  (see Interaction), every assumption on the tab is accepted, the round is
+  shown answered and read-only, and the stage continues at once.
 - **A run ends on `submit_artifact`**, a terminal tool carrying the markdown
   body and the stage's structured yaml block. The controller stores the
-  artifact and the full transcript (less web search result lists).
+  artifact and the full transcript (less web search result lists). A run that
+  stops with text and no terminal call gets one follow-up run on its
+  conversation. That run is offered only the run's terminal tools and made to
+  call one (`tool_choice`, sent once more without it when the endpoint refuses
+  that with a 400), with two turns, so a refused submit gets one retry. The
+  ledger and the transcript cover both runs. If the follow-up also stops with
+  text, the run failed. Reviewer and responder runs get the same follow-up.
 - **Critique loop inside a stage.** On submit, the mechanical checks run
   inside the run: a failing submit is returned to the model as the tool
   result and it submits again. The third failing submit is accepted: cards
@@ -196,9 +236,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   reopening the blueprint's session re-runs the open stage from its inputs. A
   re-run is given the questions its stage already asked, their answers and who
   answered each (the user or the responder), so it does not ask them again. A
-  stage run is never resumed from the store; only a builder round after a
-  review, a low one's next round or a passing one's revision, resumes the
-  transcript of the run that built the artifact.
+  stage run is resumed from the store only as a continuation after a round;
+  a builder round after a review, a low one's next round or a passing one's
+  revision, resumes the transcript of the run that built the artifact.
 
 ## Data model
 
@@ -207,12 +247,12 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | Table         | Holds                                                                                                                        |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price as CM sent it                                        |
-| stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status, model, started, ended, cost, token buckets |
+| stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, findings, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
-| questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once, at the answer |
+| questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes (an assumption a human accepted on its tab included), or at the responder's answer under auto, or at the answer for one asked alone before rounds |
 | gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted, each web search result list replaced by its query and result count |
-| events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning; every change of the blueprint's state is a `state` row, stored and never sent to the panel; every web search and page read is a `research` event (the query and result count, the URL and source tag, or the rule that refused it), and a session that runs a research stage without research says so once in a `research_off` event |
+| events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning; every change of the blueprint's state is a `state` row, stored and never sent to the panel; every web search and page read is a `research` event (the query and result count, the URL and source tag, or the rule that refused it), and a session that runs a research stage without research says so once in a `research_off` event; a round is its `round` snapshots, the newest per round number winning |
 | sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage; a page `web_fetch` read is a `url` source versioned by the sha256 of its text, its title on its `research` event |
 | ledger        | per-run cost rows summed per blueprint                                                                                        |
 | emissions     | append-only: blueprint, kind (card, playbook, run), the draft card id, project, CM id, created at; one row per blueprint, kind and draft id |
@@ -245,9 +285,9 @@ developer (DEV), reviewer (REV).
 
 | #  | Stage           | Persona | Consumes          | Produces                                                                                              | Gate      |
 | -- | --------------- | ------- | ----------------- | ----------------------------------------------------------------------------------------------------- | --------- |
-| 1  | Intake          | PO      | the need          | need: problem, value, scope in and out, measurable outcomes, the expected shape                       | questions |
-| 2  | Slicing         | PO      | need              | slices, each delivering standalone value; one slice is fine                                           | yes; folds into 3 when there is one slice |
-| 3  | Solution design | SD      | need, slices      | per slice: projects involved, decisions with rejected options and their basis, cross-project contracts; asks a question for each decision with real alternatives, and reads the code, checking it out when no earlier stage has | yes       |
+| 1  | Intake          | PO      | the need          | need: problem, value, scope in and out, measurable outcomes, the expected shape, reading the code      | questions |
+| 2  | Slicing         | PO      | need              | slices, each delivering standalone value; one slice is fine; reads the code                             | yes; folds into 3 when there is one slice |
+| 3  | Solution design | SD      | need, slices      | per slice: projects involved, decisions with rejected options and their basis, cross-project contracts; asks a question for each decision with real alternatives; reads the code | yes       |
 | 4  | Grounding       | DEV     | design            | per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        |
 | 5  | Acceptance      | DEV     | design, grounding | per slice: criteria checkable inside one repo; human and live checks split into manual steps         | `auto` by default |
 | 6  | Decomposition   | DEV     | all above         | draft cards with type and priority, `depends_on` per project, manual entries for human and live checks, a playbook title and order, and the setup for a project without a verify command or instruction file | no        |
@@ -259,10 +299,14 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
 
 - Intake states the shape it expects (slices, projects involved). When its
   run completes, the controller posts the gate plan: who answers each
-  stage's questions and decides its gate, and the `gate <stage> human|auto`
-  reply that changes it, so the operator can change a policy before
-  solution design spends anything.
-- The first stage with the code tools, solution design in the default
+  stage's questions and decides its gate, for a gate that folds the gate
+  it folds into and when, and the `gate <stage> human|auto` reply that
+  changes it, so the operator can change a policy before solution design
+  spends anything.
+- Every stage that interviews (intake, slicing and solution design) reads the
+  code, so it states what the code answers as a finding and asks only what
+  neither the code nor the need settles.
+- The first stage with the code tools, intake in the default
   pack, ends by telling the session what each target project lacks for an
   agent run: a verify command in CM (read again then), an instruction file
   at the root, or any commit. None of it blocks. Decomposition plans it as
@@ -273,7 +317,8 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
 - Solution design's submit is checked: it has slices, every slice of slicing
   among them; every decision has a chosen option, a rejected option and a
   basis (`Q<n>`, `S<n>` or `assumption`); and every question it got answered
-  since the slicing it consumes was built is the basis of a decision; an
+  since the slicing it consumes was built is the basis of a decision or of a
+  stated assumption, an assumption accepted on a round's tab included; an
   answer from before a re-slice stays a basis it may cite.
 - Acceptance's submit is checked: it has slices, every slice of slicing
   among them and each with at least one criterion; every criterion has an
@@ -295,7 +340,7 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   again, and `reject slicing <feedback>` runs slicing and everything after
   it again and records the design version it replaces as `superseded`, an
   audit row that decides nothing. The folded gate shows slicing's artifact
-  and refers to the design posted above it, as every gate does, and it
+  and refers to the design on the sheet, as every gate does, and it
   waits for a human while either stage's policy is human; it approves both
   on its own only when both are auto.
 - Reviewer runs are declared on every gated stage in the pack and skipped
@@ -304,13 +349,13 @@ The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign
   none. A one-slice need costs nine runs: intake, slicing, solution design
   and its review, grounding, acceptance and its review, decomposition and
   readiness; up to eleven when both reviews pass with findings, each adding
-  a revision round.
-- In default mode a one-slice need touches the human at the questions of
-  intake (three at most per attempt), slicing (no cap) and solution design
-  (five at most per attempt, its builder rounds included), the solution
-  design gate with slicing folded into it, and the sign-off. A need that
-  slices into several gets slicing's own gate as well, without anyone
-  classifying it.
+  a revision round, plus one continuation run per question round and one
+  chat run per chat reply.
+- In default mode a one-slice need touches the human at the rounds of
+  intake, slicing and solution design (no limit when a human answers), the
+  solution design gate with slicing folded into it, and the sign-off. A
+  need that slices into several gets slicing's own gate as well, without
+  anyone classifying it.
 - A cross-project contract is copied into the cards on both sides of the
   boundary.
 - Human-only and live-environment checks become manual playbook entries, never
@@ -327,7 +372,7 @@ A pack is a directory:
 pack.yaml          stage order; per stage: persona, consumes,
                    produces, tools, checks, the responder policy for its questions and
                    gate (human, or auto by default), the gate, its fold condition, the
-                   reviewer's persona and threshold, the question cap, loop target
+                   reviewer's persona and threshold, the auto responder's question cap, loop target
                    and rounds
 personas/*.md      role text, one file per persona
 stages/*.md        instructions, one file per stage, review.md for every reviewer run and responder.md for every responder run
@@ -398,6 +443,7 @@ Verified against `contextmatrix-agent` at harness v0.25.0.
 - The task-skill menu reaches the coder, fix, document and specialist prompts,
   not the planner.
 - The root `AGENTS.md`, else `CLAUDE.md`, is injected verbatim into every phase.
+- A non-empty `## Solution` skips the HITL brainstorm.
 
 These facts are data in `lists.yaml` and must be re-verified on every agent
 release.
@@ -428,7 +474,7 @@ release.
 | ------------------- | ---------------------------------------------------------------------------------------------------------- |
 | Context             | Why, written into the card. For a bug, the root-cause hypothesis and its evidence.                          |
 | Where               | Files, functions and types in this repo, verified at a sha. For wiring changes, every call site.            |
-| Change              | The decided approach. Binding constraints are restated in the criteria, since nothing else reaches review. |
+| Solution            | The decided approach. Binding constraints are restated in the criteria, since nothing else reaches review. |
 | Acceptance criteria | Numbered. Each is a test or command checkable in the working tree.                                         |
 | Tests expected      | The test cases to write.                                                                                   |
 | Out of scope        | Explicit non-goals.                                                                                        |
@@ -505,8 +551,8 @@ recorded as an assumption; only these reach the sign-off and the cards.
 
 | Policy  | Questions                                                                                   | Gates                                                                 |
 | ------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `human` | Shown in the CM session as `Q<n>` with options, the recommended one marked; the run waits for the reply, which is recorded in `questions`. A stage asks at most its pack's `max_questions` per attempt, its builder rounds included; past it, and for an option the server would take as a command, `ask_human` returns an error and the stage decides. | Artifact shown with Approve and Reject; the reviewer's score is shown with it, and its findings in the review line just above; after a revision round the gate shows the revised version and says it was revised, with the version the reviewer scored. The reply, clicked or typed, is `approve` or `reject <feedback>`. |
-| `auto`  | A responder run answers. The answer is recorded as an `[assumption]` with responder `auto`. The same `max_questions` applies; past it, `ask_human` returns an error and the stage decides. | The reviewer's score decides: approved at or above the threshold, after one revision round when it lists findings; below it the builder takes another round with the findings, three reviewer rounds per attempt, then a human decides. |
+| `human` | Asked in rounds in the CM session, one tab per question as `Q<n>` with its options and the recommended one marked. The run ends on the round, which waits as long as it takes, batches of answers included; every answer is recorded in `questions` when the round closes, and the stage resumes from its conversation. There is no limit on a human's questions. | Artifact shown with Approve and Reject; the reviewer's score is shown with it, and its findings in the review line just above; after a revision round the gate shows the revised version and says it was revised, with the version the reviewer scored. The reply, clicked or typed, is `approve` or `reject <feedback>`. |
+| `auto`  | A responder run answers each question of the round inside the asking run, which then ends on the round; the stage continues at once with the answers. Each answer is recorded as an `[assumption]` with responder `auto`, and the round is shown read-only. `max_questions` caps the questions per attempt, its builder rounds included; a round past the cap is refused and the stage decides. | The reviewer's score decides: approved at or above the threshold, after one revision round when it lists findings; below it the builder takes another round with the findings, three reviewer rounds per attempt, then a human decides. |
 
 **The responder run** is a separate harness run with the persona of the
 stage that asks (the product owner for intake questions, the system designer
@@ -525,20 +571,32 @@ is recorded as an `assumed` assumption keyed by its question number
 listed only while no stated assumption rests on the answer (see below). The
 sign-off lists every assumption, riskiest first; the export and the playbook
 description list every assumption, so whoever reviews the result sees which
-decisions the AI made. A responder that fails, and a pack without
-`stages/responder.md`, leave the question to the stage, which decides and
-records an assumption where it can. On a priced model a responder spends
+decisions the AI made. A responder that fails leaves its question to the
+stage, which decides it and records an assumption where it can; under a pack
+without `stages/responder.md` an auto round is refused and the stage decides
+every question. On a priced model a responder spends
 from the asking run's cost cap.
 
-**Assumptions are data.** A stage that declares the `assumptions` check
-(intake and solution design) submits each assumption as a standalone
-sentence, or as `{"text": "<sentence>", "basis": "Q<n>"}` when it rests on
-an answered question. The check refuses a sentence that points at other text
-(the `dangling_references` list) or names an answered question (the basis
-carries the question and the sentence states the fact, so no model prose
-says who answered), and a basis that is no answered question; the third
-failing submit is accepted with its problems kept in its data, and a basis
-naming no answered question then reads as none. The controller numbers them
+**Assumptions are data.** Before it submits, a stage that declares the
+`assumptions` check (intake and solution design) posts its assumptions as
+the last tab of a round, labelled A1, A2, ... within the round; a chat that
+replaces the tab keeps an unchanged assumption's label and gives a new one
+a label the round never issued, so a decision the user made on a dropped
+assumption never lands on another. A human
+accepts each or turns it into a question: an accepted one is recorded as an
+answered question, `Q<n>`, which the stage states it with as its basis, so
+it reads `confirmed`; after one is turned into a question, a later round of
+the attempt must be posted before the stage may submit. Under the human policy
+every stated assumption must have a basis. Under `auto` each assumption is
+accepted automatically, logged on the round, and keeps the status its basis
+gives it, never `confirmed`. The stage submits each assumption as a
+standalone sentence, or as `{"text": "<sentence>", "basis": "Q<n>"}` when it
+rests on an answered question. The check refuses a sentence that points at
+other text (the `dangling_references` list) or names an answered question
+(the basis carries the question and the sentence states the fact, so no
+model prose says who answered), and a basis that is no answered question;
+the third failing submit is accepted with its problems kept in its data,
+and a basis naming no answered question then reads as none. The controller numbers them
 A1, A2, ... across those stages in pack order and gives every later stage
 that consumes a stating stage the list with the ids. An assumption starts
 with its basis's status: `confirmed` when a human answered the question,
@@ -599,10 +657,10 @@ starts are bounded by CM's per-card guardrails, not by the architect.
 
 | Group    | Tools                                                                                                   | Notes                                                                                                                                             |
 | -------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock the first time a run needs the trees: at the start of the first stage with the code tools (solution design), or earlier, at a research stage's first leak-guard check that needs them, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. A repository with no commits checks out as an empty tree with no sha. `repo_info` returns the sha, instruction file presence, the project's verify command, whether the repository is empty and, to the stage that fetched the tree, the default branch. |
+| code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock the first time a run needs the trees: at the start of the first stage with the code tools (intake), or earlier, at a research stage's first leak-guard check that needs them, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. A repository with no commits checks out as an empty tree with no sha. `repo_info` returns the sha, instruction file presence, the project's verify command, whether the repository is empty and, to the stage that fetched the tree, the default branch. |
 | research | `web_search`, `web_fetch` | Offered to the stages whose pack names the group (intake, slicing and solution design in the default pack) when the session's research settings name a provider the architect can build; otherwise the group is absent and the session says once, at the first such stage, that research is off. `web_search` asks the provider (Brave Search) for ten results: titles, URLs and snippets the model reads in that run only, since a run's stored messages keep only the query and the result count. `web_fetch` reads an http or https page from a public address: every connection's address is checked after the name resolves, redirects included (five at most), and no proxy is used; it reads at most 5 MiB in 20 seconds, keeps 48 KiB of text, turns HTML into readable text (the main or article element, without scripts, navigation or footers), takes text types as they are and refuses the rest. A page read is recorded as a `url` source and its result starts with the tag; a page with no readable text is a tool error, not a source. A leak guard checks every query and every URL's host labels, path and query and refuses, as a tool error naming the rule: a token with a path separator (acronym pairs like CI/CD and HTTP/1.1 pass) or a file extension (a `<name>.js` library passes), code punctuation (a URL path segment may carry a name's `(` or `=`, as in `Raft_(algorithm)`), a compound identifier the blueprint's checkouts declare (not a name of a package they depend on, and nothing in a lockfile), the root module path's owner or name (a nested module's compound name is a declared identifier), a target project's name or its repositories' owner or name, a ContextMatrix card id, and a query, or a URL path segment, query key or query value, over 160 characters; plain words and technology names pass. A URL's host labels get the name, module, identifier and card-id rules but not the shape rules, since a page can ask for a host that carries data; its path segments skip the path and file-name rules, which a URL's own syntax breaks; its query keys and values get every query rule. It reads the checkouts once per run, at the first check that needs them, checking them out first in a stage without the code tools, and refuses everything while it cannot read them. The responder shares its stage's tools. Every query and page read is a `research` event. |
 | cm       | `list_projects`, `list_cards`, `get_card`, `get_playbook` as `cm_`-prefixed reads | Offered to grounding and readiness over the session's MCP key, one MCP session per run, chat's bridge adapter on the architect's client with a `cm_` prefix and an allowlist that skips tools CM does not serve. No `agent_id` is sent, so CM keeps redacting unvetted imported text; `get_card` never attaches images; a credential embedded in a URL is removed from every result and error before the model or the record sees it, since CM returns project config as stored; every result carries the blueprint's ContextMatrix source tag. Creating cards and playbooks and starting runs are controller calls with the configured caller identity, never model tools. |
-| control  | `ask_human`, `submit_artifact`                                                                          | `ask_human` blocks: question, options, the recommended option's position and context in; a trailing "(recommended)" a model writes into an option is cut, and marks that option when no position is given and no other option carries one; the answer out as the tool result, starting with the question's number (`Q<n>: <answer>`) so a design can cite it as a basis; an auto answer's result adds a line that the responder gave it for the user, an assumption and not the user's choice. Questions are numbered `Q<n>` per blueprint. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
+| control  | `ask_questions`, `answer_chat`, `submit_artifact`                                          | `ask_questions` posts a round and ends the run: per question a tab title, the question, why it matters, options with a summary, pros, cons and source tags (only tags a tool result of this blueprint returned; the panel shows a page `web_fetch` read by its title (its address when it has none), linked to its address, and any other source by its identity), and the recommended position; a trailing "(recommended)" a model writes into an option title is cut and marks it. A stage that declares the `assumptions` check may add its assumptions as the round's last tab, or post the tab alone; any other stage's tab is refused. A round asks at most 10 questions of at most 6 options, 96 KiB in all, its assumptions included. A question already answered with the same options is refused; a changed option set makes a new question. Under `auto` its responder answers before the run ends. Questions are numbered `Q<n>` per blueprint. `answer_chat` replies in an open round's chat, at most 4000 characters, revising or adding questions under the same limits or replacing the assumptions tab, and ends the run. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
 
 Every tool result passes the harness redactor for every secret the process
 holds.
@@ -710,21 +768,22 @@ calls and cost stream into it as log entries. The binary,
 `contextmatrix-architect`, has one server command, `serve`, plus the
 `config defaults` and `config validate` helpers.
 
-Replies the server understands, besides answers to questions:
+Replies the server understands, besides a round's structured answers:
 
 | Reply                         | Effect                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
-| `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition with the feedback. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is an answer, the need or a note. |
-| `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next question or gate on; an open question or gate keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
+| `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition with the feedback. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
+| `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round or gate keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
 | `lessons`                     | Lists lessons and their state.                                          |
-| `abort`                       | Ends the open run; the blueprint stays and can be reopened.             |
+| `abort`                       | Ends the open run; the blueprint stays and can be reopened, and an open round stays open. |
 
 - A run does not start if it would breach the blueprint's cost cap.
 - Reopening a session makes CM send a start for it; a stage interrupted by a
-  server restart is re-run from its inputs, and a stage whose inputs were
-  stored but which never started runs. Completed artifacts are never lost. A
+  server restart is re-run from its inputs, or from its stored conversation
+  when it went on from a round (below), and a stage whose inputs were stored
+  but which never started runs. Completed artifacts are never lost. A
   record the pack cannot place, such as a stage the pack no longer has, is
   reported in the session and nothing runs. An open gate or sign-off is shown
   again as it was, a gate that was never shown opens under the policy now in
@@ -734,26 +793,36 @@ Replies the server understands, besides answers to questions:
   approve, an emitted blueprint's watch restarts, and nothing is created or
   started twice. CM sends the start again after the architect restarts, when
   a message finds the session unknown or the log stream ends.
-- A stage the session's end cut short, an open question included, runs again on
-  reopen, given the answers its earlier runs got and who gave each; a reopen
-  that comes while that run still winds down waits for it first. A human's
-  question the end or a restart left open is shown again as the same `Q<n>`
-  before the model runs, and the re-run, or the builder round, is given its
-  answer and who gave it; an abort ends the open question instead. An aborted
-  stage waits for the next message, as below.
+- A stage the session's end cut short runs again on reopen, given the answers
+  its earlier runs got and who gave each; a reopen that comes while that run
+  still winds down waits for it first. A round outlives End, a restart and
+  days away: its stored answers stay, a reopen shows it again with them, and
+  it waits; a chat message that a chat run cut short by the session's end
+  or a restart left unanswered is answered first. A continuation that the
+  session's end or a restart cut short runs again on reopen from the same
+  stored conversation, and a round that
+  closed but never continued continues; a close cut short finishes, and no
+  answer is recorded twice. An abort ends a run in flight, never a round. A
+  round the pipeline went past without its answers, as when the run that
+  posted it never recorded its end, is collapsed in the panel, and its stage
+  runs again as any stage cut short does. An aborted stage waits for the
+  next message, as below.
 - After a later stage fails or is aborted, the next message is logged as a
-  note and re-runs that stage; after a review or a builder round, a revision
-  round included, fails or is aborted, the next message is a note and runs
-  it again; after intake fails or is aborted, the next message is the need
+  note and re-runs that stage; after a continuation, one of intake included,
+  fails or is aborted, the next message is a note and runs it again from the
+  same conversation; after a review or a builder round, a revision round
+  included, fails or is aborted, the next message is a note and runs it
+  again; after intake fails or is aborted, the next message is the need
   again and intake re-runs on it. A pipeline stopped by the card contract or
   by readiness's rounds is not re-run; the user starts a new blueprint with
   a better design.
 - From slice 4, a project may opt into automatic export in config: a target
   repo, branch and directory; the bundle is committed there at each gate or at
   sign-off. Off by default.
-- A message that arrives after the need, while no question is open, and that
-  decides no open gate is a note: it is logged and given to every model run
-  that starts later, in arrival order. A note never reaches a run already in
+- A message that arrives after the need, while no human's round waits
+  (then it is chat about the round), and that decides no open gate is a
+  note: it is logged and given to every model run that starts later, in
+  arrival order. A note never reaches a run already in
   flight, and a note at an open gate leaves the gate open. A note that is only
   `approve` or `reject` is a misplaced decision, not guidance: it is logged
   and reaches no run.
@@ -775,22 +844,25 @@ frames on the session's chat stream.
   skipped), attempt, a loop stage's round of its maximum, latest version
   and cost. The view also carries the run in flight (stage, kind, persona,
   model, start, and the turns, tool calls and tokens its harness lines have
-  counted), the open prompt (`Q<n>`, `gate:<stage>:v<n>`,
-  `gate:signoff:v<n>`, or `emission:v<n>` for a stopped emission or run
-  start), and the cost: the ledger plus the runs in flight, the blueprint
-  and per-run caps, and whether every run was priced. Every artifact
-  version is listed with its status (current, reviewing, at_gate,
-  approved, rejected, superseded, folded), who decided its gate (you, the
-  responder, or automatically for a sign-off an emitting mode approved) and
-  when, and its reviewer's verdict. A rejected version stays rejected; any
-  other is superseded once a newer one exists, or once a gate row records
-  it superseded, as `reject slicing` does for the design version it
-  replaces. The newest version reads reviewing while its review, or the
-  builder round after it, is owed, and current once that run fails, as its
-  step then reads failed. A verdict's findings are sent to the next version
-  when the verdict sends the builder back. A finding is marked addressed in
-  that version, with its note, only when the revision listed it. A run
-  whose end is recorded counts in the ledger only.
+  counted), the open prompt (`round:<n>` of kind `round`,
+  `gate:<stage>:v<n>`, `gate:signoff:v<n>`, or `emission:v<n>` for a
+  stopped emission or run start), and the cost: the ledger plus the runs in
+  flight, the blueprint and per-run caps, and whether every run was priced.
+  While a round waits, its stage's step is waiting and no run is in
+  flight; while a chat run answers its chat, the step is running and the
+  round stays the open prompt. Every artifact version is listed with its
+  status (current, reviewing, at_gate, approved, rejected, superseded,
+  folded), who decided
+  its gate (you, the responder, or automatically for a sign-off an emitting
+  mode approved) and when, and its reviewer's verdict. A rejected version
+  stays rejected; any other is superseded once a newer one exists, or once
+  a gate row records it superseded, as `reject slicing` does for the design
+  version it replaces. The newest version reads reviewing while its review,
+  or the builder round after it, is owed, and current once that run fails,
+  as its step then reads failed. A verdict's findings are sent to the next
+  version when the verdict sends the builder back. A finding is marked
+  addressed in that version, with its note, only when the revision listed
+  it. A run whose end is recorded counts in the ledger only.
   `Seq` is the id of the newest events row the view reflects, and every
   state change writes one. The view reads the store and memory only, so an
   ended session's blueprint has one while the architect is up. A record the
@@ -881,7 +953,7 @@ frames on the session's chat stream.
 
 - Go 1.27, `contextmatrix-harness` v0.26.0 (loop, llm client, jailed read
   tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.9.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.26.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.27.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
@@ -999,16 +1071,16 @@ Ordered so a real card comes out as early as possible.
 - **Store**: temp SQLite. Tests prove no update or delete path exists for
   append-only tables.
 - **Controller**: driven through its command and event interface, table-driven
-  state transitions. A question test blocks a run on `ask_human`, answers
-  through the interface and asserts the run continues with the answer.
+  state transitions. A round test posts a round, answers it through the
+  interface in two batches and asserts the stage resumes its conversation
+  with the answers.
 - **Critique loop**: a submit that fails a mechanical check is returned to
   the model as the tool result, and the third failing submit is accepted,
   stored and reported.
 - **Emission**: an in-test MCP server asserting call order, and that a re-run
   after a simulated partial failure creates nothing twice.
 - **Webhook**: an in-test CM that signs requests starts a session with a
-  payload, sends a message as the answer to a pending question, sends each
-  reply form and asserts its effect, and reads the SSE log entries; an
+  payload, sends a round reply, sends each reply form and asserts its effect, and reads the SSE log entries; an
   unsigned request and a start without an LLM endpoint are refused.
 - **End to end**: one run driven through the webhook protocol against a
   fixture git repo in `t.TempDir()`, producing a report.

@@ -540,41 +540,6 @@ func TestFirstStageTask_CarriesTheProjectsAndTheNeed(t *testing.T) {
 	}
 }
 
-func TestMessage_AnswersAPendingQuestion(t *testing.T) {
-	asked := make(chan struct{})
-	c, st, _, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		close(asked)
-
-		answer, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?", Options: []string{"helm", "kustomize"}})
-		if err != nil {
-			return stage.Output{}, err
-		}
-
-		return stage.Output{
-			Artifact: stage.Artifact{Body: "# Need\n\n" + answer},
-			Result:   harness.Result{Completed: true, Reason: "done"},
-		}, nil
-	})
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-
-	<-asked
-	rec.waitFor(t, EventQuestion)
-
-	bp, err := st.GetBlueprint(ctx, "BP1")
-	require.NoError(t, err)
-	assert.Equal(t, string(StateWaiting), bp.State)
-
-	require.NoError(t, c.Message(ctx, "BP1", "helm", "m2"))
-	c.Wait("BP1")
-
-	art, err := st.LatestArtifact(ctx, "BP1", "intake")
-	require.NoError(t, err)
-	assert.Equal(t, "# Need\n\nQ1: helm", art.Body)
-	assert.True(t, rec.has(EventAnswer))
-}
-
 func TestAbort_CancelsTheRun(t *testing.T) {
 	started := make(chan struct{})
 	c, st, _, rec := newController(t, func(ctx context.Context, _ stage.Input) (stage.Output, error) {
@@ -760,54 +725,6 @@ func TestEnd_CancelsTheRunAndKeepsTheBlueprint(t *testing.T) {
 	require.NoError(t, c.End(ctx, "BP1"))
 	c.Wait("BP1")
 	assert.Equal(t, 2, rec.count(EventEnded), "every End is audited")
-}
-
-func TestCancel_WhileParkedInAskHumanUnblocksTheRun(t *testing.T) {
-	tests := []struct {
-		name   string
-		cancel func(ctx context.Context, c *Controller) error
-	}{
-		{"abort", func(ctx context.Context, c *Controller) error { return c.Abort(ctx, "BP1", "m2") }},
-		{"end", func(ctx context.Context, c *Controller) error { return c.End(ctx, "BP1") }},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			askErr := make(chan error, 4)
-			c, st, _, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
-				answer, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"})
-				askErr <- err
-
-				if err != nil {
-					return stage.Output{}, err
-				}
-
-				return artifactOutput("# Need\n\n"+answer, in), nil
-			})
-			ctx := context.Background()
-			require.NoError(t, c.Start(ctx, startInput("BP1")))
-			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-			rec.waitFor(t, EventQuestion)
-
-			require.NoError(t, tt.cancel(ctx, c))
-			c.Wait("BP1")
-
-			require.ErrorIs(t, <-askErr, context.Canceled, "ask_human returns an error, not an answer")
-			assert.False(t, rec.has(EventAnswer))
-
-			runs, err := st.ListRuns(ctx, "BP1")
-			require.NoError(t, err)
-			require.Len(t, runs, 1)
-			assert.Equal(t, store.RunCanceled, runs[0].Status)
-
-			bp, err := st.GetBlueprint(ctx, "BP1")
-			require.NoError(t, err)
-			assert.Equal(t, string(StateIdle), bp.State)
-
-			_, err = st.LatestArtifact(ctx, "BP1", "intake")
-			require.ErrorIs(t, err, store.ErrNotFound)
-		})
-	}
 }
 
 func TestStart_RerunsAStageInterruptedByACrash(t *testing.T) {
@@ -1414,24 +1331,33 @@ func TestSecrets_AreMaskedInTheRecordAndTheSink(t *testing.T) {
 	tests := []struct {
 		name   string
 		answer bool
+		runs   int
 		run    func(context.Context, stage.Input) (stage.Output, error)
 	}{
 		{
-			name:   "question, harness line, transcript and artifact",
+			name:   "round, answer, harness line, transcript and artifact",
 			answer: true,
+			runs:   2,
 			run: func(ctx context.Context, in stage.Input) (stage.Output, error) {
-				_, _ = in.Events.Write([]byte(`{"seq":1,"kind":"model_response","data":{"content":"keys ` + leak + `"}}` + "\n"))
+				if in.History == nil {
+					_, _ = in.Events.Write([]byte(`{"seq":1,"kind":"model_response","data":{"content":"keys ` + leak + `"}}` + "\n"))
 
-				answer, err := in.Asker.Ask(ctx, stage.Question{
-					Text: "Are " + leak + " yours?", Options: append([]string{"no"}, secrets...), Context: "seen " + leak,
-				})
-				if err != nil {
-					return stage.Output{}, err
+					q := roundQ("Keys", "Are "+leak+" yours?", append([]string{"no"}, secrets...)...)
+					q.Why = "seen " + leak
+
+					if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{q}}); err != nil {
+						return stage.Output{}, err
+					}
+
+					out := askedOutput(in)
+					out.Result.Messages = append(out.Result.Messages, llm.Message{Role: "assistant", Content: "the keys are " + leak})
+
+					return out, nil
 				}
 
 				return stage.Output{
 					Artifact: stage.Artifact{
-						Body: "# Need\n\nuse " + leak + ", " + answer,
+						Body: "# Need\n\nuse " + leak + ", " + in.Task,
 						Data: map[string]any{"key": leak, "list": []any{testKey, testMCPKey, testGitToken}},
 					},
 					Result: harness.Result{
@@ -1443,6 +1369,7 @@ func TestSecrets_AreMaskedInTheRecordAndTheSink(t *testing.T) {
 		},
 		{
 			name: "runner error",
+			runs: 1,
 			run: func(_ context.Context, _ stage.Input) (stage.Output, error) {
 				return stage.Output{Result: harness.Result{
 						Reason:   "error",
@@ -1459,15 +1386,14 @@ func TestSecrets_AreMaskedInTheRecordAndTheSink(t *testing.T) {
 			ctx := context.Background()
 			require.NoError(t, c.Start(ctx, startInput("BP1")))
 			require.NoError(t, c.Message(ctx, "BP1", "deploy with "+leak, "m1"))
-
-			if tt.answer {
-				rec.waitFor(t, EventQuestion)
-				require.NoError(t, c.Message(ctx, "BP1", "yes, "+leak, "m2"))
-			}
-
 			c.Wait("BP1")
 
-			require.Equal(t, 1, runner.calls())
+			if tt.answer {
+				answerRound(t, c, "BP1", 1, true, own(1, "yes, "+leak))
+				c.Wait("BP1")
+			}
+
+			require.Equal(t, tt.runs, runner.calls())
 
 			for _, secret := range secrets {
 				assert.NotContains(t, runner.input(0).Task, secret, "the task is the stored, masked need")
@@ -1512,14 +1438,38 @@ func TestSecrets_AreMaskedInTheRecordAndTheSink(t *testing.T) {
 				places["artifact"] = art.Body + "\n" + string(art.Data)
 			}
 
+			if tt.answer {
+				rounds, err := st.ListEventsOfKind(ctx, "BP1", EventRound)
+				require.NoError(t, err)
+
+				for _, e := range rounds {
+					places["stored rounds"] += string(e.Payload) + "\n"
+				}
+
+				for _, e := range rec.all(EventRound) {
+					b, err := json.Marshal(e.Payload)
+					require.NoError(t, err)
+
+					places["sink rounds"] += string(b) + "\n"
+				}
+
+				qs, err := st.ListQuestions(ctx, "BP1")
+				require.NoError(t, err)
+				require.Len(t, qs, 1)
+
+				places["questions row"] = strings.Join(append([]string{qs[0].Text, qs[0].Context, qs[0].Answer}, qs[0].Options...), "\n")
+			}
+
 			runs, err := st.ListRuns(ctx, "BP1")
 			require.NoError(t, err)
-			require.Len(t, runs, 1)
+			require.Len(t, runs, tt.runs)
 
-			tr, err := st.GetTranscript(ctx, runs[0].ID)
-			require.NoError(t, err)
+			for _, r := range runs {
+				tr, err := st.GetTranscript(ctx, r.ID)
+				require.NoError(t, err)
 
-			places["transcript"] = string(tr)
+				places["transcript"] += string(tr) + "\n"
+			}
 
 			for place, text := range places {
 				for _, secret := range secrets {
@@ -1685,7 +1635,8 @@ func TestCancel_IsNotShownAsAnError(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = st.Close() })
 
-			pk, err := pack.LoadEmbedded()
+			// The single-stage pack has no code tools, so no workspace is needed.
+			pk, err := pack.LoadDir("testdata/single")
 			require.NoError(t, err)
 
 			model := &blockingLLM{entered: make(chan struct{}, 4)}
@@ -2045,7 +1996,7 @@ func TestStart_ClosesEveryRunACrashLeftAndRerunsTheStageOnce(t *testing.T) {
 	_, err := st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: "need", Body: "the stored need"})
 	require.NoError(t, err)
 
-	// The stage's run was parked in ask_human while a responder run answered.
+	// The stage's run was parked in an auto round while a responder run answered.
 	stageRun, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
 	require.NoError(t, err)
 	responderRun, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "intake", Kind: store.RunKindResponder, Attempt: 7, Round: 1, Status: store.RunRunning, StartedAt: now})
@@ -2067,271 +2018,71 @@ func TestStart_ClosesEveryRunACrashLeftAndRerunsTheStageOnce(t *testing.T) {
 	assert.Equal(t, 2, runs[2].Attempt, "a responder run is not an attempt of its stage")
 }
 
-func TestQuestions_AreNumberedAndRecordedAtTheAnswer(t *testing.T) {
-	c, st, _, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		first, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?", Options: []string{"helm", "kustomize"}, Recommended: 1})
-		if err != nil {
-			return stage.Output{}, err
-		}
-
-		second, err := in.Asker.Ask(ctx, stage.Question{Text: "Which cluster?", Context: "where it runs"})
-		if err != nil {
-			return stage.Output{}, err
-		}
-
-		return artifactOutput("# Need\n\n"+first+" on "+second, in), nil
-	})
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-
-	rec.waitForCount(t, EventQuestion, 1)
-	require.NoError(t, c.Message(ctx, "BP1", "helm", "m2"))
-	rec.waitForCount(t, EventQuestion, 2)
-	require.NoError(t, c.Message(ctx, "BP1", "dev", "m3"))
-	c.Wait("BP1")
-
-	questions := rec.all(EventQuestion)
-	require.Len(t, questions, 2)
-	assert.Equal(t, 1, questions[0].Payload["number"])
-	assert.Equal(t, 1, questions[0].Payload["recommended"])
-	assert.Equal(t, 2, questions[1].Payload["number"])
-
-	answers := rec.all(EventAnswer)
-	require.Len(t, answers, 2)
-	assert.Equal(t, 2, answers[1].Payload["number"])
-
-	runs, err := st.ListRuns(ctx, "BP1")
-	require.NoError(t, err)
-	require.Len(t, runs, 1)
-
-	recorded, err := st.ListQuestions(ctx, "BP1")
-	require.NoError(t, err)
-
-	for i := range recorded {
-		assert.False(t, recorded[i].AnsweredAt.IsZero())
-		recorded[i].AnsweredAt = time.Time{}
-	}
-
-	assert.Equal(t, []store.Question{
-		{
-			BlueprintID: "BP1", RunID: runs[0].ID, Stage: "intake", Number: 1, Text: "Helm or kustomize?",
-			Options: []string{"helm", "kustomize"}, Answer: "helm", Responder: store.ResponderHuman, MessageID: "m2",
-		},
-		{
-			BlueprintID: "BP1", RunID: runs[0].ID, Stage: "intake", Number: 2, Text: "Which cluster?",
-			Context: "where it runs", Answer: "dev", Responder: store.ResponderHuman, MessageID: "m3",
-		},
-	}, recorded)
-}
-
-func TestQuestions_PastTheCapTheStageDecides(t *testing.T) {
-	refused := make(chan error, 1)
-
-	c, _, _, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"}); err != nil {
-			refused <- err
-
-			return stage.Output{}, err
-		}
-
-		_, err := in.Asker.Ask(ctx, stage.Question{Text: "Which cluster?"})
-		refused <- err
-
-		return artifactOutput("# Need", in), nil
-	})
-	c.opts.Pack.Stages[0].MaxQuestions = 1
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
-	require.NoError(t, c.Message(ctx, "BP1", "helm", "m2"))
-	c.Wait("BP1")
-
-	require.Error(t, <-refused, "the second question is past the cap")
-	assert.Equal(t, 1, rec.count(EventQuestion), "a refused question is never shown")
-}
-
-func TestQuestions_AnOptionTheWebhookTakesAsACommandIsRefused(t *testing.T) {
-	refused := make(chan error, 3)
-
-	c, _, _, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		for _, option := range []string{"Abort", "export", "gate intake auto"} {
-			_, err := in.Asker.Ask(ctx, stage.Question{Text: "What next?", Options: []string{"go on", option}})
-			refused <- err
-		}
-
-		return artifactOutput("# Need", in), nil
-	})
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	c.Wait("BP1")
-
-	for range 3 {
-		require.Error(t, <-refused)
-	}
-
-	assert.False(t, rec.has(EventQuestion))
-}
-
 func TestQuestions_ARerunOfTheStageIsGivenItsAnswers(t *testing.T) {
-	var calls atomic.Int32
+	var continuations atomic.Int32
 
-	c, _, runner, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		if calls.Add(1) > 1 {
-			return artifactOutput("# Need", in), nil
+	c, st, runner, _ := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if in.History == nil {
+			if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Deploy", "Helm or Kustomize?", "Helm", "Kustomize")}}); err != nil {
+				return stage.Output{}, err
+			}
+
+			return askedOutput(in), nil
 		}
 
-		if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"}); err != nil {
-			return stage.Output{}, err
+		if continuations.Add(1) == 1 {
+			return stage.Output{Result: harness.Result{Reason: "error"}}, errors.New("provider down")
 		}
 
-		return stage.Output{Result: harness.Result{Reason: "error"}}, errors.New("provider down")
-	})
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
-	require.NoError(t, c.Message(ctx, "BP1", "helm", "m2"))
-	c.Wait("BP1")
-
-	// Intake failed without an artifact, so the next message is the need.
-	require.NoError(t, c.Message(ctx, "BP1", "the need, again", "m3"))
-	c.Wait("BP1")
-
-	require.Equal(t, 2, runner.calls())
-	assert.NotContains(t, runner.input(0).Task, "helm")
-	assert.Contains(t, runner.input(1).Task, "Helm or kustomize?")
-	assert.Contains(t, runner.input(1).Task, "helm", "the answer reaches the re-run")
-}
-
-// endAtFirstQuestion scripts a stage whose first run asks one question and
-// is cut short there, and whose later runs submit.
-func endAtFirstQuestion() func(context.Context, stage.Input) (stage.Output, error) {
-	var calls atomic.Int32
-
-	return func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		if calls.Add(1) > 1 {
-			return artifactOutput("# Need", in), nil
-		}
-
-		_, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?", Options: []string{"helm", "kustomize"}})
-
-		return stage.Output{}, err
-	}
-}
-
-func TestEnd_AQuestionLeftOpenComesBackBeforeTheStageRunsAgain(t *testing.T) {
-	c, st, runner, rec := newController(t, endAtFirstQuestion())
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
-
-	require.NoError(t, c.End(ctx, "BP1"))
-	c.Wait("BP1")
-
-	runs, err := st.ListRuns(ctx, "BP1")
-	require.NoError(t, err)
-	require.Len(t, runs, 1)
-	assert.Equal(t, store.RunCanceled, runs[0].Status)
-	assert.Equal(t, reasonSessionEnded, runs[0].Reason)
-
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	rec.waitFor(t, EventReshow)
-
-	again, ok := rec.first(EventReshow)
-	require.True(t, ok)
-	assert.Equal(t, EventQuestion, again.Payload["kind"])
-	assert.EqualValues(t, 1, again.Payload["payload"].(map[string]any)["number"], "the same question, under its number")
-	require.Never(t, func() bool { return runner.calls() > 1 }, 100*time.Millisecond, 10*time.Millisecond,
-		"the stage waits for the answer before it runs again")
-
-	require.NoError(t, c.Message(ctx, "BP1", "helm", "m2"))
-	c.Wait("BP1")
-
-	require.Equal(t, 2, runner.calls(), "the stage runs once more")
-	assert.Contains(t, runner.input(1).Task, "Helm or kustomize?")
-	assert.Contains(t, runner.input(1).Task, "helm", "the answer reaches the re-run")
-	assert.Equal(t, 1, rec.count(EventQuestion), "no question number is spent")
-
-	questions, err := st.ListQuestions(ctx, "BP1")
-	require.NoError(t, err)
-	require.Len(t, questions, 1)
-	assert.Equal(t, 1, questions[0].Number)
-	assert.Equal(t, runs[0].ID, questions[0].RunID, "recorded under the run that asked it")
-	assert.Equal(t, "m2", questions[0].MessageID)
-	assert.Equal(t, store.ResponderHuman, questions[0].Responder)
-
-	_, err = st.LatestArtifact(ctx, "BP1", "intake")
-	require.NoError(t, err)
-}
-
-func TestEnd_AQuestionLeftOpenComesBackAfterEveryEnd(t *testing.T) {
-	c, _, runner, rec := newController(t, endAtFirstQuestion())
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
-
-	for i := 1; i <= 2; i++ {
-		require.NoError(t, c.End(ctx, "BP1"))
-		c.Wait("BP1")
-		require.NoError(t, c.Start(ctx, startInput("BP1")))
-		rec.waitForCount(t, EventReshow, i)
-	}
-
-	require.NoError(t, c.Message(ctx, "BP1", "helm", "m2"))
-	c.Wait("BP1")
-
-	assert.Equal(t, 2, runner.calls(), "the model runs only once the question is answered")
-	assert.Contains(t, runner.input(1).Task, "helm")
-}
-
-func TestRestart_AQuestionLeftOpenComesBack(t *testing.T) {
-	c, st, _, rec := newController(t, endAtFirstQuestion())
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
-	require.NoError(t, c.Shutdown(ctx))
-
-	c2, _, runner2, rec2 := newControllerOn(t, st, func(_ context.Context, in stage.Input) (stage.Output, error) {
 		return artifactOutput("# Need", in), nil
 	})
-	require.NoError(t, c2.Start(ctx, startInput("BP1")))
-	rec2.waitFor(t, EventReshow)
-	require.NoError(t, c2.Message(ctx, "BP1", "helm", "m2"))
-	c2.Wait("BP1")
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+	answerRound(t, c, "BP1", 1, true, pick(1, 2))
+	c.Wait("BP1")
+	require.Equal(t, 2, runner.calls(), "the continuation ran and failed")
 
-	require.Equal(t, 1, runner2.calls())
-	assert.Contains(t, runner2.input(0).Task, "helm", "the answer reaches the re-run")
+	// The round is closed and the run after it failed, so the next message
+	// runs the continuation again.
+	require.NoError(t, c.Message(ctx, "BP1", "try again", "m3"))
+	c.Wait("BP1")
+
+	require.Equal(t, 3, runner.calls())
+
+	again := runner.input(2)
+	assert.NotNil(t, again.History, "it resumes the conversation that asked")
+	assert.Contains(t, again.Task, "Kustomize", "the answer reaches the second continuation")
+
+	_, err := st.LatestArtifact(ctx, "BP1", "intake")
+	require.NoError(t, err)
 }
 
 func TestEnd_AReopenWhileTheEndedRunWindsDownRunsTheStageAgain(t *testing.T) {
 	var calls atomic.Int32
 
+	running := make(chan struct{}, 1)
 	windingDown := make(chan struct{}, 1)
 	finish := make(chan struct{})
 
-	c, _, runner, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+	c, _, runner, _ := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
 		if calls.Add(1) > 1 {
 			return artifactOutput("# Need", in), nil
 		}
 
-		_, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"})
-
+		signal(running)
+		<-ctx.Done()
 		signal(windingDown)
 		<-finish
 
-		return stage.Output{}, err
+		return stage.Output{}, ctx.Err()
 	})
 	release := closer(t, finish)
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
+	receive(t, running, "the run")
 
 	require.NoError(t, c.End(ctx, "BP1"))
 	receive(t, windingDown, "the ended run")
@@ -2360,9 +2111,6 @@ func TestEnd_AReopenWhileTheEndedRunWindsDownRunsTheStageAgain(t *testing.T) {
 		require.FailNow(t, "the reopen never returned")
 	}
 
-	// The question the ended run left open comes back first.
-	rec.waitFor(t, EventReshow)
-	require.NoError(t, c.Message(ctx, "BP1", "helm", "m2"))
 	c.Wait("BP1")
 
 	assert.Equal(t, 2, runner.calls(), "the reopen runs the stage again")
@@ -2371,6 +2119,7 @@ func TestEnd_AReopenWhileTheEndedRunWindsDownRunsTheStageAgain(t *testing.T) {
 func TestEnd_AnAbortWhileTheReopenWaitsWins(t *testing.T) {
 	var calls atomic.Int32
 
+	running := make(chan struct{}, 1)
 	windingDown := make(chan struct{}, 1)
 	finish := make(chan struct{})
 
@@ -2379,18 +2128,18 @@ func TestEnd_AnAbortWhileTheReopenWaitsWins(t *testing.T) {
 			return artifactOutput("# Need", in), nil
 		}
 
-		_, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"})
-
+		signal(running)
+		<-ctx.Done()
 		signal(windingDown)
 		<-finish
 
-		return stage.Output{}, err
+		return stage.Output{}, ctx.Err()
 	})
 	release := closer(t, finish)
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
+	receive(t, running, "the run")
 
 	require.NoError(t, c.End(ctx, "BP1"))
 	receive(t, windingDown, "the ended run")
@@ -2434,66 +2183,4 @@ func TestEnd_AnAbortWhileTheReopenWaitsWins(t *testing.T) {
 	need, err := st.LatestArtifact(ctx, "BP1", needStage)
 	require.NoError(t, err)
 	assert.Equal(t, 2, need.Version)
-}
-
-func TestAbort_DuringAQuestionStillWaitsAfterAReopen(t *testing.T) {
-	c, st, runner, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		_, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?"})
-
-		return stage.Output{}, err
-	})
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
-
-	require.NoError(t, c.Abort(ctx, "BP1", "m2"))
-	c.Wait("BP1")
-	require.NoError(t, c.End(ctx, "BP1"))
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	c.Wait("BP1")
-
-	assert.Equal(t, 1, runner.calls(), "an aborted stage waits for a message")
-
-	runs, err := st.ListRuns(ctx, "BP1")
-	require.NoError(t, err)
-	require.Len(t, runs, 1)
-	assert.Equal(t, "canceled", runs[0].Reason)
-}
-
-func TestQuestions_OneAskerAsksOneQuestionAtATime(t *testing.T) {
-	c, _, _, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		var wg sync.WaitGroup
-
-		for _, text := range []string{"Helm or kustomize?", "Which cluster?"} {
-			wg.Add(1)
-
-			go func() {
-				defer wg.Done()
-
-				_, _ = in.Asker.Ask(ctx, stage.Question{Text: text})
-			}()
-		}
-
-		wg.Wait()
-
-		return artifactOutput("# Need", in), nil
-	})
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx, startInput("BP1")))
-	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
-
-	require.Never(t, func() bool { return rec.count(EventQuestion) > 1 }, 200*time.Millisecond, 10*time.Millisecond,
-		"the second question waits for the first answer")
-
-	require.NoError(t, c.Message(ctx, "BP1", "one", "m2"))
-	rec.waitForCount(t, EventQuestion, 2)
-	require.NoError(t, c.Message(ctx, "BP1", "two", "m3"))
-	c.Wait("BP1")
-
-	questions := rec.all(EventQuestion)
-	require.Len(t, questions, 2)
-	assert.Equal(t, 1, questions[0].Payload["number"])
-	assert.Equal(t, 2, questions[1].Payload["number"])
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -11,11 +12,12 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-// logEntryFor renders a controller event as a panel entry. A question or gate
-// a human answers carries a prompt, whose actions the panel shows as buttons
-// and whose replies come back as ordinary messages; the markdown stays the
-// readable fallback. A prompt also carries a kind and its own text, the entry
-// without its option list or reply instruction. A human's answer is echoed
+// logEntryFor renders a controller event as a panel entry. A gate a human
+// decides carries a prompt, whose actions the panel shows as buttons and
+// whose replies come back as ordinary messages; a round's prompt carries the
+// round, whose answers come back structured. The markdown stays the readable
+// fallback. A gate's prompt also carries a kind and its own text, the entry
+// without its reply instruction. A human's answer is echoed
 // by CM itself and harness events reach the hub through the bridge, so both
 // are skipped here; the responder's answer is shown.
 func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
@@ -39,57 +41,32 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = fmt.Sprintf("Blueprint reopened (state %s).", str(p["state"]))
 	case blueprint.EventStageStarted:
 		entry.Type = "system"
-		entry.Content = fmt.Sprintf("%s started as %s.", runLabel(p), strings.ReplaceAll(str(p["persona"]), "_", " "))
 
-		// A stage run's first round is a divider; its builder rounds, its
-		// reviews and its responders are not.
-		if kind := str(p["kind"]); (kind == "" || kind == store.RunKindStage) && num(p["round"]) <= 1 {
-			entry.Marker = &protocol.LogMarker{Kind: "stage", Stage: str(p["stage"]), Persona: str(p["persona"])}
-		}
-	case blueprint.EventQuestion:
-		if str(p["responder"]) == store.ResponderAuto {
-			entry.Type = "system"
-			entry.Content = fmt.Sprintf("Stage %s asked Q%.0f: %s Its policy is auto.", str(p["stage"]), num(p["number"]), str(p["text"]))
+		// A run that goes on from a round is no new start, so no divider.
+		switch str(p["segment"]) {
+		case blueprint.SegmentAnswers:
+			entry.Content = fmt.Sprintf("%s resumes with the answers to round %.0f.", runLabel(p), num(p["question_round"]))
+		case blueprint.SegmentChat:
+			entry.Content = fmt.Sprintf("%s answers the chat about round %.0f.", runLabel(p), num(p["question_round"]))
+		default:
+			entry.Content = fmt.Sprintf("%s started as %s.", runLabel(p), strings.ReplaceAll(str(p["persona"]), "_", " "))
 
-			break
-		}
-
-		entry.Type = "text"
-
-		var b strings.Builder
-
-		heading := "**Question:**"
-		if n := num(p["number"]); n > 0 {
-			heading = fmt.Sprintf("**Question Q%.0f:**", n)
-		}
-
-		b.WriteString(heading + " " + str(p["text"]))
-
-		if ctxText := str(p["context"]); ctxText != "" {
-			b.WriteString("\n\n" + ctxText)
-		}
-
-		// The prompt's text is the question alone: a consumer that renders it
-		// shows the options only as buttons.
-		text := b.String()
-
-		b.WriteString("\n")
-
-		if opts := stringsOf(p["options"]); len(opts) > 0 {
-			b.WriteString("\nOptions:\n")
-
-			for i, o := range opts {
-				if i+1 == int(num(p["recommended"])) {
-					o += " (recommended)"
-				}
-
-				fmt.Fprintf(&b, "%d. %s\n", i+1, o)
+			// A stage run's first round is a divider; its builder rounds, its
+			// reviews and its responders are not.
+			if kind := str(p["kind"]); (kind == "" || kind == store.RunKindStage) && num(p["round"]) <= 1 {
+				entry.Marker = &protocol.LogMarker{Kind: "stage", Stage: str(p["stage"]), Persona: str(p["persona"])}
 			}
 		}
+	case blueprint.EventRound:
+		n, frame, ok := roundFrame(p)
+		if !ok {
+			return protocol.LogEntry{}, false
+		}
 
-		b.WriteString("\nReply with your answer.")
-		entry.Content = b.String()
-		entry.Prompt = questionPrompt(p, text)
+		left := str(p["change"]) == blueprint.ChangeLeft
+		entry.Type = "text"
+		entry.Content = roundText(n, frame, left)
+		entry.Prompt = &protocol.LogPrompt{ID: fmt.Sprintf("round:%d", n), Kind: "round", Text: roundHeading(n, frame, left), Round: &frame}
 	case blueprint.EventArtifact:
 		// A sheet reference: the body is on the sheet, never transcript text.
 		note := artifactNote(p)
@@ -106,6 +83,21 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			label = "cost"
 		}
 
+		if str(p["status"]) == store.RunAsked {
+			what := fmt.Sprintf("%s waits for the answers to round %.0f", runLabel(p), num(p["question_round"]))
+
+			switch chat, _ := p["chat"].(bool); {
+			case chat:
+				what = fmt.Sprintf("%s replied in round %.0f's chat", runLabel(p), num(p["question_round"]))
+			case p["responder"] == true:
+				what = fmt.Sprintf("%s had the responder answer round %.0f", runLabel(p), num(p["question_round"]))
+			}
+
+			entry.Content = fmt.Sprintf("%s (%s %.2f USD).", what, label, num(p["cost_usd"]))
+
+			break
+		}
+
 		entry.Content = fmt.Sprintf("%s %s (%s %.2f USD).", runLabel(p), str(p["status"]), label, num(p["cost_usd"]))
 	case blueprint.EventNote:
 		entry.Type = "system"
@@ -115,6 +107,8 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		critique, _ := p["critique"].(bool)
 
 		switch stage := str(p["retries"]); {
+		case num(p["round"]) > 0 && stage == "":
+			entry.Content = fmt.Sprintf("Noted. Round %.0f still waits for its answers in the question block; the stage's next run gets the note.", num(p["round"]))
 		case stage != "" && critique:
 			entry.Content = fmt.Sprintf("Noted. The review of %s, or its next builder round, runs again, and it and every run after it get the note.", stage)
 		case stage != "":
@@ -143,11 +137,6 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventReview:
 		entry.Type = "system"
 		entry.Content = reviewText(p)
-	case blueprint.EventReshow:
-		// The open question again, rendered as it was first shown.
-		inner, _ := p["payload"].(map[string]any)
-
-		return logEntryFor(blueprint.Event{Kind: str(p["kind"]), BlueprintID: e.BlueprintID, Time: e.Time, Payload: inner})
 	case blueprint.EventDecided:
 		entry.Type = "system"
 		entry.Content = decidedText(p)
@@ -187,7 +176,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = gatePlanText(p)
 	case blueprint.EventResearchOff:
 		entry.Type = "system"
-		entry.Content = fmt.Sprintf("Research is off for this session (%s): stages work from the model's knowledge, and question options cite no web sources.", str(p["reason"]))
+		entry.Content = fmt.Sprintf("Research is off for this session (%s): stages work from the model's knowledge and the code, and question options cite no web sources.", str(p["reason"]))
 	case blueprint.EventResearch:
 		// A page read is a source, shown as a checkout is; a search or a
 		// refusal is already the tool call's own entry.
@@ -400,6 +389,126 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	}
 
 	return entry, true
+}
+
+// roundFrame reads a round snapshot's number and frame; ok is false for a
+// payload that does not decode, and for a close in progress, which only
+// reserves numbers: the closed snapshot follows it.
+func roundFrame(p map[string]any) (int, protocol.LogRound, bool) {
+	var f protocol.LogRound
+
+	if str(p["change"]) == blueprint.ChangeClosing {
+		return 0, f, false
+	}
+
+	raw, err := json.Marshal(p["frame"])
+	if err != nil || json.Unmarshal(raw, &f) != nil {
+		return 0, f, false
+	}
+
+	n := int(num(p["round"]))
+
+	return n, f, n > 0
+}
+
+// roundHeading names round n; left marks a round the pipeline went past
+// before it was answered, which is closed but holds no full answer.
+func roundHeading(n int, f protocol.LogRound, left bool) string {
+	switch {
+	case left:
+		return fmt.Sprintf("Round %d, left unanswered", n)
+	case f.Closed:
+		return fmt.Sprintf("Round %d, answered", n)
+	case f.Responder:
+		return fmt.Sprintf("Round %d: %s from the %s, answered by the responder", n, roundCount(f), f.Persona)
+	default:
+		return fmt.Sprintf("Round %d: %s from the %s", n, roundCount(f), f.Persona)
+	}
+}
+
+// roundCount is what round f puts to the user: its questions, the
+// assumptions on its tab, or both.
+func roundCount(f protocol.LogRound) string {
+	questions := fmt.Sprintf("%d question(s)", len(f.Questions))
+	assumptions := fmt.Sprintf("%d assumption(s)", len(f.Assumptions))
+
+	switch {
+	case len(f.Assumptions) == 0:
+		return questions
+	case len(f.Questions) == 0:
+		return assumptions
+	default:
+		return questions + " and " + assumptions
+	}
+}
+
+// roundText is the round as plain markdown, for a panel without the block:
+// each question with its answer, or its options while it has none, then the
+// assumptions tab with each decision made.
+func roundText(n int, f protocol.LogRound, left bool) string {
+	var b strings.Builder
+
+	b.WriteString("**" + roundHeading(n, f, left) + ".**")
+
+	answers := map[int]protocol.RoundAnswer{}
+	for _, a := range f.Answers {
+		answers[a.Number] = a
+	}
+
+	for _, q := range f.Questions {
+		fmt.Fprintf(&b, "\n\n**Q%d. %s**", q.Number, q.Text)
+
+		if a, ok := answers[q.Number]; ok {
+			b.WriteString("\nAnswer: " + blueprint.AnswerText(q, a))
+
+			continue
+		}
+
+		if q.Why != "" {
+			b.WriteString("\n" + q.Why)
+		}
+
+		for i, o := range q.Options {
+			line := fmt.Sprintf("\n%d. %s", i+1, o.Title)
+			if i+1 == q.Recommended {
+				line += " (recommended)"
+			}
+
+			if o.Summary != "" {
+				line += ": " + o.Summary
+			}
+
+			b.WriteString(line)
+		}
+	}
+
+	decisions := map[string]bool{}
+	for _, d := range f.Decisions {
+		decisions[d.ID] = d.Accept
+	}
+
+	if len(f.Assumptions) > 0 {
+		b.WriteString("\n\n**Assumptions**")
+	}
+
+	for _, a := range f.Assumptions {
+		line := fmt.Sprintf("\n%s. %s", a.ID, a.Text)
+
+		switch accept, ok := decisions[a.ID]; {
+		case ok && accept:
+			line += " (accepted)"
+		case ok:
+			line += " (to be asked)"
+		}
+
+		b.WriteString(line)
+	}
+
+	if !f.Closed && !f.Responder {
+		b.WriteString("\n\nAnswer in the question block.")
+	}
+
+	return b.String()
 }
 
 // artifactNote is a stored artifact's sheet reference note, finished prose
@@ -646,8 +755,8 @@ func policyText(p map[string]any) string {
 
 	text := fmt.Sprintf("Stage %s is now %s for this blueprint, from its next question or gate.", str(p["stage"]), str(p["policy"]))
 
-	if str(p["open"]) == "question" {
-		text += " Its open question stays with whoever it was put to."
+	if str(p["open"]) == "round" {
+		text += " Its open round of questions stays with whoever it was put to."
 	}
 
 	if str(p["open"]) == "gate" {
@@ -669,6 +778,15 @@ func gatePlanText(p map[string]any) string {
 
 		if gate, _ := s["gate"].(bool); gate {
 			b.WriteString(", with a gate")
+
+			if into := str(s["folds_into"]); into != "" {
+				limit, unit := num(s["fold_max"]), "entries"
+				if limit == 1 {
+					unit = "entry"
+				}
+
+				fmt.Fprintf(&b, " that folds into %s's gate when both stages have the same policy and its %s has at most %.0f %s", into, str(s["fold_field"]), limit, unit)
+			}
 		}
 	}
 
@@ -684,10 +802,10 @@ func gatePlanText(p map[string]any) string {
 	return b.String()
 }
 
-// gateText renders a stage's gate: the body (the artifact above waits, the
-// reviewer's score, the artifacts folded into it shown below, the problems
-// its checks accepted them with) and the reply line that decides it, which
-// starts with its separator.
+// gateText renders a stage's gate: the body (the version on the sheet waits,
+// the reviewer's score, the artifacts folded into it shown below, the
+// problems its checks accepted them with) and the reply line that decides
+// it, which starts with its separator.
 func gateText(p map[string]any) (body, reply string) {
 	var replies []string
 
@@ -703,7 +821,7 @@ func gateText(p map[string]any) (body, reply string) {
 	stage, version := str(p["stage"]), num(p["version"])
 	folded := anyMaps(p["folded"])
 
-	text := fmt.Sprintf("**Gate: %s, version %.0f.** The artifact above waits for your decision.", stage, version)
+	text := fmt.Sprintf("**Gate: %s, version %.0f.** Version %.0f is on the sheet and waits for your decision.", stage, version, version)
 
 	if len(folded) > 0 {
 		names := make([]string, 0, len(folded))
@@ -731,7 +849,7 @@ func gateText(p map[string]any) (body, reply string) {
 
 		switch {
 		case revised:
-			text += fmt.Sprintf(" The reviewer scored %s version %.0f at %.0f of 5 (passes at %.0f); its findings, in the review above, went back for one revision, and the artifact above is the revised version, not reviewed again.",
+			text += fmt.Sprintf(" The reviewer scored %s version %.0f at %.0f of 5 (passes at %.0f); its findings, in the review above, went back for one revision, and the version on the sheet is the revision, not reviewed again.",
 				stage, num(v["judged"]), num(v["score"]), num(v["threshold"]))
 		case passed:
 			text += fmt.Sprintf(" The reviewer scored it %.0f of 5 (passes at %.0f)%s.", num(v["score"]), num(v["threshold"]), findings)
@@ -836,21 +954,6 @@ func reviewText(p map[string]any) string {
 	}
 
 	return text
-}
-
-// questionPrompt makes a human's question answerable by a click: one action
-// per option, its label and reply the full option, which reaches the stage
-// verbatim. Any typed reply answers it too.
-func questionPrompt(p map[string]any, text string) *protocol.LogPrompt {
-	recommended := int(num(p["recommended"]))
-
-	var actions []protocol.LogAction
-
-	for i, o := range stringsOf(p["options"]) {
-		actions = append(actions, protocol.LogAction{Label: o, Reply: o, Recommended: i+1 == recommended})
-	}
-
-	return &protocol.LogPrompt{ID: fmt.Sprintf("Q%.0f", num(p["number"])), Text: text, Kind: "question", FreeText: true, Actions: actions}
 }
 
 // actionsPrompt makes a gate decidable by a click from the replies its

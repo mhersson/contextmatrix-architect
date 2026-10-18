@@ -317,8 +317,12 @@ func byID(list []assumption) map[string]assumption {
 func TestAssumptions_ABasisOnAHumanAnswerIsConfirmed(t *testing.T) {
 	script := happyScript()
 	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Keep the routes?"}); err != nil {
-			return stage.Output{}, err
+		if in.History == nil {
+			if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Routes", "Keep the routes?")}}); err != nil {
+				return stage.Output{}, err
+			}
+
+			return askedOutput(in), nil
 		}
 
 		return done(needBody, map[string]any{"slices": 1, "assumptions": []any{
@@ -331,8 +335,8 @@ func TestAssumptions_ABasisOnAHumanAnswerIsConfirmed(t *testing.T) {
 
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitFor(t, EventQuestion)
-	require.NoError(t, c.Message(ctx, "BP1", "keep them", "m2"))
+	c.Wait("BP1")
+	answerRound(t, c, "BP1", 1, true, own(1, "keep them"))
 	c.Wait("BP1")
 
 	so, ok := rec.first(EventSignOff)
@@ -369,7 +373,7 @@ func TestAssumptions_ABasisOnAnUnverifiedAutoAnswerMergesItsEntry(t *testing.T) 
 func TestAssumptions_AnEntryRestingOnAnAutoAnswerCarriesItToTheSignoff(t *testing.T) {
 	script := happyScript()
 	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		if _, err := in.Asker.Ask(ctx, stage.Question{Text: "Helm or kustomize?", Options: []string{"helm", "kustomize"}}); err != nil {
+		if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Deploy", "Helm or kustomize?", "helm", "kustomize")}}); err != nil {
 			return stage.Output{}, err
 		}
 

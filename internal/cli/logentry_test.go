@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -20,12 +21,9 @@ func TestLogEntryFor(t *testing.T) {
 		carries  []string
 		skipped  bool
 	}{
-		{"question the stage decides itself", blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: map[string]any{
-			"number": 4, "stage": "grounding", "text": "Which port?", "responder": "auto",
-		}}, "system", []string{"grounding", "Q4", "Which port?"}, false},
 		{"an automatic sign-off's record is for the sheet", blueprint.Event{Kind: blueprint.EventSignOffAuto, BlueprintID: "S1", Payload: map[string]any{"version": 1}}, "", nil, true},
 		{"gate reply", blueprint.Event{Kind: blueprint.EventPolicy, BlueprintID: "S1", Payload: map[string]any{
-			"stage": "intake", "policy": "auto", "open": "question",
+			"stage": "intake", "policy": "auto", "open": "round",
 		}}, "system", []string{"intake", "auto"}, false},
 		{"refused gate reply", blueprint.Event{Kind: blueprint.EventPolicy, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "nosuch", "policy": "auto", "refused": "There is no stage nosuch.",
@@ -33,10 +31,10 @@ func TestLogEntryFor(t *testing.T) {
 		{"gate plan", blueprint.Event{Kind: blueprint.EventGatePlan, BlueprintID: "S1", Payload: map[string]any{
 			"stages": []any{
 				map[string]any{"stage": "intake", "policy": "human", "gate": false},
-				map[string]any{"stage": "shape", "policy": "auto", "gate": true},
+				map[string]any{"stage": "shape", "policy": "auto", "gate": true, "folds_into": "solution_design", "fold_field": "slices", "fold_max": 1},
 			},
 			"signoff": "human",
-		}}, "text", []string{"intake: human", "shape: auto", "gate <stage> human", "gate <stage> auto"}, false},
+		}}, "text", []string{"intake: human", "shape: auto", "solution_design", "gate <stage> human", "gate <stage> auto"}, false},
 		{"setup gaps", blueprint.Event{Kind: blueprint.EventSetupGaps, BlueprintID: "S1", Payload: map[string]any{"projects": []any{
 			map[string]any{"project": "alpha", "has_verify": false, "has_instruction_file": false, "empty": true},
 			map[string]any{"project": "beta", "has_verify": true, "has_instruction_file": false, "empty": false},
@@ -48,8 +46,6 @@ func TestLogEntryFor(t *testing.T) {
 		}, false},
 		{"created", blueprint.Event{Kind: blueprint.EventCreated, BlueprintID: "S1", Payload: map[string]any{"projects": []string{"alpha", "beta"}, "mode": "yolo"}}, "system", []string{"alpha", "beta", "yolo"}, false},
 		{"stage started", blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "persona": "product_owner", "pack": "default", "pack_version": "1"}}, "system", []string{"intake"}, false},
-		{"question", blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: map[string]any{"number": 2, "text": "Helm or kustomize?", "options": []string{"helm", "kustomize"}}}, "text", []string{"Q2", "Helm or kustomize?", "helm", "kustomize"}, false},
-		{"question with a recommended option", blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: map[string]any{"number": 3, "text": "Which?", "options": []string{"a", "b"}, "recommended": 2}}, "text", []string{"2. b (recommended)"}, false},
 		{"artifact", blueprint.Event{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "version": 1, "body": "# Need\n\nk8s", "persona": "product_owner"}}, "text", []string{"intake rev 1"}, false},
 		{"stage ended", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "status": "done", "cost_usd": 0.25}}, "system", []string{"intake", "done", "0.25"}, false},
 		{"stage ended priced", blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "S1", Payload: map[string]any{"stage": "intake", "status": "done", "cost_usd": 0.2, "priced": true}}, "system", []string{"0.20"}, false},
@@ -376,30 +372,12 @@ func TestLogEntryFor_ARunAlreadyThereIsRecordedNotStarted(t *testing.T) {
 }
 
 func TestLogEntryFor_Prompts(t *testing.T) {
-	long := strings.Repeat("ø", 70)
-
 	tests := []struct {
 		name     string
 		event    blueprint.Event
 		wantType string
 		want     *protocol.LogPrompt
 	}{
-		{"a question for a human", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
-			"number": 3, "text": "Helm or kustomize?", "options": []any{"helm", "kustomize"}, "recommended": 2, "responder": "human",
-		}}, "text", &protocol.LogPrompt{ID: "Q3", Kind: "question", FreeText: true, Actions: []protocol.LogAction{
-			{Label: "helm", Reply: "helm"}, {Label: "kustomize", Reply: "kustomize", Recommended: true},
-		}}},
-		{"a question without options", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
-			"number": 1, "text": "Which cluster?", "responder": "human",
-		}}, "text", &protocol.LogPrompt{ID: "Q1", Kind: "question", FreeText: true}},
-		{"a long option keeps its full label", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
-			"number": 2, "text": "Which?", "options": []any{long}, "responder": "human",
-		}}, "text", &protocol.LogPrompt{ID: "Q2", Kind: "question", FreeText: true, Actions: []protocol.LogAction{
-			{Label: long, Reply: long},
-		}}},
-		{"a question the stage decides itself", blueprint.Event{Kind: blueprint.EventQuestion, Payload: map[string]any{
-			"number": 4, "text": "Which port?", "responder": "auto",
-		}}, "system", nil},
 		{"a stage's gate", blueprint.Event{Kind: blueprint.EventGate, Payload: map[string]any{
 			"stage": "shape", "version": 2, "actions": []any{
 				map[string]any{"label": "Approve", "reply": "approve", "feedback": false},
@@ -431,9 +409,6 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 		{"a stopped emission shown on reopen", blueprint.Event{Kind: blueprint.EventAwaitInput, Payload: map[string]any{
 			"stage": "signoff", "prompt": "Emission is stopped; reply approve to resume it.", "resume": "emission", "version": 3,
 		}}, "text", &protocol.LogPrompt{ID: "emission:v3", Kind: "gate", Actions: []protocol.LogAction{{Label: "Resume emission", Reply: "approve"}}}},
-		{"a question shown again", blueprint.Event{Kind: blueprint.EventReshow, Payload: map[string]any{
-			"kind": "question", "payload": map[string]any{"number": 3, "text": "Helm or kustomize?", "options": []any{"helm"}, "responder": "human"},
-		}}, "text", &protocol.LogPrompt{ID: "Q3", Kind: "question", FreeText: true, Actions: []protocol.LogAction{{Label: "helm", Reply: "helm"}}}},
 		{"any other error", blueprint.Event{Kind: blueprint.EventError, Payload: map[string]any{"message": "cost cap"}}, "stderr", nil},
 	}
 
@@ -454,57 +429,6 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 			}
 
 			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestLogEntryFor_AQuestionsTextLeavesOutItsOptions(t *testing.T) {
-	tests := []struct {
-		name       string
-		payload    map[string]any
-		wantNumber string
-		wantText   []string
-		options    []any
-	}{
-		{"numbered with context", map[string]any{
-			"number": 4, "text": "Which packaging?", "context": "The cluster runs Flux.",
-			"options": []any{"a Helm chart under deploy/chart", "kustomize overlays under deploy/"}, "recommended": 2, "responder": "human",
-		}, "Q4", []string{"Which packaging?", "The cluster runs Flux."}, []any{"a Helm chart under deploy/chart", "kustomize overlays under deploy/"}},
-		{"numbered without context", map[string]any{
-			"number": 5, "text": "Which registry?",
-			"options": []any{"the in-cluster registry", "a hosted registry"}, "recommended": 1, "responder": "human",
-		}, "Q5", []string{"Which registry?"}, []any{"the in-cluster registry", "a hosted registry"}},
-		{"unnumbered with context", map[string]any{
-			"text": "Which database?", "context": "Writes are rare.",
-			"options": []any{"SQLite on a volume", "a managed Postgres"}, "recommended": 1, "responder": "human",
-		}, "", []string{"Which database?", "Writes are rare."}, []any{"SQLite on a volume", "a managed Postgres"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			asked, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventQuestion, BlueprintID: "S1", Payload: tt.payload})
-			require.True(t, ok)
-			require.NotNil(t, asked.Prompt)
-
-			text := asked.Prompt.Text
-			if tt.wantNumber != "" {
-				assert.Contains(t, text, tt.wantNumber)
-			}
-
-			for _, w := range tt.wantText {
-				assert.Contains(t, text, w)
-			}
-
-			assert.True(t, strings.HasPrefix(asked.Content, text), "the fallback starts with the prompt's text")
-
-			for _, o := range tt.options {
-				assert.NotContains(t, text, o, "an option is a button, not text")
-				assert.Contains(t, asked.Content, o, "the fallback keeps the options")
-			}
-
-			reshown, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventReshow, BlueprintID: "S1", Payload: map[string]any{"kind": "question", "payload": tt.payload}})
-			require.True(t, ok)
-			assert.Equal(t, asked.Prompt, reshown.Prompt, "a question shown again keeps its text, kind and actions")
 		})
 	}
 }
@@ -873,4 +797,136 @@ func TestLogEntryFor_AReportWithoutARoundNamesNone(t *testing.T) {
 
 	assert.Contains(t, report(map[string]any{"ready": true, "rounds": 2}).Content, "round 2",
 		"the number is shown when a round applies")
+}
+
+func TestLogEntry_RoundFrame(t *testing.T) {
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRound, BlueprintID: "BP1", Payload: roundPayloadForTest()})
+	require.True(t, ok)
+	require.NotNil(t, entry.Prompt)
+	assert.Equal(t, "round:3", entry.Prompt.ID)
+	assert.Equal(t, "round", entry.Prompt.Kind)
+	require.NotNil(t, entry.Prompt.Round)
+	assert.Equal(t, 7, entry.Prompt.Round.Questions[0].Number)
+	assert.Equal(t, "text", entry.Type)
+}
+
+func TestLogEntry_ALeftRoundIsNotHeadedAnswered(t *testing.T) {
+	render := func(change string) protocol.LogEntry {
+		t.Helper()
+
+		p := roundPayloadForTest()
+		p["change"] = change
+
+		frame, ok := p["frame"].(map[string]any)
+		require.True(t, ok)
+
+		frame["closed"] = true
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRound, BlueprintID: "BP1", Payload: p})
+		require.True(t, ok)
+		require.NotNil(t, entry.Prompt)
+		require.NotNil(t, entry.Prompt.Round)
+
+		return entry
+	}
+
+	answered, left := render("closed"), render(blueprint.ChangeLeft)
+
+	assert.True(t, left.Prompt.Round.Closed, "the panel collapses a left round")
+	assert.Equal(t, "round:3", left.Prompt.ID)
+	assert.Contains(t, left.Prompt.Text, "Round 3")
+	assert.NotEqual(t, answered.Prompt.Text, left.Prompt.Text, "a left round is not headed as answered")
+	assert.Contains(t, left.Content, left.Prompt.Text, "the fallback line carries the same heading")
+	assert.NotContains(t, left.Content, answered.Prompt.Text)
+}
+
+func TestLogEntry_ACloseInProgressIsNotShown(t *testing.T) {
+	p := roundPayloadForTest()
+	p["change"] = blueprint.ChangeClosing
+
+	_, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRound, BlueprintID: "BP1", Payload: p})
+	assert.False(t, ok, "a closing snapshot only reserves numbers; the closed one follows")
+}
+
+func TestLogEntry_TheFallbackListsTheAssumptionsTab(t *testing.T) {
+	render := func(decisions ...any) string {
+		t.Helper()
+
+		p := roundPayloadForTest()
+
+		frame, ok := p["frame"].(map[string]any)
+		require.True(t, ok)
+
+		frame["assumptions"] = []any{map[string]any{"id": "A1", "text": "One region."}, map[string]any{"id": "A2", "text": "Postgres stays."}}
+		frame["decisions"] = decisions
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRound, BlueprintID: "BP1", Payload: p})
+		require.True(t, ok)
+
+		return entry.Content
+	}
+
+	undecided := render()
+	accepted := render(map[string]any{"id": "A1", "accept": true})
+	converted := render(map[string]any{"id": "A1", "accept": false})
+
+	for _, text := range []string{"A1. One region.", "A2. Postgres stays."} {
+		assert.Contains(t, undecided, text)
+	}
+
+	assert.NotEqual(t, undecided, accepted, "a decision shows")
+	assert.NotEqual(t, accepted, converted, "accepting and turning into a question read apart")
+}
+
+func TestLogEntry_ATabOnlyRoundCountsItsAssumptions(t *testing.T) {
+	p := roundPayloadForTest()
+
+	frame, ok := p["frame"].(map[string]any)
+	require.True(t, ok)
+
+	frame["questions"] = []any{}
+	frame["assumptions"] = []any{map[string]any{"id": "A1", "text": "One region."}, map[string]any{"id": "A2", "text": "Postgres stays."}}
+
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRound, BlueprintID: "BP1", Payload: p})
+	require.True(t, ok)
+	require.NotNil(t, entry.Prompt)
+	assert.Equal(t, "Round 3: 2 assumption(s) from the system designer", entry.Prompt.Text)
+}
+
+func TestLogEntry_AnAutoRoundEndIsNotAWait(t *testing.T) {
+	end := func(extra map[string]any) string {
+		p := map[string]any{"stage": "solution_design", "kind": "stage", "status": "asked", "question_round": 2.0, "cost_usd": 0.5}
+		for k, v := range extra {
+			p[k] = v
+		}
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventStageEnded, BlueprintID: "BP1", Payload: p})
+		require.True(t, ok)
+
+		return entry.Content
+	}
+
+	waiting := end(nil)
+	assert.NotEqual(t, waiting, end(map[string]any{"responder": true}), "an auto round is not rendered as a wait")
+	assert.NotEqual(t, waiting, end(map[string]any{"chat": true}))
+	assert.Equal(t, waiting, end(map[string]any{"responder": false}))
+}
+
+func roundPayloadForTest() map[string]any {
+	raw := []byte(`{"round":3,"change":"posted","frame":{"persona":"system designer","stage":"solution_design",
+		"questions":[{"number":7,"title":"Deploy","text":"Helm or Kustomize?","options":[{"title":"Helm"}]}]}}`)
+
+	var p map[string]any
+
+	_ = json.Unmarshal(raw, &p)
+
+	return p
+}
+
+func TestLogEntry_ASegmentStartIsNoDivider(t *testing.T) {
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "BP1", Payload: map[string]any{
+		"stage": "intake", "kind": "stage", "round": 1.0, "segment": blueprint.SegmentAnswers, "question_round": 2.0,
+	}})
+	require.True(t, ok)
+	assert.Nil(t, entry.Marker)
 }

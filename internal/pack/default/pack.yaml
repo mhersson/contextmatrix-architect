@@ -1,18 +1,18 @@
 name: default
-version: "0.12"
+version: "0.13"
 stages:
   - id: intake
     persona: product_owner
     produces: need
+    tools: [code, research]
     checks: [assumptions]
     policy: human
     max_questions: 3
-    tools: [research]
   - id: slicing
     persona: product_owner
     produces: slices
     consumes: [intake]
-    tools: [research]
+    tools: [code, research]
     checks: [slices]
     policy: human
     gate: true

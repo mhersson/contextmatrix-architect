@@ -12,7 +12,7 @@ import (
 
 func testLists() Lists {
 	return Lists{
-		RequiredSections:        []string{"Context", "Where", "Change", "Acceptance criteria", "Tests expected", "Out of scope"},
+		RequiredSections:        []string{"Context", "Where", "Solution", "Acceptance criteria", "Tests expected", "Out of scope"},
 		StrippedHeadings:        []string{"Diagnosis", "Design", "Verify Command"},
 		StrippedHeadingPrefixes: []string{"Review Findings"},
 		DefectPhrases:           []string{"does not work", "panic", "error:"},
@@ -30,7 +30,7 @@ const goodBody = `## Context
 Why.
 ## Where
 internal/api/router.go
-## Change
+## Solution
 Add the route.
 ## Acceptance criteria
 1. go test ./internal/api/ passes.
@@ -348,7 +348,7 @@ func TestParseDraft_ManualEntries(t *testing.T) {
 }
 
 func validBody() string {
-	return "## Context\nwhy\n## Where\nx.go\n## Change\nadd\n## Acceptance criteria\n1. go test ./... passes.\n## Tests expected\nTestX.\n## Out of scope\nrest.\n"
+	return "## Context\nwhy\n## Where\nx.go\n## Solution\nadd\n## Acceptance criteria\n1. go test ./... passes.\n## Tests expected\nTestX.\n## Out of scope\nrest.\n"
 }
 
 func TestCheck_ProjectFieldsAndSelfContainment(t *testing.T) {
@@ -413,13 +413,13 @@ func TestCheck_ProjectWithoutTypesOrPrioritiesSkipsThoseChecks(t *testing.T) {
 	assert.Empty(t, Check(d, Lists{}, projects))
 }
 
-// changeOnlyBody names "make check" in its Change section but not in its
+// changeOnlyBody names "make check" in its Solution section but not in its
 // criteria.
 const changeOnlyBody = `## Context
 Why.
 ## Where
 internal/api/router.go
-## Change
+## Solution
 Run make check before pushing.
 ## Acceptance criteria
 1. The route answers 200.

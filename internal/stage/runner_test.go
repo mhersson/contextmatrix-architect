@@ -96,36 +96,7 @@ func TestRun_SubmitArtifactEndsTheRunWithTheArtifact(t *testing.T) {
 		names = append(names, tool.Function.Name)
 	}
 
-	assert.ElementsMatch(t, []string{"ask_human", "submit_artifact"}, names)
-}
-
-func TestRun_AskHumanBlocksUntilAnswered(t *testing.T) {
-	f := &fakeLLM{responses: []llm.Response{
-		{ToolCalls: []llm.ToolCall{toolCall("c1", "ask_human", `{"question":"Helm or kustomize?","options":["helm","kustomize"]}`)}, FinishReason: "tool_calls"},
-		{ToolCalls: []llm.ToolCall{toolCall("c2", "submit_artifact", `{"body":"# Need\n\nhelm"}`)}, FinishReason: "tool_calls"},
-	}}
-
-	asker := &stubAsker{answer: "helm"}
-	in := baseInput(&bytes.Buffer{})
-	in.Asker = asker
-
-	out, err := runnerWith(f).Run(context.Background(), in)
-	require.NoError(t, err)
-	assert.Equal(t, "Helm or kustomize?", asker.got.Text)
-
-	// The answer reached the model as the tool result of c1.
-	var sawAnswer bool
-
-	for _, req := range f.requests {
-		for _, m := range req.Messages {
-			if m.Role == "tool" && m.ToolCallID == "c1" && strings.Contains(m.Content, "helm") {
-				sawAnswer = true
-			}
-		}
-	}
-
-	assert.True(t, sawAnswer, "answer must be fed back as the tool result")
-	assert.Equal(t, "# Need\n\nhelm", out.Artifact.Body)
+	assert.ElementsMatch(t, []string{"submit_artifact"}, names)
 }
 
 func TestRun_NonObjectDataIsCorrectedByTheModel(t *testing.T) {
@@ -147,18 +118,6 @@ func TestRun_EndsWithoutArtifactIsAnError(t *testing.T) {
 
 	_, err := runnerWith(f).Run(context.Background(), baseInput(&bytes.Buffer{}))
 	require.ErrorIs(t, err, ErrNoArtifact)
-}
-
-func TestRun_NoAskerRejectsAskHuman(t *testing.T) {
-	f := &fakeLLM{responses: []llm.Response{
-		{ToolCalls: []llm.ToolCall{toolCall("c1", "ask_human", `{"question":"q"}`)}, FinishReason: "tool_calls"},
-		{ToolCalls: []llm.ToolCall{toolCall("c2", "submit_artifact", `{"body":"x"}`)}, FinishReason: "tool_calls"},
-	}}
-
-	out, err := runnerWith(f).Run(context.Background(), baseInput(&bytes.Buffer{}))
-	require.NoError(t, err)
-	assert.Equal(t, "x", out.Artifact.Body)
-	assert.GreaterOrEqual(t, out.Result.ToolCallFailures, 1, "ask_human without an asker fails as a tool error, not a crash")
 }
 
 func TestClientFor_BaseURLAndAPIKeyReachTheWire(t *testing.T) {
@@ -191,14 +150,14 @@ func TestRun_SecretInToolResultIsRedactedFromEventsAndConversation(t *testing.T)
 	const secret = "sk-secret-value-123456"
 
 	f := &fakeLLM{responses: []llm.Response{
-		{ToolCalls: []llm.ToolCall{toolCall("c1", "ask_human", `{"question":"key?"}`)}, FinishReason: "tool_calls"},
+		{ToolCalls: []llm.ToolCall{toolCall("c1", "echo", `{"text":"the key is `+secret+`"}`)}, FinishReason: "tool_calls"},
 		{ToolCalls: []llm.ToolCall{toolCall("c2", "submit_artifact", `{"body":"x"}`)}, FinishReason: "tool_calls"},
 	}}
 
 	var events bytes.Buffer
 
 	in := baseInput(&events)
-	in.Asker = &stubAsker{answer: "the key is " + secret}
+	in.Tools = []tools.Tool{echoTool{}}
 
 	out, err := runnerWith(f).Run(context.Background(), in)
 	require.NoError(t, err)
@@ -298,7 +257,7 @@ type namedTool struct {
 func (n namedTool) Name() string { return n.name }
 
 func TestRun_ToolNamedLikeABuiltInIsRefused(t *testing.T) {
-	for _, name := range []string{"ask_human", "submit_artifact"} {
+	for _, name := range []string{"ask_questions", "answer_chat", "submit_artifact"} {
 		t.Run(name, func(t *testing.T) {
 			f := &fakeLLM{}
 
@@ -360,7 +319,7 @@ func TestRun_CapsToolOutput(t *testing.T) {
 
 func TestRun_CompactsALongConversationInsteadOfStopping(t *testing.T) {
 	ask := func(id string) llm.Response {
-		return llm.Response{ToolCalls: []llm.ToolCall{toolCall(id, "ask_human", `{"question":"more?"}`)}, FinishReason: "tool_calls"}
+		return llm.Response{ToolCalls: []llm.ToolCall{toolCall(id, "echo", `{"text":"more"}`)}, FinishReason: "tool_calls"}
 	}
 
 	near := ask("c6")
@@ -377,7 +336,7 @@ func TestRun_CompactsALongConversationInsteadOfStopping(t *testing.T) {
 
 	in := baseInput(&events)
 	in.MaxTurns = 20
-	in.Asker = &stubAsker{answer: "yes"}
+	in.Tools = []tools.Tool{echoTool{}}
 
 	out, err := runnerWith(f).Run(context.Background(), in)
 	require.NoError(t, err)
@@ -541,7 +500,7 @@ func TestRun_WithoutADraftCallbackNothingIsDrafted(t *testing.T) {
 
 func TestRun_ACompactionDiscardVoidsTheDraft(t *testing.T) {
 	ask := func(id string) llm.Response {
-		return llm.Response{ToolCalls: []llm.ToolCall{toolCall(id, "ask_human", `{"question":"more?"}`)}, FinishReason: "tool_calls"}
+		return llm.Response{ToolCalls: []llm.ToolCall{toolCall(id, "echo", `{"text":"more"}`)}, FinishReason: "tool_calls"}
 	}
 
 	near := llm.Response{
@@ -561,7 +520,7 @@ func TestRun_ACompactionDiscardVoidsTheDraft(t *testing.T) {
 
 	in := baseInput(&bytes.Buffer{})
 	in.MaxTurns = 20
-	in.Asker = &stubAsker{answer: "yes"}
+	in.Tools = []tools.Tool{echoTool{}}
 	in.Draft = func(d DraftFrame) { frames = append(frames, d) }
 
 	out, err := (&Runner{NewLLM: func(protocol.LLMEndpoint) llm.LLM { return f }}).Run(context.Background(), in)
@@ -606,14 +565,14 @@ func (g *ghostLLM) SendStream(ctx context.Context, req llm.Request, onDelta func
 
 func TestRun_ANewModelCallStartsAFreshDraftWhateverIDItReuses(t *testing.T) {
 	f := &ghostLLM{ghost: `{"body":"ghost of the first`, streamingLLM: streamingLLM{chunk: 4, fakeLLM: fakeLLM{responses: []llm.Response{
-		{ToolCalls: []llm.ToolCall{toolCall("a1", "ask_human", `{"question":"more?"}`)}, FinishReason: "tool_calls"},
+		{ToolCalls: []llm.ToolCall{toolCall("a1", "echo", `{"text":"more"}`)}, FinishReason: "tool_calls"},
 		{ToolCalls: []llm.ToolCall{toolCall("c1", "submit_artifact", `{"body":"the second call's own body"}`)}, FinishReason: "tool_calls"},
 	}}}}
 
 	var frames []DraftFrame
 
 	in := baseInput(&bytes.Buffer{})
-	in.Asker = &stubAsker{answer: "yes"}
+	in.Tools = []tools.Tool{echoTool{}}
 	in.Draft = func(d DraftFrame) { frames = append(frames, d) }
 
 	tick := time.Unix(1000, 0)
@@ -802,6 +761,35 @@ func TestRun_KeepsTransientResultsOutOfARunWithoutAnArtifact(t *testing.T) {
 	got, ok := toolResult(out.Result.Messages, "c1")
 	require.True(t, ok)
 	assert.Equal(t, "lookup: 2 hits", got)
+}
+
+func TestRun_KeepsTransientResultsOutOfAForcedFollowUp(t *testing.T) {
+	f := &fakeLLM{responses: []llm.Response{
+		{ToolCalls: []llm.ToolCall{toolCall("c1", "lookup", `{}`)}, FinishReason: "tool_calls"},
+		{Content: "I have what I need.", FinishReason: "stop"},
+		{ToolCalls: []llm.ToolCall{toolCall("c2", "submit_artifact", `{"body":"# Need"}`)}, FinishReason: "tool_calls"},
+	}}
+
+	in := baseInput(&bytes.Buffer{})
+	in.Tools = []tools.Tool{lookupTool{}}
+
+	out, err := runnerWith(f).Run(context.Background(), in)
+	require.NoError(t, err)
+	assert.Equal(t, "# Need", out.Artifact.Body)
+
+	// The follow-up belongs to the run, so its model reads the whole result.
+	require.Len(t, f.requests, 3)
+
+	seen, ok := toolResult(f.requests[2].Messages, "c1")
+	require.True(t, ok)
+	assert.Contains(t, seen, "hit one")
+
+	got, ok := toolResult(out.Result.Messages, "c1")
+	require.True(t, ok)
+	assert.Equal(t, "lookup: 2 hits", got, "the record of a forced follow-up keeps only what the tool stores")
+
+	_, ok = toolResult(out.Result.Messages, "c2")
+	assert.True(t, ok, "the record holds the follow-up's conversation")
 }
 
 func TestRun_PassesARecordedHistoryThroughUnchanged(t *testing.T) {

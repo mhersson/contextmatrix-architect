@@ -14,6 +14,9 @@ const (
 	RunFailed      = "failed"
 	RunInterrupted = "interrupted"
 	RunCanceled    = "canceled"
+	// RunAsked is a stage run that ended by posting a question round, or by
+	// answering an open round's chat; the stage goes on in a later run.
+	RunAsked = "asked"
 )
 
 // Run kinds. A stage run produces a stage's artifact; a reviewer run judges

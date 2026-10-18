@@ -38,6 +38,13 @@ type round struct {
 	history         []llm.Message
 	task            string
 	findings        int
+	// segment marks a run that goes on from a question round: SegmentAnswers
+	// resumes it with the answers, SegmentChat answers its chat; qround is the
+	// round. Empty for a stage run or a builder round.
+	segment string
+	qround  int
+	// seen is how many chat entries a chat run's task gave it.
+	seen int
 }
 
 // reviewStage names the pseudo-stage a stage's verdicts are stored under.
@@ -211,8 +218,8 @@ func (c *Controller) latestStageRun(ctx context.Context, id, stageID string) (st
 // exists, and runs the builder's next round with the findings when the
 // score is below the threshold with a round left in the attempt, or its
 // revision when the score passed with findings. A revision is never
-// reviewed. false when a run did not complete, which has been reported.
-func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string) bool {
+// reviewed. A run that did not complete has been reported and stops.
+func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string) stageEnd {
 	bg := context.Background()
 	au := sess.audit
 
@@ -220,21 +227,21 @@ func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp sto
 	if !ok || st.Reviewer == nil {
 		c.fail(bg, au, bp.ID, 0, fmt.Sprintf("review %s: the pack has no reviewer for it", stageID))
 
-		return false
+		return stageStopped
 	}
 
 	art, err := c.opts.Store.LatestArtifact(bg, bp.ID, stageID)
 	if err != nil {
 		c.fail(bg, au, bp.ID, 0, fmt.Sprintf("review %s: %v", stageID, err))
 
-		return false
+		return stageStopped
 	}
 
 	built, err := c.latestStageRun(bg, bp.ID, stageID)
 	if err != nil {
 		c.fail(bg, au, bp.ID, 0, err.Error())
 
-		return false
+		return stageStopped
 	}
 
 	v, found, revised, err := c.gateReview(bg, bp.ID, st, art)
@@ -243,25 +250,25 @@ func (c *Controller) critique(ctx context.Context, r *run, sess *session, bp sto
 	case err != nil:
 		c.fail(bg, au, bp.ID, 0, err.Error())
 
-		return false
+		return stageStopped
 	case revised:
-		return true
+		return stageStored
 	case !found:
 		var ok bool
 		if v, ok = c.runReviewer(ctx, r, sess, bp, st, art, built.Attempt); !ok {
-			return false
+			return stageStopped
 		}
 	}
 
 	if settled(st, v) {
-		return true
+		return stageStored
 	}
 
 	rd, err := c.builderRound(bg, bp, st, built, art, v)
 	if err != nil {
 		c.fail(bg, au, bp.ID, 0, err.Error())
 
-		return false
+		return stageStopped
 	}
 
 	return c.runStage(ctx, r, sess, bp, stageID, rd)
@@ -316,29 +323,34 @@ func (c *Controller) builderRound(ctx context.Context, bp store.Blueprint, st pa
 	return rd, nil
 }
 
-// builtHistory is the conversation of the run that built the artifact,
-// without its system message; nil when the run stored no transcript. A
-// transcript that cannot be read is logged, and the round starts over.
+// builtHistory is the conversation of the run that built the artifact.
 func (c *Controller) builtHistory(ctx context.Context, id string, built store.Run) []llm.Message {
-	raw, err := c.opts.Store.GetTranscript(ctx, built.ID)
+	return c.runHistory(ctx, id, built.ID)
+}
+
+// runHistory is the conversation of run runID without its system message;
+// nil when the run stored no transcript. A transcript that cannot be read is
+// logged, and the caller starts over.
+func (c *Controller) runHistory(ctx context.Context, id string, runID int64) []llm.Message {
+	raw, err := c.opts.Store.GetTranscript(ctx, runID)
 
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return nil
 	case err != nil:
-		c.opts.Logger.Warn("blueprint: read the builder's transcript; the round starts over", "blueprint", id, "run", built.ID, "error", err)
+		c.opts.Logger.Warn("blueprint: read the run's transcript; the caller starts over", "blueprint", id, "run", runID, "error", err)
 
 		return nil
 	}
 
 	var history []llm.Message
 	if err := json.Unmarshal(raw, &history); err != nil {
-		c.opts.Logger.Warn("blueprint: decode the builder's transcript; the round starts over", "blueprint", id, "run", built.ID, "error", err)
+		c.opts.Logger.Warn("blueprint: decode the run's transcript; the caller starts over", "blueprint", id, "run", runID, "error", err)
 
 		return nil
 	}
 
-	return withoutSystem(history)
+	return stage.WithoutSystem(history)
 }
 
 // writeNewNotes gives a round that resumes runID's conversation the notes
@@ -359,20 +371,6 @@ func (c *Controller) writeNewNotes(ctx context.Context, b *strings.Builder, id s
 	}
 
 	return c.writeNotesAfter(ctx, b, id, after)
-}
-
-// withoutSystem drops a conversation's system message: a run's own comes
-// first, from its persona and instructions.
-func withoutSystem(msgs []llm.Message) []llm.Message {
-	out := make([]llm.Message, 0, len(msgs))
-
-	for _, m := range msgs {
-		if m.Role != "system" {
-			out = append(out, m)
-		}
-	}
-
-	return out
 }
 
 // runReviewer judges a gated stage's artifact with the pack's reviewer: its

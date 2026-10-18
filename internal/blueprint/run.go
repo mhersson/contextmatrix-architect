@@ -8,11 +8,9 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/mhersson/contextmatrix-harness/harness"
-	"github.com/mhersson/contextmatrix-harness/tools"
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
@@ -54,35 +52,73 @@ func usageOf(p *protocol.ModelPrice, res harness.Result) store.RunUsage {
 	return u
 }
 
+// stageEnd is how a step of the pipeline ended.
+type stageEnd int
+
+const (
+	// stageStopped: the run failed, was cancelled or refused; nothing follows
+	// on its own.
+	stageStopped stageEnd = iota
+	// stageStored: the stage's artifact is stored, or the critique left it to
+	// its gate.
+	stageStored
+	// stageAsked: the run posted a round or answered its chat.
+	stageAsked
+)
+
 // launch runs stageID and whatever follows it on the run slot r, which the
-// caller holds. The chain stops at a run that did not complete, a gate that
-// waits for the user, the pipeline's end (after the sign-off of ready cards,
-// shown even when a cancel landed first), or a cancel between steps; the
-// slot is released then.
+// caller holds (see launchStep).
 func (c *Controller) launch(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string) {
-	c.launchStep(ctx, r, sess, bp, stageID, false)
+	c.launchStep(ctx, r, sess, bp, segmentStep{stage: stageID})
 }
 
 // launchCritique is launch starting with the critique of stageID's latest
 // artifact, its review or its next builder round, instead of a run of it.
 func (c *Controller) launchCritique(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string) {
-	c.launchStep(ctx, r, sess, bp, stageID, true)
+	c.launchStep(ctx, r, sess, bp, segmentStep{stage: stageID, critique: true})
 }
 
-func (c *Controller) launchStep(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string, critique bool) {
+// launchStep runs step and whatever follows it on the run slot r, which the
+// caller holds. A run that posts a round is followed by what the round needs
+// next: its continuation at once when it is already answered, else nothing,
+// and the blueprint waits. The chain also stops at a run that did not
+// complete, a gate that waits for the user, the pipeline's end (after the
+// sign-off of ready cards, shown even when a cancel landed first), or a
+// cancel between steps; the slot is released then.
+func (c *Controller) launchStep(ctx context.Context, r *run, sess *session, bp store.Blueprint, step segmentStep) {
 	go func() {
 		defer c.release(bp.ID, r)
 
-		for stageID != "" && ctx.Err() == nil {
-			if critique {
-				if !c.critique(ctx, r, sess, bp, stageID) {
-					return
-				}
+		for step.stage != "" && ctx.Err() == nil {
+			stageID := step.stage
+
+			var end stageEnd
+
+			if step.critique {
+				end = c.critique(ctx, r, sess, bp, stageID)
 			} else {
-				if !c.runStage(ctx, r, sess, bp, stageID, nil) {
+				end = c.runStage(ctx, r, sess, bp, stageID, step.seg)
+			}
+
+			switch end {
+			case stageStopped:
+				return
+			case stageAsked:
+				next, err := c.nextSegment(context.WithoutCancel(ctx), sess, bp, false)
+				if err != nil {
+					c.fail(context.WithoutCancel(ctx), sess.audit, bp.ID, 0, err.Error())
+
 					return
 				}
 
+				step = next
+
+				continue
+			}
+
+			// A first build's artifact: a builder round's, even one that went
+			// on from a round, is not.
+			if !step.critique && (step.seg == nil || step.seg.number <= 1) {
 				if stageID == c.opts.Pack.Stages[0].ID {
 					c.postGatePlan(context.WithoutCancel(ctx), sess, bp)
 				}
@@ -92,24 +128,24 @@ func (c *Controller) launchStep(ctx context.Context, r *run, sess *session, bp s
 				}
 			}
 
-			// What follows is decided and recorded even when a cancel
-			// landed as the step completed; the loop then stops.
-			var end outcome
+			// What follows is decided and recorded even when a cancel landed
+			// as the step completed; the loop then stops.
+			var adv outcome
 
-			stageID, end = c.advance(context.WithoutCancel(ctx), sess, bp, stageID)
-			critique = end.critique
+			stageID, adv = c.advance(context.WithoutCancel(ctx), sess, bp, stageID)
+			step = segmentStep{stage: stageID, critique: adv.critique}
 
-			if end.ready {
+			if adv.ready {
 				c.holdForSignoff(r)
-				c.signoff(ctx, sess, bp, end)
+				c.signoff(ctx, sess, bp, adv)
 			}
 		}
 	}()
 }
 
-// runStage runs one stage, or one builder round of it, and reports whether
-// it completed with an artifact.
-func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string, rd *round) bool {
+// runStage runs one stage, one builder round of it, or a run that goes on
+// from one of its rounds, and reports how it ended.
+func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp store.Blueprint, stageID string, rd *round) stageEnd {
 	bg := context.Background()
 	id := bp.ID
 	au := sess.audit
@@ -125,19 +161,19 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	if !ok {
 		c.fail(bg, au, id, 0, fmt.Sprintf("unknown stage %q", stageID))
 
-		return false
+		return stageStopped
 	}
 
 	m := c.modelFor(sess, st.Persona)
 
 	runCap, ok := c.capAllows(bg, au, bp, stageID, m, nil)
 	if !ok {
-		return false
+		return stageStopped
 	}
 
-	attempt, number, asked := 0, 1, 0
-
 	var err error
+
+	attempt, number, asked := 0, 1, 0
 
 	if rd != nil {
 		// The question cap is per attempt, so a round counts what the
@@ -151,7 +187,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	if err != nil {
 		c.fail(bg, au, id, 0, err.Error())
 
-		return false
+		return stageStopped
 	}
 
 	runID, err := c.opts.Store.StartRun(bg, store.Run{
@@ -161,7 +197,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	if err != nil {
 		c.fail(bg, au, id, 0, "start run failed: "+err.Error())
 
-		return false
+		return stageStopped
 	}
 
 	f := &flight{
@@ -176,27 +212,20 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	r.stage = stageID
 	c.mu.Unlock()
 
-	au.event(bg, Event{Kind: EventStageStarted, BlueprintID: id, RunID: runID, Payload: map[string]any{
+	started := map[string]any{
 		"stage": stageID, "kind": store.RunKindStage, "persona": st.Persona, "attempt": attempt, "round": number, "model": m.name,
 		"pack": c.opts.Pack.Name, "pack_version": c.opts.Pack.Version,
-	}})
+	}
 
-	// A question a cut-short run left open is answered before the task is
-	// written, so the re-run is given the answer.
-	answered, err := c.askLeftOpen(ctx, r, au, bp, stageID)
+	if rd != nil && rd.segment != "" {
+		started["segment"], started["question_round"] = rd.segment, rd.qround
+	}
+
+	au.event(bg, Event{Kind: EventStageStarted, BlueprintID: id, RunID: runID, Payload: started})
 
 	// The input is built inside the run: a failed checkout is a failed run
 	// the next message retries, and abort, End and Shutdown cancel a fetch.
-	var (
-		in         stage.Input
-		checks     stageChecks
-		closeTools func()
-	)
-
-	if err == nil {
-		in, checks, closeTools, err = c.stageInput(ctx, sess, bp, runID, st)
-	}
-
+	in, checks, closeTools, err := c.stageInput(ctx, sess, bp, runID, st)
 	if err != nil {
 		switch {
 		case c.shuttingDown(r):
@@ -216,37 +245,30 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			}})
 		}
 
-		return false
+		return stageStopped
 	}
 
 	if rd != nil {
 		if rd.history != nil {
 			in.Task, in.History = rd.task, rd.history
-
-			// The round's task was written before these were answered.
-			if len(answered) > 0 {
-				var b strings.Builder
-
-				b.WriteString("## Questions this round left open\n\nThey are answered now; use the answers and do not ask them again:\n\n")
-				writeQuestions(&b, answered)
-				in.Task += b.String()
-			}
 		} else {
 			in.Task += rd.task
 		}
 
+		in.Chat = rd.segment == SegmentChat
+
 		if rd.findings > 0 {
 			check, state := addressedValidator(rd.findings)
-
-			validators := []func(context.Context, stage.Artifact) error{check}
-			if in.Validate != nil {
-				validators = append([]func(context.Context, stage.Artifact) error{in.Validate}, check)
-			}
-
-			in.Validate = allOf(validators)
-
+			in.Validate = allOf(append(validatorsOf(in.Validate), check))
 			checks.bounded = append(checks.bounded, state)
 		}
+	}
+
+	// The tab check needs the run's attempt, which stageInput does not know.
+	if slices.Contains(st.Checks, pack.CheckAssumptions) {
+		check, state := c.tabValidator(bp, st, attempt)
+		in.Validate = allOf(append(validatorsOf(in.Validate), check))
+		checks.bounded = append(checks.bounded, state)
 	}
 
 	defer closeTools()
@@ -258,17 +280,24 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	sink := &harnessSink{
 		audit: au, id: id, runID: runID, canceled: runCtx.Done(),
-		price: m.price, capUSD: runCap, stop: stop, flight: f,
+		price: m.price, capUSD: runCap, stop: stop, flight: f, chat: in.Chat,
 	}
 
 	in.Model = m.name
 	in.Endpoint = sess.endpoint
 	in.MaxCostUSD = runCap
 	in.MaxTurns = c.opts.MaxTurns
-	in.Asker = &asker{
-		c: c, bp: bp, stage: stageID, max: st.MaxQuestions, runID: runID, run: r, audit: au,
-		sess: sess, attempt: attempt, tools: in.Tools, sink: sink, asked: asked,
+
+	iv := &interviewer{
+		c: c, bp: bp, st: st, sess: sess, r: r, runID: runID, attempt: attempt, builderRound: number,
+		tools: in.Tools, sink: sink, max: st.MaxQuestions, asked: asked,
 	}
+	if rd != nil {
+		iv.revisedFor, iv.qround, iv.seen = rd.findings, rd.qround, rd.seen
+	}
+
+	in.Interviewer = iv
+
 	in.Events = sink
 	in.Secrets = sess.secrets()
 
@@ -297,7 +326,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	// recovery re-runs the stage on the next Start. A completed run still
 	// writes; Shutdown waits for it, so the store is open.
 	if runErr != nil && c.shuttingDown(r) {
-		return false
+		return stageStopped
 	}
 
 	if len(out.Result.Messages) > 0 {
@@ -310,6 +339,14 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	isPriced := m.price != nil
 
 	switch {
+	case runErr == nil && out.Asked:
+		c.endRun(bg, runID, store.RunAsked, "round", usage)
+		au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
+			"stage": stageID, "kind": store.RunKindStage, "status": store.RunAsked, "cost_usd": usage.CostUSD, "priced": isPriced,
+			"question_round": iv.posted, "chat": in.Chat, "responder": iv.responded,
+		}})
+
+		return stageAsked
 	case runErr == nil:
 		// Cards accepted on the last contract round carry their findings, and
 		// the stopped flag ends the pipeline at this stage. On a checked stage
@@ -339,7 +376,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			c.endRun(bg, runID, store.RunFailed, "store artifact failed", usage)
 			c.fail(bg, au, id, runID, err.Error())
 
-			return false
+			return stageStopped
 		}
 
 		c.endRun(bg, runID, store.RunDone, out.Result.Reason, usage)
@@ -372,7 +409,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			"stage": stageID, "kind": store.RunKindStage, "status": store.RunDone, "cost_usd": usage.CostUSD, "priced": isPriced,
 		}})
 
-		return true
+		return stageStored
 	case errors.Is(context.Cause(runCtx), errCostCap) || out.Result.Reason == "max_cost":
 		// The sink's stop and the harness's own cap on the reported cost are
 		// one condition: the run cap was reached.
@@ -414,7 +451,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		}})
 	}
 
-	return false
+	return stageStopped
 }
 
 // stageInput builds what a run of st is given besides its model and limits:
@@ -551,6 +588,15 @@ func allOf(validators []func(context.Context, stage.Artifact) error) func(contex
 	}
 }
 
+// validatorsOf is v as a list for allOf; empty when v is nil.
+func validatorsOf(v func(context.Context, stage.Artifact) error) []func(context.Context, stage.Artifact) error {
+	if v == nil {
+		return nil
+	}
+
+	return []func(context.Context, stage.Artifact) error{v}
+}
+
 // nextAttempt numbers a new run of stageID after every earlier stage run of
 // it; reviewer and responder runs are not attempts.
 func (c *Controller) nextAttempt(ctx context.Context, id, stageID string) (int, error) {
@@ -570,8 +616,8 @@ func (c *Controller) nextAttempt(ctx context.Context, id, stageID string) (int, 
 	return attempt, nil
 }
 
-// askedIn counts the questions the runs of stageID's attempt asked,
-// answered or not.
+// askedIn counts the questions the runs of stageID's attempt asked: in the
+// rounds they posted, and alone in a record from before rounds.
 func (c *Controller) askedIn(ctx context.Context, id, stageID string, attempt int) (int, error) {
 	runs, err := c.opts.Store.ListRuns(ctx, id)
 	if err != nil {
@@ -586,14 +632,25 @@ func (c *Controller) askedIn(ctx context.Context, id, stageID string, attempt in
 		}
 	}
 
-	questions, err := c.opts.Store.ListEventsOfKind(ctx, id, EventQuestion)
+	rounds, err := c.rounds(ctx, id)
 	if err != nil {
-		return 0, fmt.Errorf("blueprint: count the questions asked: %w", err)
+		return 0, err
 	}
 
 	n := 0
 
-	for _, e := range questions {
+	for _, s := range rounds {
+		if in[s.PostedBy] {
+			n += len(s.Frame.Questions)
+		}
+	}
+
+	alone, err := c.opts.Store.ListEventsOfKind(ctx, id, EventQuestion)
+	if err != nil {
+		return 0, fmt.Errorf("blueprint: count the questions asked: %w", err)
+	}
+
+	for _, e := range alone {
 		if in[e.RunID] {
 			n++
 		}
@@ -647,173 +704,6 @@ func cancelReason(ctx context.Context) string {
 	return "canceled"
 }
 
-// asker puts a stage's questions to their responder, one at a time: it
-// numbers each, refuses one past the stage's cap or with an option the
-// webhook would take as a command, parks the run on its slot until a
-// message answers it and records the answer. Under the stage's auto policy
-// the responder answers it.
-type asker struct {
-	c     *Controller
-	bp    store.Blueprint
-	stage string
-	// max caps the questions this run's attempt may ask; 0 is no cap.
-	max   int
-	runID int64
-	run   *run
-	audit audit
-	sess  *session
-	// attempt numbers the responder's runs with the asking run's attempt.
-	attempt int
-	// tools are the asking stage's tools, which its responder reads with.
-	tools []tools.Tool
-	// sink is the asking run's, which a responder's cost is charged to.
-	sink *harnessSink
-
-	// mu keeps one question open at a time, so two asks of one tool batch
-	// never share a number or the run's answer channel.
-	mu sync.Mutex
-	// asked counts the attempt's questions, its earlier rounds' included.
-	asked int
-}
-
-func (a *asker) Ask(ctx context.Context, q stage.Question) (string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	// Checked before anything is numbered or recorded: a cancelled run asks
-	// nothing.
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if err := commandOption(q.Options); err != nil {
-		return "", err
-	}
-
-	if a.max > 0 && a.asked >= a.max {
-		return "", fmt.Errorf("this stage may ask %d question(s) per attempt and has asked them; decide the rest yourself and, where this stage records assumptions, record each decision as one", a.max)
-	}
-
-	bg := context.WithoutCancel(ctx)
-
-	// Read at every question, so a gate reply during the run applies from
-	// the next question on.
-	policy, err := a.c.policy(bg, a.bp, a.stage)
-	if err != nil {
-		return "", err
-	}
-
-	number, err := a.c.nextQuestion(bg, a.bp.ID)
-	if err != nil {
-		return "", err
-	}
-
-	a.asked++
-
-	payload := map[string]any{
-		"number": number, "stage": a.stage, "text": q.Text, "options": q.Options,
-		"context": q.Context, "recommended": q.Recommended,
-	}
-
-	if policy == pack.PolicyAuto {
-		payload["responder"] = store.ResponderAuto
-
-		// As the human path: an abort or End never starts a responder run.
-		a.c.mu.Lock()
-		err := ctx.Err()
-		a.c.mu.Unlock()
-
-		if err != nil {
-			return "", err
-		}
-
-		a.audit.event(bg, Event{Kind: EventQuestion, BlueprintID: a.bp.ID, RunID: a.runID, Payload: payload})
-
-		return a.respond(ctx, q, number)
-	}
-
-	payload["responder"] = store.ResponderHuman
-
-	ans, err := a.c.awaitAnswer(ctx, a.run, a.bp.ID, number, payload, func() {
-		a.audit.event(bg, Event{Kind: EventQuestion, BlueprintID: a.bp.ID, RunID: a.runID, Payload: payload})
-	})
-	if err != nil {
-		return "", err
-	}
-
-	a.record(bg, q, number, ans)
-
-	return fmt.Sprintf("Q%d: %s", number, ans.text), nil
-}
-
-// awaitAnswer opens question number on the run slot r, has publish show it,
-// and waits for the human's answer; ctx's error when abort, End or Shutdown
-// cancels the run first.
-func (c *Controller) awaitAnswer(ctx context.Context, r *run, id string, number int, payload map[string]any, publish func()) (reply, error) {
-	bg := context.WithoutCancel(ctx)
-	ch := make(chan reply, 1)
-
-	// Checked under c.mu: abort and End cancel under it, so a cancelled run
-	// never opens a question.
-	c.mu.Lock()
-
-	if err := ctx.Err(); err != nil {
-		c.mu.Unlock()
-
-		return reply{}, err
-	}
-
-	// Registered before the question is published, so an answer to it is
-	// never a lost wakeup.
-	r.answer, r.question, r.pending = ch, number, payload
-	c.mu.Unlock()
-
-	c.setState(bg, id, StateWaiting)
-	publish()
-
-	select {
-	case ans := <-ch:
-		c.setState(bg, id, StateRunning)
-
-		return ans, nil
-	case <-ctx.Done():
-		c.mu.Lock()
-
-		if r.answer == ch {
-			r.answer = nil
-		}
-
-		c.mu.Unlock()
-
-		return reply{}, ctx.Err()
-	}
-}
-
-// record stores an answered question once. A failure is logged: the answer
-// already reached the stage, and the events keep it.
-func (a *asker) record(ctx context.Context, q stage.Question, number int, ans reply) {
-	if err := a.c.opts.Store.AddQuestion(ctx, store.Question{
-		BlueprintID: a.bp.ID, RunID: a.runID, Stage: a.stage, Number: number,
-		Text: a.audit.text(q.Text), Options: a.audit.texts(q.Options), Context: a.audit.text(q.Context),
-		Answer: a.audit.text(ans.text), Responder: store.ResponderHuman, MessageID: ans.msgID,
-		AnsweredAt: a.c.opts.Now().UTC(),
-	}); err != nil {
-		a.c.opts.Logger.Error("blueprint: record the answer", "blueprint", a.bp.ID, "question", number, "error", err)
-	}
-}
-
-// nextQuestion numbers a new question after every question the blueprint
-// has asked, answered or not. The caller holds the blueprint's run slot, so
-// no other question is numbered meanwhile.
-func (c *Controller) nextQuestion(ctx context.Context, id string) (int, error) {
-	n, err := c.opts.Store.CountEvents(ctx, id, EventQuestion)
-	if err != nil {
-		return 0, fmt.Errorf("blueprint: number the question: %w", err)
-	}
-
-	return n + 1, nil
-}
-
 // harnessSink stores each harness JSONL line as an event and forwards it.
 // Lines are stored even during Shutdown, which waits for the run, so the
 // store is open.
@@ -832,6 +722,9 @@ type harnessSink struct {
 	stop   context.CancelCauseFunc
 	// flight counts the run's lines for the view; nil counts nothing.
 	flight *flight
+	// chat keeps a chat run's text and its answer_chat call off the panel:
+	// the reply reaches it only in the round's chat.
+	chat bool
 
 	mu    sync.Mutex
 	spent float64
@@ -847,7 +740,7 @@ func (s *harnessSink) Write(p []byte) (int, error) {
 
 	// A canceled run's harness reports the cancel as an error. It is
 	// audited, but the panel shows the cancel as the stage's end instead.
-	forward := !s.isCanceled() || !isErrorLine(line)
+	forward := (!s.isCanceled() || !isErrorLine(line)) && (!s.chat || !isChatEcho(line))
 
 	s.flight.count(line)
 	s.audit.harness(context.Background(), s.id, s.runID, line, forward)
@@ -954,4 +847,21 @@ func isErrorLine(line []byte) bool {
 	}
 
 	return json.Unmarshal(line, &ev) == nil && ev.Kind == "error"
+}
+
+// isChatEcho reports a line that would show a chat run's reply a second
+// time beside the round: the model's text, or its answer_chat call.
+func isChatEcho(line []byte) bool {
+	var ev struct {
+		Kind string `json:"kind"`
+		Data struct {
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+
+	if json.Unmarshal(line, &ev) != nil {
+		return false
+	}
+
+	return ev.Kind == "model_response" || (ev.Kind == "tool_call" && ev.Data.Name == stage.AnswerChatName)
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -220,39 +219,40 @@ func TestFold_AnAnswerFromBeforeAReSliceIsNotOwed(t *testing.T) {
 
 	script := dialogScript()
 	script["solution_design"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		n := designs.Add(1)
+		if in.History == nil {
+			n := designs.Add(1)
 
-		asked, err := in.Asker.Ask(ctx, stage.Question{Text: fmt.Sprintf("Question %d?", n)})
-		if err != nil {
-			return stage.Output{}, err
+			if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Question", fmt.Sprintf("Question %d?", n))}}); err != nil {
+				return stage.Output{}, err
+			}
+
+			return askedOutput(in), nil
 		}
 
-		tag, _, _ := strings.Cut(asked, ": ")
-
-		if n == 1 {
-			return done("# Design", goodDesign(tag)), nil
+		if designs.Load() == 1 {
+			return done("# Design", goodDesign("Q1")), nil
 		}
 
 		// After the re-slice only this attempt's answer is owed a decision.
 		seen <- submits{
 			omitting: in.Validate(ctx, stage.Artifact{Body: "# Design", Data: goodDesign("assumption")}),
-			citing:   in.Validate(ctx, stage.Artifact{Body: "# Design", Data: goodDesign(tag)}),
+			citing:   in.Validate(ctx, stage.Artifact{Body: "# Design", Data: goodDesign("Q2")}),
 		}
 
-		return done("# Design", goodDesign(tag)), nil
+		return done("# Design", goodDesign("Q2")), nil
 	}
 
-	c, _, _, rec, _ := newDialog(t, script)
+	c, _, _, _, _ := newDialog(t, script)
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, startInput("BP1")))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
-	rec.waitForCount(t, EventQuestion, 1)
-	require.NoError(t, c.Message(ctx, "BP1", "Postgres", "m2"))
+	c.Wait("BP1")
+	answerRound(t, c, "BP1", 1, true, own(1, "Postgres"))
 	c.Wait("BP1")
 
 	require.NoError(t, c.Message(ctx, "BP1", "reject slicing merge them", "m3"))
-	rec.waitForCount(t, EventQuestion, 2)
-	require.NoError(t, c.Message(ctx, "BP1", "eu-north", "m4"))
+	c.Wait("BP1")
+	answerRound(t, c, "BP1", 2, true, own(2, "eu-north"))
 	c.Wait("BP1")
 
 	var got submits

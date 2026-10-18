@@ -98,7 +98,7 @@ func TestDraft_OnlySubmitArtifactIsDrafted(t *testing.T) {
 	got := newDraftLog(t)
 	x := newDraftExtractor(nil, got.add, time.Now, 0)
 
-	x.fragment(0, "c1", "ask_human", `{"body":"a question"}`)
+	x.fragment(0, "c1", "ask_questions", `{"body":"a question"}`)
 	x.fragment(1, "c2", "read", `{"path":"x","body":"y"}`)
 
 	assert.Empty(t, got.frames)

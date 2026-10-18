@@ -11,29 +11,11 @@ import (
 	"github.com/mhersson/contextmatrix-harness/tools"
 )
 
-// Question is what a stage asks a human (or the auto responder).
-type Question struct {
-	Text    string
-	Options []string
-	Context string
-	// Recommended is the position, from 1, of the option the stage
-	// recommends; 0 for none.
-	Recommended int
-}
-
-// Asker answers a stage's question. The call blocks until the answer exists
-// or ctx ends; the controller implements it over the session's reply channel.
-type Asker interface {
-	Ask(ctx context.Context, q Question) (string, error)
-}
-
 // Artifact is what a stage submits.
 type Artifact struct {
 	Body string         `json:"body"`
 	Data map[string]any `json:"data,omitempty"`
 }
-
-var errNoAsker = errors.New("ask_human: no responder is attached to this run")
 
 // recommendedMarker is what a model sometimes writes at the end of an option
 // instead of giving its position as recommended. The panel marks the
@@ -52,90 +34,31 @@ func cutRecommended(s string) (string, bool) {
 	return strings.TrimSpace(t[:len(t)-len(recommendedMarker)]), true
 }
 
-type askHumanTool struct {
-	asker Asker
-}
-
-func (askHumanTool) Name() string { return "ask_human" }
-
-func (askHumanTool) Schema() llm.Tool {
-	return llm.Tool{Type: "function", Function: llm.ToolFunction{
-		Name: "ask_human",
-		Description: "Ask the person driving this blueprint one question you cannot decide yourself. " +
-			"Blocks until they answer; the result starts with the question's number (Q<n>), which is how to cite the answer. Offer options when there are natural ones.",
-		Parameters: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"question": {"type": "string", "description": "the question, one sentence"},
-				"options": {"type": "array", "items": {"type": "string"}, "description": "candidate answers as plain text, optional; never write (recommended) into one"},
-				"recommended": {"type": "integer", "description": "the position, from 1, of the option you recommend, optional; the panel marks it"},
-				"context": {"type": "string", "description": "why it matters, optional"}
-			},
-			"required": ["question"]
-		}`),
-	}}
-}
-
-func (t askHumanTool) Execute(ctx context.Context, args map[string]any) (tools.Result, error) {
-	q := Question{Text: strings.TrimSpace(stringArg(args, "question")), Context: stringArg(args, "context")}
-	if q.Text == "" {
-		return tools.Result{}, errors.New("ask_human: question is required")
-	}
-
-	given, _ := args["options"].([]any)
-	// kept[i] is the 1-based position of given[i] among the kept options, 0
-	// for a blank one; marked holds the kept positions of options whose text
-	// carried the marker.
-	kept := make([]int, len(given))
-
-	var marked []int
-
-	for i, o := range given {
-		s, ok := o.(string)
-		if !ok {
-			continue
-		}
-
-		s, isMarked := cutRecommended(s)
-		if strings.TrimSpace(s) == "" {
-			continue
-		}
-
-		q.Options = append(q.Options, s)
-		kept[i] = len(q.Options)
-
-		if isMarked {
-			marked = append(marked, kept[i])
-		}
-	}
-
-	if v, ok := args["recommended"]; ok && v != nil {
-		if len(given) == 0 {
-			return tools.Result{}, errors.New("ask_human: recommended needs options")
+// recommendedPosition resolves a question's recommended option. kept[i] is
+// the position, from 1, of the i-th given option among the kept ones, 0 for a
+// blank one; marked holds the kept positions whose text carried the marker.
+// v is the model's "recommended" argument, nil when it gave none.
+func recommendedPosition(v any, given int, kept, marked []int) (int, error) {
+	if v != nil {
+		if given == 0 {
+			return 0, errors.New("recommended needs options")
 		}
 
 		n, isNumber := v.(float64)
-		if !isNumber || n != float64(int(n)) || int(n) < 1 || int(n) > len(given) || kept[int(n)-1] == 0 {
-			return tools.Result{}, fmt.Errorf("ask_human: recommended is the position of one of the options, from 1 to %d", len(given))
+		if !isNumber || n != float64(int(n)) || int(n) < 1 || int(n) > given || kept[int(n)-1] == 0 {
+			return 0, fmt.Errorf("recommended is the position of one of the options, from 1 to %d", given)
 		}
 
-		q.Recommended = kept[int(n)-1]
-	} else if len(marked) == 1 {
-		// The position wins over a marker, and markers on several options
-		// name none.
-		q.Recommended = marked[0]
+		return kept[int(n)-1], nil
 	}
 
-	if t.asker == nil {
-		return tools.Result{}, errNoAsker
+	// The position wins over a marker, and markers on several options name
+	// none.
+	if len(marked) == 1 {
+		return marked[0], nil
 	}
 
-	answer, err := t.asker.Ask(ctx, q)
-	if err != nil {
-		return tools.Result{}, fmt.Errorf("ask_human: %w", err)
-	}
-
-	return tools.Result{Text: answer}, nil
+	return 0, nil
 }
 
 type submitArtifactTool struct {

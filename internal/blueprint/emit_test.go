@@ -20,7 +20,7 @@ import (
 const needBody = "## Problem\nParsing is slow.\n## Value\nFaster builds.\n"
 
 func cardBody(change string) string {
-	return "## Context\nwhy\n## Where\ninternal/x.go\n## Change\n" + change + "\n## Acceptance criteria\n1. go test ./... passes.\n## Tests expected\nTestThing.\n## Out of scope\nrest.\n"
+	return "## Context\nwhy\n## Where\ninternal/x.go\n## Solution\n" + change + "\n## Acceptance criteria\n1. go test ./... passes.\n## Tests expected\nTestThing.\n## Out of scope\nrest.\n"
 }
 
 // twoCards is a draft of two alpha cards, the second depending on the

@@ -1,5 +1,5 @@
 // Package blueprint is the controller: one blueprint per CM session, a state
-// machine over stages, questions that block the run, and the event stream.
+// machine over stages, stored question rounds, and the event stream.
 package blueprint
 
 import (
@@ -67,11 +67,6 @@ const reasonSessionEnded = "session_ended"
 // the run is left to record its own end and the stage waits for the next
 // message.
 const endedRunWait = 10 * time.Second
-
-// reply is a message that answers an open question.
-type reply struct {
-	text, msgID string
-}
 
 // StartInput is what a CM session start carries.
 type StartInput struct {
@@ -215,16 +210,14 @@ type run struct {
 	// aborted is set under Controller.mu by Abort: a reopen waiting for the
 	// run to leave resumes nothing, as after any abort.
 	aborted bool
-	// answer is the open question's reply channel; nil when none is open.
-	answer chan reply
-	// question is the open question's number.
-	question int
-	// pending is the payload of the question waiting for its answer; it
-	// means something only while answer is set.
-	pending map[string]any
 	// stage is the stage the run in flight runs, or the sign-off while it and
 	// its emission hold the slot; set under Controller.mu.
 	stage string
+	// recheck is set under Controller.mu, and under the round lock, when a
+	// reply or a chat message changed a round while the slot was held. The
+	// holder's read of the round spends it, so one left at release is a
+	// change the holder never saw, and the release acts on the round again.
+	recheck bool
 }
 
 // Controller owns every attached blueprint.
@@ -238,8 +231,12 @@ type Controller struct {
 	// flights are each blueprint's runs in flight, outermost first, for the view.
 	flights map[string][]*flight
 	// live streams each blueprint's view and drafts to its subscribers.
-	live    *liveHub
-	closing bool
+	live *liveHub
+	// roundLocks serialize each blueprint's round changes: a post, a reply
+	// and a close. Per blueprint, not per session: a reopen attaches a new
+	// session while the ended one's run may still post.
+	roundLocks map[string]*sync.Mutex
+	closing    bool
 }
 
 // New builds a Controller.
@@ -256,7 +253,10 @@ func New(opts Options) *Controller {
 		opts.WatchInterval = time.Minute
 	}
 
-	c := &Controller{opts: opts, sessions: map[string]*session{}, runs: map[string]*run{}, watches: map[string]*watcher{}, flights: map[string][]*flight{}}
+	c := &Controller{
+		opts: opts, sessions: map[string]*session{}, runs: map[string]*run{}, watches: map[string]*watcher{},
+		flights: map[string][]*flight{}, roundLocks: map[string]*sync.Mutex{},
+	}
 	c.live = newLiveHub(c.View, opts.Logger)
 
 	return c
@@ -274,7 +274,11 @@ func effectivePrice(p *protocol.ModelPrice) *protocol.ModelPrice {
 }
 
 // Start attaches a session to the blueprint with in.ID, creating it on
-// first sight. A stage left running by a crash is marked interrupted and
+// first sight. A question round the pipeline stands at resumes: an open one
+// is shown again and waits, an answered one closes and its stage continues
+// from the stored conversation, and one whose continuation failed or was
+// aborted waits for the next message; an open round the pipeline went past
+// is collapsed. A stage left running by a crash is marked interrupted and
 // re-run, and a stage whose inputs were stored but which never started
 // runs. An open gate is shown again, or, never shown, opened under the
 // policy now in effect once its pending review or builder round has run. At
@@ -353,6 +357,12 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 		c.detach(in.ID, sess)
 
 		return err
+	}
+
+	if next.qround != nil {
+		c.resumeRound(runCtx, r, sess, bp, *next.qround)
+
+		return nil
 	}
 
 	if next.end {
@@ -479,17 +489,36 @@ func (c *Controller) leftRunning(ctx context.Context, id string) ([]store.Run, e
 	return out, nil
 }
 
-// Message handles one user message: the answer to an open question, the
-// need while the first stage has no artifact, the sign-off decision (approve or
-// reject <feedback>) at a ready end, or a note. The abort and export
+// Message handles one user message: chat about the round a human answers
+// while it waits, the need while the first stage has no artifact, the
+// sign-off decision (approve or reject <feedback>) at a ready end, or a
+// note. The abort and export
 // commands are parsed by the webhook and reach Abort and Export instead.
 func (c *Controller) Message(ctx context.Context, id, text, msgID string) error {
 	trimmed := strings.TrimSpace(text)
 
 	c.mu.Lock()
-
 	sess, ok := c.sessions[id]
+	c.mu.Unlock()
+
 	if !ok {
+		return ErrNotFound
+	}
+
+	// A message while a human's round waits is chat about it, whether or not
+	// a chat run holds the slot.
+	chatted, err := c.chatAbout(ctx, sess, id, trimmed, msgID)
+	if err != nil {
+		return fmt.Errorf("blueprint: message: %w", err)
+	}
+
+	if chatted {
+		return nil
+	}
+
+	c.mu.Lock()
+
+	if sess, ok = c.sessions[id]; !ok {
 		c.mu.Unlock()
 
 		return ErrNotFound
@@ -498,23 +527,10 @@ func (c *Controller) Message(ctx context.Context, id, text, msgID string) error 
 	r := c.runs[id]
 
 	if r != nil {
-		answer, number, open := r.answer, r.question, r.stage
-		r.answer = nil
+		open := r.stage
 		c.mu.Unlock()
 
-		if answer == nil {
-			sess.audit.event(ctx, noteEvent(id, trimmed, msgID, open, true))
-
-			return nil
-		}
-
-		// Logged before it is delivered, so the answer precedes what the run
-		// does with it. The channel is buffered: the send never blocks.
-		sess.audit.event(ctx, Event{Kind: EventAnswer, BlueprintID: id, Payload: map[string]any{
-			"text": trimmed, "message_id": msgID, "number": number,
-		}})
-
-		answer <- reply{text: trimmed, msgID: msgID}
+		sess.audit.event(ctx, noteEvent(id, trimmed, msgID, open, true))
 
 		return nil
 	}
@@ -531,9 +547,8 @@ func (c *Controller) Message(ctx context.Context, id, text, msgID string) error 
 	return c.input(ctx, runCtx, r, sess, id, trimmed, msgID)
 }
 
-// Abort ends the run in flight, if any. During an open question it is the
-// abort, not the answer. The blueprint persists; the next message retries
-// the stage that was cut short.
+// Abort ends the run in flight, if any; an open round stays open. The
+// blueprint persists; the next message retries the stage that was cut short.
 func (c *Controller) Abort(ctx context.Context, id, msgID string) error {
 	c.mu.Lock()
 
@@ -544,10 +559,7 @@ func (c *Controller) Abort(ctx context.Context, id, msgID string) error {
 		return ErrNotFound
 	}
 
-	// Cancelled under c.mu, so Ask cannot open a new question on a run that
-	// is already aborted.
 	if r := c.runs[id]; r != nil {
-		r.answer = nil
 		r.aborted = true
 		r.cancel(nil)
 	}
@@ -647,8 +659,7 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 	}
 
 	c.mu.Lock()
-	r, running := c.runs[id]
-	asked := openQuestion(r)
+	_, running := c.runs[id]
 	c.mu.Unlock()
 
 	// during_run tells the panel whether a stage keeps working after the
@@ -656,7 +667,6 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 	sess.audit.event(ctx, Event{Kind: EventExported, BlueprintID: id, Payload: map[string]any{
 		"path": dir, "files": len(files), "message_id": msgID, "during_run": running,
 	}})
-	c.reshowQuestion(ctx, sess.audit, id, asked)
 
 	return nil
 }
@@ -767,7 +777,6 @@ func (c *Controller) End(ctx context.Context, id string) error {
 	delete(c.sessions, id)
 
 	if r := c.runs[id]; r != nil {
-		r.answer = nil
 		r.ended = true
 		r.cancel(errSessionEnded)
 	}
@@ -808,7 +817,6 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 
 	for _, r := range c.runs {
 		r.shutdown = true
-		r.answer = nil
 		r.cancel(nil)
 
 		dones = append(dones, r.done)
@@ -909,7 +917,10 @@ func (c *Controller) claimAfterEnd(ctx context.Context, id string, sess *session
 	return c.claimLocked(id)
 }
 
-// release frees id's run slot and wakes Wait.
+// release frees id's run slot and wakes Wait. When a round changed while r
+// held the slot and r never read the change, the slot is taken again at once
+// to act on it, unless r was aborted, which leaves the round to the next
+// message, or ended, which leaves it to the reopen.
 func (c *Controller) release(id string, r *run) {
 	c.mu.Lock()
 
@@ -917,11 +928,39 @@ func (c *Controller) release(id string, r *run) {
 		delete(c.runs, id)
 	}
 
-	r.answer = nil
+	var (
+		next    *run
+		nextCtx context.Context
+	)
+
+	// Claimed before r's done closes, so Wait never sees the slot free while
+	// a round still has to be acted on.
+	if r.recheck && !r.aborted && !r.ended && !c.closing && c.sessions[id] != nil {
+		next, nextCtx, _ = c.claimLocked(id)
+	}
+
 	c.mu.Unlock()
 
 	r.cancel(nil)
 	close(r.done)
+
+	if next != nil {
+		c.settleOn(nextCtx, next, id)
+	}
+}
+
+// roundLock is blueprint id's round lock.
+func (c *Controller) roundLock(id string) *sync.Mutex {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	l := c.roundLocks[id]
+	if l == nil {
+		l = &sync.Mutex{}
+		c.roundLocks[id] = l
+	}
+
+	return l
 }
 
 // detach removes sess unless another session replaced it.

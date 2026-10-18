@@ -45,8 +45,6 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		payload  map[string]any
 		wantIdle bool
 	}{
-		{"question", blueprint.EventQuestion, nil, true},
-		{"question the stage decides itself", blueprint.EventQuestion, map[string]any{"responder": "auto"}, false},
 		{"gate reply on an idle blueprint", blueprint.EventPolicy, map[string]any{"during_run": false}, true},
 		{"gate reply while a stage runs", blueprint.EventPolicy, map[string]any{"during_run": true}, false},
 		{"gate plan", blueprint.EventGatePlan, nil, false},
@@ -57,7 +55,6 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		{"report the sign-off follows", blueprint.EventReport, map[string]any{"ready": true, "signoff": true}, false},
 		{"signoff", blueprint.EventSignOff, map[string]any{"cards": []any{}}, true},
 		{"gate", blueprint.EventGate, map[string]any{"stage": "shape"}, true},
-		{"a question shown again", blueprint.EventReshow, map[string]any{"kind": "question"}, true},
 		{"decided", blueprint.EventDecided, map[string]any{"decision": "approve"}, false},
 		{"emitted", blueprint.EventEmitted, map[string]any{"cards": []any{}}, true},
 		{"emitted, the run start follows", blueprint.EventEmitted, map[string]any{"cards": []any{}, "run_follows": true}, false},
@@ -83,6 +80,34 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		{"ended", blueprint.EventEnded, nil, false},
 		{"verdict", blueprint.EventReview, nil, false},
 		{"responder failed, the stage runs on", blueprint.EventStageEnded, map[string]any{"status": "failed", "kind": "responder"}, false},
+		{"an open round a human answers", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{"questions": []any{
+			map[string]any{"number": 1.0, "title": "Deploy", "text": "Helm?", "options": []any{}},
+		}}}, true},
+		{"an answered round, its close and continuation follow", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{
+			"questions": []any{map[string]any{"number": 1.0, "title": "Deploy", "text": "Helm?", "options": []any{}}},
+			"answers":   []any{map[string]any{"number": 1.0, "text": "yes"}},
+		}}, false},
+		{"a stale reply while a run works", blueprint.EventError, map[string]any{"reason": "stale_reply", "during_run": true}, false},
+		{"a stale reply on an idle blueprint", blueprint.EventError, map[string]any{"reason": "stale_reply", "during_run": false}, true},
+		{"chat the stage has not seen, a chat run answers it", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{
+			"questions": []any{map[string]any{"number": 1.0, "title": "Deploy", "text": "Helm?", "options": []any{}}},
+			"chat":      []any{map[string]any{"from": "user", "text": "why?"}},
+		}}, false},
+		{"a chat reply, the round waits again", blueprint.EventRound, map[string]any{"round": 1.0, "seen": 2.0, "frame": map[string]any{
+			"questions": []any{map[string]any{"number": 1.0, "title": "Deploy", "text": "Helm?", "options": []any{}}},
+			"chat":      []any{map[string]any{"from": "user", "text": "why?"}, map[string]any{"from": "product_owner", "text": "because"}},
+		}}, true},
+		{"a chat reply with a message written meanwhile, the next chat run follows", blueprint.EventRound, map[string]any{"round": 1.0, "seen": 2.0, "frame": map[string]any{
+			"questions": []any{map[string]any{"number": 1.0, "title": "Deploy", "text": "Helm?", "options": []any{}}},
+			"chat": []any{
+				map[string]any{"from": "user", "text": "why?"},
+				map[string]any{"from": "product_owner", "text": "because"},
+				map[string]any{"from": "user", "text": "and?"},
+			},
+		}}, false},
+		{"a closed round, its stage goes on", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{"closed": true}}, false},
+		{"a round the responder answers", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{"responder": true}}, false},
+		{"a run that asked, its round decides", blueprint.EventStageEnded, map[string]any{"status": "asked", "kind": "stage"}, false},
 	}
 
 	for _, tc := range cases {
@@ -126,7 +151,7 @@ func TestHarnessForwarder_DropsStopLines(t *testing.T) {
 	}{
 		{"stop is not shown", `{"seq":9,"kind":"state_change","data":{"stop":"done","turns":2,"via":"terminating_tool"}}`, ""},
 		{"stop on a cap is not shown", `{"seq":9,"kind":"state_change","data":{"stop":"max_cost","cost_usd":2}}`, ""},
-		{"a tool call is shown", `{"seq":3,"kind":"tool_call","data":{"id":"c1","name":"ask_human","raw_args":"{}"}}`, "tool_call"},
+		{"a tool call is shown", `{"seq":3,"kind":"tool_call","data":{"id":"c1","name":"ask_questions","raw_args":"{}"}}`, "tool_call"},
 	}
 
 	for _, tc := range cases {
