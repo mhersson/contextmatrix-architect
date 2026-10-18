@@ -184,6 +184,51 @@ func TestRun_AnswerChatAssumptionsReplaceTheTabOnlyWhenGiven(t *testing.T) {
 	}
 }
 
+func TestRun_TheRoundToolsOfferTheAssumptionsTab(t *testing.T) {
+	tests := []struct {
+		name string
+		chat bool
+		tool string
+	}{
+		{"ask_questions posts it", false, "ask_questions"},
+		{"answer_chat replaces it", true, "answer_chat"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeLLM{responses: []llm.Response{{ToolCalls: []llm.ToolCall{toolCall("c1", "answer_chat", `{"reply":"Yes."}`)}, FinishReason: "tool_calls"}}}
+
+			in := baseInput(&bytes.Buffer{})
+			in.Interviewer, in.Chat = &stubInterviewer{}, tt.chat
+
+			_, _ = runnerWith(f).Run(context.Background(), in)
+			require.NotEmpty(t, f.requests)
+
+			var schema struct {
+				Properties map[string]struct {
+					Type  string `json:"type"`
+					Items struct {
+						Type string `json:"type"`
+					} `json:"items"`
+				} `json:"properties"`
+				Required []string `json:"required"`
+			}
+
+			for _, offered := range f.requests[0].Tools {
+				if offered.Function.Name == tt.tool {
+					require.NoError(t, json.Unmarshal(offered.Function.Parameters, &schema))
+				}
+			}
+
+			tab, ok := schema.Properties["assumptions"]
+			require.True(t, ok, "the model is offered the tab")
+			assert.Equal(t, "array", tab.Type)
+			assert.Equal(t, "string", tab.Items.Type)
+			assert.NotContains(t, schema.Required, "assumptions")
+		})
+	}
+}
+
 func TestRun_AnInterviewerRefusalIsAToolError(t *testing.T) {
 	f := &fakeLLM{responses: []llm.Response{
 		{ToolCalls: []llm.ToolCall{toolCall("c1", "ask_questions", twoQuestions)}, FinishReason: "tool_calls"},

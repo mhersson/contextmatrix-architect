@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -220,7 +221,9 @@ func TestTab_AConvertedAssumptionMustBeAskedFirst(t *testing.T) {
 	c.putRound(ctx, au, "BP1", poster, s)
 
 	v, _ := c.tabValidator(bp, intake, 1)
-	require.Error(t, submitAssumptions(v, stated), "A2 was not asked yet")
+	err = submitAssumptions(v, stated)
+	require.Error(t, err, "A2 was not asked yet")
+	assert.Contains(t, err.Error(), "Postgres stays.", "the refusal names the assumption to ask")
 
 	v, _ = c.tabValidator(bp, intake, 2)
 	require.NoError(t, submitAssumptions(v, stated), "another attempt's round binds only that attempt")
@@ -308,15 +311,139 @@ func TestTab_AChatReplacesTheTabAndKeepsUnchangedDecisions(t *testing.T) {
 	c.Wait("BP1")
 
 	s := latestRound(t, c, "BP1", 1)
-	assert.Equal(t, []protocol.RoundAssumption{{ID: "A1", Text: "One region."}, {ID: "A2", Text: "Two zones."}}, s.Frame.Assumptions)
-	assert.Equal(t, []protocol.AssumptionDecision{accept("A1")}, s.Frame.Decisions,
-		"One region.'s decision moves with it to A1; nothing decides the new A2")
-	assert.False(t, s.Frame.Closed, "the new A2 is undecided")
+	assert.Equal(t, []protocol.RoundAssumption{{ID: "A2", Text: "One region."}, {ID: "A3", Text: "Two zones."}}, s.Frame.Assumptions,
+		"an unchanged assumption keeps its id; a new one takes an id the round never issued")
+	assert.Equal(t, []protocol.AssumptionDecision{accept("A2")}, s.Frame.Decisions, "A2's decision stays; nothing decides A3")
+	assert.False(t, s.Frame.Closed, "A3 is undecided")
 	assert.Equal(t, 2, runner.calls(), "the chat run, and no continuation")
 
+	// CM still holds the user's pick for the dropped A1 and sends it again:
+	// it lands on no assumption.
 	decide(t, c, "BP1", 1, []protocol.RoundAnswer{own(1, "ops")}, accept("A1"), accept("A2"))
 	c.Wait("BP1")
-	assert.Equal(t, map[string]int{"A1": 2, "A2": 3}, latestRound(t, c, "BP1", 1).Accepted)
+
+	s = latestRound(t, c, "BP1", 1)
+	assert.Equal(t, 1, s.Dropped)
+	assert.Equal(t, []protocol.AssumptionDecision{accept("A2")}, s.Frame.Decisions)
+	assert.False(t, s.Frame.Closed)
+
+	decide(t, c, "BP1", 1, []protocol.RoundAnswer{own(1, "ops")}, accept("A2"), convert("A3"))
+	c.Wait("BP1")
+
+	s = latestRound(t, c, "BP1", 1)
+	assert.True(t, s.Frame.Closed)
+	assert.Equal(t, map[string]int{"A2": 2}, s.Accepted, "only what the user accepted, under the id it was shown with")
+	assert.Equal(t, []string{"A3"}, s.Converted)
+}
+
+func TestRetabbed_NeverReusesAnID(t *testing.T) {
+	s := twoQuestionRound(1, 1, 7)
+	s.Frame.Assumptions = []protocol.RoundAssumption{{ID: "A1", Text: "x"}, {ID: "A2", Text: "y"}}
+	s.Frame.Decisions = []protocol.AssumptionDecision{convert("A1"), accept("A2")}
+	s.TabIssued = 2
+
+	once := retabbed(s, []string{"y", "z"})
+	assert.Equal(t, []protocol.RoundAssumption{{ID: "A2", Text: "y"}, {ID: "A3", Text: "z"}}, once.Frame.Assumptions)
+	assert.Equal(t, []protocol.AssumptionDecision{accept("A2")}, once.Frame.Decisions)
+
+	twice := retabbed(once, []string{"x", "y", "y"})
+	assert.Equal(t, []protocol.RoundAssumption{{ID: "A4", Text: "x"}, {ID: "A2", Text: "y"}, {ID: "A5", Text: "y"}}, twice.Frame.Assumptions,
+		"a dropped id is never issued again, and a repeated text is a new assumption")
+	assert.Equal(t, []protocol.AssumptionDecision{accept("A2")}, twice.Frame.Decisions)
+
+	_, dropped := mergeReply(twice, nil, []protocol.AssumptionDecision{accept("A1"), accept("A3")})
+	assert.Equal(t, 2, dropped, "decisions for ids the tab no longer has")
+
+	assert.Equal(t, []protocol.RoundAssumption{{ID: "A1", Text: "x"}, {ID: "A2", Text: "y"}}, s.Frame.Assumptions, "the snapshot read is untouched")
+}
+
+func TestTab_ATabCountsTowardTheRoundsSize(t *testing.T) {
+	s := twoQuestionRound(1, 1, 7)
+	require.NoError(t, fits(s))
+
+	s.Frame.Assumptions = []protocol.RoundAssumption{{ID: "A1", Text: strings.Repeat("x", maxRoundBytes)}}
+	require.Error(t, fits(s))
+}
+
+func TestTab_ATabOnlyRoundWritesNoAnswers(t *testing.T) {
+	s := twoQuestionRound(1, 1, 7)
+	s.Frame.Questions = nil
+	s.Frame.Assumptions = []protocol.RoundAssumption{{ID: "A1", Text: "One region."}}
+
+	var b strings.Builder
+
+	writeRoundAnswers(&b, s)
+	assert.Empty(t, b.String())
+}
+
+func TestTab_IntakesSubmitNeedsABasisUnderHuman(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      StartInput
+		refused bool
+	}{
+		{"human", startInput("BP1"), true},
+		{"auto", autoInput(), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got error
+
+			script := happyScript()
+			script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+				got = in.Validate(ctx, stage.Artifact{Body: "# Need", Data: map[string]any{"assumptions": []any{"One region."}}})
+
+				return done("# Need", map[string]any{"slices": 1}), nil
+			}
+
+			c, _, _, _, _ := newPipeline(t, script)
+			driveIn(t, c, tt.in)
+
+			if tt.refused {
+				require.Error(t, got)
+
+				return
+			}
+
+			require.NoError(t, got)
+		})
+	}
+}
+
+func TestTab_AChatOnAStageWithoutTheCheckPostsNoTab(t *testing.T) {
+	var refused error
+
+	c, _, _, _ := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		switch {
+		case in.Chat:
+			_, refused = in.Interviewer.Answer(ctx, stage.ChatAnswer{Reply: "Noted.", Assumptions: []string{"One region."}})
+
+			if _, err := in.Interviewer.Answer(ctx, stage.ChatAnswer{Reply: "Noted."}); err != nil {
+				return stage.Output{}, err
+			}
+
+			return askedOutput(in), nil
+		case in.History == nil:
+			if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Users", "Who uses it?")}}); err != nil {
+				return stage.Output{}, err
+			}
+
+			return askedOutput(in), nil
+		default:
+			return artifactOutput("# Need", in), nil
+		}
+	})
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+	require.NoError(t, c.Message(ctx, "BP1", "Why?", "m2"))
+	c.Wait("BP1")
+
+	require.Error(t, refused)
+	assert.Empty(t, latestRound(t, c, "BP1", 1).Frame.Assumptions)
 }
 
 func TestTab_SignoffConfirmsAnAcceptedAssumption(t *testing.T) {

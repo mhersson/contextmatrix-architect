@@ -32,8 +32,8 @@ Produce markdown with one `## <slice id>` section per slice: the projects
 involved, each decision with the options it rejected, and the contracts
 between projects. Submit with a data object
 `{"slices": [{"id": "SL1", "projects": ["<name>"], "decisions": [{"id": "DEC1", "text": "<what is decided>", "chosen": "<the option>", "rejected": [{"option": "<an option>", "why": "<why not>"}], "basis": "<Q<n>, S<n> or assumption>"}], "contracts": ["<a contract between projects, for both sides>"]}], "assumptions": ["<sentence>" or {"text": "<sentence>", "basis": "Q<n>"}]}`.
-Every answer you got for the slicing you design is the basis of at least one
-decision; an answer from before it may still be cited.
+Every answer you got for the slicing you design is the basis of a decision
+or a stated assumption; an answer from before it may still be cited.
 
 When a reviewer's findings come back to you, numbered, revise for them and
 add `"addressed": [{"finding": <its number>, "note": "<one sentence on what you changed>"}]`

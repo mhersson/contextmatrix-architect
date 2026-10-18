@@ -55,6 +55,10 @@ type roundState struct {
 	MessageID string `json:"message_id,omitempty"`
 	// Dropped counts the entries the reply that made this snapshot dropped.
 	Dropped int `json:"dropped,omitempty"`
+	// TabIssued is the highest assumption id the round has issued, A<n>. CM
+	// keeps a decision by id while the block is docked, so a re-tab numbers
+	// a new assumption after it and an id never names another sentence.
+	TabIssued int `json:"tab_issued,omitempty"`
 	// Accepted maps an assumption the human accepted to the question number
 	// its acceptance is recorded under; Converted lists those turned into
 	// questions. Both are set when the round closes.
@@ -359,32 +363,37 @@ func sameOptions(a, b protocol.RoundQuestion) bool {
 	return slices.EqualFunc(a.Options, b.Options, func(x, y protocol.RoundOption) bool { return x.Title == y.Title })
 }
 
-// retabbed replaces round s's assumptions tab with texts, labelled A1..Ak in
-// their order. A decision follows its assumption when the text is unchanged;
-// the others are dropped, so a new or reworded assumption waits for one.
+// retabbed replaces round s's assumptions tab with texts, in their order. An
+// assumption whose text is unchanged keeps its id and its decision; any
+// other takes the next id the round never issued, so a decision the user
+// made on a dropped assumption can never land on it.
 func retabbed(s roundState, texts []string) roundState {
 	out := s.clone()
 
-	textOf := map[string]string{}
+	idOf := map[string][]string{}
 	for _, a := range out.Frame.Assumptions {
-		textOf[a.ID] = a.Text
+		idOf[a.Text] = append(idOf[a.Text], a.ID)
 	}
 
-	accepts := map[string]bool{}
-	for _, d := range out.Frame.Decisions {
-		accepts[textOf[d.ID]] = d.Accept
-	}
+	var kept []protocol.RoundAssumption
 
-	out.Frame.Assumptions, out.Frame.Decisions = nil, nil
+	for _, text := range texts {
+		id := ""
 
-	for i, text := range texts {
-		id := fmt.Sprintf("A%d", i+1)
-		out.Frame.Assumptions = append(out.Frame.Assumptions, protocol.RoundAssumption{ID: id, Text: text})
-
-		if accept, ok := accepts[text]; ok {
-			out.Frame.Decisions = append(out.Frame.Decisions, protocol.AssumptionDecision{ID: id, Accept: accept})
+		if ids := idOf[text]; len(ids) > 0 {
+			id, idOf[text] = ids[0], ids[1:]
+		} else {
+			out.TabIssued++
+			id = fmt.Sprintf("A%d", out.TabIssued)
 		}
+
+		kept = append(kept, protocol.RoundAssumption{ID: id, Text: text})
 	}
+
+	out.Frame.Assumptions = kept
+	out.Frame.Decisions = slices.DeleteFunc(out.Frame.Decisions, func(d protocol.AssumptionDecision) bool {
+		return !slices.ContainsFunc(kept, func(a protocol.RoundAssumption) bool { return a.ID == d.ID })
+	})
 
 	return out
 }
@@ -726,8 +735,13 @@ func (c *Controller) continuation(ctx context.Context, bp store.Blueprint, s rou
 }
 
 // writeRoundAnswers lists a round's questions with their answers and who
-// gave them, in the tagged form a basis cites.
+// gave them, in the tagged form a basis cites; nothing for a round of
+// assumptions alone.
 func writeRoundAnswers(b *strings.Builder, s roundState) {
+	if len(s.Frame.Questions) == 0 {
+		return
+	}
+
 	who := answeredByUser
 	if s.Frame.Responder {
 		who = answeredByResponder

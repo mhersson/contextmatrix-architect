@@ -416,9 +416,25 @@ func roundHeading(n int, f protocol.LogRound, left bool) string {
 	case f.Closed:
 		return fmt.Sprintf("Round %d, answered", n)
 	case f.Responder:
-		return fmt.Sprintf("Round %d: %d question(s) from the %s, answered by the responder", n, len(f.Questions), f.Persona)
+		return fmt.Sprintf("Round %d: %s from the %s, answered by the responder", n, roundCount(f), f.Persona)
 	default:
-		return fmt.Sprintf("Round %d: %d question(s) from the %s", n, len(f.Questions), f.Persona)
+		return fmt.Sprintf("Round %d: %s from the %s", n, roundCount(f), f.Persona)
+	}
+}
+
+// roundCount is what round f puts to the user: its questions, the
+// assumptions on its tab, or both.
+func roundCount(f protocol.LogRound) string {
+	questions := fmt.Sprintf("%d question(s)", len(f.Questions))
+	assumptions := fmt.Sprintf("%d assumption(s)", len(f.Assumptions))
+
+	switch {
+	case len(f.Assumptions) == 0:
+		return questions
+	case len(f.Questions) == 0:
+		return assumptions
+	default:
+		return questions + " and " + assumptions
 	}
 }
 

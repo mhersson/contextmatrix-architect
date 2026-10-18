@@ -878,6 +878,22 @@ func TestLogEntry_TheFallbackListsTheAssumptionsTab(t *testing.T) {
 	assert.NotEqual(t, accepted, converted, "accepting and turning into a question read apart")
 }
 
+func TestLogEntry_ATabOnlyRoundCountsItsAssumptions(t *testing.T) {
+	p := roundPayloadForTest()
+
+	frame, ok := p["frame"].(map[string]any)
+	require.True(t, ok)
+
+	frame["questions"] = []any{}
+	frame["assumptions"] = []any{map[string]any{"id": "A1", "text": "One region."}, map[string]any{"id": "A2", "text": "Postgres stays."}}
+
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRound, BlueprintID: "BP1", Payload: p})
+	require.True(t, ok)
+	require.NotNil(t, entry.Prompt)
+	assert.Contains(t, entry.Prompt.Text, "2", "the tab's count")
+	assert.NotContains(t, entry.Prompt.Text, "0 question", "no questions are counted")
+}
+
 func roundPayloadForTest() map[string]any {
 	raw := []byte(`{"round":3,"change":"posted","frame":{"persona":"system designer","stage":"solution_design",
 		"questions":[{"number":7,"title":"Deploy","text":"Helm or Kustomize?","options":[{"title":"Helm"}]}]}}`)

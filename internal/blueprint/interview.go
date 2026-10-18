@@ -16,8 +16,9 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-// maxRoundBytes bounds a round's encoded questions: ContextMatrix keeps a
-// round's frame in a 256 KiB row, chat included, and reads 1 MiB per line.
+// maxRoundBytes bounds a round's encoded questions and assumptions:
+// ContextMatrix keeps a round's frame in a 256 KiB row, chat included, and
+// reads 1 MiB per line.
 const maxRoundBytes = 96 << 10
 
 // interviewer is the stage.Interviewer a stage run gets: it numbers the
@@ -135,6 +136,8 @@ func (iv *interviewer) numbered(ctx context.Context, rd stage.Round, sources map
 	for i, text := range rd.Assumptions {
 		s.Frame.Assumptions = append(s.Frame.Assumptions, protocol.RoundAssumption{ID: fmt.Sprintf("A%d", i+1), Text: text})
 	}
+
+	s.TabIssued = len(rd.Assumptions)
 
 	if err := fits(s); err != nil {
 		return roundState{}, err
@@ -276,15 +279,20 @@ func (iv *interviewer) takesAssumptions(tab []string) error {
 	return nil
 }
 
-// fits refuses a round whose questions would not fit the panel's frame.
+// fits refuses a round whose questions and assumptions would not fit the
+// panel's frame.
 func fits(s roundState) error {
-	raw, err := json.Marshal(s.Frame.Questions)
+	raw, err := json.Marshal(struct {
+		Questions   []protocol.RoundQuestion
+		Assumptions []protocol.RoundAssumption
+	}{s.Frame.Questions, s.Frame.Assumptions})
 	if err != nil {
 		return fmt.Errorf("encode the round: %w", err)
 	}
 
 	if len(raw) > maxRoundBytes {
-		return fmt.Errorf("the round's questions take %d KiB and a round takes at most %d KiB; ask fewer questions or shorten the options", len(raw)>>10, maxRoundBytes>>10)
+		return fmt.Errorf("the round's questions and assumptions take %d KiB and a round takes at most %d KiB; ask fewer questions, or shorten the options or the assumptions",
+			len(raw)>>10, maxRoundBytes>>10)
 	}
 
 	return nil

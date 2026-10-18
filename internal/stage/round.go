@@ -158,10 +158,13 @@ func (answerChatTool) Schema() llm.Tool {
 	return llm.Tool{Type: "function", Function: llm.ToolFunction{
 		Name: AnswerChatName,
 		Description: "Reply in the open round's chat. Revise a question (give its number) or add one when the person's point changes the round; " +
-			"a question whose options you change loses its answer, and the others keep theirs. Your run ends with the reply.",
+			"a question whose options you change loses its answer, and the others keep theirs. " +
+			"Where your stage records assumptions, give assumptions to replace the round's assumptions tab with every assumption you still hold; " +
+			"one whose text is unchanged keeps its decision. Your run ends with the reply.",
 		Parameters: json.RawMessage(`{"type":"object","properties":{
 			"reply":{"type":"string","description":"your reply in the round's chat"},
-			"questions":{"type":"array","items":` + questionSchema(true) + `}},"required":["reply"]}`),
+			"questions":{"type":"array","items":` + questionSchema(true) + `},
+			"assumptions":{"type":"array","items":{"type":"string"},"description":"replaces the round's assumptions tab: every assumption you still hold, one standalone sentence each; leave it out to keep the tab"}},"required":["reply"]}`),
 	}}
 }
 

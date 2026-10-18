@@ -454,8 +454,16 @@ func (c *Controller) unaskedConversions(ctx context.Context, id, stageID string,
 			continue
 		}
 
-		for _, a := range s.Converted {
-			out = append(out, fmt.Sprintf("round %d's %s was turned into a question; ask it in a round before you submit", s.Number, a))
+		for _, id := range s.Converted {
+			text := ""
+
+			for _, a := range s.Frame.Assumptions {
+				if a.ID == id {
+					text = a.Text
+				}
+			}
+
+			out = append(out, fmt.Sprintf("round %d's %s (%s) was turned into a question; ask it in a round before you submit", s.Number, id, text))
 		}
 	}
 

@@ -56,9 +56,10 @@ func waitsOnUser(e blueprint.Event) bool {
 		return e.Payload["reason"] != "responder_refused" && !duringRun
 	case blueprint.EventRound:
 		// An open round a human answers waits on the user. A closed one, one
-		// the responder answers, one whose every question has an answer,
-		// which closes and goes on at once, or one with chat its stage has
-		// not seen, which a chat run answers, leaves the stage working.
+		// the responder answers, one whose every question has an answer and
+		// every assumption a decision, which closes and goes on at once, or
+		// one with chat its stage has not seen, which a chat run answers,
+		// leaves the stage working.
 		_, frame, ok := roundFrame(e.Payload)
 		chatPending := len(frame.Chat) > int(num(e.Payload["seen"]))
 
