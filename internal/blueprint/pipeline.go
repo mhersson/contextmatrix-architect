@@ -145,9 +145,9 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 		// A gated stage's artifact waits at its gate: approved, what follows
 		// it runs; rejected, the stage runs again.
 		if st.Gate {
-			// A rejection at this gate of a stage folded into it runs that
-			// stage again, and everything after it.
-			again, err := c.foldedRejected(ctx, bp.ID, st)
+			// A rejection at this gate of a stage folded into it, or of a
+			// shared stage, runs that stage again, and everything after it.
+			again, err := c.rejectedAtGate(ctx, bp.ID, st)
 			if err != nil {
 				return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
 			}

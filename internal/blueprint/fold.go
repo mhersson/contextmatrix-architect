@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
@@ -122,15 +123,110 @@ func (c *Controller) folded(ctx context.Context, id, stageID string) ([]store.Ar
 	return c.foldersDecided(ctx, id, stageID, store.GateFold)
 }
 
-// foldedRejected returns the stage folding into st's gate whose latest
-// artifact was rejected there; it runs again, and everything after it.
-func (c *Controller) foldedRejected(ctx context.Context, id string, st pipelineStep) (string, error) {
+// rejectedAtGate returns the step a rejection at st's gate runs again, and
+// everything after it: a stage folded into the gate, or a shared stage the
+// gate offers to reject, whose latest version was rejected.
+func (c *Controller) rejectedAtGate(ctx context.Context, id string, st pipelineStep) (string, error) {
 	rejected, err := c.foldersDecided(ctx, id, st.ID, store.GateReject)
-	if err != nil || len(rejected) == 0 {
+	if err != nil {
 		return "", err
 	}
 
-	return rejected[0].Stage, nil
+	if len(rejected) > 0 {
+		return rejected[0].Stage, nil
+	}
+
+	shared, err := c.sharedRejects(ctx, id, st.ID)
+	if err != nil {
+		return "", err
+	}
+
+	return c.rejectedTarget(ctx, id, shared)
+}
+
+// rejectedTarget returns the target of the first of actions whose latest
+// version's latest decision is a rejection, which stands until the target
+// runs again and stores a new version; "" when there is none. A target with
+// no version was never rejected.
+func (c *Controller) rejectedTarget(ctx context.Context, id string, actions []gateAction) (string, error) {
+	for _, a := range actions {
+		art, err := c.opts.Store.LatestArtifact(ctx, id, a.Target)
+
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			continue
+		case err != nil:
+			return "", fmt.Errorf("blueprint: read %s: %w", c.stepName(ctx, id, a.Target), err)
+		}
+
+		d, err := c.gateDecision(ctx, id, a.Target, art.Version)
+		if err != nil {
+			return "", err
+		}
+
+		if d == store.GateReject {
+			return a.Target, nil
+		}
+	}
+
+	return "", nil
+}
+
+// sharedRejects are the replies that reject a shared stage at key's gate:
+// one per shared stage that ran, when key is its slice's first gated step,
+// the slice's design. Each runs the shared stage, and every slice from the
+// first, again. A collapsed shared stage is not run, whatever versions it
+// stored before a re-slice, so one slice offers none.
+func (c *Controller) sharedRejects(ctx context.Context, id, key string) ([]gateAction, error) {
+	steps, _, err := c.steps(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	i := stepIndex(steps, key)
+	if i < 0 || !firstGated(steps, steps[i]) {
+		return nil, nil
+	}
+
+	var out []gateAction
+
+	for _, s := range steps[:i] {
+		if !s.Shared || s.Collapsed {
+			continue
+		}
+
+		_, err := c.opts.Store.LatestArtifact(ctx, id, s.ID)
+
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			continue
+		case err != nil:
+			return nil, fmt.Errorf("blueprint: read %s: %w", c.stepName(ctx, id, s.ID), err)
+		}
+
+		out = append(out, gateAction{
+			Label: "Reject " + strings.ReplaceAll(s.ID, "_", " "), Reply: store.GateReject + " " + s.ID, Feedback: true,
+			Decision: store.GateReject, Target: s.ID,
+		})
+	}
+
+	return out, nil
+}
+
+// firstGated reports whether st is the first gated step of its slice, the
+// slice's design; false for a whole-blueprint step.
+func firstGated(steps []pipelineStep, st pipelineStep) bool {
+	if st.Slice == "" {
+		return false
+	}
+
+	for _, s := range steps {
+		if s.Slice == st.Slice && s.Gate {
+			return s.ID == st.ID
+		}
+	}
+
+	return false
 }
 
 // foldersDecided returns the latest artifact of every stage that folds into
@@ -168,8 +264,9 @@ func (c *Controller) foldersDecided(ctx context.Context, id, stageID, decision s
 
 // gateActions are the replies stageID's gate takes: approve and reject, and
 // for every stage folded into it, "reject <stage> <feedback>", which runs
-// that stage again and everything after it. It returns the folded
-// artifacts too.
+// that stage again and everything after it, and at a slice's design gate,
+// reject <shared stage> <feedback> for every shared stage that ran. It
+// returns the folded artifacts too.
 func (c *Controller) gateActions(ctx context.Context, id, stageID string) ([]gateAction, []store.Artifact, error) {
 	folded, err := c.folded(ctx, id, stageID)
 	if err != nil {
@@ -184,6 +281,13 @@ func (c *Controller) gateActions(ctx context.Context, id, stageID string) ([]gat
 			Decision: store.GateReject, Target: f.Stage,
 		})
 	}
+
+	shared, err := c.sharedRejects(ctx, id, stageID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	actions = append(actions, shared...)
 
 	return actions, folded, nil
 }

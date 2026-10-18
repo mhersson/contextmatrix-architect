@@ -3,7 +3,9 @@ package blueprint
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -139,6 +141,19 @@ func (c *Controller) gateDecision(ctx context.Context, id, stageID string, versi
 	}
 
 	return d, nil
+}
+
+// supersededAt reports whether a gates row records stageID's version
+// superseded, as the view reads it.
+func (c *Controller) supersededAt(ctx context.Context, id, stageID string, version int) (bool, error) {
+	gates, err := c.opts.Store.ListGates(ctx, id, stageID)
+	if err != nil {
+		return false, fmt.Errorf("blueprint: list gates: %w", err)
+	}
+
+	return slices.ContainsFunc(gates, func(g store.Gate) bool {
+		return g.Version == version && g.Decision == store.GateSuperseded
+	}), nil
 }
 
 // gateFeedback is the feedback of every rejection at stageID's gate, oldest
@@ -381,7 +396,9 @@ func (c *Controller) resumeGate(ctx context.Context, r *run, sess *session, bp s
 // rejection and runs the stage again, and any other text is a note with a
 // hint. Approving a gate approves every stage folded into it; reject <stage>
 // <feedback> rejects a folded stage, which runs again with everything after
-// it. The caller holds the run slot.
+// it. At a slice's design gate, reject <shared stage> <feedback> rejects the
+// shared decisions, which run again with every slice, and the versions they
+// replace are recorded superseded. The caller holds the run slot.
 func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, out outcome, text, msgID string) error {
 	actions, folded, err := c.gateActions(ctx, bp.ID, out.stage)
 	if err != nil {
@@ -414,14 +431,26 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 	}
 
 	if action.Decision == store.GateReject {
-		// The rejection lands on the stage that runs again: the gate's own,
-		// or a stage folded into it.
-		version := out.art.Version
+		// The rejection lands on the step that runs again: the gate's own, a
+		// stage folded into it, or a shared stage. A shared stage's own gate
+		// rejects it as any gate rejects its own stage.
+		version, shared := out.art.Version, false
 
 		for _, f := range folded {
 			if f.Stage == action.Target {
 				version = f.Version
 			}
+		}
+
+		if st, ok := c.stepAt(action.Target); ok && st.Shared && action.Target != out.stage {
+			art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, action.Target)
+			if err != nil {
+				c.release(bp.ID, r)
+
+				return fmt.Errorf("blueprint: gate: read %s: %w", c.stepName(ctx, bp.ID, action.Target), err)
+			}
+
+			version, shared = art.Version, true
 		}
 
 		if !c.decide(ctx, sess.audit, bp.ID, action.Target, version, store.GateReject, feedback, store.ResponderHuman, msgID) {
@@ -431,9 +460,17 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 		}
 
 		// Recorded after the reject, which alone drives the re-run, so a
-		// crash between the two loses only this audit row.
-		if action.Target != out.stage &&
-			!c.decide(ctx, sess.audit, bp.ID, out.stage, out.art.Version, store.GateSuperseded, action.Target, store.ResponderHuman, msgID) {
+		// crash between them loses only audit rows.
+		recorded := true
+
+		switch {
+		case shared:
+			recorded = c.supersedeAfter(ctx, sess.audit, bp.ID, action.Target, msgID)
+		case action.Target != out.stage:
+			recorded = c.decide(ctx, sess.audit, bp.ID, out.stage, out.art.Version, store.GateSuperseded, action.Target, store.ResponderHuman, msgID)
+		}
+
+		if !recorded {
 			c.release(bp.ID, r)
 
 			return nil
@@ -461,6 +498,65 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 	c.proceed(ctx, runCtx, r, sess, bp, out.stage)
 
 	return nil
+}
+
+// supersedeAfter records superseded, naming target, on the latest version
+// of every gated step after target whose latest decision is no rejection
+// and that no row records superseded yet: the versions a re-run from target
+// replaces, each recorded once. Audit rows only, so the view shows them
+// replaced before they are; false when one could not be stored, which fails
+// the blueprint.
+func (c *Controller) supersedeAfter(ctx context.Context, au audit, id, target, msgID string) bool {
+	failed := func(err error) bool {
+		c.fail(ctx, au, id, 0, fmt.Sprintf("record what %s replaces: %v", c.stepName(ctx, id, target), err))
+
+		return false
+	}
+
+	steps, _, err := c.steps(ctx, id)
+	if err != nil {
+		return failed(err)
+	}
+
+	i := stepIndex(steps, target)
+	if i < 0 {
+		return true
+	}
+
+	for _, s := range steps[i+1:] {
+		if !s.Gate {
+			continue
+		}
+
+		art, err := c.opts.Store.LatestArtifact(ctx, id, s.ID)
+
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			continue
+		case err != nil:
+			return failed(fmt.Errorf("read %s: %w", c.stepName(ctx, id, s.ID), err))
+		}
+
+		d, err := c.gateDecision(ctx, id, s.ID, art.Version)
+		if err != nil {
+			return failed(err)
+		}
+
+		marked, err := c.supersededAt(ctx, id, s.ID, art.Version)
+		if err != nil {
+			return failed(err)
+		}
+
+		if d == store.GateReject || marked {
+			continue
+		}
+
+		if !c.decide(ctx, au, id, s.ID, art.Version, store.GateSuperseded, target, store.ResponderHuman, msgID) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // proceed runs or awaits what follows completed on the run slot r, which

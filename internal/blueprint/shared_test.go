@@ -389,3 +389,120 @@ func TestAfter_ASlicingWithNoSlices(t *testing.T) {
 		})
 	}
 }
+
+// gateLabels lists the labels a gate event offers, in order.
+func gateLabels(e Event) []string {
+	var out []string
+
+	for _, a := range anyList(e.Payload["actions"]) {
+		out = append(out, a.(map[string]any)["label"].(string))
+	}
+
+	return out
+}
+
+func TestShared_ASliceDesignGateRejectsTheSharedDecisions(t *testing.T) {
+	c, st, runner, rec := newSliced(t, slicedScript())
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	approveUntil(t, c, rec, "solution_design@SL1")
+
+	first := lastGate(t, rec)
+	require.Equal(t, []string{"approve", "reject", "reject shared_decisions"}, gateReplies(first))
+	assert.Equal(t, "Reject shared decisions", gateLabels(first)[2])
+
+	approveUntil(t, c, rec, "solution_design@SL2")
+	require.NoError(t, c.Message(ctx, "BP1", "reject shared_decisions name exports by date", "m-shared"))
+	c.Wait("BP1")
+
+	shared := inputsOf(runner, "shared_decisions")
+	require.Len(t, shared, 2)
+	assert.Contains(t, shared[1].Task, "name exports by date", "the shared decisions run again with the feedback")
+
+	assert.Equal(t, []string{
+		"slicing@1:approve", "shared_decisions@1:approve", "solution_design@SL1@1:approve", "acceptance@SL1@1:approve",
+		"shared_decisions@1:reject",
+		"solution_design@SL1@1:superseded", "acceptance@SL1@1:superseded", "solution_design@SL2@1:superseded",
+	}, gateRows(t, st), "the reject, then every later gated version it replaces: the first slice's design and acceptance, and the design at the gate")
+	assert.Equal(t, "shared_decisions", lastGate(t, rec).Payload["stage"])
+
+	approveUntil(t, c, rec, "solution_design@SL1")
+	assert.Len(t, inputsOf(runner, "solution_design@SL1"), 2, "every slice runs again from the first")
+}
+
+func TestShared_AReopenAfterTheRejectRunsTheSharedDecisions(t *testing.T) {
+	// The rejection is recorded and the process died before the shared
+	// decisions ran again.
+	c, st := newSlicedView(t)
+	throughSliced(t, st, "decomposition@SL1")
+	ran(t, st, "solution_design@SL2", store.RunKindStage, 1, 1, 0.1)
+	put(t, st, "solution_design@SL2", nil)
+	gateRow(t, st, "shared_decisions", 1, store.GateReject, store.ResponderHuman, "name exports by date")
+
+	bp, err := st.GetBlueprint(context.Background(), viewID)
+	require.NoError(t, err)
+
+	out, _, err := c.position(context.Background(), bp)
+	require.NoError(t, err)
+	assert.Equal(t, "shared_decisions", out.stage)
+}
+
+func TestShared_ASecondSharedRejectSupersedesEachVersionOnce(t *testing.T) {
+	c, st, _, rec := newSliced(t, slicedScript())
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	approveUntil(t, c, rec, "solution_design@SL2")
+	require.NoError(t, c.Message(ctx, "BP1", "reject shared_decisions name exports by date", "m-shared"))
+	c.Wait("BP1")
+	approveUntil(t, c, rec, "solution_design@SL1")
+
+	before := len(gateRows(t, st))
+	require.NoError(t, c.Message(ctx, "BP1", "reject shared_decisions keep the dates", "m-again"))
+	c.Wait("BP1")
+
+	assert.Equal(t, []string{"shared_decisions@2:reject", "solution_design@SL1@2:superseded"}, gateRows(t, st)[before:],
+		"SL1's acceptance and SL2's design are already recorded superseded")
+}
+
+func TestShared_APlainRejectAtTheSharedGateSupersedesNothing(t *testing.T) {
+	st := slicedStore(t)
+	c, _, rec := newSlicedOn(t, st, slicedScript())
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	approveUntil(t, c, rec, "solution_design@SL2")
+	require.NoError(t, c.End(ctx, "BP1"))
+
+	// The shared reject was recorded and the process died before its
+	// superseded rows, so the later versions stand unmarked.
+	gateRow(t, st, "shared_decisions", 1, store.GateReject, store.ResponderHuman, "name exports by date")
+
+	c2, runner2, rec2 := newSlicedOn(t, st, slicedScript())
+	require.NoError(t, c2.Start(ctx, startInput("BP1")))
+	c2.Wait("BP1")
+	require.Len(t, inputsOf(runner2, "shared_decisions"), 1, "the reopen runs the rejected shared decisions")
+	require.Equal(t, "shared_decisions", lastGate(t, rec2).Payload["stage"])
+
+	before := len(gateRows(t, st))
+	require.NoError(t, c2.Message(ctx, "BP1", "reject keep the dates", "m-own"))
+	c2.Wait("BP1")
+
+	assert.Equal(t, []string{"shared_decisions@2:reject"}, gateRows(t, st)[before:],
+		"the shared stage's own gate rejects it as any gate rejects its own stage")
+}
+
+func TestShared_TheSupersededRowsSkipARejectedVersion(t *testing.T) {
+	c, st := newSlicedView(t)
+	throughSliced(t, st, "decomposition@SL1")
+	gateRow(t, st, "acceptance@SL1", 1, store.GateReject, store.ResponderHuman, "split the criteria")
+	ran(t, st, "solution_design@SL2", store.RunKindStage, 1, 1, 0.1)
+	put(t, st, "solution_design@SL2", nil)
+
+	before := len(gateRows(t, st))
+	require.True(t, c.supersedeAfter(context.Background(), c.newAudit(), viewID, "shared_decisions", "m1"))
+
+	assert.Equal(t, []string{"solution_design@SL1@1:superseded", "solution_design@SL2@1:superseded"}, gateRows(t, st)[before:],
+		"a rejected version runs again anyway and stays rejected")
+}
