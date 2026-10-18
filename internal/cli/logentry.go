@@ -176,7 +176,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = gatePlanText(p)
 	case blueprint.EventResearchOff:
 		entry.Type = "system"
-		entry.Content = fmt.Sprintf("Research is off for this session (%s): stages work from the model's knowledge, and question options cite no web sources.", str(p["reason"]))
+		entry.Content = fmt.Sprintf("Research is off for this session (%s): stages work from the model's knowledge and the code, and question options cite no web sources.", str(p["reason"]))
 	case blueprint.EventResearch:
 		// A page read is a source, shown as a checkout is; a search or a
 		// refusal is already the tool call's own entry.

@@ -215,7 +215,7 @@ const (
 		"Research a question with real alternatives before you ask it. Cite and quote only pages you fetched, never a search result or its snippet. " +
 		"Search result lists are not kept after this run; the pages you fetch are, so fetch what you will cite before you ask. " +
 		"Queries use plain words and technology names: the leak guard refuses paths, file names, code, the project's own identifiers and names, and card ids.\n\n"
-	researchOffTask = "Research is off for this session: there are no web tools, so options rest on your own knowledge; say so instead of citing a web source.\n\n"
+	researchOffTask = "Research is off for this session: there are no web tools, so options rest on your own knowledge and the code; say so instead of citing a web source.\n\n"
 )
 
 // sessionResearch is the search provider a start's research settings name,
