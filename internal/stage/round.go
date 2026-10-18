@@ -54,6 +54,9 @@ type RoundQuestion struct {
 // Round is what ask_questions posts.
 type Round struct {
 	Questions []RoundQuestion
+	// Assumptions is the round's last tab: the stage's assumptions, each to
+	// be accepted or turned into a question.
+	Assumptions []string
 }
 
 // ChatAnswer is what answer_chat sends: the reply for the round's chat and
@@ -61,6 +64,8 @@ type Round struct {
 type ChatAnswer struct {
 	Reply     string
 	Questions []RoundQuestion
+	// Assumptions, when not nil, replaces the open round's tab.
+	Assumptions []string
 }
 
 // Interviewer posts a run's rounds and answers the chat about the open one.
@@ -75,6 +80,8 @@ type Interviewer interface {
 // round instead of decoding an artifact. The harness runs a run's tool calls
 // one at a time on the run's goroutine.
 type terminalMark struct{ asked bool }
+
+const assumptionsSchema = `{"type":"array","items":{"type":"string"},"description":"before you submit: the decisions you made that nobody confirmed, one standalone sentence each, for the person to accept or turn into a question"}`
 
 const optionSchema = `{"type":"object","properties":{
 	"title":{"type":"string","description":"the option, a few words; never write (recommended) into it"},
@@ -110,9 +117,10 @@ func (askQuestionsTool) Terminal() bool { return true }
 func (askQuestionsTool) Schema() llm.Tool {
 	return llm.Tool{Type: "function", Function: llm.ToolFunction{
 		Name: askQuestionsName,
-		Description: "Ask the person driving this blueprint a round of questions you cannot settle from the code or your sources. " +
+		Description: "Ask the person driving this blueprint a round of questions you cannot settle from the code or your sources; " +
+			"where your stage records assumptions, post them as the round's last tab before you submit. " +
 			"Your run ends when the round is posted; the answers arrive as your next message, numbered Q<n>, which is how to cite them.",
-		Parameters: json.RawMessage(`{"type":"object","properties":{"questions":{"type":"array","items":` + questionSchema(false) + `}},"required":["questions"]}`),
+		Parameters: json.RawMessage(`{"type":"object","properties":{"questions":{"type":"array","items":` + questionSchema(false) + `},"assumptions":` + assumptionsSchema + `}}`),
 	}}
 }
 
@@ -122,11 +130,13 @@ func (t askQuestionsTool) Execute(ctx context.Context, args map[string]any) (too
 		return tools.Result{}, fmt.Errorf("%s: %w", askQuestionsName, err)
 	}
 
-	if len(qs) == 0 {
-		return tools.Result{}, fmt.Errorf("%s: a round needs at least one question", askQuestionsName)
+	assumptions := textList(args["assumptions"])
+
+	if len(qs) == 0 && len(assumptions) == 0 {
+		return tools.Result{}, fmt.Errorf("%s: a round needs at least one question or assumption", askQuestionsName)
 	}
 
-	text, err := t.iv.Ask(ctx, Round{Questions: qs})
+	text, err := t.iv.Ask(ctx, Round{Questions: qs, Assumptions: assumptions})
 	if err != nil {
 		return tools.Result{}, fmt.Errorf("%s: %w", askQuestionsName, err)
 	}
@@ -170,7 +180,13 @@ func (t answerChatTool) Execute(ctx context.Context, args map[string]any) (tools
 		return tools.Result{}, fmt.Errorf("%s: %w", AnswerChatName, err)
 	}
 
-	text, err := t.iv.Answer(ctx, ChatAnswer{Reply: reply, Questions: qs})
+	// A present list, even an empty one, replaces the tab; nil keeps it.
+	var assumptions []string
+	if raw, ok := args["assumptions"]; ok && raw != nil {
+		assumptions = append([]string{}, textList(raw)...)
+	}
+
+	text, err := t.iv.Answer(ctx, ChatAnswer{Reply: reply, Questions: qs, Assumptions: assumptions})
 	if err != nil {
 		return tools.Result{}, fmt.Errorf("%s: %w", AnswerChatName, err)
 	}

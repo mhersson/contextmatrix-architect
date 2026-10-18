@@ -33,6 +33,9 @@ const (
 	// ChangeLeft marks a round the pipeline went past without its answers;
 	// the panel collapses it like a closed one.
 	ChangeLeft = "left"
+	// ChangeClosing is stored, never shown: the acceptance numbers of a close
+	// in progress.
+	ChangeClosing = "closing"
 )
 
 // roundState is one snapshot of a question round: the frame the panel shows
@@ -51,8 +54,13 @@ type roundState struct {
 	Change    string `json:"change"`
 	MessageID string `json:"message_id,omitempty"`
 	// Dropped counts the entries the reply that made this snapshot dropped.
-	Dropped int               `json:"dropped,omitempty"`
-	Frame   protocol.LogRound `json:"frame"`
+	Dropped int `json:"dropped,omitempty"`
+	// Accepted maps an assumption the human accepted to the question number
+	// its acceptance is recorded under; Converted lists those turned into
+	// questions. Both are set when the round closes.
+	Accepted  map[string]int    `json:"accepted,omitempty"`
+	Converted []string          `json:"converted,omitempty"`
+	Frame     protocol.LogRound `json:"frame"`
 }
 
 func roundPromptID(n int) string { return fmt.Sprintf("round:%d", n) }
@@ -149,8 +157,9 @@ func (c *Controller) putRound(ctx context.Context, au audit, id string, runID in
 }
 
 // nextQuestionNumber numbers a new question after every question the
-// blueprint has numbered: answered ones, those its rounds asked, and those
-// asked alone before rounds, which were numbered from 1 in order.
+// blueprint has numbered: answered ones, those its rounds asked, the numbers
+// a close reserved for accepted assumptions, and those asked alone before
+// rounds, which were numbered from 1 in order.
 func (c *Controller) nextQuestionNumber(ctx context.Context, id string) (int, error) {
 	n, err := c.opts.Store.CountEvents(ctx, id, EventQuestion)
 	if err != nil {
@@ -174,6 +183,10 @@ func (c *Controller) nextQuestionNumber(ctx context.Context, id string) (int, er
 	for _, s := range rounds {
 		for _, q := range s.Frame.Questions {
 			n = max(n, q.Number)
+		}
+
+		for _, number := range s.Accepted {
+			n = max(n, number)
 		}
 	}
 
@@ -346,8 +359,39 @@ func sameOptions(a, b protocol.RoundQuestion) bool {
 	return slices.EqualFunc(a.Options, b.Options, func(x, y protocol.RoundOption) bool { return x.Title == y.Title })
 }
 
+// retabbed replaces round s's assumptions tab with texts, labelled A1..Ak in
+// their order. A decision follows its assumption when the text is unchanged;
+// the others are dropped, so a new or reworded assumption waits for one.
+func retabbed(s roundState, texts []string) roundState {
+	out := s.clone()
+
+	textOf := map[string]string{}
+	for _, a := range out.Frame.Assumptions {
+		textOf[a.ID] = a.Text
+	}
+
+	accepts := map[string]bool{}
+	for _, d := range out.Frame.Decisions {
+		accepts[textOf[d.ID]] = d.Accept
+	}
+
+	out.Frame.Assumptions, out.Frame.Decisions = nil, nil
+
+	for i, text := range texts {
+		id := fmt.Sprintf("A%d", i+1)
+		out.Frame.Assumptions = append(out.Frame.Assumptions, protocol.RoundAssumption{ID: id, Text: text})
+
+		if accept, ok := accepts[text]; ok {
+			out.Frame.Decisions = append(out.Frame.Decisions, protocol.AssumptionDecision{ID: id, Accept: accept})
+		}
+	}
+
+	return out
+}
+
 // writeOpenRound gives a run without the conversation the round as it
-// stands: each question, its options and its answer so far.
+// stands: each question, its options and its answer so far, and the
+// assumptions tab with each decision so far.
 func writeOpenRound(b *strings.Builder, s roundState) {
 	answers := map[int]protocol.RoundAnswer{}
 	for _, a := range s.Frame.Answers {
@@ -368,7 +412,29 @@ func writeOpenRound(b *strings.Builder, s roundState) {
 		}
 	}
 
+	decisions := map[string]bool{}
+	for _, d := range s.Frame.Decisions {
+		decisions[d.ID] = d.Accept
+	}
+
+	for _, a := range s.Frame.Assumptions {
+		fmt.Fprintf(b, "- %s: %s\n", a.ID, a.Text)
+
+		if accept, ok := decisions[a.ID]; ok {
+			fmt.Fprintf(b, "  Decision so far: %s\n", decisionText(accept))
+		}
+	}
+
 	b.WriteString("\n")
+}
+
+// decisionText is an assumption decision as a model and a reader see it.
+func decisionText(accept bool) string {
+	if accept {
+		return "accepted"
+	}
+
+	return "turned into a question"
 }
 
 // AnswerText is an answer as a model and a reader see it: the chosen
@@ -382,8 +448,9 @@ func AnswerText(q protocol.RoundQuestion, a protocol.RoundAnswer) string {
 }
 
 // closeRound records an answered round: one questions row per question, as
-// the run that posted it asked it, and the closed snapshot. Rows a close cut
-// short already wrote are kept and never written twice.
+// the run that posted it asked it, one per assumption a human accepted, and
+// the closed snapshot. Rows a close cut short already wrote are kept and
+// never written twice.
 func (c *Controller) closeRound(ctx context.Context, au audit, bp store.Blueprint, s roundState) (roundState, error) {
 	written, err := c.opts.Store.ListQuestions(ctx, bp.ID)
 	if err != nil {
@@ -430,11 +497,82 @@ func (c *Controller) closeRound(ctx context.Context, au audit, bp store.Blueprin
 		}
 	}
 
+	s, err = c.recordAcceptances(ctx, au, bp, s, have, msgID)
+	if err != nil {
+		return roundState{}, err
+	}
+
 	closed := s.clone()
 	closed.Change, closed.Frame.Closed = changeClosed, true
 	c.putRound(ctx, au, bp.ID, 0, closed)
 
 	return closed, nil
+}
+
+// recordAcceptances records each assumption a human accepted on round s's
+// tab as an answered question, under a number reserved once, and lists the
+// ones turned into questions; s with both set. have holds the numbers
+// already written. A responder's round records none: under auto nothing is
+// confirmed.
+func (c *Controller) recordAcceptances(ctx context.Context, au audit, bp store.Blueprint, s roundState, have map[int]bool, msgID string) (roundState, error) {
+	if s.Frame.Responder {
+		return s, nil
+	}
+
+	if s.Accepted == nil {
+		var accepted []string
+
+		for _, d := range s.Frame.Decisions {
+			if d.Accept {
+				accepted = append(accepted, d.ID)
+			}
+		}
+
+		if len(accepted) > 0 {
+			first, err := c.nextQuestionNumber(ctx, bp.ID)
+			if err != nil {
+				return roundState{}, err
+			}
+
+			// The numbers are stored before any row, so a close cut short
+			// writes the same rows again, never new ones.
+			s = s.clone()
+			s.Accepted = map[string]int{}
+
+			for i, id := range accepted {
+				s.Accepted[id] = first + i
+			}
+
+			s.Change = ChangeClosing
+			c.putRound(ctx, au, bp.ID, 0, s)
+		}
+	}
+
+	for _, a := range s.Frame.Assumptions {
+		n, ok := s.Accepted[a.ID]
+		if !ok || have[n] {
+			continue
+		}
+
+		if err := c.opts.Store.AddQuestion(ctx, store.Question{
+			BlueprintID: bp.ID, RunID: s.PostedBy, Stage: s.Frame.Stage, Number: n,
+			Text: au.text(a.Text), Options: []string{"Accept", "Turn into a question"},
+			Context: fmt.Sprintf("Round %d's assumptions tab, %s", s.Number, a.ID),
+			Answer:  "Accepted", Responder: store.ResponderHuman, MessageID: msgID, AnsweredAt: c.opts.Now().UTC(),
+		}); err != nil {
+			return roundState{}, fmt.Errorf("blueprint: close round %d: record %s as Q%d: %w", s.Number, a.ID, n, err)
+		}
+	}
+
+	s.Converted = nil
+
+	for _, d := range s.Frame.Decisions {
+		if !d.Accept {
+			s.Converted = append(s.Converted, d.ID)
+		}
+	}
+
+	return s, nil
 }
 
 // answeringMessage is the message whose reply last stored answers in round
@@ -574,6 +712,7 @@ func (c *Controller) continuation(ctx context.Context, bp store.Blueprint, s rou
 	var b strings.Builder
 
 	writeRoundAnswers(&b, s)
+	writeRoundAssumptions(&b, s)
 	writeRoundChat(&b, s)
 
 	if err := c.writeNewNotes(ctx, &b, bp.ID, s.RunID); err != nil {
@@ -603,6 +742,38 @@ func writeRoundAnswers(b *strings.Builder, s roundState) {
 
 	for _, q := range s.Frame.Questions {
 		fmt.Fprintf(b, "- [Q%d] %s\n  Answer (%s): %s\n", q.Number, q.Text, who, AnswerText(q, answers[q.Number]))
+	}
+
+	b.WriteString("\n")
+}
+
+// writeRoundAssumptions tells a resumed conversation how each assumption on
+// round s's tab was decided, with the tag an accepted one is cited by.
+func writeRoundAssumptions(b *strings.Builder, s roundState) {
+	if len(s.Frame.Assumptions) == 0 {
+		return
+	}
+
+	converted := map[string]bool{}
+	for _, id := range s.Converted {
+		converted[id] = true
+	}
+
+	fmt.Fprintf(b, "## Assumptions tab of round %d\n\n", s.Number)
+
+	for _, a := range s.Frame.Assumptions {
+		fmt.Fprintf(b, "- %s: %s\n", a.ID, a.Text)
+
+		n, accepted := s.Accepted[a.ID]
+
+		switch {
+		case s.Frame.Responder:
+			b.WriteString("  Accepted automatically under the auto policy; it stays unverified: state it without a basis.\n")
+		case accepted:
+			fmt.Fprintf(b, "  Accepted by the user as [Q%d]: state it with the basis Q%d.\n", n, n)
+		case converted[a.ID]:
+			b.WriteString("  Turned into a question by the user: research it if you can, then ask it in your next round.\n")
+		}
 	}
 
 	b.WriteString("\n")

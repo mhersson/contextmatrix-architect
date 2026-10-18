@@ -388,9 +388,14 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 }
 
 // roundFrame reads a round snapshot's number and frame; ok is false for a
-// payload that does not decode.
+// payload that does not decode, and for a close in progress, which only
+// reserves numbers: the closed snapshot follows it.
 func roundFrame(p map[string]any) (int, protocol.LogRound, bool) {
 	var f protocol.LogRound
+
+	if str(p["change"]) == blueprint.ChangeClosing {
+		return 0, f, false
+	}
 
 	raw, err := json.Marshal(p["frame"])
 	if err != nil || json.Unmarshal(raw, &f) != nil {
@@ -418,7 +423,8 @@ func roundHeading(n int, f protocol.LogRound, left bool) string {
 }
 
 // roundText is the round as plain markdown, for a panel without the block:
-// each question with its answer, or its options while it has none.
+// each question with its answer, or its options while it has none, then the
+// assumptions tab with each decision made.
 func roundText(n int, f protocol.LogRound, left bool) string {
 	var b strings.Builder
 
@@ -454,6 +460,28 @@ func roundText(n int, f protocol.LogRound, left bool) string {
 
 			b.WriteString(line)
 		}
+	}
+
+	decisions := map[string]bool{}
+	for _, d := range f.Decisions {
+		decisions[d.ID] = d.Accept
+	}
+
+	if len(f.Assumptions) > 0 {
+		b.WriteString("\n\n**Assumptions**")
+	}
+
+	for _, a := range f.Assumptions {
+		line := fmt.Sprintf("\n%s. %s", a.ID, a.Text)
+
+		switch accept, ok := decisions[a.ID]; {
+		case ok && accept:
+			line += " (accepted)"
+		case ok:
+			line += " (to be asked)"
+		}
+
+		b.WriteString(line)
 	}
 
 	if !f.Closed && !f.Responder {

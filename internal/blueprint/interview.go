@@ -3,6 +3,7 @@ package blueprint
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -49,6 +50,10 @@ type interviewer struct {
 
 func (iv *interviewer) Ask(ctx context.Context, rd stage.Round) (string, error) {
 	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	if err := iv.takesAssumptions(rd.Assumptions); err != nil {
 		return "", err
 	}
 
@@ -127,6 +132,10 @@ func (iv *interviewer) numbered(ctx context.Context, rd stage.Round, sources map
 		s.Frame.Questions = append(s.Frame.Questions, frameQuestion(q, first+i, sources))
 	}
 
+	for i, text := range rd.Assumptions {
+		s.Frame.Assumptions = append(s.Frame.Assumptions, protocol.RoundAssumption{ID: fmt.Sprintf("A%d", i+1), Text: text})
+	}
+
 	if err := fits(s); err != nil {
 		return roundState{}, err
 	}
@@ -135,13 +144,18 @@ func (iv *interviewer) numbered(ctx context.Context, rd stage.Round, sources map
 }
 
 // respondAll has the responder answer each question of auto round s inside
-// the asking run, stores the round closed and read-only, and ends the run
-// on it like a human's round; the stage continues at once. A cancel leaves
-// no round; the answers already given stay recorded, and a re-run asks only
-// what is still unanswered. A question the responder cannot answer
-// is left to the stage, which decides it.
+// the asking run, accepts every assumption on its tab, stores the round
+// closed and read-only, and ends the run on it like a human's round; the
+// stage continues at once. A cancel leaves no round; the answers already
+// given stay recorded, and a re-run asks only what is still unanswered. A
+// question the responder cannot answer is left to the stage, which decides
+// it.
 func (iv *interviewer) respondAll(ctx context.Context, s roundState) (string, error) {
 	s.Frame.Responder = true
+
+	for _, a := range s.Frame.Assumptions {
+		s.Frame.Decisions = append(s.Frame.Decisions, protocol.AssumptionDecision{ID: a.ID, Accept: true})
+	}
 
 	for _, q := range s.Frame.Questions {
 		ans, err := iv.respond(ctx, q)
@@ -177,6 +191,10 @@ func (iv *interviewer) respondAll(ctx context.Context, s roundState) (string, er
 // at the round.
 func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, error) {
 	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	if err := iv.takesAssumptions(a.Assumptions); err != nil {
 		return "", err
 	}
 
@@ -222,6 +240,10 @@ func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, 
 		return "", err
 	}
 
+	if a.Assumptions != nil {
+		next = retabbed(next, a.Assumptions)
+	}
+
 	if len(next.Frame.Questions) > stage.MaxRoundQuestions {
 		return "", fmt.Errorf("a round asks at most %d questions and round %d has %d; revise one of them instead of adding more",
 			stage.MaxRoundQuestions, next.Number, len(place.state.Frame.Questions))
@@ -244,6 +266,16 @@ func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, 
 	return fmt.Sprintf("Your reply is in round %d's chat. Your run ends here; the user answers in the block or writes again.", next.Number), nil
 }
 
+// takesAssumptions refuses an assumptions tab on a stage that records no
+// assumptions: nothing would state or check them.
+func (iv *interviewer) takesAssumptions(tab []string) error {
+	if len(tab) > 0 && !slices.Contains(iv.st.Checks, pack.CheckAssumptions) {
+		return errors.New("this stage records no assumptions; ask questions only")
+	}
+
+	return nil
+}
+
 // fits refuses a round whose questions would not fit the panel's frame.
 func fits(s roundState) error {
 	raw, err := json.Marshal(s.Frame.Questions)
@@ -261,6 +293,10 @@ func fits(s roundState) error {
 // postedText is ask_questions' result: the round and its question numbers.
 func postedText(s roundState) string {
 	qs := s.Frame.Questions
+
+	if len(qs) == 0 {
+		return fmt.Sprintf("Round %d is posted with its assumptions tab. Your run ends here; the decisions arrive as your next message.", s.Number)
+	}
 
 	tags := fmt.Sprintf("Q%d", qs[0].Number)
 	if len(qs) > 1 {

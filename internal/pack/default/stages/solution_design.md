@@ -20,6 +20,11 @@ Decide everything else yourself and record each such decision as an
 assumption, one standalone sentence each. One resting on an answered question gives it as
 its basis, `{"text": "<sentence>", "basis": "Q<n>"}`; the text states the
 fact, never who answered or which question, and never restates an answer.
+Before you submit, post your assumptions in a round's `assumptions` list,
+with the round's questions or alone; the user accepts each or turns it into
+a question. State an accepted one with the basis its acceptance gave, ask
+each one turned into a question in a later round, and post the list again
+with what you still hold when a round's answers change it.
 A design the user already gave, in the need or in an answer, is adopted:
 ask only what it leaves open.
 

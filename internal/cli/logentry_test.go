@@ -840,6 +840,44 @@ func TestLogEntry_ALeftRoundIsNotHeadedAnswered(t *testing.T) {
 	assert.NotContains(t, left.Content, answered.Prompt.Text)
 }
 
+func TestLogEntry_ACloseInProgressIsNotShown(t *testing.T) {
+	p := roundPayloadForTest()
+	p["change"] = blueprint.ChangeClosing
+
+	_, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRound, BlueprintID: "BP1", Payload: p})
+	assert.False(t, ok, "a closing snapshot only reserves numbers; the closed one follows")
+}
+
+func TestLogEntry_TheFallbackListsTheAssumptionsTab(t *testing.T) {
+	render := func(decisions ...any) string {
+		t.Helper()
+
+		p := roundPayloadForTest()
+
+		frame, ok := p["frame"].(map[string]any)
+		require.True(t, ok)
+
+		frame["assumptions"] = []any{map[string]any{"id": "A1", "text": "One region."}, map[string]any{"id": "A2", "text": "Postgres stays."}}
+		frame["decisions"] = decisions
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRound, BlueprintID: "BP1", Payload: p})
+		require.True(t, ok)
+
+		return entry.Content
+	}
+
+	undecided := render()
+	accepted := render(map[string]any{"id": "A1", "accept": true})
+	converted := render(map[string]any{"id": "A1", "accept": false})
+
+	for _, text := range []string{"A1. One region.", "A2. Postgres stays."} {
+		assert.Contains(t, undecided, text)
+	}
+
+	assert.NotEqual(t, undecided, accepted, "a decision shows")
+	assert.NotEqual(t, accepted, converted, "accepting and turning into a question read apart")
+}
+
 func roundPayloadForTest() map[string]any {
 	raw := []byte(`{"round":3,"change":"posted","frame":{"persona":"system designer","stage":"solution_design",
 		"questions":[{"number":7,"title":"Deploy","text":"Helm or Kustomize?","options":[{"title":"Helm"}]}]}}`)

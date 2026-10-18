@@ -48,8 +48,10 @@ func (c *Controller) decisionsValidator(bp store.Blueprint, stageID string) (fun
 // chosen option, a rejected option and a basis the blueprint knows (an
 // answered question, a recorded source or "assumption"); every slice of a
 // consumed slicing is designed; and every question the stage got answered
-// since that slicing was built, in any attempt, is some decision's basis,
-// so no answer is dropped. An answer from before a re-slice stays citable.
+// since that slicing was built, in any attempt, is the basis of some
+// decision or stated assumption, so no answer is dropped: an assumption
+// accepted on a round's tab is an answered question its statement rests
+// on. An answer from before a re-slice stays citable.
 func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, stageID string, data map[string]any) ([]string, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
@@ -100,6 +102,10 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 
 	used := map[string]bool{}
 
+	for _, a := range statedAssumptions(store.Artifact{Data: raw}) {
+		used[a.Basis] = true
+	}
+
 	for _, s := range d.Slices {
 		for _, dec := range s.Decisions {
 			where := strings.TrimSpace(s.ID + " " + dec.ID)
@@ -136,7 +142,7 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 
 	for _, tag := range own {
 		if !used[tag] {
-			out = append(out, problem(tag, "unused_answer", "the question was answered, but no decision rests on it"))
+			out = append(out, problem(tag, "unused_answer", "the question was answered, but no decision or stated assumption rests on it"))
 		}
 	}
 

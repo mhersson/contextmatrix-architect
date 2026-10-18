@@ -363,6 +363,105 @@ func (c *Controller) assumptionsValidator(bp store.Blueprint) (func(context.Cont
 	})
 }
 
+// tabValidator refuses a submit of st, as boundedValidator bounds it, that
+// states an assumption without a basis while st's policy, read at submit,
+// is human, or that comes before an assumption the user turned into a
+// question on a round of the attempt was asked in a later round of it.
+func (c *Controller) tabValidator(bp store.Blueprint, st pack.Stage, attempt int) (func(context.Context, stage.Artifact) error, *validatorState) {
+	return boundedValidator("assumptions tab", func(ctx context.Context, a stage.Artifact) ([]string, error) {
+		policy, err := c.policy(ctx, bp, st.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		var out []string
+
+		if policy == pack.PolicyHuman {
+			out = unbasedAssumptions(a.Data)
+		}
+
+		unasked, err := c.unaskedConversions(ctx, bp.ID, st.ID, attempt)
+		if err != nil {
+			return nil, err
+		}
+
+		return append(out, unasked...), nil
+	})
+}
+
+// unbasedAssumptions reports every stated assumption that names no basis.
+// The assumptions check reports a malformed list or entry.
+func unbasedAssumptions(data map[string]any) []string {
+	items, _ := data["assumptions"].([]any)
+
+	var out []string
+
+	for i, item := range items {
+		text, basis := "", ""
+
+		switch e := item.(type) {
+		case string:
+			text = e
+		case map[string]any:
+			text, _ = e["text"].(string)
+			basis, _ = e["basis"].(string)
+		default:
+			continue
+		}
+
+		if strings.TrimSpace(text) != "" && normalTag(basis) == "" {
+			out = append(out, fmt.Sprintf("assumption %d has no basis: show it on a round's assumptions tab first; state an accepted one with the basis Q<n> its acceptance recorded", i+1))
+		}
+	}
+
+	return out
+}
+
+// unaskedConversions reports each assumption the user turned into a question
+// on a round a run of stageID's attempt posted, when no run of the attempt
+// posted a round after it.
+func (c *Controller) unaskedConversions(ctx context.Context, id, stageID string, attempt int) ([]string, error) {
+	runs, err := c.opts.Store.ListRuns(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("list runs: %w", err)
+	}
+
+	ofAttempt := map[int64]bool{}
+
+	for _, r := range runs {
+		if r.Kind == store.RunKindStage && r.Stage == stageID && r.Attempt == attempt {
+			ofAttempt[r.ID] = true
+		}
+	}
+
+	rounds, err := c.rounds(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	newest := 0
+
+	for _, s := range rounds {
+		if ofAttempt[s.PostedBy] {
+			newest = max(newest, s.Number)
+		}
+	}
+
+	var out []string
+
+	for _, s := range rounds {
+		if !ofAttempt[s.PostedBy] || s.Number < newest {
+			continue
+		}
+
+		for _, a := range s.Converted {
+			out = append(out, fmt.Sprintf("round %d's %s was turned into a question; ask it in a round before you submit", s.Number, a))
+		}
+	}
+
+	return out, nil
+}
+
 var questionTags = regexp.MustCompile(`\bQ\d+\b`)
 
 // assumptionProblems checks a submit's assumptions: a list of entries, each

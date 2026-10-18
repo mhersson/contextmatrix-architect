@@ -113,6 +113,77 @@ func TestRun_AskQuestionsRefusalsGoBackToTheModel(t *testing.T) {
 	}
 }
 
+func TestRun_ARoundOfAssumptionsAlonePosts(t *testing.T) {
+	f := &fakeLLM{responses: []llm.Response{{
+		ToolCalls:    []llm.ToolCall{toolCall("c1", "ask_questions", `{"questions":[],"assumptions":["One region."," "]}`)},
+		FinishReason: "tool_calls",
+	}}}
+	iv := &stubInterviewer{}
+
+	in := baseInput(&bytes.Buffer{})
+	in.Interviewer = iv
+
+	out, err := runnerWith(f).Run(context.Background(), in)
+	require.NoError(t, err)
+	assert.True(t, out.Asked)
+
+	require.Len(t, iv.asked, 1)
+	assert.Empty(t, iv.asked[0].Questions)
+	assert.Equal(t, []string{"One region."}, iv.asked[0].Assumptions, "blanks are dropped")
+}
+
+func TestRun_ARoundWithNeitherQuestionsNorAssumptionsIsRefused(t *testing.T) {
+	for _, args := range []string{`{}`, `{"questions":[],"assumptions":[" "]}`} {
+		t.Run(args, func(t *testing.T) {
+			f := &fakeLLM{responses: []llm.Response{
+				{ToolCalls: []llm.ToolCall{toolCall("c1", "ask_questions", args)}, FinishReason: "tool_calls"},
+				{ToolCalls: []llm.ToolCall{toolCall("c2", "submit_artifact", `{"body":"# Need"}`)}, FinishReason: "tool_calls"},
+			}}
+			iv := &stubInterviewer{}
+
+			in := baseInput(&bytes.Buffer{})
+			in.Interviewer = iv
+
+			out, err := runnerWith(f).Run(context.Background(), in)
+			require.NoError(t, err)
+			assert.False(t, out.Asked)
+			assert.Empty(t, iv.asked)
+			assert.Equal(t, 1, out.Result.ToolCallFailures)
+		})
+	}
+}
+
+func TestRun_AnswerChatAssumptionsReplaceTheTabOnlyWhenGiven(t *testing.T) {
+	tests := []struct {
+		name string
+		args string
+		want []string
+	}{
+		{"left out keeps the tab", `{"reply":"Yes."}`, nil},
+		{"an empty list empties it", `{"reply":"Yes.","assumptions":[]}`, []string{}},
+		{"a list replaces it", `{"reply":"Yes.","assumptions":["Two zones."," "]}`, []string{"Two zones."}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeLLM{responses: []llm.Response{{ToolCalls: []llm.ToolCall{toolCall("c1", "answer_chat", tt.args)}, FinishReason: "tool_calls"}}}
+			iv := &stubInterviewer{}
+
+			in := baseInput(&bytes.Buffer{})
+			in.Interviewer, in.Chat = iv, true
+
+			_, err := runnerWith(f).Run(context.Background(), in)
+			require.NoError(t, err)
+			require.Len(t, iv.answers, 1)
+			assert.Equal(t, tt.want, iv.answers[0].Assumptions)
+
+			if tt.want != nil {
+				assert.NotNil(t, iv.answers[0].Assumptions)
+			}
+		})
+	}
+}
+
 func TestRun_AnInterviewerRefusalIsAToolError(t *testing.T) {
 	f := &fakeLLM{responses: []llm.Response{
 		{ToolCalls: []llm.ToolCall{toolCall("c1", "ask_questions", twoQuestions)}, FinishReason: "tool_calls"},

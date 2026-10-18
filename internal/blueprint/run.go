@@ -259,16 +259,16 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 		if rd.findings > 0 {
 			check, state := addressedValidator(rd.findings)
-
-			validators := []func(context.Context, stage.Artifact) error{check}
-			if in.Validate != nil {
-				validators = append([]func(context.Context, stage.Artifact) error{in.Validate}, check)
-			}
-
-			in.Validate = allOf(validators)
-
+			in.Validate = allOf(append(validatorsOf(in.Validate), check))
 			checks.bounded = append(checks.bounded, state)
 		}
+	}
+
+	// The tab check needs the run's attempt, which stageInput does not know.
+	if slices.Contains(st.Checks, pack.CheckAssumptions) {
+		check, state := c.tabValidator(bp, st, attempt)
+		in.Validate = allOf(append(validatorsOf(in.Validate), check))
+		checks.bounded = append(checks.bounded, state)
 	}
 
 	defer closeTools()
@@ -586,6 +586,15 @@ func allOf(validators []func(context.Context, stage.Artifact) error) func(contex
 
 		return errors.Join(errs...)
 	}
+}
+
+// validatorsOf is v as a list for allOf; empty when v is nil.
+func validatorsOf(v func(context.Context, stage.Artifact) error) []func(context.Context, stage.Artifact) error {
+	if v == nil {
+		return nil
+	}
+
+	return []func(context.Context, stage.Artifact) error{v}
 }
 
 // nextAttempt numbers a new run of stageID after every earlier stage run of
