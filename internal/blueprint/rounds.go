@@ -66,9 +66,39 @@ type roundState struct {
 	// Accepted, which older closes stored, maps an accepted assumption to the
 	// question number reserved for its row. Converted lists the assumptions a
 	// human turned into questions, set when the round closes.
-	Accepted  map[string]int    `json:"accepted,omitempty"`
-	Converted []string          `json:"converted,omitempty"`
-	Frame     protocol.LogRound `json:"frame"`
+	Accepted  map[string]int `json:"accepted,omitempty"`
+	Converted []string       `json:"converted,omitempty"`
+	// HandedOver is set when a mode switch handed the round, while it waited
+	// for a human, to the auto responder: what the human had answered and
+	// decided by then stays the human's, and the rest is the responder's.
+	HandedOver *handover         `json:"handed_over,omitempty"`
+	Frame      protocol.LogRound `json:"frame"`
+}
+
+// handover records what a human had settled on a round when a mode switch
+// handed it to the auto responder.
+type handover struct {
+	Answered []int    `json:"answered,omitempty"`
+	Decided  []string `json:"decided,omitempty"`
+}
+
+// humanAnswered reports whether the human answered question n before the
+// handover; false on a round never handed over.
+func (h *handover) humanAnswered(n int) bool { return h != nil && slices.Contains(h.Answered, n) }
+
+// humanDecided reports whether the human decided assumption id before the
+// handover; false on a round never handed over.
+func (h *handover) humanDecided(id string) bool { return h != nil && slices.Contains(h.Decided, id) }
+
+// responderAnswered reports whether the auto responder gave question n's
+// answer.
+func (s roundState) responderAnswered(n int) bool {
+	return s.Frame.Responder && !s.HandedOver.humanAnswered(n)
+}
+
+// responderDecided reports whether the auto responder decided assumption id.
+func (s roundState) responderDecided(id string) bool {
+	return s.Frame.Responder && !s.HandedOver.humanDecided(id)
 }
 
 func roundPromptID(n int) string { return fmt.Sprintf("round:%d", n) }
@@ -504,19 +534,22 @@ func (c *Controller) closeRound(ctx context.Context, au audit, bp store.Blueprin
 		answers[a.Number] = a
 	}
 
-	responder := store.ResponderHuman
-	if s.Frame.Responder {
-		responder = store.ResponderAuto
-	}
-
 	msgID, err := c.answeringMessage(ctx, bp.ID, s)
 	if err != nil {
 		return roundState{}, fmt.Errorf("blueprint: close round %d: %w", s.Number, err)
 	}
 
 	for _, q := range s.Frame.Questions {
-		if have[q.Number] {
+		// The responder's runs write the rows of its answers; one it could not
+		// give on a handed-over round is the stage's to decide, as on an auto
+		// round.
+		if have[q.Number] || (s.HandedOver != nil && !s.HandedOver.humanAnswered(q.Number)) {
 			continue
+		}
+
+		responder := store.ResponderHuman
+		if s.responderAnswered(q.Number) {
+			responder = store.ResponderAuto
 		}
 
 		options := make([]string, 0, len(q.Options))
@@ -544,16 +577,12 @@ func (c *Controller) closeRound(ctx context.Context, au audit, bp store.Blueprin
 }
 
 // conversions lists the assumptions a human turned into questions on round
-// s's tab; a responder's round has none.
+// s's tab; the responder turns none.
 func conversions(s roundState) []string {
-	if s.Frame.Responder {
-		return nil
-	}
-
 	var out []string
 
 	for _, d := range s.Frame.Decisions {
-		if !d.Accept {
+		if !d.Accept && !s.responderDecided(d.ID) {
 			out = append(out, d.ID)
 		}
 	}
@@ -578,8 +607,8 @@ func acceptanceTag(n int, id string) string { return fmt.Sprintf("round%d.%s", n
 
 // acceptedAssumptions lists every assumption a human accepted on the
 // blueprint's closed rounds, in round and tab order, with the run that
-// posted the round. Under auto nothing is confirmed, so a responder's round
-// accepts none.
+// posted the round. Under auto nothing is confirmed, so the responder's
+// acceptances count for none.
 func (c *Controller) acceptedAssumptions(ctx context.Context, id string) ([]acceptedAssumption, error) {
 	rounds, err := c.rounds(ctx, id)
 	if err != nil {
@@ -599,7 +628,7 @@ func (c *Controller) acceptedAssumptions(ctx context.Context, id string) ([]acce
 	var out []acceptedAssumption
 
 	for _, s := range rounds {
-		if s.Frame.Responder || s.Change != changeClosed {
+		if s.Change != changeClosed {
 			continue
 		}
 
@@ -609,7 +638,7 @@ func (c *Controller) acceptedAssumptions(ctx context.Context, id string) ([]acce
 		}
 
 		for _, a := range s.Frame.Assumptions {
-			if !accepted[a.ID] {
+			if !accepted[a.ID] || s.responderDecided(a.ID) {
 				continue
 			}
 
@@ -793,11 +822,6 @@ func writeRoundAnswers(b *strings.Builder, s roundState) {
 		return
 	}
 
-	who := answeredByUser
-	if s.Frame.Responder {
-		who = answeredByResponder
-	}
-
 	answers := map[int]protocol.RoundAnswer{}
 	for _, a := range s.Frame.Answers {
 		answers[a.Number] = a
@@ -806,6 +830,11 @@ func writeRoundAnswers(b *strings.Builder, s roundState) {
 	fmt.Fprintf(b, "## Answers to round %d\n\n", s.Number)
 
 	for _, q := range s.Frame.Questions {
+		who := answeredByUser
+		if s.responderAnswered(q.Number) {
+			who = answeredByResponder
+		}
+
 		fmt.Fprintf(b, "- [Q%d] %s\n  Answer (%s): %s\n", q.Number, q.Text, who, AnswerText(q, answers[q.Number]))
 	}
 
@@ -839,7 +868,7 @@ func writeRoundAssumptions(b *strings.Builder, s roundState, accepted []accepted
 		fmt.Fprintf(b, "- %s: %s\n", a.ID, a.Text)
 
 		switch tag := tags[a.ID]; {
-		case s.Frame.Responder:
+		case s.responderDecided(a.ID):
 			b.WriteString("  Accepted automatically under the auto policy; it stays unverified: state it without a basis.\n")
 		case tag != "":
 			fmt.Fprintf(b, "  Accepted by the user as [%s]: state it with the basis %s.\n", tag, tag)
