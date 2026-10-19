@@ -22,6 +22,7 @@ const (
 	CommandExport = "export"
 	CommandGate   = "gate"
 	CommandCap    = "cap"
+	CommandMode   = "mode"
 	CommandResume = "resume"
 )
 
@@ -44,8 +45,9 @@ var errNoResponder = errors.New("nobody answers this stage's questions under its
 // ParseCommand recognises a reply that is a command rather than text for
 // the blueprint: abort, export and resume (or its synonym continue) are the
 // whole message, a gate reply is exactly gate, a stage and human or auto,
-// and a cap reply is exactly cap and an amount or off, so an answer that
-// starts with one of these words stays an answer. Case is ignored; the
+// a cap reply is exactly cap and an amount or off, and a mode reply exactly
+// mode and one of the modes, so an answer that starts with one of these
+// words stays an answer. Case is ignored; the
 // arguments come back lowercased. Any other text returns "".
 func ParseCommand(text string) (string, []string) {
 	fields := strings.Fields(strings.ToLower(text))
@@ -59,6 +61,8 @@ func ParseCommand(text string) (string, []string) {
 		return CommandGate, fields[1:]
 	case len(fields) == 2 && fields[0] == CommandCap && (fields[1] == capOff || capAmount.MatchString(fields[1])):
 		return CommandCap, fields[1:]
+	case len(fields) == 2 && fields[0] == CommandMode && protocol.ValidArchitectMode(fields[1]):
+		return CommandMode, fields[1:]
 	default:
 		return "", nil
 	}

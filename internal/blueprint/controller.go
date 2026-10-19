@@ -241,7 +241,10 @@ type Controller struct {
 	// and a close. Per blueprint, not per session: a reopen attaches a new
 	// session while the ended one's run may still post.
 	roundLocks map[string]*sync.Mutex
-	closing    bool
+	// modeLocks serialize each blueprint's mode switches with its sign-off
+	// approvals, so a switch lands before an approval or is refused after it.
+	modeLocks map[string]*sync.Mutex
+	closing   bool
 }
 
 // New builds a Controller.
@@ -261,6 +264,7 @@ func New(opts Options) *Controller {
 	c := &Controller{
 		opts: opts, sessions: map[string]*session{}, runs: map[string]*run{}, watches: map[string]*watcher{},
 		flights: map[string][]*flight{}, roundLocks: map[string]*sync.Mutex{},
+		modeLocks: map[string]*sync.Mutex{},
 	}
 	c.live = newLiveHub(c.View, opts.Logger)
 
@@ -1165,6 +1169,20 @@ func (c *Controller) roundLock(id string) *sync.Mutex {
 	if l == nil {
 		l = &sync.Mutex{}
 		c.roundLocks[id] = l
+	}
+
+	return l
+}
+
+// modeLock is blueprint id's mode lock.
+func (c *Controller) modeLock(id string) *sync.Mutex {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	l := c.modeLocks[id]
+	if l == nil {
+		l = &sync.Mutex{}
+		c.modeLocks[id] = l
 	}
 
 	return l

@@ -79,6 +79,15 @@ func TestLogEntryFor(t *testing.T) {
 		{"a cap raise that resumes a stage", blueprint.Event{Kind: blueprint.EventCap, BlueprintID: "S1", Payload: map[string]any{
 			"from": 2.0, "to": 4.0, "resumes": "solution_design",
 		}}, "system", []string{"$2.00", "$4.00", "Solution design"}, false},
+		{"a mode switch", blueprint.Event{Kind: blueprint.EventMode, BlueprintID: "S1", Payload: map[string]any{
+			"from": "default", "to": "auto+emit",
+		}}, "system", []string{"Default", "Auto + emit"}, false},
+		{"a mode switch that hands a round over", blueprint.Event{Kind: blueprint.EventMode, BlueprintID: "S1", Payload: map[string]any{
+			"from": "default", "to": "auto", "hands_over": 3,
+		}}, "system", []string{"Default", "Auto", "3"}, false},
+		{"a refused mode switch", blueprint.Event{Kind: blueprint.EventMode, BlueprintID: "S1", Payload: map[string]any{
+			"from": "yolo", "to": "default", "reason": "emission_started", "refused": "Emission has started, so the mode stays yolo.",
+		}}, "system", []string{"Emission has started, so the mode stays yolo."}, false},
 		{"a resume that runs a stopped stage", blueprint.Event{Kind: blueprint.EventResume, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "solution_design", "message_id": "m1",
 		}}, "system", []string{"Solution design"}, false},
