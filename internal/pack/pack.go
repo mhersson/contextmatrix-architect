@@ -46,6 +46,11 @@ const (
 	// CheckCriteria checks acceptance's criteria and manual checks, and
 	// makes decomposition map every criterion to exactly one card.
 	CheckCriteria = "criteria"
+	// CheckOutcomes checks a submit's measurable outcomes: ids O<n> unique
+	// across the blueprint and after the highest an earlier step holds, each
+	// with its sentence; the first stage that checks them states at least
+	// one.
+	CheckOutcomes = "outcomes"
 )
 
 // Responder policies: who answers a stage's questions and decides its gate.
@@ -420,7 +425,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	}
 
 	for _, check := range s.Checks {
-		if check != CheckCards && check != CheckAssumptions && check != CheckDecisions && check != CheckSlices && check != CheckCriteria {
+		if !slices.Contains([]string{CheckCards, CheckAssumptions, CheckDecisions, CheckSlices, CheckCriteria, CheckOutcomes}, check) {
 			return fmt.Errorf("pack: stage %q: unknown check %q", s.ID, check)
 		}
 	}

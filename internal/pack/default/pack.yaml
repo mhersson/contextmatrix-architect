@@ -1,11 +1,11 @@
 name: default
-version: "0.16"
+version: "0.17"
 stages:
   - id: intake
     persona: product_owner
     produces: need
     tools: [code, research]
-    checks: [assumptions]
+    checks: [assumptions, outcomes]
     policy: human
     gate: true
     gate_policy: auto
@@ -26,7 +26,7 @@ stages:
     produces: shared_decisions
     consumes: [intake, slicing]
     tools: [code, research]
-    checks: [assumptions, decisions]
+    checks: [assumptions, decisions, outcomes]
     policy: human
     gate: true
     shared: true
@@ -37,7 +37,7 @@ stages:
     produces: design
     consumes: [intake, slicing, shared_decisions]
     tools: [code, research]
-    checks: [assumptions, decisions]
+    checks: [assumptions, decisions, outcomes]
     policy: human
     gate: true
     per_slice: true

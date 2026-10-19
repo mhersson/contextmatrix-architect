@@ -84,7 +84,7 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	assert.Equal(t, PolicyHuman, design.Policy)
 	assert.Equal(t, 5, design.MaxQuestions)
 	assert.Contains(t, design.Tools, ToolCode)
-	assert.Equal(t, []string{CheckAssumptions, CheckDecisions}, design.Checks)
+	assert.Equal(t, []string{CheckAssumptions, CheckDecisions, CheckOutcomes}, design.Checks)
 	require.NotNil(t, design.Reviewer)
 	assert.Equal(t, "senior_developer", design.Reviewer.Persona)
 
@@ -93,6 +93,7 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	assert.True(t, intake.Gate)
 	assert.Equal(t, PolicyAuto, intake.GatePolicy, "intake's reviewer's verdict decides its gate")
 	assert.Equal(t, 3, intake.MaxQuestions)
+	assert.Equal(t, []string{CheckAssumptions, CheckOutcomes}, intake.Checks, "intake states the need's outcomes")
 
 	next := map[string]string{"intake": "system_designer", "slicing": "system_designer", "shared_decisions": "senior_developer", "solution_design": "senior_developer", "acceptance": "tester"}
 
@@ -115,7 +116,7 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	assert.Equal(t, PolicyHuman, shared.Policy)
 	assert.Equal(t, "system_designer", shared.Persona)
 	assert.Equal(t, []string{"intake", "slicing"}, shared.Consumes)
-	assert.Equal(t, []string{CheckAssumptions, CheckDecisions}, shared.Checks)
+	assert.Equal(t, []string{CheckAssumptions, CheckDecisions, CheckOutcomes}, shared.Checks)
 
 	for _, id := range []string{"solution_design", "grounding", "acceptance", "decomposition"} {
 		s, _ := p.Stage(id)
@@ -524,4 +525,12 @@ func TestStepKey(t *testing.T) {
 		assert.Equal(t, tc.stage, stage)
 		assert.Equal(t, tc.slice, slice)
 	}
+}
+
+func TestLoad_AcceptsTheOutcomesCheck(t *testing.T) {
+	p, err := load(packFS("    checks: [outcomes]\n", nil))
+	require.NoError(t, err)
+
+	s1, _ := p.Stage("s1")
+	assert.Equal(t, []string{CheckOutcomes}, s1.Checks)
 }

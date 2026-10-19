@@ -26,6 +26,7 @@ type digest struct {
 	Criteria  []digestLine              `json:"criteria,omitempty"`
 	Cards     []digestCard              `json:"cards,omitempty"`
 	Manual    []digestLine              `json:"manual,omitempty"`
+	Outcomes  []digestLine              `json:"outcomes,omitempty"`
 	Setup     map[string]contract.Setup `json:"setup,omitempty"`
 }
 
@@ -51,7 +52,7 @@ type digestCard struct {
 }
 
 func (d digest) empty() bool {
-	return len(d.Decisions)+len(d.Contracts)+len(d.Criteria)+len(d.Cards)+len(d.Manual) == 0
+	return len(d.Decisions)+len(d.Contracts)+len(d.Criteria)+len(d.Cards)+len(d.Manual)+len(d.Outcomes) == 0
 }
 
 // misfit counts the entries of another shape that a digest would drop; any
@@ -158,7 +159,10 @@ func digestOf(checks []string, art store.Artifact) (digest, bool) {
 			// shape; a per-slice design's checks do not rule on where they sit.
 			Decisions []digestDecision `json:"decisions"`
 			Contracts []string         `json:"contracts"`
-			Slices    []struct {
+			// Outcomes at the top level are where a design states a quality
+			// only it can; a later slice numbers its own after them.
+			Outcomes []digestLine `json:"outcomes"`
+			Slices   []struct {
 				Decisions []digestDecision `json:"decisions"`
 				Contracts []string         `json:"contracts"`
 				Criteria  []digestLine     `json:"criteria"`
@@ -172,6 +176,10 @@ func digestOf(checks []string, art store.Artifact) (digest, bool) {
 
 		d.Decisions = bad.appendDecisions(d.Decisions, data.Decisions)
 		d.Contracts = bad.appendContracts(d.Contracts, data.Contracts)
+
+		for _, o := range data.Outcomes {
+			d.Outcomes = bad.appendLine(d.Outcomes, o.ID, o.Text)
+		}
 
 		for _, s := range data.Slices {
 			d.Decisions = bad.appendDecisions(d.Decisions, s.Decisions)

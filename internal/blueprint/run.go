@@ -587,6 +587,10 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		bounded(c.criteriaValidator(bp, st.ID))
 	}
 
+	if slices.Contains(st.Checks, pack.CheckOutcomes) {
+		bounded(c.outcomesValidator(bp, st.ID))
+	}
+
 	if slices.Contains(st.Checks, pack.CheckCards) {
 		var cards func(context.Context, stage.Artifact) error
 

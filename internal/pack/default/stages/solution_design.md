@@ -38,11 +38,18 @@ each one turned into a question in a later round, and post the list again
 with what you still hold when a round's answers change it.
 A design the user already gave, in the need or in an answer, is adopted:
 ask only what it leaves open.
+Ask about the qualities that matter for this slice, such as how fast a page
+must load, who may see a record, what happens to data a failed run half
+wrote, or which older clients must keep working, as researched questions
+when the code, the need and the earlier designs leave them open. A quality
+only this design can state measurably becomes an outcome: add it to the
+data's top-level `outcomes`, never inside a slice entry, numbering on after
+the highest outcome id the need and earlier designs hold.
 
 Produce markdown with a `## <slice id>` section for each slice you design: the projects
 involved, each decision with the options it rejected, and the contracts
 between projects. Submit with a data object
-`{"slices": [{"id": "SL1", "projects": ["<name>"], "decisions": [{"id": "DEC1", "text": "<what is decided>", "chosen": "<the option>", "rejected": [{"option": "<an option>", "why": "<why not>"}], "basis": "<Q<n>, round<n>.A<k>, S<n> or assumption>"}], "contracts": ["<a contract between projects, for both sides>"]}], "assumptions": ["<sentence>" or {"text": "<sentence>", "basis": "<Q<n> or round<n>.A<k>>"}]}`.
+`{"slices": [{"id": "SL1", "projects": ["<name>"], "decisions": [{"id": "DEC1", "text": "<what is decided>", "chosen": "<the option>", "rejected": [{"option": "<an option>", "why": "<why not>"}], "basis": "<Q<n>, round<n>.A<k>, S<n> or assumption>"}], "contracts": ["<a contract between projects, for both sides>"]}], "outcomes": [{"id": "O<n>", "text": "<one measurable sentence>", "quality": "<the quality>"}], "assumptions": ["<sentence>" or {"text": "<sentence>", "basis": "<Q<n> or round<n>.A<k>>"}]}`.
 One `slices` entry per slice you design.
 Every answer you got and every assumption the user accepted for the slicing
 you design is the basis of a decision or a stated assumption; one from

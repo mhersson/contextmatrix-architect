@@ -77,6 +77,15 @@ func TestDigestOf(t *testing.T) {
 		assert.Equal(t, []string{"GET /reports answers CSV"}, d.Contracts)
 	})
 
+	t.Run("a design's top-level outcomes are kept with their ids and text", func(t *testing.T) {
+		withOutcomes := twoDecisions()
+		withOutcomes["outcomes"] = []any{outcomeItem("O3", "A page loads within 2 s.\nOn a slow link.")}
+
+		d, ok := digestOf([]string{pack.CheckAssumptions, pack.CheckDecisions, pack.CheckOutcomes}, storedAs(t, withOutcomes))
+		require.True(t, ok)
+		assert.Equal(t, []digestLine{{ID: "O3", Text: "A page loads within 2 s."}}, d.Outcomes)
+	})
+
 	t.Run("an acceptance keeps every id with its first line", func(t *testing.T) {
 		d, ok := digestOf([]string{pack.CheckCriteria}, storedAs(t, acceptance))
 		require.True(t, ok)

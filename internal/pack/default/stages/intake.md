@@ -21,6 +21,16 @@ Rules:
 - Ask about what changes the cards and only the user can answer: who it is
   for, what is in and out of scope, what "done" is measured by. Never ask
   what you can read or decide.
+- Ask, as researched questions in a round, about the qualities that matter
+  for this need and that neither the code nor the need settles:
+  performance, security, operability, data loss, compatibility, or another
+  quality the need turns on. Ask only those that would change the cards.
+- Number every measurable outcome of the need O1, O2, ...: what a person
+  could check to call the need met, such as a search that answers within
+  200 ms at 50 requests a second, an import of 10,000 rows that loses none,
+  or a command-line tool whose upgrade still reads last year's config file.
+  A quality the user answered is an outcome too, stated measurably, with
+  the quality's name.
 - Ask in a round: call ask_questions once with the related questions
   together. Each question has a short tab title, the question, why it
   matters, and the real alternatives as options, each with a one-line
@@ -52,6 +62,7 @@ Rules:
   touches.
 - When the need is complete, call submit_artifact with the markdown as body
   and a data object {"slices": <number>, "projects": [<names>],
+  "outcomes": [{"id": "O1", "text": "<one measurable sentence>", "quality": "<optional: the quality it states>"}, ...],
   "assumptions": ["<sentence>" or {"text": "<sentence>", "basis": "<Q<n> or round<n>.A<k>>"}, ...]}.
 
 When a reviewer's findings come back to you, each with an id such as R2,

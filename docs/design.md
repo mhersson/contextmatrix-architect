@@ -345,7 +345,7 @@ developer (DEV), tester (TST), reviewer (REV).
 
 | #  | Stage            | Persona | Consumes          | Produces                                                                                              | Gate      | Reviewer |
 | -- | ---------------- | ------- | ----------------- | ----------------------------------------------------------------------------------------------------- | --------- | -------- |
-| 1  | Intake           | PO      | the need          | need: problem, value, scope in and out, measurable outcomes, the expected shape, reading the code      | `auto` by default; its questions go to a human | SD       |
+| 1  | Intake           | PO      | the need          | need: problem, value, scope in and out, measurable outcomes numbered O1, O2, ..., the expected shape, reading the code   | `auto` by default; its questions go to a human | SD       |
 | 2  | Slicing          | PO      | need              | slices in order, the thinnest working one first and riskier ones before polish, each delivering standalone value; one slice is fine; reads the code | yes; folds into 4's gate when there is one slice | SD       |
 | 3  | Shared decisions | SD      | need, slices      | the decisions every slice shares: tooling, conventions, platform, cross-slice contracts, cross-cutting qualities; asks a question for each decision with real alternatives; reads the code; collapses, unrun, with one slice | yes       | DEV      |
 | 4  | Solution design  | SD      | need, slices, shared decisions, earlier slices | once per slice: projects involved, decisions with rejected options and their basis, cross-project contracts; asks a question for each decision with real alternatives; reads the code | yes       | DEV      |
@@ -391,19 +391,19 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   stage after the per-slice stages reads every slice's, in order.
   With two or more slices, an artifact of another slice is given as a digest
   of its data, by the shape its stage's checks give it: a design's decisions
-  (id, text, chosen) and contracts; an acceptance's criteria and manual
-  checks by id with their first line; cards by id, title, project, type,
-  Where paths, `depends_on` and criteria ids, with the draft's manual
-  entries and setup. A whole-blueprint stage reads the stage it loops to
-  whole for every slice. A stage without such a shape, or data that does not
-  decode or holds an item of another shape, is given whole. A run whose task
-  holds a digest is offered `read_artifact` for the whole. A per-slice task
-  opens by naming its slice. A gate reply (`gate <stage> human|auto`) and a
-  stage's policies cover every slice of the stage. A rejection at a slice's
-  gate runs that slice's step again. A run's cost floor reads every slice's
-  runs of its stage. A blueprint whose record ran a per-slice stage under
-  its plain id, from before stages repeated per slice, keeps running them
-  once for the whole blueprint.
+  (id, text, chosen), the outcomes it states at its top level and contracts;
+  an acceptance's criteria and manual checks by id with their first line;
+  cards by id, title, project, type, Where paths, `depends_on` and criteria
+  ids, with the draft's manual entries and setup. A whole-blueprint stage
+  reads the stage it loops to whole for every slice. A stage without such a
+  shape, or data that does not decode or holds an item of another shape, is
+  given whole. A run whose task holds a digest is offered `read_artifact`
+  for the whole. A per-slice task opens by naming its slice. A gate reply
+  (`gate <stage> human|auto`) and a stage's policies cover every slice of
+  the stage. A rejection at a slice's gate runs that slice's step again. A
+  run's cost floor reads every slice's runs of its stage. A blueprint whose
+  record ran a per-slice stage under its plain id, from before stages
+  repeated per slice, keeps running them once for the whole blueprint.
 - A stage the pack marks `shared` settles what every slice shares, between
   slicing and the per-slice stages, behind its own gate. With fewer than two
   slices it collapses: it never runs, and the step after it follows. The
@@ -438,6 +438,20 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   A shared stage's submit is one top-level `decisions` list of the same
   decision objects, with at least one decision and no `slices`, and an
   optional `contracts` list, held to the same rules for each decision.
+- Intake states every measurable outcome of the need in its data's
+  `outcomes`, each `{id: O<n>, text, quality}`: one measurable sentence,
+  and, for a quality the user answered (performance, security,
+  operability, data loss, compatibility, or another), the quality's name.
+  Intake and every design ask about the qualities that matter for the need
+  as researched questions. The shared decisions and each slice's design may
+  add outcomes, at the top level of their data, for qualities only they can
+  state; ids run on across the blueprint. The `outcomes` check refuses an
+  entry of another shape (`outcome_shape`), an id that is not `O<n>`,
+  repeats one or is not after the highest an earlier step holds
+  (`outcome_id`), an outcome without its sentence (`outcome_text`), and an
+  intake that states none (`no_outcomes`); bounded like the other checks,
+  never fatal. Earlier means the steps before it in pipeline order, so a
+  re-run's own earlier version never counts.
 - Acceptance's submit is checked: it has slices, every slice of slicing
   among them, or a per-slice acceptance's own slice alone, and each with at
   least one criterion; every criterion has an id of its own, never one an
