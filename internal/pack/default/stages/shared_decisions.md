@@ -45,13 +45,17 @@ with the round's questions or alone; the user accepts each or turns it into
 a question. State an accepted one with the basis its acceptance gave, ask
 each one turned into a question in a later round, and post the list again
 with what you still hold when a round's answers change it.
+The task lists every assumption so far with its id (A<n>). Never state one of
+them again, in your words or theirs, and never post again on a tab one the
+user accepted: a decision that rests on one gives its A<n> or its tag as the
+basis.
 A decision the user already gave, in the need or in an answer, is adopted:
 ask only what it leaves open.
 
 Produce markdown with a section per decision, each with the options it
 rejected, and a section for the contracts every slice holds to. Submit with
 a data object
-`{"decisions": [{"id": "DEC1", "text": "<what is decided>", "chosen": "<the option>", "rejected": [{"option": "<an option>", "why": "<why not>"}], "basis": "<Q<n>, round<n>.A<k>, S<n> or assumption>"}], "contracts": ["<a contract between projects every slice holds to>"], "outcomes": [{"id": "O<n>", "text": "<one measurable sentence>", "quality": "<the quality>"}], "assumptions": ["<sentence>" or {"text": "<sentence>", "basis": "<Q<n> or round<n>.A<k>>"}]}`.
+`{"decisions": [{"id": "DEC1", "text": "<what is decided>", "chosen": "<the option>", "rejected": [{"option": "<an option>", "why": "<why not>"}], "basis": "<Q<n>, round<n>.A<k>, A<n>, S<n> or assumption>"}], "contracts": ["<a contract between projects every slice holds to>"], "outcomes": [{"id": "O<n>", "text": "<one measurable sentence>", "quality": "<the quality>"}], "assumptions": ["<sentence>" or {"text": "<sentence>", "basis": "<Q<n> or round<n>.A<k>>"}]}`.
 Every answer you got and every assumption the user accepted for the slicing
 these decisions serve is the basis of a decision or a stated assumption;
 one from before it may still be cited.

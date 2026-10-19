@@ -380,6 +380,19 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		// it, for its gate and its reviewer.
 		out.Artifact.Data = keepProblems(out.Artifact.Data, checks.unresolved())
 
+		// Each stated assumption carries its blueprint-wide id, so the sheet
+		// shows the id later tasks and refusals name. A read that fails
+		// stores it unnumbered: the list numbers it all the same.
+		if slices.Contains(st.Checks, pack.CheckAssumptions) {
+			out.Artifact.Data = withoutAssumptionIDs(out.Artifact.Data)
+
+			if numbered, err := c.numberAssumptions(bg, id, stageID, out.Artifact.Data); err != nil {
+				c.opts.Logger.Warn("blueprint: number the assumptions", "blueprint", id, "stage", stageID, "error", err)
+			} else {
+				out.Artifact.Data = numbered
+			}
+		}
+
 		// A submitted artifact is kept even when a cancel raced it.
 		version, err := au.artifact(bg, id, stageID, out.Artifact.Body, out.Artifact.Data)
 		if err != nil {
@@ -572,7 +585,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	}
 
 	if slices.Contains(st.Checks, pack.CheckAssumptions) {
-		bounded(c.assumptionsValidator(bp))
+		bounded(c.assumptionsValidator(bp, st.ID))
 	}
 
 	if slices.Contains(st.Checks, pack.CheckDecisions) {

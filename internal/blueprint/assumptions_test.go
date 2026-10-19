@@ -127,18 +127,18 @@ func TestAssumptionsValidator(t *testing.T) {
 		return v(ctx, stage.Artifact{Body: "# Need", Data: map[string]any{"assumptions": assumptions}})
 	}
 
-	v, state := c.assumptionsValidator(bp)
+	v, state := c.assumptionsValidator(bp, "intake")
 	require.Error(t, submit(v, "The limits stay as noted above."), "a sentence that points above")
 	require.NoError(t, submit(v, "Requests stay under 100 per second."), "fixed")
 	assert.Empty(t, state.last(), "an accepted submit that passes keeps no problems")
 
-	v, state = c.assumptionsValidator(bp)
+	v, state = c.assumptionsValidator(bp, "intake")
 	require.Error(t, submit(v, "", 3), "not sentences")
 	require.Error(t, submit(v, "As noted above, the cache stays."))
 	require.NoError(t, submit(v, "As noted above, the cache stays."), "the third failing submit is accepted, so the stage never loops")
 	assert.Len(t, state.last(), 1, "with the problem it still has")
 
-	v, _ = c.assumptionsValidator(bp)
+	v, _ = c.assumptionsValidator(bp, "intake")
 	require.NoError(t, v(ctx, stage.Artifact{Body: "# Need", Data: map[string]any{"slices": 1}}), "no assumptions is fine")
 }
 
@@ -522,7 +522,7 @@ func TestAssumptionsValidator_Basis(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			v, _ := c.assumptionsValidator(store.Blueprint{ID: "BP1"})
+			v, _ := c.assumptionsValidator(store.Blueprint{ID: "BP1"}, "intake")
 			err := v(ctx, stage.Artifact{Body: "# Need", Data: map[string]any{"assumptions": []any{tt.entry}}})
 
 			if tt.ok {
@@ -654,4 +654,36 @@ func TestAssumptions_AnAcceptedAssumptionReadsAsAcceptedAtItsStage(t *testing.T)
 	assert.Contains(t, answered, "Q1")
 	assert.Contains(t, answered, "answer 1")
 	assert.NotContains(t, answered, "accepted at")
+}
+
+func TestAssumptions_AStageRunStoresTheIDs(t *testing.T) {
+	script := happyScript()
+	script["intake"] = returns(needBody, map[string]any{"slices": 1, "assumptions": []any{"The parser stays in Go.", "The API keeps its routes."}})
+
+	c, st, _, _, _ := newPipeline(t, script)
+	drive(t, c, "BP1")
+
+	art, err := st.LatestArtifact(context.Background(), "BP1", "intake")
+	require.NoError(t, err)
+
+	var data struct {
+		Assumptions []map[string]any `json:"assumptions"`
+	}
+
+	require.NoError(t, json.Unmarshal(art.Data, &data))
+	require.Len(t, data.Assumptions, 2)
+	assert.Equal(t, "A1", data.Assumptions[0]["id"])
+	assert.Equal(t, "A2", data.Assumptions[1]["id"])
+}
+
+func TestAssumptions_SoFarListsIDStatusAndText(t *testing.T) {
+	list := []assumption{{ID: "A1", Text: "The API keeps its routes.", Basis: "Q1", Answer: "keep them", Status: assumptionConfirmed}}
+
+	line := briefAssumptionLines(list)
+	for _, part := range []string{"A1", assumptionConfirmed, "The API keeps its routes."} {
+		assert.Contains(t, line, part)
+	}
+
+	assert.NotContains(t, line, "keep them", "the line carries no answer")
+	assert.NotContains(t, line, "Q1")
 }

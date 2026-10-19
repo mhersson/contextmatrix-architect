@@ -51,10 +51,11 @@ func (c *Controller) decisionsValidator(bp store.Blueprint, stageID string) (fun
 // sliceCoverage asks for; a shared stage's is one decisions list with at
 // least one decision. Every decision has a chosen option, a rejected option
 // and a basis the blueprint knows (an answered question, an accepted
-// assumption, a recorded source or "assumption"). Every question the stage
-// got answered and every assumption the user accepted on its tabs since the
-// slicing was built, in any attempt, is the basis of some decision or stated
-// assumption, so none is dropped. One from before a re-slice stays citable.
+// assumption, an earlier step's stated assumption, a recorded source or
+// "assumption"). Every question the stage got answered and every assumption
+// the user accepted on its tabs since the slicing was built, in any attempt,
+// is the basis of some decision or stated assumption, so none is dropped.
+// One from before a re-slice stays citable.
 func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, stageID string, data map[string]any) ([]string, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
@@ -122,6 +123,16 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 		known[s.Tag()] = true
 	}
 
+	// A decision may rest on an assumption an earlier step states.
+	stated, err := c.existingAssumptions(ctx, bp.ID, stageID, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, a := range stated {
+		known[a.id] = true
+	}
+
 	var out []string
 
 	// group is a list of decisions and where it sits, a slice id or shared.
@@ -179,7 +190,7 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 			case known[basis]:
 				used[basis] = true
 			default:
-				out = append(out, problem(where, "basis", fmt.Sprintf("%q is no answered question (Q<n>), accepted assumption (round<n>.A<k>), recorded source (S<n>) or assumption", dec.Basis)))
+				out = append(out, problem(where, "basis", fmt.Sprintf("%q is no answered question (Q<n>), accepted assumption (round<n>.A<k>), assumption an earlier step states (A<n>), recorded source (S<n>) or assumption", dec.Basis)))
 			}
 		}
 	}

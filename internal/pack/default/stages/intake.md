@@ -58,6 +58,8 @@ Rules:
   it into a question. State an accepted one with the basis its acceptance
   gave, ask each one turned into a question in a later round, and post the
   list again with what you still hold when a round's answers change it.
+  Never post again an assumption the user already accepted; state it with the
+  tag its acceptance gave.
 - Expected shape states how many slices you expect and which projects each
   touches.
 - When the need is complete, call submit_artifact with the markdown as body

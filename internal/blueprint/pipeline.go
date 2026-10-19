@@ -802,8 +802,8 @@ func (c *Controller) writeEdgeCases(b *strings.Builder, st pipelineStep) {
 }
 
 // writeAssumptions gives a stage that consumes a stage with stated
-// assumptions every assumption so far, each with its id and latest status:
-// the ids a verdict names.
+// assumptions every assumption so far, each with its id, latest status and
+// sentence: the ids a verdict or a decision names.
 func (c *Controller) writeAssumptions(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pipelineStep) error {
 	states := slices.ContainsFunc(st.Consumes, func(id string) bool {
 		consumed, _ := c.opts.Pack.Stage(id)
@@ -824,7 +824,7 @@ func (c *Controller) writeAssumptions(ctx context.Context, b *strings.Builder, b
 	}
 
 	b.WriteString("## Assumptions so far\n\nEach with its id and latest status; a verdict names the id:\n\n")
-	b.WriteString(assumptionLines(list, c.sliced(ctx, bp.ID)) + "\n\n")
+	b.WriteString(briefAssumptionLines(list) + "\n\n")
 
 	return nil
 }

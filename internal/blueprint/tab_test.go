@@ -249,7 +249,7 @@ func TestTab_AnAcceptanceTagIsABasisTheUserConfirmed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			v, _ := c.assumptionsValidator(bp)
+			v, _ := c.assumptionsValidator(bp, "intake")
 			err := submitAssumptions(v, tt.entry)
 
 			if tt.ok {
@@ -853,4 +853,53 @@ func TestTab_SolutionDesignOwesItsOwnAcceptances(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, problems, 1, problems)
 	assert.True(t, owed(problems, "Q7"), problems)
+}
+
+func TestTab_AnAcceptedAssumptionIsNeverPostedAgain(t *testing.T) {
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+
+	au := c.newAudit()
+	intakeRun := doneRun(t, st, "intake")
+	c.putRound(ctx, au, "BP1", intakeRun, tabRound(2, "intake", intakeRun, []string{"One region."}, accept("A1")))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	err = c.reposted(ctx, bp.ID, []string{"Two zones.", "one REGION"})
+	require.Error(t, err)
+	assert.Regexp(t, `(^|[^.\w])round2\.A1\b`, err.Error(), "the refusal names the tag to cite")
+
+	require.NoError(t, c.reposted(ctx, bp.ID, []string{"One region per tenant."}), "a new assumption is posted")
+}
+
+func TestTab_ARoundRefusesEveryAcceptedAssumptionItPostsAgain(t *testing.T) {
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+
+	au := c.newAudit()
+	intakeRun := doneRun(t, st, "intake")
+	c.putRound(ctx, au, "BP1", intakeRun, tabRound(2, "intake", intakeRun, []string{"One region.", "Two zones."}, accept("A1"), accept("A2")))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	intake, ok := c.stepAt("intake")
+	require.True(t, ok)
+
+	iv := &interviewer{c: c, bp: bp, st: intake, r: &run{}}
+	tab := []string{"ONE region", "A new one.", "two zones!"}
+
+	_, err = iv.Ask(ctx, stage.Round{Assumptions: tab})
+	require.Error(t, err)
+	assert.Regexp(t, `(^|[^.\w])round2\.A1\b`, err.Error())
+	assert.Regexp(t, `(^|[^.\w])round2\.A2\b`, err.Error(), "one refusal names each")
+
+	_, err = iv.Answer(ctx, stage.ChatAnswer{Reply: "x", Assumptions: tab})
+	require.Error(t, err)
+	assert.Regexp(t, `(^|[^.\w])round2\.A1\b`, err.Error())
 }

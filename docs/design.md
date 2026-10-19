@@ -431,14 +431,15 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   SL1. The three rounds count per blueprint.
 - Solution design's submit is checked: it has slices, every slice of slicing
   among them, or a per-slice design's own slice alone (`slice_missing`,
-  `slice_extra`); every decision has a chosen option, a rejected option and a
-  basis (`Q<n>`, `round<n>.A<k>`, `S<n>` or `assumption`); and every
-  question it got answered and every assumption the user accepted on its tabs
-  since the slicing it consumes was built is the basis of a decision or of a
-  stated assumption; one from before a re-slice stays a basis it may cite.
-  A shared stage's submit is one top-level `decisions` list of the same
-  decision objects, with at least one decision and no `slices`, and an
-  optional `contracts` list, held to the same rules for each decision.
+  `slice_extra`); every decision has a chosen option, a rejected option and
+  a basis (`Q<n>`, `round<n>.A<k>`, `A<n>` for an earlier step's stated
+  assumption, `S<n>` or `assumption`); and every question it got answered
+  and every assumption the user accepted on its tabs since the slicing it
+  consumes was built is the basis of a decision or of a stated assumption;
+  one from before a re-slice stays a basis it may cite. A shared stage's
+  submit is one top-level `decisions` list of the same decision objects,
+  with at least one decision and no `slices`, and an optional `contracts`
+  list, held to the same rules for each decision.
 - Intake states every measurable outcome of the need in its data's
   `outcomes`, each `{id: O<n>, text, quality}`: one measurable sentence,
   and, for a quality the user answered (performance, security,
@@ -785,8 +786,16 @@ assumption (the basis carries it and the sentence states the fact, so no
 model prose says who answered), and a basis that is neither; the third
 failing submit is accepted with its problems kept in its data, and such a
 basis then reads as none. The controller numbers them A1, A2, ... across
-those stages in pipeline order, slice by slice, and gives every later stage
-that consumes a stating stage the list with the ids. An assumption starts
+those stages in pipeline order, slice by slice, writes each one's id into
+the data it stores, so the sheet shows the id tasks and refusals name, and
+gives every later stage that consumes a stating stage the list with the
+ids, each with its status and sentence only. A later step never states one
+again: the check refuses a stated assumption whose sentence, case, spacing
+and punctuation aside, restates one an earlier step states or one the user
+accepted on another step's tab ("restates A3; cite A3 instead"), or an
+earlier entry of the same submit; a decision may give an earlier step's
+`A<n>` as its basis. A round's tab that posts again an assumption the user
+already accepted is refused, naming the tag to cite. An assumption starts
 with its basis's status: `confirmed` when a human answered the question or
 accepted the assumption, `assumed` when the responder answered it, `verified`
 with the responder's evidence when that answer was verified, and `unverified`
@@ -854,7 +863,7 @@ starts are bounded by CM's per-card guardrails, not by the architect.
 | research | `web_search`, `web_fetch` | Offered to the stages whose pack names the group (intake, slicing, shared decisions and solution design in the default pack) when the session's research settings name a provider the architect can build; otherwise the group is absent and the session says once, at the first such stage, that research is off. `web_search` asks the provider (Brave Search) for ten results: titles, URLs and snippets the model reads in that run only, since a run's stored messages keep only the query and the result count. `web_fetch` reads an http or https page from a public address: every connection's address is checked after the name resolves, redirects included (five at most), and no proxy is used; it reads at most 5 MiB in 20 seconds, keeps 48 KiB of text, turns HTML into readable text (the main or article element, without scripts, navigation or footers), takes text types as they are and refuses the rest. A page read is recorded as a `url` source and its result starts with the tag; a page with no readable text is a tool error, not a source. A leak guard checks every query and every URL's host labels, path and query and refuses, as a tool error naming the rule: a token with a path separator (acronym pairs like CI/CD and HTTP/1.1 pass) or a file extension (a `<name>.js` library passes), code punctuation (a URL path segment may carry a name's `(` or `=`, as in `Raft_(algorithm)`), a compound identifier the blueprint's checkouts declare (not a name of a package they depend on, and nothing in a lockfile), the root module path's owner or name (a nested module's compound name is a declared identifier), a target project's name or its repositories' owner or name, a ContextMatrix card id, and a query, or a URL path segment, query key or query value, over 160 characters; plain words and technology names pass. A URL's host labels get the name, module, identifier and card-id rules but not the shape rules, since a page can ask for a host that carries data; its path segments skip the path and file-name rules, which a URL's own syntax breaks; its query keys and values get every query rule. It reads the checkouts once per run, at the first check that needs them, checking them out first in a stage without the code tools, and refuses everything while it cannot read them. The responder shares its stage's tools. Every query and page read is a `research` event. A reviewer whose entry names `research` gets `web_fetch` alone behind the same guard, and never posts the research-off notice. |
 | cm       | `list_projects`, `list_cards`, `get_card`, `get_playbook` as `cm_`-prefixed reads | Offered to grounding and readiness over the session's MCP key, one MCP session per run, chat's bridge adapter on the architect's client with a `cm_` prefix and an allowlist that skips tools CM does not serve. No `agent_id` is sent, so CM keeps redacting unvetted imported text; `get_card` never attaches images; a credential embedded in a URL is removed from every result and error before the model or the record sees it, since CM returns project config as stored; every result carries the blueprint's ContextMatrix source tag. Creating cards and playbooks and starting runs are controller calls with the configured caller identity, never model tools. |
 | artifacts | `read_artifact` | Offered to a run whose task can hold a digest of another slice's artifact: the whole body and data of any stored version of a step the run reads. The stored transcript keeps each result's first line, since the record holds the artifact. |
-| control  | `ask_questions`, `answer_chat`, `submit_artifact`                                          | `ask_questions` posts a round and ends the run: per question a tab title, the question, why it matters, options with a summary, pros, cons and source tags (only tags a tool result of this blueprint returned; the panel shows a page `web_fetch` read by its title (its address when it has none), linked to its address, and any other source by its identity), and the recommended position; a trailing "(recommended)" a model writes into an option title is cut and marks it. A stage that declares the `assumptions` check may add its assumptions as the round's last tab, or post the tab alone; any other stage's tab is refused. A round asks at most 10 questions of at most 6 options, 96 KiB in all, its assumptions included. A question already answered with the same options is refused; a changed option set makes a new question. Under `auto` its responder answers before the run ends. Questions are numbered `Q<n>` per blueprint. `answer_chat` replies in an open round's chat, at most 4000 characters, revising or adding questions under the same limits or replacing the assumptions tab, and ends the run. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
+| control  | `ask_questions`, `answer_chat`, `submit_artifact`                                          | `ask_questions` posts a round and ends the run: per question a tab title, the question, why it matters, options with a summary, pros, cons and source tags (only tags a tool result of this blueprint returned; the panel shows a page `web_fetch` read by its title (its address when it has none), linked to its address, and any other source by its identity), and the recommended position; a trailing "(recommended)" a model writes into an option title is cut and marks it. A stage that declares the `assumptions` check may add its assumptions as the round's last tab, or post the tab alone; any other stage's tab is refused. A tab entry the user already accepted on a closed round is refused. A round asks at most 10 questions of at most 6 options, 96 KiB in all, its assumptions included. A question already answered with the same options is refused; a changed option set makes a new question. Under `auto` its responder answers before the run ends. Questions are numbered `Q<n>` per blueprint. `answer_chat` replies in an open round's chat, at most 4000 characters, revising or adding questions under the same limits or replacing the assumptions tab, and ends the run. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
 
 Every tool result passes the harness redactor for every secret the process
 holds.
