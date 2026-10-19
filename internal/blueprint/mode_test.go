@@ -1081,3 +1081,63 @@ func TestSetMode_AFoldedGateMarksOnlyItsOwnDecision(t *testing.T) {
 
 	assert.Equal(t, []any{"solution_design"}, marked, "one prompt was shown, so one decision closes it")
 }
+
+// lockProbe wraps the sink to record, at each sign-off approval, whether the
+// mode lock was free. The sink runs inside the decision, so a free lock
+// means the approval was recorded outside the lock.
+func lockProbe(c *Controller, id string) *[]bool {
+	ml := c.modeLock(id)
+	next := c.opts.Sink
+	free := &[]bool{}
+
+	c.opts.Sink = func(e Event) {
+		next(e)
+
+		if e.Kind != EventDecided || e.Payload["stage"] != signoffStage || e.Payload["decision"] != store.GateApprove {
+			return
+		}
+
+		got := ml.TryLock()
+		if got {
+			ml.Unlock()
+		}
+
+		*free = append(*free, got)
+	}
+
+	return free
+}
+
+func TestSignoff_ApprovalsHoldTheModeLock(t *testing.T) {
+	t.Run("the mode approving a shown sign-off", func(t *testing.T) {
+		c, _, _, rec, _ := newPipeline(t, happyScript())
+		c.opts.ConnectCM = newFakeCM().connect
+		ctx := context.Background()
+
+		drive(t, c, "BP1")
+		require.True(t, rec.has(EventSignOff))
+
+		free := lockProbe(c, "BP1")
+
+		require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAutoEmit, "m-mode"))
+		c.Wait("BP1")
+
+		assert.Equal(t, []bool{false}, *free)
+	})
+
+	t.Run("a human approving the sign-off", func(t *testing.T) {
+		c, _, _, rec, _ := newPipeline(t, happyScript())
+		c.opts.ConnectCM = newFakeCM().connect
+		ctx := context.Background()
+
+		drive(t, c, "BP1")
+		require.True(t, rec.has(EventSignOff))
+
+		free := lockProbe(c, "BP1")
+
+		require.NoError(t, c.Message(ctx, "BP1", "approve", "m-approve"))
+		c.Wait("BP1")
+
+		assert.Equal(t, []bool{false}, *free)
+	})
+}

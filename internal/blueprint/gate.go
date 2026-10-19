@@ -367,7 +367,7 @@ func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint,
 
 // gateShown reports whether stageID's gate for version was shown. A shown
 // gate stays with its human when policies change through a gate reply; a
-// mode switch out of default decides a shown gate whose policies are now
+// mode switch into any mode but default decides a shown gate whose policies are now
 // auto and whose verdict passes.
 func (c *Controller) gateShown(ctx context.Context, id, stageID string, version int) (bool, error) {
 	events, err := c.opts.Store.ListEventsOfKind(ctx, id, EventGate)
