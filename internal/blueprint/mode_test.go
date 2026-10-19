@@ -946,3 +946,138 @@ func TestRowAnswer_TakesTheOptionARowNamesElseItsText(t *testing.T) {
 		})
 	}
 }
+
+// shapeDecisions are the decided events of BP1's shape gate.
+func shapeDecisions(rec *recorder) []Event {
+	var out []Event
+
+	for _, e := range rec.all(EventDecided) {
+		if e.Payload["stage"] == "shape" {
+			out = append(out, e)
+		}
+	}
+
+	return out
+}
+
+func TestSetMode_AGateShownForItsPolicyIsApprovedByTheNewMode(t *testing.T) {
+	c, st, runner, rec := newGated(t, gatedScript())
+	ctx := context.Background()
+
+	startGated(t, c, protocol.ArchitectModeDefault)
+	require.True(t, rec.has(EventGate))
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	c.Wait("BP1")
+
+	assert.Equal(t, "shape", onlyMode(t, rec).Payload["gate"])
+	assert.Equal(t, []string{"intake", "shape", "plan"}, stagesRun(runner), "the pipeline goes on")
+
+	gates, err := st.ListGates(ctx, "BP1", "shape")
+	require.NoError(t, err)
+	require.Len(t, gates, 1)
+	assert.Equal(t, store.GateApprove, gates[0].Decision)
+	assert.Equal(t, store.ResponderAuto, gates[0].Responder)
+
+	decided := shapeDecisions(rec)
+	require.Len(t, decided, 1)
+	assert.Equal(t, true, decided[0].Payload["shown"], "the decision closes the gate prompt the human was shown")
+}
+
+func TestSetMode_AGateWhoseVerdictDoesNotPassStaysWithItsHuman(t *testing.T) {
+	script := gatedScript()
+	script["shape.review"] = reviews(2)
+
+	c, st, runner, rec := newGated(t, script)
+	ctx := context.Background()
+
+	startGated(t, c, protocol.ArchitectModeAuto)
+
+	shown := rec.count(EventGate)
+	require.Positive(t, shown, "the attempt's last verdict did not pass, so a human decides")
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAutoEmit, "m-mode"))
+	c.Wait("BP1")
+
+	assert.NotContains(t, onlyMode(t, rec).Payload, "gate")
+	assert.NotContains(t, stagesRun(runner), "plan")
+	assert.Equal(t, shown, rec.count(EventGate))
+
+	gates, err := st.ListGates(ctx, "BP1", "shape")
+	require.NoError(t, err)
+	assert.Empty(t, gates)
+	assert.Equal(t, string(StateWaiting), stateOf(t, st, "BP1"))
+}
+
+func TestSetMode_AGateReplyKeepsTheShownGateWithItsHuman(t *testing.T) {
+	c, st, runner, rec := newGated(t, gatedScript())
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.SetPolicy(ctx, "BP1", "shape", pack.PolicyHuman, "m0"))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+	require.True(t, rec.has(EventGate))
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	c.Wait("BP1")
+
+	assert.NotContains(t, stagesRun(runner), "plan")
+
+	gates, err := st.ListGates(ctx, "BP1", "shape")
+	require.NoError(t, err)
+	assert.Empty(t, gates)
+}
+
+func TestSetMode_ASwitchBackToDefaultLeavesAShownGateAlone(t *testing.T) {
+	c, st, runner, rec := newGated(t, gatedScript())
+	ctx := context.Background()
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeAuto
+	require.NoError(t, c.Start(ctx, in))
+	require.NoError(t, c.SetPolicy(ctx, "BP1", "shape", pack.PolicyHuman, "m0"))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+	require.True(t, rec.has(EventGate))
+
+	require.NoError(t, c.SetPolicy(ctx, "BP1", "shape", pack.PolicyAuto, "m2"))
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeDefault, "m-mode"))
+	c.Wait("BP1")
+
+	assert.NotContains(t, onlyMode(t, rec).Payload, "gate", "a switch to default asks for more human control")
+	assert.NotContains(t, stagesRun(runner), "plan")
+	assert.Empty(t, shapeDecisions(rec))
+
+	gates, err := st.ListGates(ctx, "BP1", "shape")
+	require.NoError(t, err)
+	assert.Empty(t, gates)
+	assert.Equal(t, string(StateWaiting), stateOf(t, st, "BP1"))
+}
+
+func TestSetMode_AFoldedGateMarksOnlyItsOwnDecision(t *testing.T) {
+	c, st, _, rec, _ := newDialog(t, dialogScript())
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+
+	gate, ok := rec.first(EventGate)
+	require.True(t, ok)
+	require.Equal(t, "solution_design", gate.Payload["stage"])
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	c.Wait("BP1")
+
+	assert.Equal(t, []string{"slicing@1:fold", "slicing@1:approve", "solution_design@1:approve", "acceptance@1:approve"}, gateRows(t, st))
+	assert.True(t, rec.has(EventSignOff), "auto stops at the sign-off")
+
+	var marked []any
+
+	for _, e := range rec.all(EventDecided) {
+		if e.Payload["shown"] == true {
+			marked = append(marked, e.Payload["stage"])
+		}
+	}
+
+	assert.Equal(t, []any{"solution_design"}, marked, "one prompt was shown, so one decision closes it")
+}

@@ -26,8 +26,12 @@ const (
 // default, the round waiting for a human goes to the auto responder at once
 // when its stage's policy is now auto (see handOver). Into auto+emit or
 // yolo, a sign-off that waits for a human runs again, preflight included,
-// and approves itself under the rule the sign-off always follows. Like a
-// gate reply it works while a stage runs. An applied switch posts the gate
+// and approves itself under the rule the sign-off always follows. On a
+// switch into auto, auto+emit or yolo, a stage gate shown only because its
+// policy asked a human is approved when the policies now in effect are auto
+// and its verdict passes, as if the blueprint had been in the new mode all
+// along; one whose verdict did not pass stays with its human. Like a gate
+// reply it works while a stage runs. An applied switch posts the gate
 // plan again.
 func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error {
 	c.mu.Lock()
@@ -44,11 +48,14 @@ func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error 
 	}
 
 	var (
-		r      *run
-		runCtx context.Context
-		end    outcome
-		handed int
-		signs  bool
+		r       *run
+		runCtx  context.Context
+		end     outcome
+		handed  int
+		signs   bool
+		gate    outcome
+		folded  []store.Artifact
+		decides bool
 	)
 
 	if applied && mode != protocol.ArchitectModeDefault {
@@ -60,6 +67,14 @@ func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error 
 
 	if applied && handed == 0 && emitsOnItsOwn(mode) {
 		r, runCtx, end, signs = c.claimWaitingSignoff(ctx, sess, bp)
+	}
+
+	if applied && mode != protocol.ArchitectModeDefault && handed == 0 && !signs {
+		r, runCtx, gate, folded, decides = c.claimWaitingGate(ctx, sess, bp)
+	}
+
+	if decides {
+		payload["gate"] = gate.stage
 	}
 
 	if handed > 0 {
@@ -80,6 +95,15 @@ func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error 
 	switch {
 	case signs:
 		c.launchEnd(runCtx, r, sess, bp, end)
+	case decides:
+		bg := context.WithoutCancel(ctx)
+		if !c.approveAuto(bg, sess.audit, id, gate, folded, map[string]any{"shown": true}) {
+			c.release(id, r)
+
+			return nil
+		}
+
+		c.proceed(bg, runCtx, r, sess, bp, gate.stage)
 	case r != nil:
 		c.follow(context.WithoutCancel(ctx), runCtx, r, sess, bp, true)
 	}
@@ -340,6 +364,57 @@ func (c *Controller) claimWaitingSignoff(ctx context.Context, sess *session, bp 
 	}
 
 	return r, runCtx, out, true
+}
+
+// claimWaitingGate takes the run slot while the blueprint waits at a shown,
+// undecided stage gate that the policies now in effect decide on its
+// reviewer's verdict, for the caller to approve as openGate would have; ok
+// is false, and the slot free, anywhere else. A held slot is left alone, as
+// for the sign-off.
+func (c *Controller) claimWaitingGate(ctx context.Context, sess *session, bp store.Blueprint) (*run, context.Context, outcome, []store.Artifact, bool) {
+	r, runCtx, claimed, _ := c.claimAttached(bp.ID, sess)
+	if !claimed {
+		return nil, nil, outcome{}, nil, false
+	}
+
+	out, folded, ok, err := c.waitingGate(ctx, bp)
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: read the gate a mode switch decides", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
+	}
+
+	if !ok {
+		c.release(bp.ID, r)
+
+		return nil, nil, outcome{}, nil, false
+	}
+
+	return r, runCtx, out, folded, true
+}
+
+// waitingGate is the shown, undecided stage gate the pipeline stands at when
+// the policies now in effect auto-approve it; false anywhere else.
+func (c *Controller) waitingGate(ctx context.Context, bp store.Blueprint) (outcome, []store.Artifact, bool, error) {
+	out, _, err := c.position(ctx, bp)
+	if err != nil || !out.gate || out.critique {
+		return outcome{}, nil, false, err
+	}
+
+	decision, err := c.gateDecision(ctx, bp.ID, out.stage, out.art.Version)
+	if err != nil || decision != "" {
+		return outcome{}, nil, false, err
+	}
+
+	shown, err := c.gateShown(ctx, bp.ID, out.stage, out.art.Version)
+	if err != nil || !shown {
+		return outcome{}, nil, false, err
+	}
+
+	auto, folded, err := c.autoApproves(ctx, bp, out)
+	if err != nil || !auto {
+		return outcome{}, nil, false, err
+	}
+
+	return out, folded, true, nil
 }
 
 // waitingSignoff is the ready end whose sign-off was shown and waits for a

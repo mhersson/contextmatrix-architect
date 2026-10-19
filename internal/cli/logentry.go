@@ -154,10 +154,11 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Type = "system"
 		entry.Content = decidedText(p, e.Sliced)
 
-		// The mode's approval of a sign-off already shown closes that prompt
-		// in the panel, as a reply would.
+		// The mode's approval of a sign-off or gate already shown closes that
+		// prompt in the panel, as a reply would.
 		if shown, _ := p["shown"].(bool); shown {
-			entry.Marker = &protocol.LogMarker{Kind: "decision", Stage: str(p["stage"]), Version: int(num(p["version"]))}
+			stage, slice := pack.SplitStep(str(p["stage"]))
+			entry.Marker = &protocol.LogMarker{Kind: "decision", Stage: stage, Slice: slice, Version: int(num(p["version"]))}
 		}
 	case blueprint.EventAborted:
 		entry.Type = "system"
@@ -199,7 +200,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = capText(p, e.Sliced)
 	case blueprint.EventMode:
 		entry.Type = "system"
-		entry.Content = modeText(p)
+		entry.Content = modeText(p, e.Sliced)
 	case blueprint.EventResume:
 		entry.Type = "system"
 		entry.Content = resumeText(p, e.Sliced)
@@ -880,7 +881,7 @@ func capText(p map[string]any, sliced bool) string {
 
 // modeText renders a mode reply: the switch and what it hands on at once, or
 // why it changed nothing.
-func modeText(p map[string]any) string {
+func modeText(p map[string]any, sliced bool) string {
 	if refused := str(p["refused"]); refused != "" {
 		return "Nothing changed. " + refused
 	}
@@ -893,6 +894,10 @@ func modeText(p map[string]any) string {
 
 	if signs, _ := p["signoff"].(bool); signs {
 		text += " The sign-off is decided again under the new mode."
+	}
+
+	if gate := str(p["gate"]); gate != "" {
+		text += fmt.Sprintf(" %s's gate is decided under the new mode.", pack.StageName(gate, sliced))
 	}
 
 	return text

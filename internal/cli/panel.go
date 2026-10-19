@@ -81,11 +81,11 @@ func waitsOnUser(e blueprint.Event) bool {
 	case blueprint.EventMode:
 		// CM arms its working indicator on every message; a mode reply that
 		// leaves nothing running must clear it, and one that hands a round to
-		// the responder or runs the sign-off again starts work.
+		// the responder, runs the sign-off again or decides a gate starts work.
 		duringRun, _ := e.Payload["during_run"].(bool)
 		signoff, _ := e.Payload["signoff"].(bool)
 
-		return !duringRun && num(e.Payload["hands_over"]) == 0 && !signoff
+		return !duringRun && num(e.Payload["hands_over"]) == 0 && !signoff && str(e.Payload["gate"]) == ""
 	case blueprint.EventResume:
 		// CM arms its working indicator on every message; a resume reply that
 		// runs nothing and finds nothing running must clear it.

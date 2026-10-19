@@ -55,6 +55,7 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		{"mode switch while a stage runs", blueprint.EventMode, map[string]any{"from": "default", "to": "auto", "during_run": true}, false},
 		{"mode switch that hands a round to the responder", blueprint.EventMode, map[string]any{"from": "default", "to": "auto", "during_run": false, "hands_over": 2}, false},
 		{"mode switch that runs the sign-off again", blueprint.EventMode, map[string]any{"from": "default", "to": "yolo", "during_run": false, "signoff": true}, false},
+		{"mode switch that decides a gate", blueprint.EventMode, map[string]any{"from": "default", "to": "auto", "during_run": false, "gate": "shape"}, false},
 		{"refused mode switch on an idle blueprint", blueprint.EventMode, map[string]any{"from": "yolo", "to": "default", "during_run": false, "refused": "x"}, true},
 		{"resume with nothing stopped", blueprint.EventResume, map[string]any{"nothing": true, "running": "", "during_run": false}, true},
 		{"resume while a stage runs", blueprint.EventResume, map[string]any{"nothing": true, "running": "readiness", "during_run": true}, false},

@@ -86,6 +86,9 @@ func TestLogEntryFor(t *testing.T) {
 		{"a mode switch that hands a round over", blueprint.Event{Kind: blueprint.EventMode, BlueprintID: "S1", Payload: map[string]any{
 			"from": "default", "to": "auto", "hands_over": 3,
 		}}, "system", []string{"Default", "Auto", "3"}, false},
+		{"a mode switch that decides a gate", blueprint.Event{Kind: blueprint.EventMode, BlueprintID: "S1", Payload: map[string]any{
+			"from": "default", "to": "auto", "gate": "shape",
+		}}, "system", []string{"Default", "Auto", "Shape"}, false},
 		{"a refused mode switch", blueprint.Event{Kind: blueprint.EventMode, BlueprintID: "S1", Payload: map[string]any{
 			"from": "yolo", "to": "default", "reason": "emission_started", "refused": "Emission has started, so the mode stays yolo.",
 		}}, "system", []string{"Emission has started, so the mode stays yolo."}, false},
@@ -1197,4 +1200,13 @@ func TestLogEntryFor_TheModesApprovalOfAShownSignoffClosesItsPrompt(t *testing.T
 			assert.Equal(t, protocol.LogMarker{Kind: "decision", Stage: "signoff", Version: 3}, *entry.Marker)
 		})
 	}
+}
+
+func TestLogEntryFor_TheModesApprovalOfAShownGateNamesItsSlice(t *testing.T) {
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{
+		"stage": "solution_design@SL2", "decision": "approve", "version": 2, "responder": "auto", "shown": true,
+	}})
+	require.True(t, ok)
+	require.NotNil(t, entry.Marker)
+	assert.Equal(t, protocol.LogMarker{Kind: "decision", Stage: "solution_design", Slice: "SL2", Version: 2}, *entry.Marker)
 }
