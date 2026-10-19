@@ -92,10 +92,11 @@ type Fold struct {
 }
 
 // Reviewer is the run that judges a gated stage's artifact before its gate:
-// Persona plays it, and a score below Threshold, 1 to 5, or a critical
-// finding left open sends the stage back for another round. Tools names
-// its tool groups: "code", and "research", which gives a reviewer
-// web_fetch alone, to open what the artifact cites.
+// Persona plays it, and a score below Threshold, 1 to 5, or a critical or
+// major finding left open sends the stage back for another round; open
+// minors go to the gate. Tools names its tool groups: "code", and
+// "research", which gives a reviewer web_fetch alone, to open what the
+// artifact cites.
 type Reviewer struct {
 	Persona   string   `yaml:"persona"`
 	Threshold int      `yaml:"threshold"`

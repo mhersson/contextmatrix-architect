@@ -242,20 +242,21 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   still open, so an open critical finding fails it whatever the score, and a
   score below the threshold must leave a finding open. The verdict and its
   ledger are stored as an artifact of the pseudo-stage `<stage>.review`. A
-  verdict that leaves a finding open or still open, a passing one included,
-  sends those findings, with the notes, answers and accepted assumptions the
-  builder's conversation has not seen, to that conversation, resumed from
-  its stored transcript for another round of the same attempt, and the
-  revision is reviewed again: no version reaches a gate unreviewed. A
-  verdict that passes with no finding open settles the artifact. Three
-  reviewer rounds per attempt: the third verdict goes to the gate whatever
-  it says, and one that does not pass waits for a human regardless of
-  policy. Each reviewer round is a harness run with its own cap, and so is
-  each builder round; the cost ledger sums them. The round is given its
-  findings by id, and its submit may list the ones it addressed in its data
-  as `addressed: [{finding, note}]`; an id the round was not given is
-  refused like any check problem, and the third failing submit is accepted
-  with its problems kept.
+  verdict that does not pass, or leaves a critical or major finding open or
+  still open, sends the unresolved findings, minors included, with the
+  notes, answers and accepted assumptions the builder's conversation has
+  not seen, to that conversation, resumed from its stored transcript for
+  another round of the same attempt, and the revision is reviewed again: no
+  version reaches a gate unreviewed. A passing verdict with only minor
+  findings open, or none, settles the artifact, and its open minors go to
+  the gate in the ledger. Three reviewer rounds per attempt: the third
+  verdict goes to the gate whatever it says, and one that does not pass
+  waits for a human regardless of policy. Each reviewer round is a harness
+  run with its own cap, and so is each builder round; the cost ledger sums
+  them. The round is given its findings by id, and its submit may list the
+  ones it addressed in its data as `addressed: [{finding, note}]`; an id the
+  round was not given is refused like any check problem, and the third
+  failing submit is accepted with its problems kept.
 - **A gate waits between runs.** The controller holds the stage's artifact and
   asks the client. Nothing runs meanwhile.
 - **A human rejection starts a new attempt**: a fresh run with the previous
@@ -453,9 +454,10 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   tests from this?). Readiness is decomposition's reviewer and gets none. A
   one-slice need costs ten runs when every review passes clean: intake and
   its review, slicing, solution design and its review, grounding, acceptance
-  and its review, decomposition and readiness, and each review that leaves
-  findings open adds a builder round and a review of its revision, at most
-  two of each per reviewed step, plus one continuation run per question round
+  and its review, decomposition and readiness, and each review that does not
+  settle (it fails the pass, or leaves a critical or major finding open) adds
+  a builder round and a review of its revision, at most two of each per
+  reviewed step, plus one continuation run per question round
   and one chat run per chat reply. A need cut into n slices, n of two or
   more, costs 7 + 6n runs on the same terms: slicing's own review, shared
   decisions and its review, and design and its review, grounding, acceptance
@@ -688,7 +690,7 @@ only these reach the sign-off and the cards.
 | Policy  | Questions                                                                                   | Gates                                                                 |
 | ------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | `human` | Asked in rounds in the CM session, one tab per question as `Q<n>` with its options and the recommended one marked. The run ends on the round, which waits as long as it takes, batches of answers included; every answer is recorded in `questions` when the round closes, and the stage resumes from its conversation. There is no limit on a human's questions. | Artifact shown with Approve and Reject; the reviewer's score is shown with it, with the ids of the critical findings it left open, and its ledger in the review line just above: each finding's id, severity and status, with the builder's claim beside a re-checked one; the gate shows the version the last round reviewed. The reply, clicked or typed, is `approve` or `reject <feedback>`. |
-| `auto`  | A responder run answers each question of the round inside the asking run, which then ends on the round; the stage continues at once with the answers. Each answer is recorded as an `[assumption]` with responder `auto`, and the round is shown read-only. `max_questions` caps the questions per attempt, its builder rounds included; a round past the cap is refused and the stage decides. | The reviewer's verdict decides: approved when it passes (at or above the threshold with no critical finding open) and leaves no finding open, or when the attempt's third verdict passes; otherwise the builder takes another round with the open findings and its revision is reviewed again, three reviewer rounds per attempt, then a human decides. |
+| `auto`  | A responder run answers each question of the round inside the asking run, which then ends on the round; the stage continues at once with the answers. Each answer is recorded as an `[assumption]` with responder `auto`, and the round is shown read-only. `max_questions` caps the questions per attempt, its builder rounds included; a round past the cap is refused and the stage decides. | The reviewer's verdict decides: approved when it passes (at or above the threshold with no critical finding open) and leaves no critical or major finding open, or when the attempt's third verdict passes; otherwise the builder takes another round with the open findings and its revision is reviewed again, three reviewer rounds per attempt, then a human decides. |
 
 **The responder run** is a separate harness run with the persona of the
 stage that asks (the product owner for intake questions, the system designer

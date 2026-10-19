@@ -176,6 +176,20 @@ func (v review) unresolved() []finding {
 	return out
 }
 
+// blocking is the unresolved findings of severity critical or major, the
+// ones that keep a passing verdict from settling.
+func (v review) blocking() []finding {
+	var out []finding
+
+	for _, f := range v.unresolved() {
+		if f.Severity == severityCritical || f.Severity == severityMajor {
+			out = append(out, f)
+		}
+	}
+
+	return out
+}
+
 // openCritical names the critical findings not fixed; never nil.
 func (v review) openCritical() []string {
 	out := []string{}
@@ -370,11 +384,12 @@ func (c *Controller) newestReview(ctx context.Context, id, stageID string) (revi
 }
 
 // settled reports a verdict that leaves its artifact to the gate: one that
-// passes and leaves no finding open, or the attempt's last round, whatever
-// it says. Any other verdict sends the builder back, so every revision is
-// reviewed again.
+// passes and leaves no critical or major finding open, or the attempt's last
+// round, whatever it says. Open minors go to the gate in the ledger, not
+// back to the builder. Any other verdict sends the builder back, so every
+// revision is reviewed again.
 func settled(st pack.Stage, v review) bool {
-	return v.Round >= maxReviewRounds || (v.passes(st.Reviewer.Threshold) && len(v.unresolved()) == 0)
+	return v.Round >= maxReviewRounds || (v.passes(st.Reviewer.Threshold) && len(v.blocking()) == 0)
 }
 
 // gateReview is the verdict that decides st's gate on art: the newest
