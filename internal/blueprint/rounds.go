@@ -76,8 +76,11 @@ type roundState struct {
 	// HandedOver is set when a mode switch handed the round, while it waited
 	// for a human, to the auto responder: what the human had answered and
 	// decided by then stays the human's, and the rest is the responder's.
-	HandedOver *handover         `json:"handed_over,omitempty"`
-	Frame      protocol.LogRound `json:"frame"`
+	HandedOver *handover `json:"handed_over,omitempty"`
+	// Audiences is the audience each question was asked for, by number;
+	// recorded in every mode, read only in plain language.
+	Audiences map[int]string    `json:"audiences,omitempty"`
+	Frame     protocol.LogRound `json:"frame"`
 }
 
 // handover records what a human had settled on a round when a mode switch
@@ -399,6 +402,7 @@ func revised(s roundState, qs []stage.RoundQuestion, first int, sources map[stri
 	for _, q := range qs {
 		if q.Number == 0 {
 			out.Frame.Questions = append(out.Frame.Questions, frameQuestion(q, first, sources))
+			out.setAudience(first, q.Audience)
 			first++
 
 			continue
@@ -415,9 +419,25 @@ func revised(s roundState, qs []stage.RoundQuestion, first int, sources map[stri
 		}
 
 		out.Frame.Questions[i] = fq
+		out.setAudience(q.Number, q.Audience)
 	}
 
 	return out, nil
+}
+
+// setAudience records question n's audience, or forgets it when none is given.
+func (s *roundState) setAudience(n int, audience string) {
+	if audience == "" {
+		delete(s.Audiences, n)
+
+		return
+	}
+
+	if s.Audiences == nil {
+		s.Audiences = map[int]string{}
+	}
+
+	s.Audiences[n] = audience
 }
 
 // sameOptions reports whether two versions of a question offer the same

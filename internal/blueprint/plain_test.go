@@ -2,6 +2,7 @@ package blueprint
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
@@ -172,4 +173,111 @@ func TestPlain_QuestionsKeepThePacksPolicy(t *testing.T) {
 	got, err = c.gatePolicy(ctx, bp, "shape")
 	require.NoError(t, err)
 	assert.Equal(t, pack.PolicyAuto, got)
+}
+
+func experienceQ(title, text string, options ...string) stage.RoundQuestion {
+	q := roundQ(title, text, options...)
+	q.Audience = stage.AudienceExperience
+
+	return q
+}
+
+func technicalQ(title, text string, options ...string) stage.RoundQuestion {
+	q := roundQ(title, text, options...)
+	q.Audience = stage.AudienceTechnical
+
+	return q
+}
+
+func TestAudience_RecordedInEveryMode(t *testing.T) {
+	script := dialogScript()
+	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{
+			experienceQ("Offline", "Should it work without internet?", "Yes", "No"),
+			technicalQ("Storage", "Where should the list be kept?", "On each phone", "On a shared server"),
+		}}); err != nil {
+			return stage.Output{}, err
+		}
+
+		return askedOutput(in), nil
+	}
+
+	c, _, runner, _, _ := newDialog(t, script)
+	drive(t, c, "BP1")
+
+	s := latestRound(t, c, "BP1", 1)
+	require.Len(t, s.Frame.Questions, 2, "off, one round holds both")
+	assert.Equal(t, map[int]string{1: stage.AudienceExperience, 2: stage.AudienceTechnical}, s.Audiences)
+	assert.Empty(t, inputsOf(runner, "intake.responder"))
+}
+
+// The dialog pack's intake is under the human policy.
+func TestAudience_AnUntaggedQuestionIsRefusedOnlyInPlainLanguage(t *testing.T) {
+	for _, plain := range []bool{false, true} {
+		t.Run(fmt.Sprint(plain), func(t *testing.T) {
+			var asked error
+
+			script := dialogScript()
+			script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+				_, asked = in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Users", "Who uses it?")}})
+
+				return done("# Need", nil), nil
+			}
+
+			c, _, _, rec, _ := newDialog(t, script)
+			in := startInput("BP1")
+			in.PlainLanguage = plain
+			driveIn(t, c, in)
+
+			if plain {
+				require.Error(t, asked)
+				assert.False(t, rec.has(EventRound), "no round was posted")
+			} else {
+				assert.NoError(t, asked)
+			}
+		})
+	}
+}
+
+func TestAudience_AChatRevisionKeepsItsTag(t *testing.T) {
+	first := []stage.RoundQuestion{experienceQ("Offline", "Should it work without internet?", "Yes", "No")}
+
+	revise := stage.ChatAnswer{Reply: "Noted.", Questions: []stage.RoundQuestion{
+		{Number: 1, Title: "Offline", Text: "Should it work offline?", Options: []stage.RoundOption{{Title: "Yes"}, {Title: "No"}}, Audience: stage.AudienceTechnical},
+		technicalQ("Storage", "Where is the list kept?"),
+	}}
+
+	c, _, _, _ := newController(t, tabbed(first, nil, revise, nil))
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+	require.Equal(t, map[int]string{1: stage.AudienceExperience}, latestRound(t, c, "BP1", 1).Audiences)
+
+	require.NoError(t, c.Message(ctx, "BP1", "hm", "m2"))
+	c.Wait("BP1")
+
+	assert.Equal(t, map[int]string{1: stage.AudienceTechnical, 2: stage.AudienceTechnical}, latestRound(t, c, "BP1", 1).Audiences)
+}
+
+func TestAudience_AChatRevisionThatGivesNoAudienceDropsTheTag(t *testing.T) {
+	first := []stage.RoundQuestion{experienceQ("Offline", "Should it work without internet?", "Yes", "No")}
+
+	revise := stage.ChatAnswer{Reply: "Noted.", Questions: []stage.RoundQuestion{
+		{Number: 1, Title: "Offline", Text: "Should it work offline?", Options: []stage.RoundOption{{Title: "Yes"}, {Title: "No"}}},
+	}}
+
+	c, _, _, _ := newController(t, tabbed(first, nil, revise, nil))
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+	require.Equal(t, map[int]string{1: stage.AudienceExperience}, latestRound(t, c, "BP1", 1).Audiences)
+
+	require.NoError(t, c.Message(ctx, "BP1", "hm", "m2"))
+	c.Wait("BP1")
+
+	assert.Empty(t, latestRound(t, c, "BP1", 1).Audiences)
 }

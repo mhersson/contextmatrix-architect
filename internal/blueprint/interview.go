@@ -80,6 +80,12 @@ func (iv *interviewer) Ask(ctx context.Context, rd stage.Round) (string, error) 
 
 	auto := policy == pack.PolicyAuto
 
+	if iv.bp.PlainLanguage && !auto {
+		if err := needAudiences(rd.Questions); err != nil {
+			return "", err
+		}
+	}
+
 	switch {
 	case auto && c.opts.Pack.ResponderInstructions() == "":
 		return "", errNoResponder
@@ -119,6 +125,15 @@ func (iv *interviewer) Ask(ctx context.Context, rd stage.Round) (string, error) 
 	return postedText(s), nil
 }
 
+// needAudiences refuses a question without its audience.
+func needAudiences(qs []stage.RoundQuestion) error {
+	if slices.ContainsFunc(qs, func(q stage.RoundQuestion) bool { return q.Audience == "" }) {
+		return errors.New("on this blueprint every question needs its audience: experience or technical")
+	}
+
+	return nil
+}
+
 // numbered frames rd as the run's next round. The caller holds the
 // blueprint's round lock.
 func (iv *interviewer) numbered(ctx context.Context, rd stage.Round, sources map[string]protocol.RoundSource) (roundState, error) {
@@ -142,6 +157,7 @@ func (iv *interviewer) numbered(ctx context.Context, rd stage.Round, sources map
 
 	for i, q := range rd.Questions {
 		s.Frame.Questions = append(s.Frame.Questions, frameQuestion(q, first+i, sources))
+		s.setAudience(first+i, q.Audience)
 	}
 
 	for i, text := range rd.Assumptions {
@@ -217,6 +233,13 @@ func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, 
 
 	if err := c.reposted(bg, iv.bp.ID, a.Assumptions); err != nil {
 		return "", err
+	}
+
+	// A chat run answers a round already posted to a person.
+	if iv.bp.PlainLanguage {
+		if err := needAudiences(a.Questions); err != nil {
+			return "", err
+		}
 	}
 
 	var added []stage.RoundQuestion

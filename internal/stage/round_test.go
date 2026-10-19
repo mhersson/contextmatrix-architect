@@ -463,3 +463,36 @@ func TestRun_AskQuestionsRecommendedOption(t *testing.T) {
 		})
 	}
 }
+
+func TestParseQuestion_Audience(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   any
+		want    string
+		wantErr bool
+	}{
+		{name: "experience", value: "experience", want: AudienceExperience},
+		{name: "normalised", value: "Technical ", want: AudienceTechnical},
+		{name: "absent", value: nil, want: ""},
+		{name: "unknown", value: "design", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obj := map[string]any{"title": "Users", "question": "Who uses it?"}
+			if tt.value != nil {
+				obj["audience"] = tt.value
+			}
+
+			q, err := parseQuestion(obj, false)
+			if tt.wantErr {
+				require.Error(t, err)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, q.Audience)
+		})
+	}
+}

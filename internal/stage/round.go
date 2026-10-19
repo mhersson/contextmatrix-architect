@@ -40,6 +40,13 @@ type RoundOption struct {
 	Sources []string
 }
 
+// A question's audience: what the person wants (experience) or how it is
+// built (technical).
+const (
+	AudienceExperience = "experience"
+	AudienceTechnical  = "technical"
+)
+
 // RoundQuestion is one question of a round. Number names the open round's
 // question an answer_chat revision replaces; 0 is a new question.
 type RoundQuestion struct {
@@ -49,6 +56,7 @@ type RoundQuestion struct {
 	Why         string
 	Options     []RoundOption
 	Recommended int
+	Audience    string
 }
 
 // Round is what ask_questions posts.
@@ -106,7 +114,8 @@ func questionSchema(revise bool) string {
 		"question":{"type":"string","description":"the question, one sentence"},
 		"why":{"type":"string","description":"why the answer matters for this need"},
 		"options":{"type":"array","items":` + optionSchema + `,"description":"the real alternatives; the person can always type their own answer, so never add an other option"},
-		"recommended":{"type":"integer","description":"the position, from 1, of the option you recommend"}},
+		"recommended":{"type":"integer","description":"the position, from 1, of the option you recommend"},
+		"audience":{"type":"string","enum":["experience","technical"],"description":"experience: what the person wants to do with the result, who uses it, how it should look, feel and behave; technical: how it is built"}},
 		"required":["title","question"]}`
 }
 
@@ -259,6 +268,13 @@ func parseQuestion(obj map[string]any, revise bool) (RoundQuestion, error) {
 		}
 
 		q.Number = int(n)
+	}
+
+	switch audience := strings.ToLower(strings.TrimSpace(stringArg(obj, "audience"))); audience {
+	case "", AudienceExperience, AudienceTechnical:
+		q.Audience = audience
+	default:
+		return RoundQuestion{}, errors.New("audience is experience or technical")
 	}
 
 	switch {
