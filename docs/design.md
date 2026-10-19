@@ -395,16 +395,18 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   an acceptance's criteria and manual checks by id with their first line and
   the outcome ids they cite; cards by id, title, project, type, Where paths,
   `depends_on` and criteria ids, with the draft's manual entries and setup.
-  A whole-blueprint stage reads the stage it loops to whole for every slice.
-  A stage without such a shape, or data that does not decode or holds an
-  item of another shape, is given whole. A run whose task holds a digest is
-  offered `read_artifact` for the whole. A per-slice task opens by naming
-  its slice. A gate reply (`gate <stage> human|auto`) and a stage's policies
-  cover every slice of the stage. A rejection at a slice's gate runs that
-  slice's step again. A run's cost floor reads every slice's runs of its
-  stage. A blueprint whose record ran a per-slice stage under its plain id,
-  from before stages repeated per slice, keeps running them once for the
-  whole blueprint.
+  A stage without such a shape whose data holds the projects it verified
+  (grounding) digests to those project facts and its verdicts. A
+  whole-blueprint stage reads the stage it loops to whole for every slice.
+  Data that fits no such shape, does not decode or holds an item of another
+  shape is given whole. A run whose task holds a digest is offered
+  `read_artifact` for the whole. A per-slice task opens by naming its slice.
+  A gate reply (`gate <stage> human|auto`) and a stage's policies cover
+  every slice of the stage. A rejection at a slice's gate runs that slice's
+  step again. A run's cost floor reads every slice's runs of its stage. A
+  blueprint whose record ran a per-slice stage under its plain id, from
+  before stages repeated per slice, keeps running them once for the whole
+  blueprint.
 - A stage the pack marks `shared` settles what every slice shares, between
   slicing and the per-slice stages, behind its own gate. With fewer than two
   slices it collapses: it never runs, and the step after it follows. The
@@ -427,8 +429,21 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   ready sends the loop to the decomposition of the slice that holds it, the
   earliest such slice, and then to every later slice's decomposition, since
   those read its cards; the later slices' designs, grounding and acceptance
-  do not run again. A verdict that names no card of the draft starts at
-  SL1. The three rounds count per blueprint.
+  do not run again. A verdict that names no card of the draft starts at SL1.
+  The three rounds count per blueprint. Readiness also judges the
+  blueprint as a whole and reports, in its data's `cross`, findings between
+  artifacts (decisions, contracts, cards and assumptions that disagree, a
+  near-duplicate assumption, an outcome no criterion proves), each `X<n>`
+  with a severity (critical, major or minor), its text and the ids it
+  names; they never loop. The `readiness` check refuses a cards list of
+  another shape (`readiness_shape`), an entry without an id, a ready flag
+  or findings that say why, a card judged twice, or a ready card that
+  carries a finding (`card_entry`), a card of the draft left out
+  (`card_unjudged`) or one no draft holds (`card_unknown`), and a cross
+  finding of another shape or with a bad id, severity, text or refs
+  (`cross_shape`, `cross_id`, `cross_severity`, `cross_text`,
+  `cross_refs`); bounded, never fatal. With two or more slices it reads
+  each slice's grounding as a digest of its project facts and verdicts.
 - Solution design's submit is checked: it has slices, every slice of slicing
   among them, or a per-slice design's own slice alone (`slice_missing`,
   `slice_extra`); every decision has a chosen option, a rejected option and

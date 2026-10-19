@@ -51,6 +51,10 @@ const (
 	// with its sentence; the first stage that checks them states at least
 	// one.
 	CheckOutcomes = "outcomes"
+	// CheckReadiness checks a readiness verdict: one well-formed entry per
+	// card, and its findings across the blueprint, each X<n> with a
+	// severity and its text.
+	CheckReadiness = "readiness"
 )
 
 // Responder policies: who answers a stage's questions and decides its gate.
@@ -440,7 +444,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	}
 
 	for _, check := range s.Checks {
-		if !slices.Contains([]string{CheckCards, CheckAssumptions, CheckDecisions, CheckSlices, CheckCriteria, CheckOutcomes}, check) {
+		if !slices.Contains([]string{CheckCards, CheckAssumptions, CheckDecisions, CheckSlices, CheckCriteria, CheckOutcomes, CheckReadiness}, check) {
 			return fmt.Errorf("pack: stage %q: unknown check %q", s.ID, check)
 		}
 	}

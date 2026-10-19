@@ -132,6 +132,7 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	readiness, _ := p.Stage("readiness")
 	assert.Equal(t, "decomposition", readiness.LoopsTo)
 	assert.Equal(t, 3, readiness.MaxRounds)
+	assert.Equal(t, []string{CheckReadiness}, readiness.Checks)
 	assert.Contains(t, readiness.Tools, ToolCode)
 	assert.False(t, readiness.PerSlice, "readiness judges every slice's cards at once")
 	assert.Contains(t, readiness.Consumes, "shared_decisions")
@@ -535,6 +536,14 @@ func TestLoad_AcceptsTheOutcomesCheck(t *testing.T) {
 
 	s1, _ := p.Stage("s1")
 	assert.Equal(t, []string{CheckOutcomes}, s1.Checks)
+}
+
+func TestLoad_AcceptsTheReadinessCheck(t *testing.T) {
+	p, err := load(packFS("    checks: [readiness]\n", nil))
+	require.NoError(t, err)
+
+	s1, _ := p.Stage("s1")
+	assert.Equal(t, []string{CheckReadiness}, s1.Checks)
 }
 
 func TestLoadEmbedded_ListsTheEdgeCases(t *testing.T) {

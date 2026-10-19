@@ -74,5 +74,6 @@ stages:
     produces: readiness
     consumes: [intake, slicing, shared_decisions, solution_design, grounding, acceptance, decomposition]
     tools: [code, cm]
+    checks: [readiness]
     loops_to: decomposition
     max_rounds: 3

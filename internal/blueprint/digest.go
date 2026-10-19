@@ -19,7 +19,9 @@ import (
 // digest is what a step reads of another slice's artifact in place of the
 // whole, by the shape the producing stage's checks give its data: the ids a
 // later slice must not repeat and depends on, the contracts it lines up with,
-// and one line of text each. read_artifact returns the whole.
+// and one line of text each; grounding, which has no check shape, digests to
+// the project facts it verified and its verdicts. read_artifact returns the
+// whole.
 type digest struct {
 	Decisions []digestDecision          `json:"decisions,omitempty"`
 	Contracts []string                  `json:"contracts,omitempty"`
@@ -28,6 +30,16 @@ type digest struct {
 	Manual    []digestLine              `json:"manual,omitempty"`
 	Outcomes  []digestLine              `json:"outcomes,omitempty"`
 	Setup     map[string]contract.Setup `json:"setup,omitempty"`
+	Projects  map[string]digestProject  `json:"projects,omitempty"`
+	Verdicts  []verdict                 `json:"verdicts,omitempty"`
+}
+
+// digestProject is what grounding verified of one project, its body aside.
+type digestProject struct {
+	SHA             string `json:"sha"`
+	VerifyCommand   string `json:"verify_command,omitempty"`
+	VerifyCandidate string `json:"verify_candidate,omitempty"`
+	InstructionFile string `json:"instruction_file,omitempty"`
 }
 
 type digestDecision struct {
@@ -55,7 +67,7 @@ type digestCard struct {
 }
 
 func (d digest) empty() bool {
-	return len(d.Decisions)+len(d.Contracts)+len(d.Criteria)+len(d.Cards)+len(d.Manual)+len(d.Outcomes) == 0
+	return len(d.Decisions)+len(d.Contracts)+len(d.Criteria)+len(d.Cards)+len(d.Manual)+len(d.Outcomes)+len(d.Projects)+len(d.Verdicts) == 0
 }
 
 // misfit counts the entries of another shape that a digest would drop; any
@@ -139,10 +151,10 @@ func oneLine(s string) string {
 	return line
 }
 
-// digestOf digests art, an artifact of a stage that declares checks. false
-// when the checks give its data no digest shape, the data does not decode
-// or holds an item of another shape, or nothing is left: the step then
-// reads the whole artifact.
+// digestOf digests art, an artifact of a stage. false when the checks give
+// its data no digest shape and it holds no projects, the data does not
+// decode or holds an item of another shape, or nothing is left: the step
+// then reads the whole artifact.
 func digestOf(checks []string, art store.Artifact) (digest, bool) {
 	var (
 		d   digest
@@ -218,7 +230,29 @@ func digestOf(checks []string, art store.Artifact) (digest, bool) {
 			}
 		}
 	default:
-		return digest{}, false
+		// A stage without a check shape whose data holds the projects it
+		// verified, grounding in the default pack, digests to the project
+		// facts and its verdicts.
+		var data struct {
+			Projects map[string]digestProject `json:"projects"`
+			Verdicts []verdict                `json:"verdicts"`
+		}
+
+		if json.Unmarshal(art.Data, &data) != nil || len(data.Projects) == 0 {
+			return digest{}, false
+		}
+
+		d.Projects = data.Projects
+
+		for _, v := range data.Verdicts {
+			if strings.TrimSpace(v.ID) == "" {
+				bad++
+
+				continue
+			}
+
+			d.Verdicts = append(d.Verdicts, v)
+		}
 	}
 
 	if bad > 0 || d.empty() {
@@ -261,7 +295,7 @@ func writeDigest(b *strings.Builder, in pipelineStep, art store.Artifact, d dige
 
 	stageID, slice := pack.SplitStep(in.ID)
 
-	fmt.Fprintf(b, "## %s\n\nDigest of version %d: the ids, contracts and one line of text each that later slices build on. "+
+	fmt.Fprintf(b, "## %s\n\nDigest of version %d: the ids, contracts, project facts and one line of text each that later steps build on. "+
 		"read_artifact with stage %q and slice %q returns the whole artifact.\n\n```json\n%s\n```\n\n", in.ID, art.Version, stageID, slice, raw)
 
 	return nil

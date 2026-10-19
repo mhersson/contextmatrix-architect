@@ -3,6 +3,7 @@ package blueprint
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -141,15 +142,18 @@ func TestOutcomes_AStageThatChecksThemIsRefusedItsFaults(t *testing.T) {
 	assert.Equal(t, []outcomeEntry{{ID: "O1", Text: "x"}}, data.Outcomes)
 }
 
-// withOutcomes adds the outcomes check to the stages ids name, in memory.
-func withOutcomes(pk *pack.Pack, ids ...string) *pack.Pack {
+// withCheck adds check to the stages ids name, in memory.
+func withCheck(pk *pack.Pack, check string, ids ...string) *pack.Pack {
 	for i := range pk.Stages {
-		for _, id := range ids {
-			if pk.Stages[i].ID == id {
-				pk.Stages[i].Checks = append(pk.Stages[i].Checks, pack.CheckOutcomes)
-			}
+		if slices.Contains(ids, pk.Stages[i].ID) {
+			pk.Stages[i].Checks = append(pk.Stages[i].Checks, check)
 		}
 	}
 
 	return pk
+}
+
+// withOutcomes adds the outcomes check to the stages ids name, in memory.
+func withOutcomes(pk *pack.Pack, ids ...string) *pack.Pack {
+	return withCheck(pk, pack.CheckOutcomes, ids...)
 }

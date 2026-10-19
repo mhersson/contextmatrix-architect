@@ -266,3 +266,22 @@ func TestReadArtifact_TheRecordKeepsTheFirstLine(t *testing.T) {
 	assert.Equal(t, r.Stored(head), r.Stored(r.Stored(head+"\n\nbody")), "storing again changes nothing")
 	assert.Equal(t, "an error text", r.Stored("an error text"), "anything else is kept as it is")
 }
+
+func TestDigestOf_Grounding(t *testing.T) {
+	d, ok := digestOf(nil, storedAs(t, map[string]any{
+		"projects": map[string]any{"alpha": map[string]any{"sha": "abc", "verify_command": "make test", "instruction_file": "AGENTS.md"}},
+		"verdicts": []any{map[string]any{"id": "A1", "status": "verified", "evidence": "[S1] the parser is Go"}},
+	}))
+	require.True(t, ok)
+	assert.Equal(t, map[string]digestProject{"alpha": {SHA: "abc", VerifyCommand: "make test", InstructionFile: "AGENTS.md"}}, d.Projects)
+	assert.Equal(t, []verdict{{ID: "A1", Status: "verified", Evidence: "[S1] the parser is Go"}}, d.Verdicts)
+
+	_, ok = digestOf(nil, storedAs(t, map[string]any{"projects": map[string]any{}}))
+	assert.False(t, ok, "no project is no digest")
+
+	_, ok = digestOf(nil, storedAs(t, map[string]any{"projects": map[string]any{"alpha": map[string]any{}}, "verdicts": []any{"verified"}}))
+	assert.False(t, ok, "a verdict of another shape keeps it whole")
+
+	_, ok = digestOf(nil, storedAs(t, map[string]any{"projects": map[string]any{"alpha": map[string]any{}}, "verdicts": []any{map[string]any{"status": "verified"}}}))
+	assert.False(t, ok, "a verdict without an id keeps it whole")
+}
