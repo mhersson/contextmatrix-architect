@@ -228,7 +228,7 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 	}
 
 	for _, st := range c.opts.Pack.Stages {
-		if rec.policies[st.ID], err = c.resolvePolicy(bp.Mode, replies, st.ID, true); err != nil {
+		if rec.policies[st.ID], err = c.resolvePolicy(bp.Mode, bp.PlainLanguage, replies, st.ID, true); err != nil {
 			return record{}, err
 		}
 	}

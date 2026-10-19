@@ -70,6 +70,7 @@ func TestPolicy_FirstMatchWins(t *testing.T) {
 	tests := []struct {
 		name    string
 		mode    string
+		plain   bool
 		stored  string      // the mode stored after the start, as a switch leaves it; "" none
 		replies [][2]string // gate replies in order: stage, policy
 		want    string
@@ -83,6 +84,7 @@ func TestPolicy_FirstMatchWins(t *testing.T) {
 		{name: "a stored switch beats the mode a chain started with", mode: protocol.ArchitectModeDefault, stored: protocol.ArchitectModeAuto, want: pack.PolicyAuto},
 		{name: "a stored switch back to default", mode: protocol.ArchitectModeYolo, stored: protocol.ArchitectModeDefault, want: pack.PolicyHuman},
 		{name: "a reply beats a stored switch", mode: protocol.ArchitectModeDefault, stored: protocol.ArchitectModeAuto, replies: [][2]string{{"intake", "human"}}, want: pack.PolicyHuman},
+		{name: "plain keeps the questions' pack policy", mode: protocol.ArchitectModeDefault, plain: true, want: pack.PolicyHuman},
 	}
 
 	for _, tt := range tests {
@@ -92,6 +94,7 @@ func TestPolicy_FirstMatchWins(t *testing.T) {
 
 			in := startInput("BP1")
 			in.Mode = tt.mode
+			in.PlainLanguage = tt.plain
 			require.NoError(t, c.Start(ctx, in))
 
 			// Read at the start, as a chain of runs holds it.

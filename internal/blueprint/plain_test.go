@@ -10,6 +10,7 @@ import (
 
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
+	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
 func plainStart(id string) StartInput {
@@ -94,4 +95,81 @@ func TestPlain_EveryRunKindGetsThePlainInstructions(t *testing.T) {
 	}
 
 	assert.Equal(t, pk.Instructions("intake"), inputsOf(defaultRunner, "intake")[0].Instructions, "off, the instructions are the pack's")
+}
+
+func TestPlain_AGateIsDecidedByTheAutoPolicy(t *testing.T) {
+	c, st, runner, rec := newGated(t, gatedScript())
+	driveIn(t, c, plainStart("BP1"))
+
+	assert.False(t, rec.has(EventGate))
+	assert.Equal(t, []string{"intake", "shape", "plan"}, stagesRun(runner))
+
+	gates, err := st.ListGates(context.Background(), "BP1", "shape")
+	require.NoError(t, err)
+	require.Len(t, gates, 1)
+	assert.Equal(t, store.ResponderAuto, gates[0].Responder)
+}
+
+func TestPlain_TheViewAndTheGatePlanShowGatesAsAuto(t *testing.T) {
+	c, _, _, rec := newGated(t, gatedScript())
+	driveIn(t, c, plainStart("BP1"))
+
+	view, err := c.View(context.Background(), "BP1")
+	require.NoError(t, err)
+
+	var seen bool
+
+	for _, step := range view.Pipeline {
+		if step.Stage == "shape" {
+			seen = true
+
+			assert.Equal(t, pack.PolicyAuto, step.Policy)
+		}
+	}
+
+	require.True(t, seen, "the view lists the shape stage")
+
+	plan, ok := rec.first(EventGatePlan)
+	require.True(t, ok)
+
+	var planned bool
+
+	for _, entry := range plan.Payload["stages"].([]any) {
+		if m := entry.(map[string]any); m["stage"] == "shape" {
+			planned = true
+
+			assert.Equal(t, pack.PolicyAuto, m["gate_policy"])
+		}
+	}
+
+	require.True(t, planned, "the plan lists the shape stage")
+}
+
+func TestPlain_AGateReplyStillMakesAGateHuman(t *testing.T) {
+	c, _, _, rec := newGated(t, gatedScript())
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, plainStart("BP1")))
+	require.NoError(t, c.SetPolicy(ctx, "BP1", "shape", pack.PolicyHuman, "m0"))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	assert.True(t, rec.has(EventGate))
+}
+
+func TestPlain_QuestionsKeepThePacksPolicy(t *testing.T) {
+	c, st, _, _ := newGated(t, gatedScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, plainStart("BP1")))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	got, err := c.policy(ctx, bp, "intake")
+	require.NoError(t, err)
+	assert.Equal(t, pack.PolicyHuman, got)
+
+	got, err = c.gatePolicy(ctx, bp, "shape")
+	require.NoError(t, err)
+	assert.Equal(t, pack.PolicyAuto, got)
 }

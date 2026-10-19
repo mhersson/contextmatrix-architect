@@ -770,8 +770,9 @@ Every stage has a responder policy for its questions and one for its gate.
 Both resolve, first match winning, from the blueprint's latest
 `gate <stage> human|auto` reply, which sets both, then the mode as stored
 when the question or gate comes (every mode but default makes both `auto`),
-then the pack: the stage's `policy` for its questions, and its `gate_policy`
-for its gate, which defaults to `policy`.
+then plain language, which makes every gate `auto`, then the pack: the
+stage's `policy` for its questions, and its `gate_policy` for its gate, which
+defaults to `policy`.
 In the default pack intake's questions go to a human and its gate is `auto`.
 A stage that declares the `assumptions` check records what it decides
 itself as data, and every responder answer is recorded as an assumption;
@@ -918,6 +919,12 @@ stages, put on the cards and exported exactly as without it. Every stage,
 responder and reviewer run of such a blueprint gets the pack's
 `stages/plain.md` after its own instructions. The view carries
 `plain_language`, and the export's summary says so.
+
+Its stage gates are decided by the auto policy, as in `auto` mode, unless a
+`gate <stage> human` reply says otherwise: approving a design is a technical
+decision. Reviewers, findings and builder rounds run as always, and a gate a
+verdict does not settle is shown to the person. Questions keep the pack's
+policy. The sign-off follows the mode.
 
 ## Tools
 

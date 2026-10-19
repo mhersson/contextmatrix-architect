@@ -362,14 +362,15 @@ func (c *Controller) policyFor(ctx context.Context, bp store.Blueprint, stageID 
 		return "", fmt.Errorf("blueprint: read the gate replies: %w", err)
 	}
 
-	return c.resolvePolicy(cur.Mode, events, stageID, gate)
+	return c.resolvePolicy(cur.Mode, cur.PlainLanguage, events, stageID, gate)
 }
 
 // resolvePolicy is policy, or gatePolicy when gate is set, under mode over
 // the blueprint's policy events, oldest first, so a caller resolving several
-// stages reads them once. A gate reply sets both. A per-slice step resolves
-// as its stage.
-func (c *Controller) resolvePolicy(mode string, events []store.Event, stageID string, gate bool) (string, error) {
+// stages reads them once. A gate reply sets both. Every mode but default makes
+// both auto, and plain language makes every gate auto. A per-slice step
+// resolves as its stage.
+func (c *Controller) resolvePolicy(mode string, plain bool, events []store.Event, stageID string, gate bool) (string, error) {
 	stageID, _ = pack.SplitStep(stageID)
 
 	for i := len(events) - 1; i >= 0; i-- {
@@ -389,6 +390,10 @@ func (c *Controller) resolvePolicy(mode string, events []store.Event, stageID st
 	}
 
 	if mode != "" && mode != protocol.ArchitectModeDefault {
+		return pack.PolicyAuto, nil
+	}
+
+	if gate && plain {
 		return pack.PolicyAuto, nil
 	}
 
@@ -436,7 +441,7 @@ func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.B
 	stages := make([]any, 0, len(c.opts.Pack.Stages))
 
 	for _, st := range c.opts.Pack.Stages {
-		policy, err := c.resolvePolicy(cur.Mode, events, st.ID, false)
+		policy, err := c.resolvePolicy(cur.Mode, cur.PlainLanguage, events, st.ID, false)
 		if err != nil {
 			c.opts.Logger.Warn("blueprint: gate plan not posted", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
 
@@ -446,7 +451,7 @@ func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.B
 		entry := map[string]any{"stage": st.ID, "policy": policy, "gate": st.Gate}
 
 		if st.Gate {
-			if entry["gate_policy"], err = c.resolvePolicy(cur.Mode, events, st.ID, true); err != nil {
+			if entry["gate_policy"], err = c.resolvePolicy(cur.Mode, cur.PlainLanguage, events, st.ID, true); err != nil {
 				c.opts.Logger.Warn("blueprint: gate plan not posted", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
 
 				return
