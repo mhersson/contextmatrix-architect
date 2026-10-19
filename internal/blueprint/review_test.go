@@ -1621,3 +1621,131 @@ func TestView_TheRoundCapIsTheRoundsAnAttemptRuns(t *testing.T) {
 	require.NotNil(t, ref.Review)
 	assert.Equal(t, len(inputsOf(runner, "shape.review")), ref.Review.MaxRounds, "a version that never passes is reviewed that many times")
 }
+
+func TestView_AReviewSaysWhetherItSentTheArtifactBack(t *testing.T) {
+	open := func(severity string) string {
+		return fmt.Sprintf(`[{"id":"R1","severity":%q,"text":"name the owner","status":"open"}]`, severity)
+	}
+	fixedR1 := `[{"id":"R1","severity":"minor","text":"name the owner","status":"fixed","verified_in":2}]`
+
+	type verdict struct {
+		version, attempt, round, score int
+		findings                       string
+	}
+
+	type gateRow struct {
+		version  int
+		decision string
+	}
+
+	tests := []struct {
+		name     string
+		shapes   int // shape versions stored beyond v1
+		verdicts []verdict
+		shown    []int
+		gates    []gateRow
+		want     map[int]bool
+		sentTo   map[int]int // version to the first open finding's sent_to
+		passed   []int       // versions whose verdict passed
+	}{
+		{
+			name: "old minor loop, both reviewed", shapes: 1,
+			verdicts: []verdict{{1, 1, 1, 4, open("minor")}, {2, 1, 2, 4, fixedR1}},
+			shown:    []int{2},
+			want:     map[int]bool{1: true, 2: false}, sentTo: map[int]int{1: 2},
+		},
+		{
+			name: "old minor loop, revision unreviewed", shapes: 1,
+			verdicts: []verdict{{1, 1, 1, 4, open("minor")}},
+			want:     map[int]bool{1: true}, sentTo: map[int]int{1: 2},
+		},
+		{
+			name:     "a pass with a major open, newest",
+			verdicts: []verdict{{1, 1, 1, 4, open("major")}},
+			want:     map[int]bool{1: true}, sentTo: map[int]int{1: 2}, passed: []int{1},
+		},
+		{
+			name:     "the last round with a major open, gate shown",
+			verdicts: []verdict{{1, 1, maxReviewRounds, 2, open("major")}},
+			shown:    []int{1},
+			want:     map[int]bool{1: false},
+		},
+		{
+			name:     "an unsettled verdict whose gate was shown",
+			verdicts: []verdict{{1, 1, 1, 2, open("major")}},
+			shown:    []int{1},
+			want:     map[int]bool{1: false},
+		},
+		{
+			name: "rejected at its gate, a new attempt reviewed", shapes: 1,
+			verdicts: []verdict{{1, 1, 1, 4, open("minor")}, {2, 2, 1, 5, `[]`}},
+			gates:    []gateRow{{1, store.GateReject}},
+			want:     map[int]bool{1: false, 2: false},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, _, _ := newGated(t, gatedScript())
+			ctx := context.Background()
+
+			seedGated(t, st, protocol.ArchitectModeDefault)
+
+			for range tt.shapes {
+				_, err := st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: "shape", Body: "# shape"})
+				require.NoError(t, err)
+			}
+
+			for _, v := range tt.verdicts {
+				_, err := st.PutArtifact(ctx, store.Artifact{
+					BlueprintID: "BP1", Stage: reviewStage("shape"), Body: "# Review",
+					Data: fmt.Appendf(nil, `{"score":%d,"findings":%s,"version":%d,"attempt":%d,"round":%d}`, v.score, v.findings, v.version, v.attempt, v.round),
+				})
+				require.NoError(t, err)
+			}
+
+			for _, version := range tt.shown {
+				require.NoError(t, st.AppendEvent(ctx, store.Event{
+					Time: time.Now().UTC(), BlueprintID: "BP1", Kind: EventGate,
+					Payload: fmt.Appendf(nil, `{"stage":"shape","version":%d}`, version),
+				}))
+			}
+
+			for _, g := range tt.gates {
+				_, err := st.AddGate(ctx, store.Gate{
+					BlueprintID: "BP1", Stage: "shape", Version: g.version, Decision: g.decision,
+					Responder: store.ResponderHuman, DecidedAt: time.Now().UTC(),
+				})
+				require.NoError(t, err)
+			}
+
+			view, err := c.View(ctx, "BP1")
+			require.NoError(t, err)
+
+			for version, want := range tt.want {
+				ref := refOf(t, view, "shape", version)
+				require.NotNil(t, ref.Review, "v%d", version)
+				assert.Equal(t, want, ref.Review.SentBack, "v%d sent back", version)
+
+				if want {
+					continue
+				}
+
+				for _, f := range ref.Review.Findings {
+					assert.Zero(t, f.SentTo, "v%d finding %s sent to", version, f.ID)
+					assert.Zero(t, f.AddressedIn, "v%d finding %s addressed in", version, f.ID)
+				}
+			}
+
+			for version, to := range tt.sentTo {
+				ref := refOf(t, view, "shape", version)
+				require.NotEmpty(t, ref.Review.Findings)
+				assert.Equal(t, to, ref.Review.Findings[0].SentTo, "v%d finding sent to", version)
+			}
+
+			for _, version := range tt.passed {
+				assert.True(t, refOf(t, view, "shape", version).Review.Passed, "v%d passed", version)
+			}
+		})
+	}
+}

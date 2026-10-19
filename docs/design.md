@@ -1066,7 +1066,10 @@ frames on the session's chat stream.
   stored without one), the most rounds an attempt runs, the reviewer's
   summary, and the ledger, each finding with its id, severity, text and
   status and, for a re-checked one, the version it was verified in and the
-  reviewer's note.
+  reviewer's note. The review carries whether the verdict sent its version
+  back for a revision in the same attempt, read from the record (a later
+  version with no gate on this one, or a verdict that does not settle with no
+  gate yet) so a verdict stored under the earlier settle rule stays true.
   Each review lists every finding its round judged, and an earlier
   version's review is never rewritten. A rejected version
   stays rejected; any other is superseded once a newer one exists, or once
@@ -1181,7 +1184,7 @@ frames on the session's chat stream.
 
 - Go 1.27, `contextmatrix-harness` v0.26.0 (loop, llm client, jailed read
   tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.9.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.30.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.31.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
@@ -1271,6 +1274,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | CM sends the session model's context window from its model catalog as `ArchitectStart.ContextWindow`, through the same lookup as the price (`Rate`), 0 when it does not know it; panel: a reviewer's verdict renders as a review card from the `review` marker, with the summary, the round of the most rounds and the reviewer's notes on re-checked findings (protocol v0.30.0) | context fix and review card |
 | Panel: the review popover and the gate bar show the findings ledger (id, severity, the reviewer's status, the builder's claim beside it), and the tester persona has a display name (protocol v0.28.0) | reviewers |
 | Pin protocol v0.29.0, since `internal/chat` decodes `LogMarker` and `LogRound`; panel: slice tabs under the stage tabs and a grouped scale bar, only with two or more slices; the artifact proxy forwards `?slice=SL<n>`, checked against `^SL[1-9][0-9]{0,2}$`; the gate bar renders "Reject shared decisions" like any action; the new `shared_decisions` stage displays with tab "Shared", name "Shared decisions", title "Shared decisions", noun "shared decisions" and doing "settling the shared decisions" | slices |
+| Pin protocol v0.31.0; panel: a review card reads "sent back" from ArtifactReview.SentBack, "passed" otherwise when it passed, else "failed", and its explanation states the settle rule; a blueprint session's pane header shows the view's cost.spent_usd; a design sheet with one slice entry drops the slice heading | review settle |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |
