@@ -141,8 +141,14 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = body + reply
 		entry.Prompt = actionsPrompt(blueprint.GatePromptID(str(p["stage"]), int(num(p["version"]))), body, p["actions"])
 	case blueprint.EventReview:
-		entry.Type = "system"
+		// A review card: the view's review of this version renders it; the
+		// verdict's text is the fallback.
+		stage, slice := pack.SplitStep(str(p["stage"]))
+		entry.Type = "text"
 		entry.Content = reviewText(p, e.Sliced)
+		entry.Marker = &protocol.LogMarker{
+			Kind: "review", Stage: stage, Slice: slice, Version: int(num(p["version"])), Persona: str(p["reviewer"]),
+		}
 	case blueprint.EventDecided:
 		entry.Type = "system"
 		entry.Content = decidedText(p, e.Sliced)

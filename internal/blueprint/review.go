@@ -158,6 +158,9 @@ type review struct {
 	Version  int         `json:"version"`
 	Attempt  int         `json:"attempt"`
 	Round    int         `json:"round"`
+	// Summary is the reviewer's short account of what it read and checked
+	// and its judgement; "" when it gave none.
+	Summary string `json:"summary,omitempty"`
 }
 
 // unresolved is the findings the reviewer has not seen fixed.
@@ -205,6 +208,17 @@ func parseReview(data map[string]any, prior findingList, threshold, version int)
 		return review{}, errors.New("score must be a whole number from 1 to 5")
 	}
 
+	var summary string
+
+	if raw, ok := data["summary"]; ok && raw != nil {
+		s, isText := raw.(string)
+		if !isText {
+			return review{}, errors.New("summary must be text")
+		}
+
+		summary = strings.TrimSpace(s)
+	}
+
 	checks, err := parseChecks(data["verdicts"], prior)
 	if err != nil {
 		return review{}, err
@@ -215,7 +229,7 @@ func parseReview(data map[string]any, prior findingList, threshold, version int)
 		return review{}, err
 	}
 
-	v := review{Score: int(score), Findings: findingList{}}
+	v := review{Score: int(score), Findings: findingList{}, Summary: summary}
 	next := 1
 
 	for _, f := range prior {
@@ -696,10 +710,16 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 	v.Version, v.Attempt, v.Round = art.Version, attempt, number
 	passed := v.passes(threshold)
 
-	if _, err := au.artifact(bg, bp.ID, reviewStage(st.ID), out.Artifact.Body, map[string]any{
+	stored := map[string]any{
 		"score": v.Score, "passed": passed, "findings": v.Findings.payload(nil),
 		"version": v.Version, "attempt": v.Attempt, "round": v.Round,
-	}); err != nil {
+	}
+
+	if v.Summary != "" {
+		stored["summary"] = v.Summary
+	}
+
+	if _, err := au.artifact(bg, bp.ID, reviewStage(st.ID), out.Artifact.Body, stored); err != nil {
 		c.fail(bg, au, bp.ID, 0, err.Error())
 
 		return review{}, false
@@ -814,6 +834,15 @@ func (c *Controller) reviewerTools(ctx context.Context, sess *session, bp store.
 
 		ts = stage.CodeTools(facts.root, facts.repos)
 		lead = checkoutLines(facts)
+	}
+
+	steps, pieces, err := c.steps(ctx, bp.ID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if readsDigests(steps, pieces, st) {
+		ts = append(ts, artifactReader{c: c, id: bp.ID, st: st})
 	}
 
 	if slices.Contains(st.Reviewer.Tools, pack.ToolResearch) {

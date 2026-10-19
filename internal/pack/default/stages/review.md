@@ -44,5 +44,5 @@ critical finding left open fails the review whatever the score, and a score
 below the pass mark needs at least one finding open.
 
 Submit with a short markdown summary as the body and a data object
-`{"score": <1 to 5>, "verdicts": [{"id": "R1", "status": "fixed" or "still_open", "note": "<what this version shows>"}], "findings": [{"severity": "critical", "major" or "minor", "text": "<sentence>"}]}`.
+`{"score": <1 to 5>, "summary": "<two to four sentences: what you read and checked, and your overall judgement>", "verdicts": [{"id": "R1", "status": "fixed" or "still_open", "note": "<what this version shows>"}], "findings": [{"severity": "critical", "major" or "minor", "text": "<sentence>"}]}`.
 A first round has no verdicts.

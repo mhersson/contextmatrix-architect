@@ -1532,3 +1532,92 @@ func TestReview_TheBlueprintCapStopsTheReview(t *testing.T) {
 		})
 	}
 }
+
+func TestParseReview_TheSummary(t *testing.T) {
+	tests := []struct {
+		name    string
+		summary any
+		want    string
+		refused bool
+	}{
+		{"is trimmed", "  Read the shape against the need.  ", "Read the shape against the need.", false},
+		{"may be left out", nil, "", false},
+		{"is text", 3.0, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := map[string]any{"score": float64(5), "findings": []any{}}
+			if tt.summary != nil {
+				data["summary"] = tt.summary
+			}
+
+			v, err := parseReview(data, nil, 4, 1)
+			if tt.refused {
+				require.Error(t, err)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, v.Summary)
+		})
+	}
+}
+
+func TestView_AReviewCarriesItsSummaryRoundCapAndNotes(t *testing.T) {
+	first := scored(3, "name the owner")
+	first["summary"] = "Read the shape against the need."
+
+	script := gatedScript()
+	script["shape.review"] = verdicts(
+		first,
+		rechecked(4, []map[string]any{check("R1", findingStillOpen, "the owners table is still empty")}),
+		fixed(5, "R1"),
+	)
+
+	c, st, _, _ := newGated(t, script)
+	startGated(t, c, protocol.ArchitectModeDefault)
+
+	v, err := c.View(context.Background(), "BP1")
+	require.NoError(t, err)
+
+	stored := func(version int) map[string]any {
+		art, err := st.GetArtifact(context.Background(), "BP1", reviewStage("shape"), version)
+		require.NoError(t, err)
+
+		var data map[string]any
+
+		require.NoError(t, json.Unmarshal(art.Data, &data))
+
+		return data
+	}
+
+	assert.Equal(t, "Read the shape against the need.", stored(1)["summary"])
+	assert.NotContains(t, stored(2), "summary", "a verdict without a summary is stored without the key")
+
+	r1 := refOf(t, v, "shape", 1)
+	require.NotNil(t, r1.Review)
+	assert.Equal(t, "Read the shape against the need.", r1.Review.Summary)
+
+	r2 := refOf(t, v, "shape", 2)
+	require.NotNil(t, r2.Review)
+	require.NotEmpty(t, r2.Review.Findings)
+	assert.Equal(t, "the owners table is still empty", r2.Review.Findings[0].ReviewerNote, "a re-checked finding's note reaches the view")
+	assert.Empty(t, r2.Review.Summary, "a verdict without a summary has none")
+}
+
+func TestView_TheRoundCapIsTheRoundsAnAttemptRuns(t *testing.T) {
+	script := gatedScript()
+	script["shape.review"] = reviews(2)
+
+	c, _, runner, _ := newGated(t, script)
+	startGated(t, c, protocol.ArchitectModeAuto)
+
+	v, err := c.View(context.Background(), "BP1")
+	require.NoError(t, err)
+
+	ref := refOf(t, v, "shape", 1)
+	require.NotNil(t, ref.Review)
+	assert.Equal(t, len(inputsOf(runner, "shape.review")), ref.Review.MaxRounds, "a version that never passes is reviewed that many times")
+}

@@ -90,6 +90,23 @@ func TestBlueprintPriceRoundTrip(t *testing.T) {
 	assert.Nil(t, got.Price)
 }
 
+func TestBlueprintContextWindowRoundTrip(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: "sized", State: "new", ContextWindow: 200000, CreatedAt: now, UpdatedAt: now}))
+	require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: "unsized", State: "new", CreatedAt: now, UpdatedAt: now}))
+
+	got, err := s.GetBlueprint(ctx, "sized")
+	require.NoError(t, err)
+	assert.Equal(t, 200000, got.ContextWindow)
+
+	got, err = s.GetBlueprint(ctx, "unsized")
+	require.NoError(t, err)
+	assert.Zero(t, got.ContextWindow)
+}
+
 func TestRunUsageRoundTrip(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
@@ -169,10 +186,11 @@ func TestOpen_MigratesV1(t *testing.T) {
 	got, err := s.GetBlueprint(context.Background(), "old")
 	require.NoError(t, err)
 	assert.Nil(t, got.Price)
+	assert.Zero(t, got.ContextWindow, "a blueprint stored before the window has none")
 
 	var version int
 	require.NoError(t, s.db.QueryRow("PRAGMA user_version").Scan(&version))
-	assert.Equal(t, 4, version)
+	assert.Equal(t, schemaVersion, version)
 
 	// Every ALTER landed: usage written to the migrated table reads back.
 	ctx := context.Background()
@@ -495,6 +513,7 @@ func TestOpen_MigratesV2(t *testing.T) {
 		`DROP TRIGGER emissions_no_update`, `DROP TRIGGER emissions_no_delete`, `DROP TABLE emissions`,
 		`DROP TRIGGER questions_no_update`, `DROP TRIGGER questions_no_delete`, `DROP TABLE questions`,
 		`ALTER TABLE stage_runs DROP COLUMN kind`,
+		`ALTER TABLE blueprints DROP COLUMN context_window`,
 		`PRAGMA user_version = 2`,
 	} {
 		_, err := s.db.Exec(stmt)
@@ -509,7 +528,7 @@ func TestOpen_MigratesV2(t *testing.T) {
 
 	var version int
 	require.NoError(t, s.db.QueryRow("PRAGMA user_version").Scan(&version))
-	assert.Equal(t, 4, version)
+	assert.Equal(t, schemaVersion, version)
 
 	_, err = s.AddGate(context.Background(), Gate{BlueprintID: "BP1", Stage: "signoff", Version: 1, Decision: GateApprove, Responder: ResponderHuman, DecidedAt: time.Now()})
 	require.NoError(t, err)
@@ -592,6 +611,7 @@ func TestOpen_MigratesV3(t *testing.T) {
 	for _, stmt := range []string{
 		`DROP TRIGGER questions_no_update`, `DROP TRIGGER questions_no_delete`, `DROP TABLE questions`,
 		`ALTER TABLE stage_runs DROP COLUMN kind`,
+		`ALTER TABLE blueprints DROP COLUMN context_window`,
 		`PRAGMA user_version = 3`,
 	} {
 		_, err := s.db.Exec(stmt)
@@ -606,7 +626,7 @@ func TestOpen_MigratesV3(t *testing.T) {
 
 	var version int
 	require.NoError(t, s.db.QueryRow("PRAGMA user_version").Scan(&version))
-	assert.Equal(t, 4, version)
+	assert.Equal(t, schemaVersion, version)
 
 	runs, err := s.ListRuns(ctx, "BP1")
 	require.NoError(t, err)

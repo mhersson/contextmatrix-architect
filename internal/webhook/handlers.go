@@ -64,6 +64,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		Model:               p.Model,
 		Endpoint:            *p.LLMEndpoint,
 		Price:               p.Architect.Price,
+		ContextWindow:       p.Architect.ContextWindow,
 		MCPAPIKey:           p.MCPAPIKey,
 		GitCredentialsToken: p.GitCredentialsToken,
 	}

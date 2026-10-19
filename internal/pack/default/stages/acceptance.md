@@ -1,7 +1,7 @@
 # Acceptance
 
-Input: the need, the slices, the shared decisions, the design and grounding's verified facts for the slice the task names, and the earlier slices' design, acceptance and cards.
-This run has no checkout and no read tools: work from that input, and take
+Input: the need, the slices, the shared decisions, the design and grounding's verified facts for the slice the task names, and the earlier slices' design, acceptance and cards as digests, with every criterion and manual-check id they hold (`read_artifact` returns the whole).
+This run has no checkout and no code tools: work from that input, and take
 what the code holds from grounding's facts. You may still ask a question, and
 you submit as below.
 

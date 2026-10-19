@@ -69,7 +69,7 @@ Settled during design. Each has its reason so it is not re-litigated.
 | Provisioned by CM, like the agent and chat backends      | Every blueprint is a CM session. The start payload delivers the LLM endpoint, the MCP key, the model, a git-credentials token and, when research is on, the search provider and its key. The architect's own config holds no secret but the backend HMAC key, and there is no CM-less mode. |
 | Questions in stored rounds; a stage resumes its stored conversation | A big need takes a long interview, answered in one sitting or in batches over days. Posting a round ends the run, so nothing waits in memory and End, a reopen or a restart loses nothing; once every question has an answer and every assumption a decision the stage resumes the conversation that asked, with the answers as its next message, so the model keeps its reasoning, and the prompt cache is warm when the answer comes quickly. |
 | SQLite is the record; markdown is a rendering             | One store for artifacts, gates, transcripts, audit and cost. Committing per-stage markdown into code repos bloats them fast; an opt-in automatic export serves teams that review in pull requests. |
-| Everything is logged                                      | Every run's full transcript (less web search result lists) and an append-only event log. The append-only tables are never updated or deleted. The export is a complete audit record, less the web search result lists the next row keeps out. |
+| Everything is logged                                      | Every run's full transcript (less web search result lists and `read_artifact` results, whose artifacts the record holds) and an append-only event log. The append-only tables are never updated or deleted. The export is a complete audit record, less the web search result lists the next row keeps out. |
 | Search result lists are never stored                      | The search provider's terms forbid storing or caching results beyond transient use, and no storage rights are bought. The model sees a list in the run that searched; transcripts, events and exports keep the query and the result count. The pages `web_fetch` reads are the recorded sources, so a claim cites a page the architect read itself. A deliberate, permanent exception, with no switch to record lists. |
 | A playbook for several cards, a bare card for one         | Manual entries are the only way to express human and live checks across cards. A one-card playbook would end in a merged PR on a playbook branch plus a second PR to main; a bare card ends in one PR to the default branch. The `emissions` table is the blueprint's handle in CM either way. |
 | Fixed stage list, repeated per slice; no composer; size is never estimated | Every stage earns its place for any need. Stages the pack marks per slice repeat once per slice, so slicing's count decides how much runs. A stage with nothing to do collapses: it is recorded but not run, as the shared decisions stage is for one slice. Gates fold and the playbook decision falls out of counts in the artifacts (slices, cards), so a need is never classified small or big up front. Evidence for skippable stages comes from Outcomes, which does not exist yet. |
@@ -102,6 +102,8 @@ stage runner (internal/stage)       one harness.Run per round: persona + stage p
      |                   public addresses only
      |-- cm tools        read-only MCP reads for grounding and readiness:
      |                   cm_list_projects, cm_list_cards, cm_get_card, cm_get_playbook
+     |-- slice tools     read_artifact (the whole of an earlier slice's artifact,
+     |                   where the task gives it as a digest)
      |-- control tools   ask_questions (posts a round, ends the run),
      |                   answer_chat (replies in a round's chat, ends the run),
      |                   submit_artifact (terminal)
@@ -144,10 +146,15 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   known when it is stored: the persona that drew it, the findings a
   revision was given, a loop stage's round, or that its checks refused it
   until round 3. A marker and a round's frame carry a per-slice step's
-  stage and its slice apart. Reviewer verdicts and gate decisions stay
-  prose entries.
+  stage and its slice apart. A reviewer's verdict is a review marker (kind
+  `review`, a text entry) naming the reviewed stage, its slice, the version
+  and the reviewer, rendered from the view's review of that version. Gate
+  decisions stay prose entries.
   Each marker keeps a plain fallback line in `Content`, which a CM without
   markers shows instead.
+  The reply a run ends on, one that calls `submit_artifact` or calls no
+  tool, is kept in the record and the export but not shown: its sheet
+  reference, review or answer is the row. Other model text is shown.
   Rounds are `round:<n>` and their questions `Q<n>`, gates
   `gate:<stage>:v<n>` (`gate:<stage>:<slice>:v<n>` for a per-slice step's),
   the sign-off `gate:signoff:v<n>`, and a stopped
@@ -202,7 +209,8 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   shown answered and read-only, and the stage continues at once.
 - **A run ends on `submit_artifact`**, a terminal tool carrying the markdown
   body and the stage's structured yaml block. The controller stores the
-  artifact and the full transcript (less web search result lists). A run that
+  artifact and the full transcript (less web search result lists and
+  `read_artifact` results). A run that
   stops with text and no terminal call gets one follow-up run on its
   conversation. That run is offered only the run's terminal tools and made to
   call one (`tool_choice`, sent once more without it when the endpoint refuses
@@ -223,7 +231,7 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   the builder's transcript, and the tool groups the pack gives it: the code
   tools over the blueprint's checkouts, and with research on `web_fetch`
   alone, behind the same leak guard, to open what the artifact cites; it has
-  no web search. It scores the artifact 1-5 and
+  no web search. It scores the artifact 1-5, sums up what it read and checked, and
   keeps a findings ledger: each finding has an id stable within the stage
   attempt (R1, R2, ...) and a severity (critical, major or minor). A later
   round of the attempt is given every earlier finding, with the claim the
@@ -255,6 +263,7 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
 - **Across stages only artifacts carry forward**, never transcripts. Each step
   consumes the artifacts the pack names: a per-slice stage's step its own
   slice's and the earlier slices' that its `earlier_slices` names (see
+  Stages). With two or more slices, another slice's artifact is a digest (see
   Stages).
 - **Crash recovery.** Artifacts are stored per step, a per-slice stage's per
   slice, so after a dead process reopening the blueprint's session re-runs
@@ -272,12 +281,12 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 
 | Table         | Holds                                                                                                                        |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price as CM sent it                                        |
+| blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price and context window as CM sent them                                      |
 | stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets |
-| artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, whether it passed, its findings ledger with ids, severities, statuses and the reviewer's notes, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
+| artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, whether it passed, its summary when it gave one, its findings ledger with ids, severities, statuses and the reviewer's notes, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes, or at the responder's answer under auto, or at the answer for one asked alone before rounds; an assumption a human accepted on a tab is recorded on its round, not here |
 | gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded; a fold at version 0 records a stage that collapsed), feedback, responder (human, auto), decided at |
-| transcripts   | append-only: run, full message history as JSON, redacted, each web search result list replaced by its query and result count |
+| transcripts   | append-only: run, full message history as JSON, redacted, each web search result list replaced by its query and result count, and each `read_artifact` result by its first line |
 | events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning; every change of the blueprint's state is a `state` row, stored and never sent to the panel; every web search and page read is a `research` event (the query and result count, the URL and source tag, or the rule that refused it), and a session that runs a research stage without research says so once in a `research_off` event; a round is its `round` snapshots, the newest per round number winning |
 | sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage; a page `web_fetch` read is a `url` source versioned by the sha256 of its text, its title on its `research` event |
 | ledger        | per-run cost rows summed per blueprint                                                                                        |
@@ -366,7 +375,16 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   each. A per-slice step reads the whole-blueprint stages it consumes, its
   own slice's earlier steps, and, slice by slice, each earlier slice's
   artifacts of the stages its `earlier_slices` names. A whole-blueprint
-  stage after the per-slice stages reads every slice's, in order. A
+  stage after the per-slice stages reads every slice's, in order.
+  With two or more slices, an artifact of another slice is given as a
+  digest of its data, by the shape its stage's checks give it: a design's
+  decisions (id, text, chosen) and contracts; an acceptance's criteria and
+  manual checks by id with their first line; cards by id, title, project,
+  type, Where paths, `depends_on` and criteria ids, with the draft's manual
+  entries and setup. A whole-blueprint stage reads the stage it loops to
+  whole for every slice. A stage without such a shape, or data that does
+  not decode or holds an item of another shape, is given whole. A run
+  whose task holds a digest is offered `read_artifact` for the whole. A
   per-slice task opens by naming its slice. A gate reply (`gate <stage>
   human|auto`) and a stage's policies cover every slice of the stage. A
   rejection at a slice's gate runs that slice's step again. A run's cost
@@ -790,6 +808,7 @@ starts are bounded by CM's per-card guardrails, not by the architect.
 | code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock the first time a run needs the trees: at the start of the first stage with the code tools (intake), or earlier, at a research stage's first leak-guard check that needs them, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. A repository with no commits checks out as an empty tree with no sha. `repo_info` returns the sha, instruction file presence, the project's verify command, whether the repository is empty and, to the stage that fetched the tree, the default branch. A reviewer whose pack entry names `code` gets the same tools, and can be the first to fetch the trees. |
 | research | `web_search`, `web_fetch` | Offered to the stages whose pack names the group (intake, slicing, shared decisions and solution design in the default pack) when the session's research settings name a provider the architect can build; otherwise the group is absent and the session says once, at the first such stage, that research is off. `web_search` asks the provider (Brave Search) for ten results: titles, URLs and snippets the model reads in that run only, since a run's stored messages keep only the query and the result count. `web_fetch` reads an http or https page from a public address: every connection's address is checked after the name resolves, redirects included (five at most), and no proxy is used; it reads at most 5 MiB in 20 seconds, keeps 48 KiB of text, turns HTML into readable text (the main or article element, without scripts, navigation or footers), takes text types as they are and refuses the rest. A page read is recorded as a `url` source and its result starts with the tag; a page with no readable text is a tool error, not a source. A leak guard checks every query and every URL's host labels, path and query and refuses, as a tool error naming the rule: a token with a path separator (acronym pairs like CI/CD and HTTP/1.1 pass) or a file extension (a `<name>.js` library passes), code punctuation (a URL path segment may carry a name's `(` or `=`, as in `Raft_(algorithm)`), a compound identifier the blueprint's checkouts declare (not a name of a package they depend on, and nothing in a lockfile), the root module path's owner or name (a nested module's compound name is a declared identifier), a target project's name or its repositories' owner or name, a ContextMatrix card id, and a query, or a URL path segment, query key or query value, over 160 characters; plain words and technology names pass. A URL's host labels get the name, module, identifier and card-id rules but not the shape rules, since a page can ask for a host that carries data; its path segments skip the path and file-name rules, which a URL's own syntax breaks; its query keys and values get every query rule. It reads the checkouts once per run, at the first check that needs them, checking them out first in a stage without the code tools, and refuses everything while it cannot read them. The responder shares its stage's tools. Every query and page read is a `research` event. A reviewer whose entry names `research` gets `web_fetch` alone behind the same guard, and never posts the research-off notice. |
 | cm       | `list_projects`, `list_cards`, `get_card`, `get_playbook` as `cm_`-prefixed reads | Offered to grounding and readiness over the session's MCP key, one MCP session per run, chat's bridge adapter on the architect's client with a `cm_` prefix and an allowlist that skips tools CM does not serve. No `agent_id` is sent, so CM keeps redacting unvetted imported text; `get_card` never attaches images; a credential embedded in a URL is removed from every result and error before the model or the record sees it, since CM returns project config as stored; every result carries the blueprint's ContextMatrix source tag. Creating cards and playbooks and starting runs are controller calls with the configured caller identity, never model tools. |
+| artifacts | `read_artifact` | Offered to a run whose task can hold a digest of another slice's artifact: the whole body and data of any stored version of a step the run reads. The stored transcript keeps each result's first line, since the record holds the artifact. |
 | control  | `ask_questions`, `answer_chat`, `submit_artifact`                                          | `ask_questions` posts a round and ends the run: per question a tab title, the question, why it matters, options with a summary, pros, cons and source tags (only tags a tool result of this blueprint returned; the panel shows a page `web_fetch` read by its title (its address when it has none), linked to its address, and any other source by its identity), and the recommended position; a trailing "(recommended)" a model writes into an option title is cut and marks it. A stage that declares the `assumptions` check may add its assumptions as the round's last tab, or post the tab alone; any other stage's tab is refused. A round asks at most 10 questions of at most 6 options, 96 KiB in all, its assumptions included. A question already answered with the same options is refused; a changed option set makes a new question. Under `auto` its responder answers before the run ends. Questions are numbered `Q<n>` per blueprint. `answer_chat` replies in an open round's chat, at most 4000 characters, revising or adding questions under the same limits or replacing the assumptions tab, and ends the run. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
 
 Every tool result passes the harness redactor for every secret the process
@@ -1044,8 +1063,10 @@ frames on the session's chat stream.
   its reviewer's verdict, or a sign-off an emitting mode approved) and when,
   and its reviewer's verdict: the score, the threshold, whether it passed
   (derived from the score and the ledger), the round (1 for a verdict
-  stored without one), and the ledger, each finding with its id, severity,
-  text and status and, for a re-checked one, the version it was verified in.
+  stored without one), the most rounds an attempt runs, the reviewer's
+  summary, and the ledger, each finding with its id, severity, text and
+  status and, for a re-checked one, the version it was verified in and the
+  reviewer's note.
   Each review lists every finding its round judged, and an earlier
   version's review is never rewritten. A rejected version
   stays rejected; any other is superseded once a newer one exists, or once
@@ -1160,7 +1181,7 @@ frames on the session's chat stream.
 
 - Go 1.27, `contextmatrix-harness` v0.26.0 (loop, llm client, jailed read
   tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.9.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.29.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.30.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
@@ -1188,10 +1209,21 @@ frames on the session's chat stream.
   unpriced: a capped blueprint refuses it, an uncapped one counts the
   reported cost. A builder round after a review re-bills the conversation so
   far; the ledger counts it.
-- Every stage run compacts in its window: once a prompt reaches 85% of a
-  128000-token window, the harness summarizes the older turns, keeps the
-  last six messages and goes on. A model with a smaller window fails on the
-  provider's error first.
+- Every run compacts in its model's window: CM sends the window with the
+  session start (128000 tokens when it does not know it), and once a prompt
+  reaches 85% of it the harness summarizes the older turns, keeps the last
+  six messages and goes on. A run whose system prompt, task and newest
+  history messages (what compaction cannot summarize) are estimated, at 2.5
+  bytes a token, to reach that 85%, or whose whole opening prompt is
+  estimated to reach the window itself (the first call carries all of it
+  before compaction can act), is refused before any model call. A model
+  whose real window is smaller than CM says fails on the provider's error
+  first. A refused run fails like any failed run, its row ending `too_big`
+  at no cost, and its error names the biggest inputs of its task by step
+  name; a run the harness stops on a full window says so in plain words.
+  `continue` runs either again. The window is stored with the blueprint, and
+  a reopen whose start carries none keeps it on the same model; a
+  per-persona override runs on the fallback.
 - State dir: `architect.db`, `exports/<blueprint>/<time>/`,
   `workspaces/mirrors/<repo>/` and
   `workspaces/trees/<blueprint>/<project>/`, with a project's secondary
@@ -1236,6 +1268,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Panel: the blueprint pane (scale bar, sheet, transcript markers), read through CM proxies of the architect's signed view and artifact endpoints, with its live stream relayed on the session's chat stream (protocol v0.26.0) | blueprint UI |
 | A research setting (`off` or `search`, off by default) with the search provider and its key in CM's configuration, sent as `ArchitectStart.Research` (protocol v0.27.0) | research |
 | Panel: clicking the cost in the sheet header asks for a new cap and sends `cap <usd>` or `cap off` as a chat message hidden from the transcript | cost cap |
+| CM sends the session model's context window from its model catalog as `ArchitectStart.ContextWindow`, through the same lookup as the price (`Rate`), 0 when it does not know it; panel: a reviewer's verdict renders as a review card from the `review` marker, with the summary, the round of the most rounds and the reviewer's notes on re-checked findings (protocol v0.30.0) | context fix and review card |
 | Panel: the review popover and the gate bar show the findings ledger (id, severity, the reviewer's status, the builder's claim beside it), and the tester persona has a display name (protocol v0.28.0) | reviewers |
 | Pin protocol v0.29.0, since `internal/chat` decodes `LogMarker` and `LogRound`; panel: slice tabs under the stage tabs and a grouped scale bar, only with two or more slices; the artifact proxy forwards `?slice=SL<n>`, checked against `^SL[1-9][0-9]{0,2}$`; the gate bar renders "Reject shared decisions" like any action; the new `shared_decisions` stage displays with tab "Shared", name "Shared decisions", title "Shared decisions", noun "shared decisions" and doing "settling the shared decisions" | slices |
 | Panel: a gate inbox | later |

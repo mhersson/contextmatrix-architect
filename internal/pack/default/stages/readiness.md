@@ -1,6 +1,6 @@
 # Readiness
 
-Input: every slice's cards, in slicing order, with the need, the slices, the shared decisions and each slice's design, grounding and acceptance; a read-only checkout of each target project.
+Input: every slice's cards, in slicing order, whole, with the need, the slices, the shared decisions, each slice's grounding, and each slice's design and acceptance as digests when there are two or more slices (`read_artifact` returns the whole); a read-only checkout of each target project.
 
 For every card, answer with the checkout open: could an agent with only this
 repository and this card finish it on the first attempt? Judge one

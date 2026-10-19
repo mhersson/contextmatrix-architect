@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,6 +90,19 @@ func (r *recorder) line(_ string, p []byte) {
 	defer r.mu.Unlock()
 
 	r.lines = append(r.lines, bytes.Clone(p))
+}
+
+// shown is every harness line forwarded to the panel, oldest first.
+func (r *recorder) shown() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	out := make([]string, 0, len(r.lines))
+	for _, l := range r.lines {
+		out = append(out, string(l))
+	}
+
+	return out
 }
 
 func (r *recorder) kinds() []string {
@@ -2094,6 +2108,24 @@ func TestStart_AllZeroPriceIsNoPrice(t *testing.T) {
 	})
 }
 
+func TestStart_TheReviewerRunsInTheSessionWindow(t *testing.T) {
+	c, _, runner, _ := newGated(t, gatedScript())
+	ctx := context.Background()
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeDefault
+	in.ContextWindow = 200000
+	require.NoError(t, c.Start(ctx, in))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	reviews := inputsOf(runner, "shape.review")
+	require.Len(t, reviews, 1)
+	assert.Equal(t, 200000, reviews[0].ContextWindow)
+	require.NotEmpty(t, inputsOf(runner, "shape"))
+	assert.Equal(t, 200000, inputsOf(runner, "shape")[0].ContextWindow)
+}
+
 func TestStart_ReopenWithoutAPriceKeepsTheCreationPrice(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -2144,6 +2176,49 @@ func TestStart_ReopenWithoutAPriceKeepsTheCreationPrice(t *testing.T) {
 			ended, ok := rec.first(EventStageEnded)
 			require.True(t, ok)
 			assert.Equal(t, tt.wantPriced, ended.Payload["priced"])
+		})
+	}
+}
+
+func TestStart_TheContextWindowComesFromTheStart(t *testing.T) {
+	tests := []struct {
+		name         string
+		created      int
+		reopenModel  string
+		reopenWindow int
+		override     bool
+		want         int
+	}{
+		{name: "the start's window reaches the run", created: 200000, reopenModel: "session/model", reopenWindow: 200000, want: 200000},
+		{name: "a reopen without one keeps the stored window", created: 200000, reopenModel: "session/model", want: 200000},
+		{name: "a new window on the same model wins", created: 200000, reopenModel: "session/model", reopenWindow: 1000000, want: 1000000},
+		{name: "another model gets none", created: 200000, reopenModel: "other/model", want: 0},
+		{name: "a blueprint stored before the window takes the start's", reopenModel: "session/model", reopenWindow: 200000, want: 200000},
+		{name: "a per-persona override gets none", created: 200000, reopenModel: "session/model", reopenWindow: 200000, override: true, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _, runner, _ := newController(t, artifactRun("# Need"))
+			ctx := context.Background()
+
+			if tt.override {
+				c.opts.Models = map[string]string{"product_owner": "override/model"}
+			}
+
+			in := startInput("BP1")
+			in.ContextWindow = tt.created
+			require.NoError(t, c.Start(ctx, in))
+			require.NoError(t, c.End(ctx, "BP1"))
+
+			reopen := startInput("BP1")
+			reopen.Model, reopen.ContextWindow = tt.reopenModel, tt.reopenWindow
+			require.NoError(t, c.Start(ctx, reopen))
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			c.Wait("BP1")
+
+			require.Equal(t, 1, runner.calls())
+			assert.Equal(t, tt.want, runner.input(0).ContextWindow)
 		})
 	}
 }
@@ -2500,4 +2575,30 @@ func TestEnd_AnAbortWhileTheReopenWaitsWins(t *testing.T) {
 	need, err := st.LatestArtifact(ctx, "BP1", needStage)
 	require.NoError(t, err)
 	assert.Equal(t, 2, need.Version)
+}
+
+func TestRun_TheReplyARunEndsOnIsRecordedButNotShown(t *testing.T) {
+	c, st, _, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+		_, _ = in.Events.Write([]byte(`{"seq":1,"kind":"model_response","data":{"content":"reading the need"}}` + "\n"))
+		_, _ = fmt.Fprintf(in.Events, `{"seq":2,"kind":"model_response","data":{"content":"# Need restated",%q:true}}`+"\n", stage.FinalField)
+
+		return artifactOutput("# Need", in), nil
+	})
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	carries := func(text string) func(string) bool {
+		return func(l string) bool { return strings.Contains(l, text) }
+	}
+
+	assert.True(t, slices.ContainsFunc(rec.shown(), carries("reading the need")), "other model text is shown")
+	assert.False(t, slices.ContainsFunc(rec.shown(), carries("# Need restated")), "the final reply never reaches the panel")
+
+	stored, err := st.ListEventsOfKind(ctx, "BP1", EventHarness)
+	require.NoError(t, err)
+	assert.True(t, slices.ContainsFunc(stored, func(e store.Event) bool { return strings.Contains(string(e.Payload), "# Need restated") }),
+		"the record keeps it")
 }

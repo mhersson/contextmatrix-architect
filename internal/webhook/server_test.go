@@ -316,6 +316,7 @@ func TestStart_HappyPath(t *testing.T) {
 
 	payload := validStart()
 	payload.Architect.Price = &protocol.ModelPrice{PromptUSDPerMTok: 3}
+	payload.Architect.ContextWindow = 200000
 
 	w := do(srv, signed(t, http.MethodPost, "/chat/start", payload, nextTS()))
 	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
@@ -337,6 +338,7 @@ func TestStart_HappyPath(t *testing.T) {
 	assert.Equal(t, "01HZZ.mac", in.GitCredentialsToken, "and fetch git credentials with its token")
 	require.NotNil(t, in.Price)
 	assert.InDelta(t, 3.0, in.Price.PromptUSDPerMTok, 1e-9)
+	assert.Equal(t, 200000, in.ContextWindow)
 }
 
 func TestStart_CarriesTheResearchSettings(t *testing.T) {

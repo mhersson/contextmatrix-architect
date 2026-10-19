@@ -103,7 +103,7 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 	defer stop(nil)
 
 	in := s.in
-	in.Model, in.Endpoint, in.MaxCostUSD, in.MaxTurns = m.name, sess.endpoint, runCap, c.opts.MaxTurns
+	in.Model, in.Endpoint, in.MaxCostUSD, in.MaxTurns, in.ContextWindow = m.name, sess.endpoint, runCap, c.opts.MaxTurns, m.window
 	in.Secrets = sess.secrets()
 	in.Events = &harnessSink{
 		audit: au, id: bp.ID, runID: runID, canceled: runCtx.Done(),
@@ -184,6 +184,8 @@ func (c *Controller) sideFailed(ctx context.Context, r *run, au audit, id, stage
 	case ctx.Err() != nil:
 		c.setState(bg, id, StateIdle)
 	default:
-		c.fail(bg, au, id, 0, err.Error())
+		if !c.contextStop(bg, au, id, 0, store.RunKindReviewer, stageID, err) {
+			c.fail(bg, au, id, 0, err.Error())
+		}
 	}
 }

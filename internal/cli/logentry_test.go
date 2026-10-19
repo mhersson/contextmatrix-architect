@@ -224,7 +224,7 @@ func TestLogEntryFor(t *testing.T) {
 		}}, "system", []string{"Review of Shape", "0.02"}, false},
 		{"a verdict", blueprint.Event{Kind: blueprint.EventReview, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "shape", "version": 2, "score": 3, "threshold": 4, "findings": []any{map[string]any{"id": "R1", "severity": "major", "text": "name the owner", "status": "open"}}, "round": 1,
-		}}, "system", []string{"Shape", "3", "4", "R1", "major", "name the owner"}, false},
+		}}, "text", []string{"Shape", "3", "4", "R1", "major", "name the owner"}, false},
 		{"a verdict that re-checked its findings", blueprint.Event{Kind: blueprint.EventReview, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "shape", "version": 2, "score": 4, "threshold": 4, "round": 2, "open_critical": []string{"R3"},
 			"findings": []any{
@@ -232,7 +232,7 @@ func TestLogEntryFor(t *testing.T) {
 				map[string]any{"id": "R2", "severity": "minor", "text": "split it", "status": "still_open", "verified_in": 2},
 				map[string]any{"id": "R3", "severity": "critical", "text": "no way back", "status": "open"},
 			},
-		}}, "system", []string{"R1 (critical, fixed in version 2)", "named in the table", "R2 (minor, still open in version 2)", "R3 (critical, open)"}, false},
+		}}, "text", []string{"R1 (critical, fixed in version 2)", "named in the table", "R2 (minor, still open in version 2)", "R3 (critical, open)"}, false},
 		{"a gate with open critical findings", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "shape", "version": 3, "actions": []any{},
 			"review": map[string]any{
@@ -818,9 +818,14 @@ func TestLogEntryFor_Markers(t *testing.T) {
 			"text", sheet("decomposition", 1, "senior_developer", "Refused by checks, accepted on round 3"), "Decomposition rev 1",
 		},
 		{
-			"a review stays a prose row",
-			ev(blueprint.EventReview, map[string]any{"stage": "solution_design", "version": 1, "score": 4, "threshold": 4, "findings": []any{map[string]any{"id": "R1", "severity": "minor", "text": "a", "status": "open"}}, "round": 1}),
-			"system", nil, "4 of 5",
+			"a review is a review marker",
+			ev(blueprint.EventReview, map[string]any{"stage": "solution_design", "version": 1, "score": 4, "threshold": 4, "reviewer": "senior_developer", "findings": []any{map[string]any{"id": "R1", "severity": "minor", "text": "a", "status": "open"}}, "round": 1}),
+			"text", &protocol.LogMarker{Kind: "review", Stage: "solution_design", Version: 1, Persona: "senior_developer"}, "4 of 5",
+		},
+		{
+			"a slice's review names its slice apart",
+			slicedEv(blueprint.EventReview, map[string]any{"stage": "acceptance@SL2", "version": 3, "score": 4, "threshold": 4, "reviewer": "tester", "findings": []any{}, "round": 1}),
+			"text", &protocol.LogMarker{Kind: "review", Stage: "acceptance", Slice: "SL2", Version: 3, Persona: "tester"}, "4 of 5",
 		},
 		{
 			"a gate decision stays a prose row",

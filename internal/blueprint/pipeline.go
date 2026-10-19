@@ -974,19 +974,40 @@ func (c *Controller) writeInputs(ctx context.Context, b *strings.Builder, bp sto
 	}
 
 	for _, in := range consumedSteps(steps, st) {
-		if in.Collapsed {
-			fmt.Fprintf(b, "## %s\n\nNot run for this blueprint: the design settles what every slice shares.\n\n", in.ID)
-
-			continue
+		if err := c.writeInput(ctx, b, bp.ID, st, in, len(pieces) > 1, what); err != nil {
+			return err
 		}
-
-		art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, in.ID)
-		if err != nil {
-			return fmt.Errorf("blueprint: %s for %s: input %s: %w", what, st.ID, in.ID, err)
-		}
-
-		writeArtifact(b, in.ID, art)
 	}
+
+	return nil
+}
+
+// writeInput gives st the latest artifact of in, a step it consumes: whole,
+// or as a digest (digested) when its shape has one; a collapsed shared
+// stage is named, since it has none.
+func (c *Controller) writeInput(ctx context.Context, b *strings.Builder, id string, st, in pipelineStep, sliced bool, what string) error {
+	if in.Collapsed {
+		fmt.Fprintf(b, "## %s\n\nNot run for this blueprint: the design settles what every slice shares.\n\n", in.ID)
+
+		return nil
+	}
+
+	art, err := c.opts.Store.LatestArtifact(ctx, id, in.ID)
+	if err != nil {
+		return fmt.Errorf("blueprint: %s for %s: input %s: %w", what, st.ID, in.ID, err)
+	}
+
+	if digested(st, in, sliced) {
+		if d, ok := digestOf(in.Checks, art); ok {
+			if err := writeDigest(b, in, art, d); err != nil {
+				return fmt.Errorf("blueprint: %s for %s: %w", what, st.ID, err)
+			}
+
+			return nil
+		}
+	}
+
+	writeArtifact(b, in.ID, art)
 
 	return nil
 }

@@ -8,9 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 
 	_ "modernc.org/sqlite" // database/sql driver
 )
+
+var uriPath = strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23")
 
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("store: not found")
@@ -24,7 +27,8 @@ type Store struct {
 func Open(ctx context.Context, path string) (*Store, error) {
 	// recursive_triggers makes the implicit delete of INSERT OR REPLACE fire
 	// the append-only delete triggers; SQLite skips them otherwise.
-	dsn := "file:" + path + "?" + url.Values{
+	// A '%', '?' or '#' in a URI filename is decoded or cuts it, so the path is escaped.
+	dsn := "file:" + uriPath.Replace(path) + "?" + url.Values{
 		"_pragma": {"journal_mode(WAL)", "foreign_keys(1)", "busy_timeout(5000)", "recursive_triggers(1)"},
 	}.Encode()
 

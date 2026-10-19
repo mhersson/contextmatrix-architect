@@ -292,6 +292,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	in.Endpoint = sess.endpoint
 	in.MaxCostUSD = runCap
 	in.MaxTurns = c.opts.MaxTurns
+	in.ContextWindow = m.window
 
 	iv := &interviewer{
 		c: c, bp: bp, st: st, sess: sess, r: r, runID: runID, attempt: attempt, builderRound: number,
@@ -464,6 +465,11 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		}
 
 		c.endRun(bg, runID, store.RunFailed, reason, usage)
+
+		if c.contextStop(bg, au, id, runID, store.RunKindStage, stageID, runErr) {
+			return stageStopped
+		}
+
 		c.setState(bg, id, StateFailed)
 		au.event(bg, Event{Kind: EventError, BlueprintID: id, RunID: runID, Payload: map[string]any{
 			"stage": stageID, "reason": reason, "message": runErr.Error(),
@@ -493,6 +499,15 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		Instructions: c.opts.Pack.Instructions(st.Stage.ID), Task: task,
 	}
 
+	steps, pieces, err := c.steps(context.WithoutCancel(ctx), bp.ID)
+	if err != nil {
+		return stage.Input{}, stageChecks{}, nil, err
+	}
+
+	if readsDigests(steps, pieces, st) {
+		in.Tools = append(in.Tools, artifactReader{c: c, id: bp.ID, st: st})
+	}
+
 	// Checked before any checkout, so a server without the tool source fails
 	// the stage without a fetch.
 	useCM := slices.Contains(st.Tools, pack.ToolCM)
@@ -507,7 +522,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 			return stage.Input{}, stageChecks{}, nil, err
 		}
 
-		in.Tools = stage.CodeTools(facts.root, facts.repos)
+		in.Tools = append(in.Tools, stage.CodeTools(facts.root, facts.repos)...)
 		in.Task = checkoutLines(facts) + in.Task
 	}
 
@@ -759,7 +774,7 @@ func (s *harnessSink) Write(p []byte) (int, error) {
 
 	// A canceled run's harness reports the cancel as an error. It is
 	// audited, but the panel shows the cancel as the stage's end instead.
-	forward := (!s.isCanceled() || !isErrorLine(line)) && (!s.chat || !isChatEcho(line))
+	forward := (!s.isCanceled() || !isErrorLine(line)) && (!s.chat || !isChatEcho(line)) && !isFinalReply(line)
 
 	s.flight.count(line)
 	s.audit.harness(context.Background(), s.id, s.runID, line, forward)
@@ -883,4 +898,15 @@ func isChatEcho(line []byte) bool {
 	}
 
 	return ev.Kind == "model_response" || (ev.Kind == "tool_call" && ev.Data.Name == stage.AnswerChatName)
+}
+
+// isFinalReply reports the reply a run ends on (stage.FinalField): its
+// artifact, review or answer has its own transcript row.
+func isFinalReply(line []byte) bool {
+	var ev struct {
+		Kind string         `json:"kind"`
+		Data map[string]any `json:"data"`
+	}
+
+	return json.Unmarshal(line, &ev) == nil && ev.Kind == "model_response" && ev.Data[stage.FinalField] == true
 }

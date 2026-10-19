@@ -8,7 +8,7 @@ import (
 
 // schemaVersion stamps PRAGMA user_version. Bump it when the schema changes;
 // a newer database is refused.
-const schemaVersion = 4
+const schemaVersion = 5
 
 func ensureSchema(ctx context.Context, db *sql.DB) error {
 	var current int
@@ -29,6 +29,7 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 			cost_cap_usd REAL NOT NULL DEFAULT 0,
 			model        TEXT NOT NULL DEFAULT '',
 			price        TEXT,
+			context_window INTEGER NOT NULL DEFAULT 0,
 			state        TEXT NOT NULL,
 			created_at   INTEGER NOT NULL,
 			updated_at   INTEGER NOT NULL
@@ -156,6 +157,12 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 	// column from its CREATE statement.
 	if current >= 1 && current < 4 {
 		stmts = append(stmts, `ALTER TABLE stage_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'stage'`)
+	}
+
+	// Files from v1 to v4 hold blueprints without context_window; 0 is an
+	// unknown window, as CM sends for a model it cannot size.
+	if current >= 1 && current < 5 {
+		stmts = append(stmts, `ALTER TABLE blueprints ADD COLUMN context_window INTEGER NOT NULL DEFAULT 0`)
 	}
 
 	// One transaction: a failed or interrupted migration leaves the file

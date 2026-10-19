@@ -379,7 +379,7 @@ func writeSlice(b *strings.Builder, pieces []piece, slice string) {
 		}
 
 		fmt.Fprintf(b, "## The slice\n\nThis run works on slice %s, %q, number %d of %d in slicing's order. "+
-			"Earlier slices are settled: build on what their artifacts below hold, and never redo or duplicate it.\n\n",
+			"Earlier slices are settled: build on what they hold, given below whole or as digests whose whole artifact read_artifact returns, and never redo or duplicate it.\n\n",
 			p.id, p.title, i+1, len(pieces))
 
 		return
