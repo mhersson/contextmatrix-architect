@@ -202,8 +202,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   last answer arrived meanwhile closes once it ends. The reply reaches the panel only in the round's
   chat; the chat run's text and its `answer_chat` call stay in the record.
   A chat run that fails or is aborted leaves its messages until the user
-  writes, answers again or replies `continue`: the chat runs again, or the
-  continuation of the answered round gets them.
+  writes, answers again, replies `continue` or switches the mode so the round
+  goes to the responder: the chat runs again, or the continuation of the
+  answered round gets them.
   Under `auto` a responder run answers each question inside the asking run
   (see Interaction), every assumption on the tab is accepted, the round is
   shown answered and read-only, and the stage continues at once.
@@ -823,7 +824,9 @@ turned into a question, a later round of the attempt must be posted before
 the stage may submit. Under the human policy every stated assumption must
 have a basis. Under `auto` each assumption is accepted automatically, logged
 on the round, and keeps the status its basis gives it, never `confirmed`; no
-auto round records an acceptance. The stage submits each assumption as a
+auto round records an acceptance. On a round a mode switch handed to the
+responder, the acceptances and conversions the human made before it stand
+and the rest are the responder's. The stage submits each assumption as a
 standalone sentence, or as `{"text": "<sentence>", "basis": "<tag>"}` when it
 rests on an answered question (`Q<n>`) or an accepted assumption
 (`round<n>.A<k>`). The check refuses a sentence that points at other text
@@ -1043,7 +1046,7 @@ Replies the server understands, besides a round's structured answers:
 | `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At a slice's design gate, `reject slicing <feedback>` runs slicing and everything after it again, and `reject shared_decisions <feedback>` the shared decisions and every slice. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition, every slice's in slice order, with the feedback. `reject slicing <feedback>` runs slicing and everything after it again, `reject SL<n> <feedback>` that slice's design and every later slice, and `reject shared_decisions <feedback>` the shared decisions and every slice; the sign-off records its rejection first, then a rejection of the step that runs again, and the replaced versions superseded. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
 | `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round or gate keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
 | `cap <usd>`, `cap off`        | Sets the blueprint's cost cap (see below); CM sends it when the person clicks the cost in the sheet header. Exactly two words, the amount one plain decimal number, so an answer that starts with "cap" stays an answer. Works while a stage runs. |
-| `mode default\|auto\|auto+emit\|yolo` | Switches the blueprint's mode; every later question, gate and the sign-off follow the new one, and the gate plan, once posted, is posted again. Into `auto+emit` or `yolo`, a sign-off waiting for a human runs again, preflight included, and approves itself unless a critical finding across the blueprint or preflight stops it. Exactly two words, the mode one of the four, case ignored, so an answer that starts with "mode" stays an answer. Works while a stage runs. Refused, changing nothing, for the mode in effect, once emission has started (the sign-off approved) and after the pipeline ended. The stored mode survives a reopen: a later start's mode is ignored, as its cap is. Each reply is a `mode` event with the switch, or the refusal's reason (`unchanged`, `emission_started`, `ended`). |
+| `mode default\|auto\|auto+emit\|yolo` | Switches the blueprint's mode; every later question, gate and the sign-off follow the new one, and the gate plan, once posted, is posted again. Into `auto+emit` or `yolo`, a sign-off waiting for a human runs again, preflight included, and approves itself unless a critical finding across the blueprint or preflight stops it. Into any mode but default, the round waiting for a human goes to the auto responder at once when its stage's policy is now `auto` (a `gate` reply still wins): it turns read-only, the answers and decisions already sent stay the human's, the responder answers each open question and every undecided assumption is accepted, and the stage then continues; a switch back to default after that leaves it with the responder, and `continue`, the next message or a reopen finishes one an abort or a restart cut short. A shown gate stays with its human. Exactly two words, the mode one of the four, case ignored, so an answer that starts with "mode" stays an answer. Works while a stage runs. Refused, changing nothing, for the mode in effect, once emission has started (the sign-off approved) and after the pipeline ended. The stored mode survives a reopen: a later start's mode is ignored, as its cap is. Each reply is a `mode` event with the switch, or the refusal's reason (`unchanged`, `emission_started`, `ended`). |
 | `resume`, `continue`          | Runs the stopped stage again once, as a retry message would but storing no note (see below); a stage the cap stopped runs too and meets the cap again. The whole message, case ignored, so an answer that starts with either word stays an answer. While a run is in flight, or where nothing is stopped (an open gate, a round waiting for answers, the sign-off, an ended pipeline, no need yet), nothing starts and the panel says so. Each reply is a `resume` event with the stage it runs again, or with `nothing` and the stage `running`, if any. |
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
@@ -1166,7 +1169,12 @@ frames on the session's chat stream.
   blueprint and per-run caps, and whether every run was priced.
   While a round waits, its stage's step is waiting and no run is in
   flight; while a chat run answers its chat, the step is running and the
-  round stays the open prompt. Every artifact version is listed with its
+  round stays the open prompt. A round a mode switch handed to the
+  responder is no open prompt: nobody waits for the operator on it, and its
+  stage's step reads as an auto round's would at the same point: running, or
+  revising in a builder round, while the responder answers, and as after an
+  aborted run of its stage once an abort stops the responder.
+  Every artifact version is listed with its
   status (current, reviewing, at_gate, approved, rejected, superseded,
   folded), who decided
   its gate (you, or automatically: a stage gate the auto policy approved on

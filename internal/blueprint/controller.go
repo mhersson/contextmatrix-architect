@@ -434,9 +434,11 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 
 // interruptedStage marks every run a crash left running as interrupted and
 // returns the stage of the latest such stage run, to re-run. A responder run
-// left running sat inside its stage's run, so the stage run alone is re-run.
-// A builder round is not returned: the critique runs that round again, in
-// its attempt. Empty means no stage is re-run. The caller holds the run slot.
+// left running sat inside its stage's run, which alone is re-run, or answered
+// a handed-over round, whose resume answers what is left; it is never re-run
+// itself. A builder round is not returned: the critique runs that round
+// again, in its attempt. Empty means no stage is re-run. The caller holds the
+// run slot.
 func (c *Controller) interruptedStage(ctx context.Context, bp store.Blueprint) (string, error) {
 	left, err := c.leftRunning(ctx, bp.ID)
 	if err != nil || len(left) == 0 {

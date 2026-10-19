@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
+	protocol "github.com/mhersson/contextmatrix-protocol"
+
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -18,10 +22,13 @@ const (
 // SetMode switches the blueprint's mode, which every later question, gate
 // and sign-off reads from the store; the start of a reopen never changes
 // it. A switch to the mode in effect, once emission has started or after
-// the pipeline ended, is refused and changes nothing. Like a gate reply it
-// works while a stage runs. An applied switch posts the gate plan again. Into auto+emit or yolo, a
-// sign-off that waits for a human runs again, preflight included, and
-// approves itself under the rule the sign-off always follows.
+// the pipeline ended, is refused and changes nothing. Into a mode other than
+// default, the round waiting for a human goes to the auto responder at once
+// when its stage's policy is now auto (see handOver). Into auto+emit or
+// yolo, a sign-off that waits for a human runs again, preflight included,
+// and approves itself under the rule the sign-off always follows. Like a
+// gate reply it works while a stage runs. An applied switch posts the gate
+// plan again.
 func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error {
 	c.mu.Lock()
 	sess, ok := c.sessions[id]
@@ -40,11 +47,23 @@ func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error 
 		r      *run
 		runCtx context.Context
 		end    outcome
+		handed int
 		signs  bool
 	)
 
-	if applied && emitsOnItsOwn(mode) {
+	if applied && mode != protocol.ArchitectModeDefault {
+		if handed, r, runCtx, err = c.handOver(ctx, sess, bp, msgID); err != nil {
+			// The mode is stored; the round stays with its human.
+			c.opts.Logger.Warn("blueprint: hand the waiting round to the responder", "blueprint", id, "error", sess.audit.text(err.Error()))
+		}
+	}
+
+	if applied && handed == 0 && emitsOnItsOwn(mode) {
 		r, runCtx, end, signs = c.claimWaitingSignoff(ctx, sess, bp)
+	}
+
+	if handed > 0 {
+		payload["hands_over"] = handed
 	}
 
 	if signs {
@@ -58,11 +77,229 @@ func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error 
 		c.repostGatePlan(ctx, sess, bp)
 	}
 
-	if signs {
+	switch {
+	case signs:
 		c.launchEnd(runCtx, r, sess, bp, end)
+	case r != nil:
+		c.follow(context.WithoutCancel(ctx), runCtx, r, sess, bp, true)
 	}
 
 	return nil
+}
+
+// handOver hands the round waiting for a human to the auto responder when
+// its stage's policy is now auto (a gate reply still wins) and the pack has
+// responder instructions. The round turns read-only, the answers and
+// decisions stored so far stay and are recorded as the human's, and each
+// assumption left undecided is accepted. The run slot is poked: a free one
+// is claimed and returned for the caller to settle, a held one acts on the
+// round when it is released. It returns the round's number, 0 when nothing
+// was handed over. The caller has stored the new mode.
+func (c *Controller) handOver(ctx context.Context, sess *session, bp store.Blueprint, msgID string) (int, *run, context.Context, error) {
+	if c.opts.Pack.ResponderInstructions() == "" {
+		return 0, nil, nil, nil
+	}
+
+	lock := c.roundLock(bp.ID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	place, found, err := c.roundAt(ctx, bp.ID)
+	if err != nil || !found {
+		return 0, nil, nil, err
+	}
+
+	s := place.state
+	if s.Frame.Closed || s.Frame.Responder || s.complete() {
+		return 0, nil, nil, nil
+	}
+
+	policy, err := c.policy(ctx, bp, s.Frame.Stage)
+	if err != nil || policy != pack.PolicyAuto {
+		return 0, nil, nil, err
+	}
+
+	h := &handover{}
+	for _, a := range s.Frame.Answers {
+		h.Answered = append(h.Answered, a.Number)
+	}
+
+	for _, d := range s.Frame.Decisions {
+		h.Decided = append(h.Decided, d.ID)
+	}
+
+	next := acceptUndecided(s)
+	next.Frame.Responder, next.HandedOver = true, h
+	next.Change, next.MessageID, next.Dropped = changeHandedOver, msgID, 0
+	c.putRound(ctx, sess.audit, bp.ID, 0, next)
+
+	r, runCtx := c.poke(bp.ID)
+
+	return s.Number, r, runCtx, nil
+}
+
+// respondHandedOver has the auto responder answer each question of the
+// handed-over round the pipeline stands at that has no answer yet, outside
+// any stage run: with the asking stage's tools, each responder run capped
+// as a run of its own. Each answer is stored on the round as it comes, so a
+// cancel or a restart answers only what is left, and a question a row
+// already answers (a store cut short before its snapshot) takes that answer.
+// stageAsked hands the round to nextSegment, which closes it and continues
+// the stage; tools that cannot be prepared fail the blueprint, and a cancel
+// leaves it idle.
+func (c *Controller) respondHandedOver(ctx context.Context, r *run, sess *session, bp store.Blueprint) stageEnd {
+	bg := context.WithoutCancel(ctx)
+	au := sess.audit
+	lock := c.roundLock(bp.ID)
+
+	lock.Lock()
+	place, found, err := c.roundAt(bg, bp.ID)
+	lock.Unlock()
+
+	if err != nil {
+		c.fail(bg, au, bp.ID, 0, err.Error())
+
+		return stageStopped
+	}
+
+	s := place.state
+	if !found || s.HandedOver == nil || s.Frame.Closed {
+		return stageAsked
+	}
+
+	st, ok := c.stepAt(s.Frame.Stage)
+	if !ok {
+		c.fail(bg, au, bp.ID, 0, fmt.Sprintf("unknown stage %q", s.Frame.Stage))
+
+		return stageStopped
+	}
+
+	rows, err := c.opts.Store.ListQuestions(bg, bp.ID)
+	if err != nil {
+		c.fail(bg, au, bp.ID, 0, fmt.Sprintf("blueprint: read the answered questions: %v", err))
+
+		return stageStopped
+	}
+
+	recorded := map[int]store.Question{}
+	for _, q := range rows {
+		recorded[q.Number] = q
+	}
+
+	answered := map[int]bool{}
+	for _, a := range s.Frame.Answers {
+		answered[a.Number] = true
+	}
+
+	// The asking stage's tools are prepared once, at the first question the
+	// responder has to answer, and closed when the step ends.
+	var iv *interviewer
+
+	closeTools := func() {}
+	defer func() { closeTools() }()
+
+	for _, q := range s.Frame.Questions {
+		if answered[q.Number] {
+			continue
+		}
+
+		var ans protocol.RoundAnswer
+
+		if row, ok := recorded[q.Number]; ok {
+			ans = rowAnswer(q, row)
+		} else {
+			if iv == nil {
+				in, checks, closer, err := c.stageInput(ctx, sess, bp, s.PostedBy, st)
+				if err != nil {
+					switch {
+					case c.shuttingDown(r):
+					case ctx.Err() != nil:
+						c.setState(bg, bp.ID, StateIdle)
+					default:
+						c.opts.Logger.Error("blueprint: prepare the responder", "blueprint", bp.ID, "stage", s.Frame.Stage, "error", au.text(err.Error()))
+						c.setState(bg, bp.ID, StateFailed)
+						au.event(bg, Event{Kind: EventError, BlueprintID: bp.ID, Payload: map[string]any{
+							"stage": s.Frame.Stage, "reason": "prepare", "message": err.Error(),
+						}})
+					}
+
+					return stageStopped
+				}
+
+				closeTools = closer
+				iv = &interviewer{
+					c: c, bp: bp, st: st, sess: sess, r: r, runID: s.PostedBy, attempt: s.Attempt,
+					tools: in.Tools, poc: checks.poc,
+				}
+			}
+
+			ans, err = iv.respond(ctx, q)
+
+			switch {
+			case ctx.Err() != nil:
+				// A run Shutdown cut short writes nothing, as a stage run's.
+				if !c.shuttingDown(r) {
+					c.setState(bg, bp.ID, StateIdle)
+				}
+
+				return stageStopped
+			case err != nil:
+				ans = protocol.RoundAnswer{Number: q.Number, Text: err.Error()}
+			}
+		}
+
+		lock.Lock()
+
+		if cur, ok := c.newestRound(bg, bp.ID); ok && cur.Number == s.Number && !cur.Frame.Closed && cur.HandedOver != nil {
+			next, _ := mergeReply(cur, []protocol.RoundAnswer{ans}, nil)
+			// A question a chat run revised since the handover lost the
+			// human's answer; this one is the responder's.
+			next.HandedOver.Answered = slices.DeleteFunc(next.HandedOver.Answered, func(n int) bool { return n == q.Number })
+			next.Change, next.MessageID, next.Dropped = changeResponded, "", 0
+			c.putRound(bg, au, bp.ID, 0, next)
+		}
+
+		lock.Unlock()
+	}
+
+	lock.Lock()
+	defer lock.Unlock()
+
+	// A chat run that held the slot at the handover may have put new
+	// assumptions on the tab since; the responder accepts them too, so the
+	// round is complete and closes.
+	if cur, ok := c.newestRound(bg, bp.ID); ok && cur.Number == s.Number && !cur.Frame.Closed && !cur.complete() {
+		next := acceptUndecided(cur)
+		next.Change, next.MessageID, next.Dropped = changeResponded, "", 0
+		c.putRound(bg, au, bp.ID, 0, next)
+	}
+
+	return stageAsked
+}
+
+// acceptUndecided is s with each assumption on its tab that has no decision
+// accepted.
+func acceptUndecided(s roundState) roundState {
+	out := s.clone()
+
+	decided := map[string]bool{}
+	for _, d := range s.Frame.Decisions {
+		decided[d.ID] = true
+	}
+
+	for _, a := range s.Frame.Assumptions {
+		if !decided[a.ID] {
+			out.Frame.Decisions = append(out.Frame.Decisions, protocol.AssumptionDecision{ID: a.ID, Accept: true})
+		}
+	}
+
+	return out
+}
+
+// rowAnswer is the answer a questions row records for q: the option whose
+// title it holds, else its text.
+func rowAnswer(q protocol.RoundQuestion, row store.Question) protocol.RoundAnswer {
+	return optionAnswer(q, row.Answer)
 }
 
 // claimWaitingSignoff takes the run slot while the blueprint waits at a

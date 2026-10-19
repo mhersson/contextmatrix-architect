@@ -36,6 +36,11 @@ const (
 	// ChangeClosing is a snapshot older closes stored, never shown: the
 	// question numbers reserved for a close's acceptances before their rows.
 	ChangeClosing = "closing"
+	// changeHandedOver: a mode switch handed a round waiting for a human to
+	// the auto responder; changeResponded: the responder answered one of its
+	// open questions.
+	changeHandedOver = "handed_over"
+	changeResponded  = "responded"
 )
 
 // roundState is one snapshot of a question round: the frame the panel shows
@@ -697,6 +702,9 @@ const (
 	// roundChat: a chat segment for the user's messages its conversation has
 	// not seen.
 	roundChat
+	// roundRespond: a mode switch handed the round to the auto responder,
+	// which answers what is still open.
+	roundRespond
 	// roundClose: every question is answered, so the round closes and the
 	// stage continues.
 	roundClose
@@ -706,7 +714,8 @@ const (
 
 // roundPlace is the round the pipeline stands at, what it waits for, and
 // whether the run after it failed or was aborted (stalled): that run waits
-// for the next message, as a failed stage does.
+// for the next message, as a failed stage does. An open handed-over round is
+// never stalled: the switch that handed it over is the go-ahead.
 type roundPlace struct {
 	state   roundState
 	next    roundNext
@@ -759,13 +768,16 @@ func (c *Controller) roundAt(ctx context.Context, id string) (roundPlace, bool, 
 	}
 
 	place := roundPlace{state: s}
-	place.stalled = last.Status == store.RunFailed || (last.Status == store.RunCanceled && last.Reason != reasonSessionEnded)
+	place.stalled = (s.HandedOver == nil || s.Frame.Closed) &&
+		(last.Status == store.RunFailed || (last.Status == store.RunCanceled && last.Reason != reasonSessionEnded))
 
 	switch {
 	case s.Frame.Closed:
 		place.next = roundContinue
 	case s.complete():
 		place.next = roundClose
+	case s.HandedOver != nil:
+		place.next = roundRespond
 	case s.chatPending():
 		place.next = roundChat
 	default:

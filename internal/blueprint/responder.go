@@ -185,13 +185,19 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion) (p
 		c.opts.Logger.Error("blueprint: record the auto answer", "blueprint", iv.bp.ID, "question", q.Number, "error", err)
 	}
 
+	return optionAnswer(q, ans.Answer), nil
+}
+
+// optionAnswer is text as an answer to q: the option whose title it names,
+// case and surrounding space aside, else the text itself.
+func optionAnswer(q protocol.RoundQuestion, text string) protocol.RoundAnswer {
 	for i, o := range q.Options {
-		if strings.EqualFold(strings.TrimSpace(o.Title), ans.Answer) {
-			return protocol.RoundAnswer{Number: q.Number, Option: i + 1}, nil
+		if strings.EqualFold(strings.TrimSpace(o.Title), strings.TrimSpace(text)) {
+			return protocol.RoundAnswer{Number: q.Number, Option: i + 1}
 		}
 	}
 
-	return protocol.RoundAnswer{Number: q.Number, Text: ans.Answer}, nil
+	return protocol.RoundAnswer{Number: q.Number, Text: text}
 }
 
 // responderTask is what a responder is given: the target projects, the

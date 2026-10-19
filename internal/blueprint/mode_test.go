@@ -2,6 +2,9 @@ package blueprint
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -477,4 +480,426 @@ func TestSetMode_BackToDefaultDuringTheAutomaticPreflightShowsTheSignoff(t *test
 	gates, err := st.ListGates(ctx, "BP1", signoffStage)
 	require.NoError(t, err)
 	assert.Empty(t, gates)
+}
+
+// handoverScript is the pipeline with an intake whose first run asks one
+// round of two questions, with assumptions on its tab, and whose
+// continuation submits; its responder answers "operators".
+func handoverScript(assumptions ...string) stageScript {
+	script := happyScript()
+	script["intake.responder"] = respondsWith("operators")
+	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if in.History != nil {
+			return done("# Need", map[string]any{"slices": 1}), nil
+		}
+
+		if _, err := in.Interviewer.Ask(ctx, stage.Round{
+			Questions:   []stage.RoundQuestion{roundQ("Deploy", "Helm or Kustomize?", "Helm", "Kustomize"), roundQ("Users", "Who uses it?")},
+			Assumptions: assumptions,
+		}); err != nil {
+			return stage.Output{}, err
+		}
+
+		return askedOutput(in), nil
+	}
+
+	return script
+}
+
+// blockingSecond is a responder that answers "operators" except on its
+// second run, which signals blocked and waits for its cancel.
+func blockingSecond(blocked chan struct{}) func(context.Context, stage.Input) (stage.Output, error) {
+	var n atomic.Int32
+
+	return func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if n.Add(1) == 2 {
+			signal(blocked)
+			<-ctx.Done()
+
+			return stage.Output{}, ctx.Err()
+		}
+
+		return answering("operators", in), nil
+	}
+}
+
+// responderRounds are the question numbers BP1's responder runs answered, in
+// run order.
+func responderRounds(t *testing.T, st *store.Store) []int {
+	t.Helper()
+
+	runs, err := st.ListRuns(context.Background(), "BP1")
+	require.NoError(t, err)
+
+	var out []int
+
+	for _, r := range runs {
+		if r.Kind == store.RunKindResponder {
+			out = append(out, r.Round)
+		}
+	}
+
+	return out
+}
+
+func TestSetMode_HandsAWaitingRoundToTheResponderAndKeepsTheHumansAnswers(t *testing.T) {
+	c, st, runner, rec, _ := newPipeline(t, handoverScript())
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+
+	answerRound(t, c, "BP1", 1, false, pick(1, 2))
+	c.Wait("BP1")
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	c.Wait("BP1")
+
+	e := onlyMode(t, rec)
+	assert.Equal(t, 1, e.Payload["hands_over"])
+	assert.Equal(t, false, e.Payload["during_run"])
+	assert.Equal(t, []int{2}, responderRounds(t, st), "the responder answers only the open question")
+
+	round := latestRound(t, c, "BP1", 1)
+	require.True(t, round.Frame.Closed)
+	assert.Equal(t, []protocol.RoundAnswer{{Number: 1, Option: 2}, {Number: 2, Text: "operators"}}, round.Frame.Answers)
+
+	qs, err := st.ListQuestions(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, qs, 2, "one row per question")
+
+	who := map[int]string{}
+	for _, q := range qs {
+		who[q.Number] = q.Responder
+	}
+
+	assert.Equal(t, map[int]string{1: store.ResponderHuman, 2: store.ResponderAuto}, who)
+
+	var cont stage.Input
+
+	for _, in := range inputsOf(runner, "intake") {
+		if in.History != nil {
+			cont = in
+		}
+	}
+
+	require.NotNil(t, cont.History, "the stage continues from its conversation")
+	assertAttributed(t, cont.Task)
+}
+
+func TestSetMode_AHandedOverTabKeepsTheHumansDecisionsAndAcceptsTheRest(t *testing.T) {
+	c, _, _, _, _ := newPipeline(t, handoverScript("One cluster per environment.", "Nightly backups are enough.", "No multi-region."))
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+
+	require.NoError(t, c.Reply(ctx, "BP1", protocol.RoundReply{PromptID: roundPromptID(1), Decisions: []protocol.AssumptionDecision{
+		{ID: "A1", Accept: true}, {ID: "A2", Accept: false},
+	}}, "m-tab"))
+	c.Wait("BP1")
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	c.Wait("BP1")
+
+	round := latestRound(t, c, "BP1", 1)
+	require.True(t, round.Frame.Closed)
+	assert.ElementsMatch(t, []protocol.AssumptionDecision{{ID: "A1", Accept: true}, {ID: "A2", Accept: false}, {ID: "A3", Accept: true}}, round.Frame.Decisions)
+	assert.Equal(t, []string{"A2"}, round.Converted, "the human's conversion stands")
+
+	accepted, err := c.acceptedAssumptions(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, accepted, 1, "only the human's acceptance is confirmed")
+	assert.Equal(t, "A1", accepted[0].ID)
+}
+
+func TestSetMode_AGateReplyKeepsTheWaitingRoundWithTheHuman(t *testing.T) {
+	c, st, runner, rec, _ := newPipeline(t, handoverScript())
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	require.NoError(t, c.SetPolicy(ctx, "BP1", "intake", "human", "m-gate"))
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	c.Wait("BP1")
+
+	assert.NotContains(t, onlyMode(t, rec).Payload, "hands_over")
+
+	round := latestRound(t, c, "BP1", 1)
+	assert.False(t, round.Frame.Responder)
+	assert.False(t, round.Frame.Closed)
+	assert.Empty(t, inputsOf(runner, "intake.responder"))
+	assert.Equal(t, string(StateWaiting), stateOf(t, st, "BP1"))
+}
+
+func TestSetMode_ARoundIsHandedOverWhenTheChatRunHoldingTheSlotEnds(t *testing.T) {
+	cases := []struct {
+		name  string
+		modes []string
+	}{
+		{name: "switched to auto", modes: []string{protocol.ArchitectModeAuto}},
+		{name: "and back to default before the responder ran", modes: []string{protocol.ArchitectModeAuto, protocol.ArchitectModeDefault}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entered, release := make(chan struct{}, 1), make(chan struct{})
+
+			script := handoverScript()
+			asking := script["intake"]
+			script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+				if !in.Chat {
+					return asking(ctx, in)
+				}
+
+				signal(entered)
+				<-release
+
+				if _, err := in.Interviewer.Answer(ctx, stage.ChatAnswer{Reply: "Kustomize keeps plain manifests."}); err != nil {
+					return stage.Output{}, err
+				}
+
+				return askedOutput(in), nil
+			}
+
+			c, st, _, rec, _ := newPipeline(t, script)
+			ctx := context.Background()
+
+			drive(t, c, "BP1")
+
+			require.NoError(t, c.Message(ctx, "BP1", "Why Kustomize?", "m-chat"))
+			receive(t, entered, "the chat run")
+
+			for i, m := range tc.modes {
+				require.NoError(t, c.SetMode(ctx, "BP1", m, fmt.Sprintf("m-mode-%d", i)))
+			}
+
+			first := rec.all(EventMode)[0]
+			assert.Equal(t, 1, first.Payload["hands_over"])
+			assert.Equal(t, true, first.Payload["during_run"])
+
+			close(release)
+			c.Wait("BP1")
+
+			assert.Equal(t, []int{1, 2}, responderRounds(t, st), "the responder answers both questions")
+			assert.True(t, latestRound(t, c, "BP1", 1).Frame.Closed)
+		})
+	}
+}
+
+func TestSetMode_AnAbortedHandoverAnswersOnlyWhatIsLeftOnContinue(t *testing.T) {
+	blocked := make(chan struct{}, 1)
+	script := handoverScript()
+	script["intake.responder"] = blockingSecond(blocked)
+
+	c, st, _, _, _ := newPipeline(t, script)
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	receive(t, blocked, "the second responder run")
+
+	view, err := c.View(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, stepRunning, stepOf(t, view, "intake").Status, "as an auto round's step reads while its responder answers")
+
+	require.NoError(t, c.Abort(ctx, "BP1", "m-abort"))
+	c.Wait("BP1")
+
+	round := latestRound(t, c, "BP1", 1)
+	require.False(t, round.Frame.Closed)
+	assert.Equal(t, []protocol.RoundAnswer{{Number: 1, Text: "operators"}}, round.Frame.Answers, "the answer given before the abort is kept")
+
+	view, err = c.View(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Nil(t, view.Open, "a handed-over round waits for nobody")
+	assert.Equal(t, stepPending, stepOf(t, view, "intake").Status, "as an auto round's step reads after an abort")
+
+	require.NoError(t, c.Resume(ctx, "BP1", "m-continue"))
+	c.Wait("BP1")
+
+	assert.Equal(t, []int{1, 2, 2}, responderRounds(t, st), "continue answers only the open question")
+	assert.True(t, latestRound(t, c, "BP1", 1).Frame.Closed)
+
+	qs, err := st.ListQuestions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Len(t, qs, 2, "one row per question")
+}
+
+func TestSetMode_ARestartInTheMiddleOfAHandoverAnswersOnlyWhatIsLeft(t *testing.T) {
+	blocked := make(chan struct{}, 1)
+	script := handoverScript()
+	script["intake.responder"] = blockingSecond(blocked)
+
+	c, st, _, _, ws := newPipeline(t, script)
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	receive(t, blocked, "the second responder run")
+	require.NoError(t, c.Shutdown(ctx))
+
+	c2, runner2, _ := restart(t, st, ws, handoverScript(), newFakeCM().connect, startInput("BP1"))
+	c2.Wait("BP1")
+
+	assert.Len(t, inputsOf(runner2, "intake.responder"), 1, "the restart answers only the open question")
+	assert.True(t, latestRound(t, c2, "BP1", 1).Frame.Closed)
+
+	qs, err := st.ListQuestions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Len(t, qs, 2, "one row per question")
+}
+
+func TestSetMode_AnAssumptionAChatRunTabsAfterTheHandoverIsTheResponders(t *testing.T) {
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+
+	script := handoverScript("One cluster per environment.")
+	asking := script["intake"]
+	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if !in.Chat {
+			return asking(ctx, in)
+		}
+
+		signal(entered)
+		<-release
+
+		if _, err := in.Interviewer.Answer(ctx, stage.ChatAnswer{
+			Reply: "Backups belong on the tab too.", Assumptions: []string{"One cluster per environment.", "Nightly backups are enough."},
+		}); err != nil {
+			return stage.Output{}, err
+		}
+
+		return askedOutput(in), nil
+	}
+
+	c, st, _, _, _ := newPipeline(t, script)
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+
+	require.NoError(t, c.Message(ctx, "BP1", "What about backups?", "m-chat"))
+	receive(t, entered, "the chat run")
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	close(release)
+	c.Wait("BP1")
+
+	round := latestRound(t, c, "BP1", 1)
+	require.True(t, round.Frame.Closed, "the round closes once the responder has answered")
+	assert.ElementsMatch(t, []protocol.AssumptionDecision{{ID: "A1", Accept: true}, {ID: "A2", Accept: true}}, round.Frame.Decisions)
+	assert.Equal(t, []int{1, 2}, responderRounds(t, st))
+
+	accepted, err := c.acceptedAssumptions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Empty(t, accepted, "the responder's acceptances confirm nothing")
+}
+
+func TestSetMode_AnAnswerAChatRunDropsAfterTheHandoverIsTheResponders(t *testing.T) {
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+
+	script := handoverScript()
+	asking := script["intake"]
+	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if !in.Chat {
+			return asking(ctx, in)
+		}
+
+		signal(entered)
+		<-release
+
+		// New options drop the human's answer to Q1.
+		revisedQ := roundQ("Deploy", "Helm or Kustomize?", "Helm", "Kustomize", "Plain manifests")
+		revisedQ.Number = 1
+
+		if _, err := in.Interviewer.Answer(ctx, stage.ChatAnswer{Reply: "Plain manifests are an option too.", Questions: []stage.RoundQuestion{revisedQ}}); err != nil {
+			return stage.Output{}, err
+		}
+
+		return askedOutput(in), nil
+	}
+
+	c, st, runner, _, _ := newPipeline(t, script)
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+
+	answerRound(t, c, "BP1", 1, false, pick(1, 2))
+	c.Wait("BP1")
+
+	require.NoError(t, c.Message(ctx, "BP1", "Is there a third way?", "m-chat"))
+	receive(t, entered, "the chat run")
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	close(release)
+	c.Wait("BP1")
+
+	assert.Equal(t, []int{1, 2}, responderRounds(t, st))
+	require.True(t, latestRound(t, c, "BP1", 1).Frame.Closed)
+
+	var cont stage.Input
+
+	for _, in := range inputsOf(runner, "intake") {
+		if in.History != nil && !in.Chat {
+			cont = in
+		}
+	}
+
+	require.NotNil(t, cont.History, "the stage continues from its conversation")
+
+	q1 := blockOf(cont.Task, "Q1")
+	assert.Contains(t, q1, answeredByResponder)
+	assert.NotContains(t, q1, answeredByUser)
+}
+
+func TestSetMode_AStalledRoundHandedOverIsAnsweredAndItsStageGoesOn(t *testing.T) {
+	script := handoverScript()
+	asking := script["intake"]
+	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if in.Chat {
+			return stage.Output{}, errors.New("the chat run failed")
+		}
+
+		return asking(ctx, in)
+	}
+
+	c, st, runner, _, _ := newPipeline(t, script)
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+
+	require.NoError(t, c.Message(ctx, "BP1", "Why Kustomize?", "m-chat"))
+	c.Wait("BP1")
+	require.Equal(t, string(StateFailed), stateOf(t, st, "BP1"))
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	c.Wait("BP1")
+
+	assert.Equal(t, []int{1, 2}, responderRounds(t, st))
+	assert.True(t, latestRound(t, c, "BP1", 1).Frame.Closed)
+
+	continued := false
+
+	for _, in := range inputsOf(runner, "intake") {
+		continued = continued || (in.History != nil && !in.Chat)
+	}
+
+	assert.True(t, continued, "the stage continues from its conversation")
+	assert.NotEqual(t, string(StateRunning), stateOf(t, st, "BP1"), "no run is left to end the running state")
+}
+
+func TestRowAnswer_TakesTheOptionARowNamesElseItsText(t *testing.T) {
+	q := protocol.RoundQuestion{Number: 3, Options: []protocol.RoundOption{{Title: "Helm"}, {Title: "Kustomize"}}}
+
+	cases := []struct {
+		name, answer string
+		want         protocol.RoundAnswer
+	}{
+		{name: "an option's title", answer: "Helm", want: protocol.RoundAnswer{Number: 3, Option: 1}},
+		{name: "an option's title, case and spacing aside", answer: "  kustomize ", want: protocol.RoundAnswer{Number: 3, Option: 2}},
+		{name: "a free answer", answer: "operators", want: protocol.RoundAnswer{Number: 3, Text: "operators"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, rowAnswer(q, store.Question{Number: 3, Answer: tc.answer}))
+		})
+	}
 }
