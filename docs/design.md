@@ -382,21 +382,21 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   own slice's earlier steps, and, slice by slice, each earlier slice's
   artifacts of the stages its `earlier_slices` names. A whole-blueprint
   stage after the per-slice stages reads every slice's, in order.
-  With two or more slices, an artifact of another slice is given as a
-  digest of its data, by the shape its stage's checks give it: a design's
-  decisions (id, text, chosen) and contracts; an acceptance's criteria and
-  manual checks by id with their first line; cards by id, title, project,
-  type, Where paths, `depends_on` and criteria ids, with the draft's manual
+  With two or more slices, an artifact of another slice is given as a digest
+  of its data, by the shape its stage's checks give it: a design's decisions
+  (id, text, chosen) and contracts; an acceptance's criteria and manual
+  checks by id with their first line; cards by id, title, project, type,
+  Where paths, `depends_on` and criteria ids, with the draft's manual
   entries and setup. A whole-blueprint stage reads the stage it loops to
-  whole for every slice. A stage without such a shape, or data that does
-  not decode or holds an item of another shape, is given whole. A run
-  whose task holds a digest is offered `read_artifact` for the whole. A
-  per-slice task opens by naming its slice. A gate reply (`gate <stage>
-  human|auto`) and a stage's policies cover every slice of the stage. A
-  rejection at a slice's gate runs that slice's step again. A run's cost
-  floor reads every slice's runs of its stage. A blueprint whose record ran
-  a per-slice stage under its plain id, from before stages repeated per
-  slice, keeps running them once for the whole blueprint.
+  whole for every slice. A stage without such a shape, or data that does not
+  decode or holds an item of another shape, is given whole. A run whose task
+  holds a digest is offered `read_artifact` for the whole. A per-slice task
+  opens by naming its slice. A gate reply (`gate <stage> human|auto`) and a
+  stage's policies cover every slice of the stage. A rejection at a slice's
+  gate runs that slice's step again. A run's cost floor reads every slice's
+  runs of its stage. A blueprint whose record ran a per-slice stage under
+  its plain id, from before stages repeated per slice, keeps running them
+  once for the whole blueprint.
 - A stage the pack marks `shared` settles what every slice shares, between
   slicing and the per-slice stages, behind its own gate. With fewer than two
   slices it collapses: it never runs, and the step after it follows. The
@@ -1052,15 +1052,15 @@ frames on the session's chat stream.
   plus `signoff` and `emission` when the pack checks cards.
   Each step carries its persona, gate, policy (the gate policy for a gated
   stage), fold target, status (pending, running, reviewing, revising,
-  waiting, done, failed, folded or skipped; a collapsed shared stage is
-  skipped), attempt, a loop stage's round of its maximum, latest version
-  and cost. The view also carries the run in flight (stage, kind, persona,
-  model, start, and the turns, tool calls and tokens its harness lines have
-  counted), the open prompt (`round:<n>` of kind `round`,
-  `gate:<stage>:v<n>`, `gate:<stage>:<slice>:v<n>` for a per-slice gate,
-  `gate:signoff:v<n>`, or `emission:v<n>` for a
-  stopped emission or run start), and the cost: the ledger plus the runs in
-  flight, the blueprint and per-run caps, and whether every run was priced.
+  waiting, done, failed, folded, skipped, stopped or not_reached; a
+  collapsed shared stage is skipped), attempt, a loop stage's round of its
+  maximum, latest version and cost. The view also carries the run in flight
+  (stage, kind, persona, model, start, and the turns, tool calls and tokens
+  its harness lines have counted), the open prompt (`round:<n>` of kind
+  `round`, `gate:<stage>:v<n>`, `gate:<stage>:<slice>:v<n>` for a per-slice
+  gate, `gate:signoff:v<n>`, or `emission:v<n>` for a stopped emission or
+  run start), and the cost: the ledger plus the runs in flight, the
+  blueprint and per-run caps, and whether every run was priced.
   While a round waits, its stage's step is waiting and no run is in
   flight; while a chat run answers its chat, the step is running and the
   round stays the open prompt. Every artifact version is listed with its
@@ -1096,6 +1096,18 @@ frames on the session's chat stream.
   they and a collapsed stage's stored versions read superseded. While a
   decomposition chain runs, the per-slice steps after it that it does not
   run read done.
+  A pipeline that ended before the sign-off (slicing that holds no slices,
+  cards the contract stopped, readiness's rounds spent) reads `ended`, with
+  a one-line `end_reason`, whatever state the blueprint's row holds (idle):
+  it is read from the record, so a blueprint that ended before the view
+  said so reads ended too. The step whose artifact the end carries is
+  stopped, its newest version current on the sheet. A step after it reads
+  skipped when it collapsed and its collapse is recorded, not_reached when
+  it collapsed otherwise, holds no version or holds one a reject
+  superseded, and done or folded when it holds a version from before the
+  end (a loop's chain the end cut short); the sign-off reads done when one
+  was shown before the end and not_reached otherwise, and the board
+  not_reached. A cost-cap stop is no end: it waits, as before.
   `Seq` is the id of the newest events row the view reflects, and every
   state change writes one. The view reads the store and memory only, so an
   ended session's blueprint has one while the architect is up. A record the
@@ -1191,7 +1203,7 @@ frames on the session's chat stream.
 
 - Go 1.27, `contextmatrix-harness` v0.26.0 (loop, llm client, jailed read
   tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.9.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.31.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.32.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
@@ -1282,6 +1294,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Panel: the review popover and the gate bar show the findings ledger (id, severity, the reviewer's status, the builder's claim beside it), and the tester persona has a display name (protocol v0.28.0) | reviewers |
 | Pin protocol v0.29.0, since `internal/chat` decodes `LogMarker` and `LogRound`; panel: slice tabs under the stage tabs and a grouped scale bar, only with two or more slices; the artifact proxy forwards `?slice=SL<n>`, checked against `^SL[1-9][0-9]{0,2}$`; the gate bar renders "Reject shared decisions" like any action; the new `shared_decisions` stage displays with tab "Shared", name "Shared decisions", title "Shared decisions", noun "shared decisions" and doing "settling the shared decisions" | slices |
 | Pin protocol v0.31.0; panel: a review card reads "sent back" from ArtifactReview.SentBack, "passed" otherwise when it passed, else "failed", and its explanation states the settle rule; a blueprint session's pane header shows the view's cost.spent_usd; a design sheet with one slice entry drops the slice heading | review settle |
+| Pin protocol v0.32.0; panel: step statuses `stopped` (the failed ink, "Stopped the pipeline") and `not_reached` (its own quiet tone, "Not reached", never clickable); on an `ended` view the current step is the stopped one and the where line reads "Stopped: <end_reason>"; a feedback box labelled by its action's `ask`; Outcomes tables on the need, shared decisions and design sheets; an Outcomes column and an Edge cases table per slice on the acceptance sheet; an "Across the blueprint" table on the readiness and sign-off sheets, and the sign-off's override reason; `A<n>` and `O<n>` basis chips | quality checks |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

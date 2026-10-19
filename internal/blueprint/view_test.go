@@ -841,27 +841,6 @@ func TestView_States(t *testing.T) {
 				assert.Equal(t, stepFailed, stepOf(t, v, "emission").Status)
 			},
 		},
-		{
-			name: "ended not ready",
-			setup: func(t *testing.T, c *Controller, st *store.Store) {
-				through(t, c, st, "decomposition")
-
-				for round := 1; round <= 3; round++ {
-					ran(t, st, "readiness", store.RunKindStage, round, 1, 0.1)
-					put(t, st, "readiness", map[string]any{"cards": []any{map[string]any{"id": "D1", "ready": false, "findings": []any{"no"}}}})
-
-					if round < 3 {
-						ran(t, st, "decomposition", store.RunKindStage, round+1, 1, 0.1)
-						put(t, st, "decomposition", stageData("decomposition"))
-					}
-				}
-			},
-			check: func(t *testing.T, v protocol.BlueprintView) {
-				assert.Equal(t, stepDone, stepOf(t, v, "readiness").Status)
-				assert.Equal(t, stepSkipped, stepOf(t, v, "signoff").Status)
-				assert.Equal(t, stepSkipped, stepOf(t, v, "emission").Status)
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -1138,4 +1117,201 @@ func TestView_TheRunInFlightNamesItsSlice(t *testing.T) {
 	assert.Equal(t, "grounding", v.Current.Stage)
 	assert.Equal(t, "SL2", v.Current.Slice)
 	assert.Equal(t, stepRunning, sliceStep(t, v, "grounding", "SL2").Status)
+}
+
+func TestView_AnEndedPipeline(t *testing.T) {
+	stopped := func(t *testing.T, st *store.Store, key string) {
+		t.Helper()
+
+		ran(t, st, key, store.RunKindStage, 2, 1, 0.1)
+		put(t, st, key, map[string]any{"cards": []any{map[string]any{"id": "D1"}}, "stopped": true, "findings": []any{"D1: missing_section: Where"}})
+	}
+
+	tests := []struct {
+		name   string
+		sliced bool
+		setup  func(t *testing.T, c *Controller, st *store.Store)
+		// stopped is the key of the step that ended the pipeline; done,
+		// folded, unreached and skipped are keys of steps after or before it.
+		stopped                          string
+		done, folded, unreached, skipped []string
+	}{
+		{
+			name: "slicing that holds no slices",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				through(t, c, st, "intake")
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", map[string]any{"slices": []any{}})
+			},
+			stopped: "slicing", done: []string{"intake"},
+			unreached: []string{"solution_design", "grounding", "acceptance", "decomposition", "readiness"},
+		},
+		{
+			name: "cards the contract stopped",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				through(t, c, st, "acceptance")
+				stopped(t, st, "decomposition")
+			},
+			stopped: "decomposition", done: []string{"intake", "slicing", "solution_design", "grounding", "acceptance"},
+			unreached: []string{"readiness"},
+		},
+		{
+			name: "readiness's rounds spent",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				through(t, c, st, "decomposition")
+
+				for round := 1; round <= 3; round++ {
+					ran(t, st, "readiness", store.RunKindStage, round, 1, 0.1)
+					put(t, st, "readiness", map[string]any{"cards": []any{map[string]any{"id": "D1", "ready": false, "findings": []any{"no"}}}})
+
+					if round < 3 {
+						ran(t, st, "decomposition", store.RunKindStage, round+1, 1, 0.1)
+						put(t, st, "decomposition", stageData("decomposition"))
+					}
+				}
+			},
+			stopped: "readiness", done: []string{"decomposition"},
+		},
+		{
+			name: "a sliced blueprint whose slicing holds none", sliced: true,
+			setup: func(t *testing.T, _ *Controller, st *store.Store) {
+				throughSliced(t, st, "intake")
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", map[string]any{"slices": []any{}})
+			},
+			stopped: "slicing",
+			// The shared stage collapses below two slices, but no pass recorded it.
+			unreached: []string{"shared_decisions", "solution_design", "grounding", "acceptance", "decomposition", "readiness"},
+		},
+		{
+			name: "a re-slice to none after one slice keeps the recorded collapse", sliced: true,
+			setup: func(t *testing.T, _ *Controller, st *store.Store) {
+				throughSliced(t, st, "intake")
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", oneSlice())
+				gateRow(t, st, "slicing", 1, store.GateFold, store.ResponderAuto, "solution_design@SL1")
+				gateRow(t, st, "shared_decisions", 0, store.GateFold, store.ResponderAuto, "solution_design@SL1")
+				ran(t, st, "slicing", store.RunKindStage, 2, 1, 0.1)
+				put(t, st, "slicing", map[string]any{"slices": []any{}})
+			},
+			stopped: "slicing", skipped: []string{"shared_decisions"},
+			unreached: []string{"solution_design", "readiness"},
+		},
+		{
+			name: "a readiness chain the contract stopped part way", sliced: true,
+			setup: func(t *testing.T, _ *Controller, st *store.Store) {
+				throughSliced(t, st, "decomposition@SL2")
+				ran(t, st, "readiness", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "readiness", map[string]any{"cards": []any{
+					map[string]any{"id": "D1", "ready": false, "findings": []any{"no"}},
+					map[string]any{"id": "D2", "ready": true, "findings": []any{}},
+				}})
+				stopped(t, st, "decomposition@SL1")
+			},
+			stopped: "decomposition@SL1",
+			done:    []string{"solution_design@SL1", "solution_design@SL2", "decomposition@SL2", "readiness"},
+		},
+		{
+			name: "a step after the stop that folded into a later gate", sliced: true,
+			setup: func(t *testing.T, _ *Controller, st *store.Store) {
+				throughSliced(t, st, "decomposition@SL2")
+				ran(t, st, "readiness", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "readiness", map[string]any{"cards": []any{map[string]any{"id": "D1", "ready": true, "findings": []any{}}}})
+				gateRow(t, st, "readiness", 1, store.GateFold, store.ResponderAuto, "signoff")
+				stopped(t, st, "decomposition@SL1")
+			},
+			stopped: "decomposition@SL1",
+			done:    []string{"solution_design@SL1", "decomposition@SL2"},
+			folded:  []string{"readiness"},
+		},
+		{
+			name: "a step after the stop whose version a reject superseded", sliced: true,
+			setup: func(t *testing.T, _ *Controller, st *store.Store) {
+				throughSliced(t, st, "decomposition@SL2")
+				gateRow(t, st, "solution_design@SL2", 1, store.GateSuperseded, store.ResponderHuman, "")
+				stopped(t, st, "decomposition@SL1")
+			},
+			stopped:   "decomposition@SL1",
+			done:      []string{"solution_design@SL1", "decomposition@SL2"},
+			unreached: []string{"solution_design@SL2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var (
+				c  *Controller
+				st *store.Store
+			)
+
+			if tt.sliced {
+				c, st = newSlicedView(t)
+			} else {
+				c, st = newViewController(t, "default", 0)
+			}
+
+			tt.setup(t, c, st)
+
+			v := view(t, c)
+			assert.Equal(t, viewEnded, v.State)
+			assert.NotEmpty(t, v.EndReason)
+			assert.Nil(t, v.Open)
+
+			step := func(key string) protocol.PipelineStep {
+				stage, slice := pack.SplitStep(key)
+
+				return sliceStep(t, v, stage, slice)
+			}
+
+			assert.Equal(t, stepStopped, step(tt.stopped).Status)
+
+			stage, slice := pack.SplitStep(tt.stopped)
+			newest := step(tt.stopped).LatestVersion
+			assert.Equal(t, artCurrent, sliceRef(t, v, stage, slice, newest).Status, "the stopping step keeps its newest version on the sheet")
+
+			for _, key := range tt.done {
+				assert.Equal(t, stepDone, step(key).Status, key)
+			}
+
+			for _, key := range tt.folded {
+				assert.Equal(t, stepFolded, step(key).Status, key)
+			}
+
+			for _, key := range tt.unreached {
+				assert.Equal(t, stepNotReached, step(key).Status, key)
+			}
+
+			for _, key := range tt.skipped {
+				assert.Equal(t, stepSkipped, step(key).Status, key)
+			}
+
+			assert.Equal(t, stepNotReached, stepOf(t, v, signoffStage).Status)
+			assert.Equal(t, stepNotReached, stepOf(t, v, emissionStage).Status)
+		})
+	}
+
+	t.Run("a sign-off that ran before the end holds its versions", func(t *testing.T) {
+		c, st := newViewController(t, "default", 0)
+		through(t, c, st, "readiness")
+		appendEvent(t, st, EventSignOff, map[string]any{"version": 1, "cards": []any{}})
+		gateRow(t, st, signoffStage, 1, store.GateReject, store.ResponderHuman, "split D1")
+		stopped(t, st, "decomposition")
+
+		v := view(t, c)
+		assert.Equal(t, viewEnded, v.State)
+		assert.Equal(t, stepDone, stepOf(t, v, signoffStage).Status)
+		assert.Equal(t, 1, stepOf(t, v, signoffStage).LatestVersion)
+		assert.Equal(t, stepNotReached, stepOf(t, v, emissionStage).Status)
+	})
+
+	t.Run("a ready end is no end", func(t *testing.T) {
+		c, st := newViewController(t, "default", 0)
+		through(t, c, st, "readiness")
+
+		v := view(t, c)
+		assert.Equal(t, string(StateIdle), v.State)
+		assert.Empty(t, v.EndReason)
+		assert.Equal(t, stepDone, stepOf(t, v, "readiness").Status)
+		assert.Equal(t, stepRunning, stepOf(t, v, signoffStage).Status)
+	})
 }
