@@ -275,6 +275,8 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "loops_to without max_rounds", stage: "  - id: s2\n    persona: po\n    loops_to: s1\n", files: map[string]string{"stages/s2.md": "x"}, want: "max_rounds"},
 		{name: "bad regex", files: map[string]string{"lists.yaml": "forbidden_references:\n  - name: broken\n    pattern: '(['\n"}, want: "forbidden reference"},
 		{name: "blank dangling reference", files: map[string]string{"lists.yaml": "dangling_references: [\" \"]\n"}, want: "dangling_references"},
+		{name: "blank edge case", files: map[string]string{"lists.yaml": "edge_cases: [\" \"]\n"}, want: "edge_cases"},
+		{name: "an edge case listed twice", files: map[string]string{"lists.yaml": "edge_cases: [Limits, \" limits\"]\n"}, want: "edge_cases"},
 		{name: "unknown lists.yaml key", files: map[string]string{"lists.yaml": "required_section: [Context]\n"}, want: "lists.yaml"},
 		{name: "card checks without lists.yaml", stage: "    tools: [code]\n    checks: [cards]\n", files: map[string]string{"lists.yaml": ""}, want: "lists.yaml"},
 		{name: "card checks without card.md", stage: "    tools: [code]\n    checks: [cards]\n", files: map[string]string{"card.md": ""}, want: "card.md"},
@@ -533,4 +535,10 @@ func TestLoad_AcceptsTheOutcomesCheck(t *testing.T) {
 
 	s1, _ := p.Stage("s1")
 	assert.Equal(t, []string{CheckOutcomes}, s1.Checks)
+}
+
+func TestLoadEmbedded_ListsTheEdgeCases(t *testing.T) {
+	p, err := LoadEmbedded()
+	require.NoError(t, err)
+	assert.NotEmpty(t, p.Lists().EdgeCases, "acceptance sweeps the default pack's edge cases")
 }

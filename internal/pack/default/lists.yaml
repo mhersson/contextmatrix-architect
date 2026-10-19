@@ -57,3 +57,14 @@ dangling_references:
   - "as mentioned"
   - "as noted earlier"
   - "described above"
+
+# The conditions acceptance sweeps for every slice: each is settled by
+# criteria or manual checks of the slice, or recorded not applicable with a
+# reason.
+edge_cases:
+  - Empty or missing input
+  - Partial failure
+  - Permissions
+  - Concurrency
+  - Version skew
+  - Limits

@@ -764,6 +764,8 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pipelin
 		return "", err
 	}
 
+	c.writeEdgeCases(&b, st)
+
 	if st.Gate {
 		if err := c.writeGateFeedback(ctx, &b, bp, st, 0); err != nil {
 			return "", err
@@ -779,6 +781,24 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pipelin
 	}
 
 	return b.String(), nil
+}
+
+// writeEdgeCases gives a stage that checks criteria, and its reviewer, the
+// pack's edge cases every slice's sweep covers; nothing when the pack lists
+// none.
+func (c *Controller) writeEdgeCases(b *strings.Builder, st pipelineStep) {
+	cases := c.opts.Pack.Lists().EdgeCases
+	if len(cases) == 0 || !slices.Contains(st.Checks, pack.CheckCriteria) {
+		return
+	}
+
+	b.WriteString("## Edge cases to sweep\n\nEvery slice's sweep gives each one entry:\n\n")
+
+	for _, edge := range cases {
+		b.WriteString("- " + edge + "\n")
+	}
+
+	b.WriteString("\n")
 }
 
 // writeAssumptions gives a stage that consumes a stage with stated

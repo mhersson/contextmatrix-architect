@@ -61,6 +61,27 @@ func TestDigestOf(t *testing.T) {
 		assert.Equal(t, []string{"GET /reports answers CSV"}, d.Contracts)
 	})
 
+	t.Run("criteria and manual checks carry the outcomes they cite", func(t *testing.T) {
+		traced := sliceAcceptance("SL1", "AC1", "MC1")
+		sl := traced["slices"].([]any)[0].(map[string]any)
+		sl["criteria"].([]any)[0].(map[string]any)["outcomes"] = []any{"O1", " O2 "}
+		sl["manual"].([]any)[0].(map[string]any)["outcomes"] = []any{"O3"}
+
+		d, ok := digestOf([]string{pack.CheckCriteria}, storedAs(t, traced))
+		require.True(t, ok)
+		assert.Equal(t, []string{"O1", "O2"}, d.Criteria[0].Outcomes)
+		assert.Equal(t, []string{"O3"}, d.Manual[0].Outcomes)
+	})
+
+	t.Run("a malformed trace reads as none and is no misfit", func(t *testing.T) {
+		traced := sliceAcceptance("SL1", "AC1", "MC1")
+		traced["slices"].([]any)[0].(map[string]any)["criteria"].([]any)[0].(map[string]any)["outcomes"] = "O1"
+
+		d, ok := digestOf([]string{pack.CheckCriteria}, storedAs(t, traced))
+		require.True(t, ok)
+		assert.Empty(t, d.Criteria[0].Outcomes)
+	})
+
 	t.Run("contracts at the top level are kept", func(t *testing.T) {
 		d, ok := digestOf([]string{pack.CheckDecisions}, storedAs(t, map[string]any{"contracts": []any{"GET /reports answers CSV"}}))
 		require.True(t, ok)

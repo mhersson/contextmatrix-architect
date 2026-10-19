@@ -379,6 +379,21 @@ func parseLists(raw []byte) (contract.Lists, error) {
 		}
 	}
 
+	seen := map[string]bool{}
+
+	for _, edge := range lists.EdgeCases {
+		key := strings.ToLower(strings.TrimSpace(edge))
+
+		switch {
+		case key == "":
+			return contract.Lists{}, errors.New("pack: lists.yaml: an edge_cases entry is blank")
+		case seen[key]:
+			return contract.Lists{}, fmt.Errorf("pack: lists.yaml: edge_cases lists %q twice", edge)
+		}
+
+		seen[key] = true
+	}
+
 	return lists, nil
 }
 

@@ -392,18 +392,19 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   With two or more slices, an artifact of another slice is given as a digest
   of its data, by the shape its stage's checks give it: a design's decisions
   (id, text, chosen), the outcomes it states at its top level and contracts;
-  an acceptance's criteria and manual checks by id with their first line;
-  cards by id, title, project, type, Where paths, `depends_on` and criteria
-  ids, with the draft's manual entries and setup. A whole-blueprint stage
-  reads the stage it loops to whole for every slice. A stage without such a
-  shape, or data that does not decode or holds an item of another shape, is
-  given whole. A run whose task holds a digest is offered `read_artifact`
-  for the whole. A per-slice task opens by naming its slice. A gate reply
-  (`gate <stage> human|auto`) and a stage's policies cover every slice of
-  the stage. A rejection at a slice's gate runs that slice's step again. A
-  run's cost floor reads every slice's runs of its stage. A blueprint whose
-  record ran a per-slice stage under its plain id, from before stages
-  repeated per slice, keeps running them once for the whole blueprint.
+  an acceptance's criteria and manual checks by id with their first line and
+  the outcome ids they cite; cards by id, title, project, type, Where paths,
+  `depends_on` and criteria ids, with the draft's manual entries and setup.
+  A whole-blueprint stage reads the stage it loops to whole for every slice.
+  A stage without such a shape, or data that does not decode or holds an
+  item of another shape, is given whole. A run whose task holds a digest is
+  offered `read_artifact` for the whole. A per-slice task opens by naming
+  its slice. A gate reply (`gate <stage> human|auto`) and a stage's policies
+  cover every slice of the stage. A rejection at a slice's gate runs that
+  slice's step again. A run's cost floor reads every slice's runs of its
+  stage. A blueprint whose record ran a per-slice stage under its plain id,
+  from before stages repeated per slice, keeps running them once for the
+  whole blueprint.
 - A stage the pack marks `shared` settles what every slice shares, between
   slicing and the per-slice stages, behind its own gate. With fewer than two
   slices it collapses: it never runs, and the step after it follows. The
@@ -456,9 +457,21 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   among them, or a per-slice acceptance's own slice alone, and each with at
   least one criterion; every criterion has an id of its own, never one an
   earlier slice's acceptance holds, a target project and its text, and every
-  manual check such an id and its text. At decomposition, acceptance data
-  that does not decode (`criteria_unreadable`) or defines no criterion
-  (`criteria_empty`) is a contract finding, not a stalled run.
+  manual check such an id and its text. Each criterion cites the outcomes
+  it proves (`outcomes`, ids an earlier step states) and a manual check may;
+  each slice sweeps the pack's edge cases (lists.yaml `edge_cases`, matched
+  case-insensitively after trimming), one entry per case, settled by the
+  slice's own criteria or manual checks or recorded not applicable with a
+  reason; and the last slice's acceptance, or one for the whole blueprint,
+  leaves no outcome uncited (`criterion_outcomes`, `sweep_missing`,
+  `sweep_unknown`, `sweep_duplicate`, `sweep_settled`, `outcome_uncovered`).
+  The traces are read apart from the criteria, so a malformed one is never
+  `shape`. A blueprint whose earlier steps state no outcome, as one stored
+  before outcomes, needs no outcome traces. The acceptance task and its
+  tester's task list the edge cases, and the tester checks the sweep and the
+  traces. At decomposition, acceptance data that does not decode
+  (`criteria_unreadable`) or defines no criterion (`criteria_empty`) is a
+  contract finding, not a stalled run.
 - A gate folds when the pack's condition on its artifact holds and the gate
   it folds into has the same gate policy: the slicing gate folds into the
   solution design gate when there is exactly one slice. Folding is decided
@@ -527,7 +540,7 @@ stages/*.md        instructions, one file per stage, review.md for every reviewe
 card.md            the card body template
 lists.yaml         data for mechanical checks: required sections, stripped headings,
                    defect phrases, maintenance labels and verbs, forbidden content,
-                   dangling references
+                   dangling references, edge cases
 ```
 
 - The default pack is embedded in the binary. The `pack` config key
