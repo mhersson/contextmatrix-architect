@@ -22,6 +22,10 @@ Rules:
   only a `bug` card's title opens with a bug verb such as fix or repair.
 - Every path and symbol under Where exists in the checkout; cite its source tag.
 - Criteria are numbered and each is checkable inside this repository.
+- A card of a project the task names as POC, a proof of concept, writes
+  Tests expected as the tests of the main behaviour the card delivers and
+  of what its criteria demand, and no other edge-case tests; the section
+  stays.
 - No decision is left open; no optional or later scope.
 - A cross-project contract is written into the cards on both sides.
 - `depends_on` names draft ids within the same project only. Order across

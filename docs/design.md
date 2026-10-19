@@ -511,6 +511,12 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   recorded not applicable with the reason "POC project"; a manual check
   still settles one. The tester judges POC criteria on clarity and
   buildability, not hardening, and flags one that proves an edge case.
+  Decomposition writes a POC card's Tests expected as the tests of the main
+  behaviour and of what its criteria demand, and no other edge-case tests;
+  the section stays required. Readiness judges a POC card on clarity and
+  buildability: Tests expected that covers the main behaviour and the card's
+  criteria is ready, and one that asks for edge-case tests its criteria do
+  not demand is a finding, and a criterion the card must carry never is one.
 - A gate folds when the pack's condition on its artifact holds and the gate
   it folds into has the same gate policy: the slicing gate folds into the
   solution design gate when there is exactly one slice. Folding is decided
@@ -686,7 +692,7 @@ release.
 | Where               | Files, functions and types in this repo, verified at a sha. For wiring changes, every call site.            |
 | Solution            | The decided approach. Binding constraints are restated in the criteria, since nothing else reaches review. |
 | Acceptance criteria | Numbered. Each is a test or command checkable in the working tree.                                         |
-| Tests expected      | The test cases to write.                                                                                   |
+| Tests expected      | The test cases to write; for a POC project's card, the main behaviour and what its criteria demand only.   |
 | Out of scope        | Explicit non-goals.                                                                                        |
 
 **Never**
