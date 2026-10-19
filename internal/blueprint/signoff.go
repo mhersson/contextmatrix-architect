@@ -126,7 +126,16 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 		_ = client.Close()
 	}
 
-	auto := emitsOnItsOwn(bp.Mode)
+	// The stored mode, not bp's: a chain of runs holds bp from its start, and
+	// a mode switch applies to the sign-off it reaches.
+	cur, err := c.opts.Store.GetBlueprint(bg, bp.ID)
+	if err != nil {
+		c.fail(bg, au, bp.ID, 0, "sign-off: "+err.Error())
+
+		return
+	}
+
+	auto := emitsOnItsOwn(cur.Mode)
 	critical := criticalCross(crossOf(out.art))
 	payload := c.signoffPayload(bg, au, bp, out, draft, pf, pfErr)
 

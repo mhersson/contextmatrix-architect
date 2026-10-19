@@ -345,8 +345,8 @@ func (c *Controller) stageIDs() []string {
 }
 
 // policy is who answers stageID's questions for this blueprint, the first of
-// these that says: the blueprint's latest gate reply for the stage, a mode
-// other than default (every policy auto), the pack's policy.
+// these that says: the blueprint's latest gate reply for the stage, a stored
+// mode other than default (every policy auto), the pack's policy.
 func (c *Controller) policy(ctx context.Context, bp store.Blueprint, stageID string) (string, error) {
 	return c.policyFor(ctx, bp, stageID, false)
 }
@@ -358,19 +358,26 @@ func (c *Controller) gatePolicy(ctx context.Context, bp store.Blueprint, stageID
 }
 
 func (c *Controller) policyFor(ctx context.Context, bp store.Blueprint, stageID string, gate bool) (string, error) {
+	// The stored mode, not bp's: a chain of runs holds bp from its start, and
+	// a mode switch applies from the next question or gate.
+	cur, err := c.opts.Store.GetBlueprint(ctx, bp.ID)
+	if err != nil {
+		return "", fmt.Errorf("blueprint: read the mode: %w", err)
+	}
+
 	events, err := c.opts.Store.ListEventsOfKind(ctx, bp.ID, EventPolicy)
 	if err != nil {
 		return "", fmt.Errorf("blueprint: read the gate replies: %w", err)
 	}
 
-	return c.resolvePolicy(bp, events, stageID, gate)
+	return c.resolvePolicy(cur.Mode, events, stageID, gate)
 }
 
-// resolvePolicy is policy, or gatePolicy when gate is set, over the
-// blueprint's policy events, oldest first, so a caller resolving several
+// resolvePolicy is policy, or gatePolicy when gate is set, under mode over
+// the blueprint's policy events, oldest first, so a caller resolving several
 // stages reads them once. A gate reply sets both. A per-slice step resolves
 // as its stage.
-func (c *Controller) resolvePolicy(bp store.Blueprint, events []store.Event, stageID string, gate bool) (string, error) {
+func (c *Controller) resolvePolicy(mode string, events []store.Event, stageID string, gate bool) (string, error) {
 	stageID, _ = pack.SplitStep(stageID)
 
 	for i := len(events) - 1; i >= 0; i-- {
@@ -389,7 +396,7 @@ func (c *Controller) resolvePolicy(bp store.Blueprint, events []store.Event, sta
 		}
 	}
 
-	if bp.Mode != "" && bp.Mode != protocol.ArchitectModeDefault {
+	if mode != "" && mode != protocol.ArchitectModeDefault {
 		return pack.PolicyAuto, nil
 	}
 
@@ -412,6 +419,14 @@ func (c *Controller) resolvePolicy(bp store.Blueprint, events []store.Event, sta
 // be read skips the plan: it is advice, and every question and gate reads
 // the policy again.
 func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.Blueprint) {
+	// The stored mode, not bp's: a chain of runs holds bp from its start.
+	cur, err := c.opts.Store.GetBlueprint(ctx, bp.ID)
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: gate plan not posted", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
+
+		return
+	}
+
 	events, err := c.opts.Store.ListEventsOfKind(ctx, bp.ID, EventPolicy)
 	if err != nil {
 		c.opts.Logger.Warn("blueprint: gate plan not posted", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
@@ -429,7 +444,7 @@ func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.B
 	stages := make([]any, 0, len(c.opts.Pack.Stages))
 
 	for _, st := range c.opts.Pack.Stages {
-		policy, err := c.resolvePolicy(bp, events, st.ID, false)
+		policy, err := c.resolvePolicy(cur.Mode, events, st.ID, false)
 		if err != nil {
 			c.opts.Logger.Warn("blueprint: gate plan not posted", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
 
@@ -439,7 +454,7 @@ func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.B
 		entry := map[string]any{"stage": st.ID, "policy": policy, "gate": st.Gate}
 
 		if st.Gate {
-			if entry["gate_policy"], err = c.resolvePolicy(bp, events, st.ID, true); err != nil {
+			if entry["gate_policy"], err = c.resolvePolicy(cur.Mode, events, st.ID, true); err != nil {
 				c.opts.Logger.Warn("blueprint: gate plan not posted", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
 
 				return
@@ -469,7 +484,7 @@ func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.B
 
 	if c.cardsStage() != "" {
 		payload["signoff"] = pack.PolicyHuman
-		if emitsOnItsOwn(bp.Mode) {
+		if emitsOnItsOwn(cur.Mode) {
 			payload["signoff"] = pack.PolicyAuto
 		}
 	}

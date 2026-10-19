@@ -62,6 +62,7 @@ func TestPolicy_FirstMatchWins(t *testing.T) {
 	tests := []struct {
 		name    string
 		mode    string
+		stored  string      // the mode stored after the start, as a switch leaves it; "" none
 		replies [][2]string // gate replies in order: stage, policy
 		want    string
 	}{
@@ -71,6 +72,9 @@ func TestPolicy_FirstMatchWins(t *testing.T) {
 		{name: "a reply beats the pack", mode: protocol.ArchitectModeDefault, replies: [][2]string{{"intake", "auto"}}, want: pack.PolicyAuto},
 		{name: "a reply beats the mode", mode: protocol.ArchitectModeAuto, replies: [][2]string{{"intake", "human"}}, want: pack.PolicyHuman},
 		{name: "the latest reply wins", mode: protocol.ArchitectModeDefault, replies: [][2]string{{"intake", "auto"}, {"intake", "human"}}, want: pack.PolicyHuman},
+		{name: "a stored switch beats the mode a chain started with", mode: protocol.ArchitectModeDefault, stored: protocol.ArchitectModeAuto, want: pack.PolicyAuto},
+		{name: "a stored switch back to default", mode: protocol.ArchitectModeYolo, stored: protocol.ArchitectModeDefault, want: pack.PolicyHuman},
+		{name: "a reply beats a stored switch", mode: protocol.ArchitectModeDefault, stored: protocol.ArchitectModeAuto, replies: [][2]string{{"intake", "human"}}, want: pack.PolicyHuman},
 	}
 
 	for _, tt := range tests {
@@ -82,12 +86,17 @@ func TestPolicy_FirstMatchWins(t *testing.T) {
 			in.Mode = tt.mode
 			require.NoError(t, c.Start(ctx, in))
 
+			// Read at the start, as a chain of runs holds it.
+			bp, err := st.GetBlueprint(ctx, "BP1")
+			require.NoError(t, err)
+
+			if tt.stored != "" {
+				require.NoError(t, st.SetBlueprintMode(ctx, "BP1", tt.stored))
+			}
+
 			for i, r := range tt.replies {
 				require.NoError(t, c.SetPolicy(ctx, "BP1", r[0], r[1], fmt.Sprintf("m%d", i)))
 			}
-
-			bp, err := st.GetBlueprint(ctx, "BP1")
-			require.NoError(t, err)
 
 			got, err := c.policy(ctx, bp, "intake")
 			require.NoError(t, err)

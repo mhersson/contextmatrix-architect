@@ -767,9 +767,10 @@ model-judged rows are the readiness stage.
 
 Every stage has a responder policy for its questions and one for its gate.
 Both resolve, first match winning, from the blueprint's latest
-`gate <stage> human|auto` reply, which sets both, then the mode (every mode
-but default makes both `auto`), then the pack: the stage's `policy` for its
-questions, and its `gate_policy` for its gate, which defaults to `policy`.
+`gate <stage> human|auto` reply, which sets both, then the mode as stored
+when the question or gate comes (every mode but default makes both `auto`),
+then the pack: the stage's `policy` for its questions, and its `gate_policy`
+for its gate, which defaults to `policy`.
 In the default pack intake's questions go to a human and its gate is `auto`.
 A stage that declares the `assumptions` check records what it decides
 itself as data, and every responder answer is recorded as an assumption;
