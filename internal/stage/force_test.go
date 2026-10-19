@@ -3,6 +3,7 @@ package stage
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -125,4 +126,121 @@ func TestRun_ForcedChoiceRefusedIsSentOnceMoreWithoutIt(t *testing.T) {
 	require.Len(t, f.requests, 3)
 	assert.NotNil(t, f.requests[1].ToolChoice)
 	assert.Nil(t, f.requests[2].ToolChoice)
+}
+
+func TestRun_AForcedFollowUpWithoutAnAcceptedCallSaysWhy(t *testing.T) {
+	const malformed = `{"body":"x"`
+
+	var m map[string]any
+
+	decodeErr := json.Unmarshal([]byte(`{"body":`), &m)
+	require.Error(t, decodeErr)
+
+	text := llm.Response{Content: "Here is my review.", FinishReason: "stop", Usage: llm.Usage{Cost: 0.01}}
+	submit := func(id, args string) llm.Response {
+		return llm.Response{
+			ToolCalls:    []llm.ToolCall{toolCall(id, "submit_artifact", args)},
+			FinishReason: "tool_calls", Usage: llm.Usage{Cost: 0.01},
+		}
+	}
+
+	tests := []struct {
+		name       string
+		responses  []llm.Response
+		maxCost    float64
+		validate   func(context.Context, Artifact) error
+		wantReason string
+		wantRefuse bool
+		wantLast   string
+		lastIsPart bool // the submit tool prefixes the validator's error
+		wantReqs   int
+	}{
+		{
+			name:       "two malformed submits",
+			responses:  []llm.Response{text, submit("c1", malformed), submit("c2", `{"body":`)},
+			wantReason: ReasonTerminalRefused, wantRefuse: true,
+			wantLast: "its arguments were not valid JSON: " + decodeErr.Error(),
+			wantReqs: 3,
+		},
+		{
+			name:      "a malformed submit then a validator refusal",
+			responses: []llm.Response{text, submit("c1", malformed), submit("c2", `{"body":"x"}`)},
+			validate: func(context.Context, Artifact) error {
+				return errors.New("cards missing")
+			},
+			wantReason: ReasonTerminalRefused, wantRefuse: true,
+			wantLast: "cards missing", lastIsPart: true,
+			wantReqs: 3,
+		},
+		{
+			name:      "both turns reuse one call id",
+			responses: []llm.Response{text, submit("c1", `{"body":"one"}`), submit("c1", `{"body":"two"}`)},
+			validate: func(_ context.Context, a Artifact) error {
+				if a.Body == "one" {
+					return errors.New("first")
+				}
+
+				return errors.New("second")
+			},
+			wantReason: ReasonTerminalRefused, wantRefuse: true,
+			wantLast: "second", lastIsPart: true,
+			wantReqs: 3,
+		},
+		{
+			name:       "a text reply",
+			responses:  []llm.Response{text, {Content: "Still prose.", FinishReason: "stop"}},
+			wantReason: ReasonTerminalRefused, wantRefuse: true,
+			wantLast: "",
+			wantReqs: 2,
+		},
+		{
+			name:       "the run cap stops the follow-up",
+			responses:  []llm.Response{text, submit("c1", malformed), submit("c2", malformed)},
+			maxCost:    0.015,
+			wantReason: "max_cost",
+			wantReqs:   2,
+		},
+		{
+			name:       "a first run that spends the whole cap",
+			responses:  []llm.Response{text, submit("c1", malformed)},
+			maxCost:    0.01,
+			wantReason: "max_cost",
+			wantReqs:   1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeLLM{responses: tt.responses}
+			in := baseInput(&bytes.Buffer{})
+			in.Validate = tt.validate
+
+			if tt.maxCost > 0 {
+				in.MaxCostUSD = tt.maxCost
+			}
+
+			out, err := runnerWith(f).Run(context.Background(), in)
+			require.ErrorIs(t, err, ErrNoArtifact)
+			assert.Equal(t, tt.wantReason, out.Result.Reason)
+			assert.Len(t, f.requests, tt.wantReqs)
+
+			var refused *RefusedError
+
+			if !tt.wantRefuse {
+				assert.NotErrorAs(t, err, &refused)
+
+				return
+			}
+
+			require.ErrorAs(t, err, &refused)
+
+			if tt.lastIsPart {
+				assert.Contains(t, refused.Last, tt.wantLast)
+			} else {
+				assert.Equal(t, tt.wantLast, refused.Last)
+			}
+
+			assert.Equal(t, []string{"submit_artifact"}, refused.Tools)
+		})
+	}
 }

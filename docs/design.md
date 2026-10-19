@@ -215,8 +215,13 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   conversation. That run is offered only the run's terminal tools and made to
   call one (`tool_choice`, sent once more without it when the endpoint refuses
   that with a 400), with two turns, so a refused submit gets one retry. The
-  ledger and the transcript cover both runs. If the follow-up also stops with
-  text, the run failed. Reviewer and responder runs get the same follow-up.
+  ledger and the transcript cover both runs. A follow-up that ends without a
+  terminal call the run accepts, with text or with refused or malformed calls
+  in its two turns, fails the run with reason `terminal_refused` rather than
+  the harness's `max_turns`, its message naming the last refusal; `continue`
+  runs it again. A run cap that stops it keeps `max_cost`, and a first run
+  that already spent the cap gets no follow-up and ends with `max_cost`.
+  Reviewer and responder runs get the same follow-up.
 - **Critique loop inside a stage.** On submit, the mechanical checks run
   inside the run: a failing submit is returned to the model as the tool
   result and it submits again. The third failing submit is accepted: cards
