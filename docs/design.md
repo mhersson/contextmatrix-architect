@@ -224,44 +224,50 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   Reviewer and responder runs get the same follow-up.
 - **Critique loop inside a stage.** On submit, the mechanical checks run
   inside the run: a failing submit is returned to the model as the tool
-  result and it submits again. The third failing submit is accepted: cards
-  with their findings, and the pipeline stops and reports, as it does for
-  slicing with no slices; any other stage's artifact as it is, with the
-  problems the checks still found kept in its data, shown at its gate and
-  given to its reviewer. When the stage has a
-  gate that does not fold, the reviewer the pack declares for it then judges
-  the accepted artifact, given its own persona, the stage's inputs, the
-  questions the stage got answered, the assumptions so far, the gate
-  feedback its attempt addresses, the user's notes and the artifact, never
-  the builder's transcript, and the tool groups the pack gives it: the code
-  tools over the blueprint's checkouts, and with research on `web_fetch`
-  alone, behind the same leak guard, to open what the artifact cites; it has
-  no web search. It scores the artifact 1-5, sums up what it read and checked, and
-  keeps a findings ledger: each finding has an id stable within the stage
-  attempt (R1, R2, ...) and a severity (critical, major or minor). A later
-  round of the attempt is given every earlier finding, with the claim the
-  builder's addressed list makes beside it, and gives each a verdict against
-  the version it judges, `fixed` or `still_open`, whatever the claim says;
-  its new findings take the ids after the attempt's highest. A verdict
-  passes at or above the pack's threshold with no critical finding open or
-  still open, so an open critical finding fails it whatever the score, and a
-  score below the threshold must leave a finding open. The verdict and its
-  ledger are stored as an artifact of the pseudo-stage `<stage>.review`. A
-  verdict that does not pass, or leaves a critical or major finding open or
-  still open, sends the unresolved findings, minors included, with the
-  notes, answers and accepted assumptions the builder's conversation has
-  not seen, to that conversation, resumed from its stored transcript for
-  another round of the same attempt, and the revision is reviewed again: no
-  version reaches a gate unreviewed. A passing verdict with only minor
-  findings open, or none, settles the artifact, and its open minors go to
-  the gate in the ledger. Three reviewer rounds per attempt: the third
-  verdict goes to the gate whatever it says, and one that does not pass
-  waits for a human regardless of policy. Each reviewer round is a harness
-  run with its own cap, and so is each builder round; the cost ledger sums
-  them. The round is given its findings by id, and its submit may list the
-  ones it addressed in its data as `addressed: [{finding, note}]`; an id the
-  round was not given is refused like any check problem, and the third
-  failing submit is accepted with its problems kept.
+  result and it submits again. The third failing submit is refused too when
+  a problem it still has would leave the next step nothing to build on:
+  slicing's `shape` and `no_slices`, a design's `shape`, `no_slices` and
+  `slice_missing`, acceptance's `shape`, `no_slices`, `slice_missing` and
+  `slice_empty`. That refusal ends the run on its call, failed with reason
+  `fatal_check` and a message naming those problems; nothing is stored, and
+  `continue` runs the stage again. Otherwise the third failing submit is
+  accepted: cards with their findings, and the pipeline stops and reports;
+  any other stage's artifact as it is, with the problems the checks still
+  found kept in its data, shown at its gate and given to its reviewer. When
+  the stage has a gate that does not fold, the reviewer the pack declares
+  for it then judges the accepted artifact, given its own persona, the
+  stage's inputs, the questions the stage got answered, the assumptions so
+  far, the gate feedback its attempt addresses, the user's notes and the
+  artifact, never the builder's transcript, and the tool groups the pack
+  gives it: the code tools over the blueprint's checkouts, and with research
+  on `web_fetch` alone, behind the same leak guard, to open what the
+  artifact cites; it has no web search. It scores the artifact 1-5, sums up
+  what it read and checked, and keeps a findings ledger: each finding has an
+  id stable within the stage attempt (R1, R2, ...) and a severity (critical,
+  major or minor). A later round of the attempt is given every earlier
+  finding, with the claim the builder's addressed list makes beside it, and
+  gives each a verdict against the version it judges, `fixed` or
+  `still_open`, whatever the claim says; its new findings take the ids after
+  the attempt's highest. A verdict passes at or above the pack's threshold
+  with no critical finding open or still open, so an open critical finding
+  fails it whatever the score, and a score below the threshold must leave a
+  finding open. The verdict and its ledger are stored as an artifact of the
+  pseudo-stage `<stage>.review`. A verdict that does not pass, or leaves a
+  critical or major finding open or still open, sends the unresolved
+  findings, minors included, with the notes, answers and accepted
+  assumptions the builder's conversation has not seen, to that conversation,
+  resumed from its stored transcript for another round of the same attempt,
+  and the revision is reviewed again: no version reaches a gate unreviewed.
+  A passing verdict with only minor findings open, or none, settles the
+  artifact, and its open minors go to the gate in the ledger. Three reviewer
+  rounds per attempt: the third verdict goes to the gate whatever it says,
+  and one that does not pass waits for a human regardless of policy. Each
+  reviewer round is a harness run with its own cap, and so is each builder
+  round; the cost ledger sums them. The round is given its findings by id,
+  and its submit may list the ones it addressed in its data as `addressed:
+  [{finding, note}]`; an id the round was not given is refused like any
+  check problem, and the third failing submit is accepted with its problems
+  kept.
 - **A gate waits between runs.** The controller holds the stage's artifact and
   asks the client. Nothing runs meanwhile.
 - **A human rejection starts a new attempt**: a fresh run with the previous
@@ -371,9 +377,10 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   command in CM meanwhile; the next decomposition submit reads it.
 - Slicing's submit is checked: at least one slice, each named SL1, SL2, ...
   in its order, with a title and only the blueprint's target projects. A
-  version with no slices, which only a third failing submit stores, ends the
-  pipeline not ready, before its gate, with the problems its check found, so
-  no per-slice stage runs for it; a blueprint from before slices goes on.
+  version with no slices fails its run (`fatal_check`). One stored before
+  that rule ends the pipeline not ready, before its gate, with the problems
+  its check found, so no per-slice stage runs for it; a blueprint from
+  before slices goes on.
 - A stage the pack marks `per_slice` runs once per slice of slicing's newest
   version, in slicing's order: every per-slice stage for SL1, then every one
   for SL2, and so on. The n-th slice is SL<n>, whatever slicing's data calls
@@ -1345,8 +1352,9 @@ Ordered so a real card comes out as early as possible.
   interface in two batches and asserts the stage resumes its conversation
   with the answers.
 - **Critique loop**: a submit that fails a mechanical check is returned to
-  the model as the tool result, and the third failing submit is accepted,
-  stored and reported.
+  the model as the tool result, and a third submit with only non-fatal
+  problems is accepted, stored and reported, while one with a fatal problem
+  fails the run with `fatal_check`.
 - **Emission**: an in-test MCP server asserting call order, and that a re-run
   after a simulated partial failure creates nothing twice.
 - **Webhook**: an in-test CM that signs requests starts a session with a

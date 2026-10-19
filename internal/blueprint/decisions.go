@@ -39,9 +39,10 @@ type rejectedOption struct {
 }
 
 // decisionsValidator refuses a design whose decisions do not stand, as
-// boundedValidator bounds it; its gate and reviewer judge it from there.
+// fatalValidator bounds it: a design of another shape, or without its
+// slices, leaves nothing to ground; its gate and reviewer judge it from there.
 func (c *Controller) decisionsValidator(bp store.Blueprint, stageID string) (func(context.Context, stage.Artifact) error, *validatorState) {
-	return boundedValidator("decisions", func(ctx context.Context, a stage.Artifact) ([]string, error) {
+	return fatalValidator("decisions", []string{"shape", "no_slices", "slice_missing"}, func(ctx context.Context, a stage.Artifact) ([]string, error) {
 		return c.decisionProblems(ctx, bp, stageID, a.Data)
 	})
 }
@@ -133,7 +134,7 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 
 	if st.Shared {
 		if hasSlices {
-			out = append(out, problem("design", "shape", "shared decisions are one decisions list for every slice, not slices"))
+			out = append(out, problem("design", "shared_slices", "shared decisions are one decisions list for every slice, not slices"))
 		}
 
 		if len(d.Decisions) == 0 {

@@ -31,9 +31,10 @@ type acceptanceData struct {
 }
 
 // criteriaValidator refuses acceptance that does not stand, as
-// boundedValidator bounds it.
+// fatalValidator bounds it: acceptance of another shape, or a slice without
+// criteria, leaves the cards nothing to carry.
 func (c *Controller) criteriaValidator(bp store.Blueprint, stageID string) (func(context.Context, stage.Artifact) error, *validatorState) {
-	return boundedValidator("criteria", func(ctx context.Context, a stage.Artifact) ([]string, error) {
+	return fatalValidator("criteria", []string{"shape", "no_slices", "slice_missing", "slice_empty"}, func(ctx context.Context, a stage.Artifact) ([]string, error) {
 		return c.criteriaProblems(ctx, bp, stageID, a.Data)
 	})
 }

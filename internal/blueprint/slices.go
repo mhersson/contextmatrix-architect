@@ -12,10 +12,11 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-// slicesValidator refuses slices that do not stand, as boundedValidator
-// bounds it.
+// slicesValidator refuses slices that do not stand, as fatalValidator
+// bounds it: slicing that is no list of slices, or holds none, leaves no
+// slice to design.
 func (c *Controller) slicesValidator(bp store.Blueprint) (func(context.Context, stage.Artifact) error, *validatorState) {
-	return boundedValidator("slices", func(_ context.Context, a stage.Artifact) ([]string, error) {
+	return fatalValidator("slices", []string{"shape", "no_slices"}, func(_ context.Context, a stage.Artifact) ([]string, error) {
 		return sliceProblems(a.Data, bp.Projects), nil
 	})
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
@@ -16,8 +17,18 @@ import (
 // until its turns are spent. The state keeps the problems of the latest
 // submit judged, so the accepted one's stay with its artifact. An error from
 // check refuses the submit without spending a round. what names the checked
-// thing in the refusal.
+// thing in the refusal. fatalValidator is its variant for checks some of whose
+// problems a stored artifact cannot carry.
 func boundedValidator(what string, check func(context.Context, stage.Artifact) ([]string, error)) (func(context.Context, stage.Artifact) error, *validatorState) {
+	return fatalValidator(what, nil, check)
+}
+
+// fatalValidator is boundedValidator whose third failing submit is refused
+// too while a problem of a check fatal names remains: stored, the artifact
+// would leave the next step nothing to build on. That refusal is a
+// stage.FatalCheckError naming those problems, which ends the run failed; a
+// third submit with other problems only is accepted with them.
+func fatalValidator(what string, fatal []string, check func(context.Context, stage.Artifact) ([]string, error)) (func(context.Context, stage.Artifact) error, *validatorState) {
 	state := &validatorState{}
 
 	return func(ctx context.Context, a stage.Artifact) error {
@@ -32,13 +43,36 @@ func boundedValidator(what string, check func(context.Context, stage.Artifact) (
 		state.rounds++
 		state.findings = problems
 
-		if len(problems) == 0 || state.rounds >= maxContractRounds {
+		switch {
+		case len(problems) == 0:
 			return nil
+		case state.rounds < maxContractRounds:
+			return fmt.Errorf("%d problem(s) with the %s; fix them and submit again (submit %d of %d):\n%s",
+				len(problems), what, state.rounds, maxContractRounds, strings.Join(problems, "\n"))
 		}
 
-		return fmt.Errorf("%d problem(s) with the %s; fix them and submit again (submit %d of %d):\n%s",
-			len(problems), what, state.rounds, maxContractRounds, strings.Join(problems, "\n"))
+		if stop := fatalProblems(problems, fatal); len(stop) > 0 {
+			return &stage.FatalCheckError{Problems: stop}
+		}
+
+		return nil
 	}, state
+}
+
+// fatalProblems keeps the problems of the checks fatal names; a problem
+// reads "<where>: <check>: <message>".
+func fatalProblems(problems, fatal []string) []string {
+	var out []string
+
+	for _, p := range problems {
+		// The check is the second field; a message may quote model text with
+		// the separator in it.
+		if parts := strings.SplitN(p, ": ", 3); len(parts) == 3 && slices.Contains(fatal, parts[1]) {
+			out = append(out, p)
+		}
+	}
+
+	return out
 }
 
 // problemsKey is the artifact data key for the problems the bounded checks

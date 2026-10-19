@@ -3,6 +3,8 @@ package blueprint
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,8 +120,8 @@ func TestDecisions_TheSharedDecisionsAreOneList(t *testing.T) {
 		want string
 	}{
 		{name: "one list", data: sharedDecisions()},
-		{name: "per slice instead", data: sliceDesign("SL1"), want: "shape"},
-		{name: "an empty slices list as well", data: emptySlices, want: "shape"},
+		{name: "per slice instead", data: sliceDesign("SL1"), want: "shared_slices"},
+		{name: "an empty slices list as well", data: emptySlices, want: "shared_slices"},
 		{name: "contracts as a list of strings", data: withContracts([]any{"every file is UTF-8"})},
 		{name: "contracts as a number", data: withContracts(3), want: "contracts"},
 		{name: "a contract that is an object", data: withContracts([]any{map[string]any{"a": 1}}), want: "contracts"},
@@ -268,4 +270,81 @@ func TestSlices_EachRunValidatesAgainstItsOwnStep(t *testing.T) {
 	driveIn(t, c, autoStart("BP1"))
 
 	assert.Equal(t, []string{"acceptance@SL1", "acceptance@SL2"}, stepRuns(runner, "acceptance"))
+}
+
+// thirdSubmit is validate's answer to data submitted three times; the first
+// two must be refused, or the third is no last submit.
+func thirdSubmit(t *testing.T, validate func(context.Context, stage.Artifact) error, data map[string]any) error {
+	t.Helper()
+
+	for range maxContractRounds - 1 {
+		require.Error(t, validate(context.Background(), stage.Artifact{Body: "# x", Data: data}))
+	}
+
+	return validate(context.Background(), stage.Artifact{Body: "# x", Data: data})
+}
+
+func TestFatalChecks_TheLastSubmitIsRefusedOnlyOverWhatLeavesNothingToBuildOn(t *testing.T) {
+	c, _, bp := slicedBlueprint(t)
+
+	slicing := func() func(context.Context, stage.Artifact) error {
+		v, _ := c.slicesValidator(bp)
+
+		return v
+	}
+	design := func() func(context.Context, stage.Artifact) error {
+		v, _ := c.decisionsValidator(bp, "solution_design@SL2")
+
+		return v
+	}
+	criteria := func() func(context.Context, stage.Artifact) error {
+		v, _ := c.criteriaValidator(bp, "acceptance@SL2")
+
+		return v
+	}
+
+	untitled := twoSlices()
+	untitled["slices"].([]any)[1].(map[string]any)["title"] = " "
+
+	both := sliceDesign("SL2")
+	both["slices"] = append(both["slices"].([]any), sliceDesign("SL1")["slices"].([]any)[0])
+
+	empty := sliceAcceptance("SL2", "AC2", "MC2")
+	empty["slices"].([]any)[0].(map[string]any)["criteria"] = []any{}
+
+	tests := []struct {
+		name     string
+		validate func(context.Context, stage.Artifact) error
+		data     map[string]any
+		fatal    string // the check refused for good; "" when the third submit is stored
+	}{
+		{"slicing with no slices", slicing(), map[string]any{"slices": []any{}}, "no_slices"},
+		{"slicing that is no list", slicing(), map[string]any{"slices": "two"}, "shape"},
+		{"a slice without a title", slicing(), untitled, ""},
+		{"a design without its slice", design(), sliceDesign("SL1"), "slice_missing"},
+		{"a design with no slices", design(), map[string]any{"slices": []any{}}, "no_slices"},
+		{"a design that also covers another slice", design(), both, ""},
+		{"a design that is no list", design(), map[string]any{"slices": "two"}, "shape"},
+		{"acceptance that is no list", criteria(), map[string]any{"slices": "two"}, "shape"},
+		{"acceptance with no slices", criteria(), map[string]any{"slices": []any{}}, "no_slices"},
+		{"acceptance with an empty slice", criteria(), empty, "slice_empty"},
+		{"acceptance without its slice", criteria(), sliceAcceptance("SL1", "AC2", "MC2"), "slice_missing"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := thirdSubmit(t, tt.validate, tt.data)
+
+			if tt.fatal == "" {
+				require.NoError(t, err)
+
+				return
+			}
+
+			var refused *stage.FatalCheckError
+			require.ErrorAs(t, err, &refused)
+			assert.True(t, slices.ContainsFunc(refused.Problems, func(p string) bool { return strings.Contains(p, ": "+tt.fatal+": ") }),
+				"refused over %s: %v", tt.fatal, refused.Problems)
+		})
+	}
 }
