@@ -225,37 +225,15 @@ func (c *Controller) decideWith(ctx context.Context, au audit, id, stageID strin
 // that still does not pass after the attempt's rounds, the gate is shown and
 // the chain stops.
 func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Blueprint, out outcome) (string, outcome) {
-	st, _ := c.stepAt(out.stage)
-
-	v, found, err := c.gateReview(ctx, bp.ID, st, out.art)
+	auto, folded, err := c.autoApproves(ctx, bp, out)
 	if err != nil {
 		c.fail(ctx, sess.audit, bp.ID, 0, err.Error())
 
 		return "", outcome{}
 	}
 
-	folded, err := c.folded(ctx, bp.ID, out.stage)
-	if err != nil {
-		c.fail(ctx, sess.audit, bp.ID, 0, err.Error())
-
-		return "", outcome{}
-	}
-
-	auto, err := c.allAuto(ctx, bp, out.stage, folded)
-	if err != nil {
-		c.fail(ctx, sess.audit, bp.ID, 0, err.Error())
-
-		return "", outcome{}
-	}
-
-	if auto && found && st.Reviewer != nil && v.passes(st.Reviewer.Threshold) {
-		for _, f := range folded {
-			if !c.decide(ctx, sess.audit, bp.ID, f.Stage, f.Version, store.GateApprove, "", store.ResponderAuto, "") {
-				return "", outcome{}
-			}
-		}
-
-		if !c.decide(ctx, sess.audit, bp.ID, out.stage, out.art.Version, store.GateApprove, "", store.ResponderAuto, "") {
+	if auto {
+		if !c.approveAuto(ctx, sess.audit, bp.ID, out, folded, nil) {
 			return "", outcome{}
 		}
 
@@ -265,6 +243,45 @@ func (c *Controller) openGate(ctx context.Context, sess *session, bp store.Bluep
 	c.showGate(ctx, sess.audit, bp, out)
 
 	return "", outcome{}
+}
+
+// autoApproves reports whether out's gate is decided by its reviewer's
+// verdict under the policies now in effect: the stage and every stage
+// folded into it under the auto gate policy, and a verdict on out's version
+// that passes. It returns the folded artifacts too.
+func (c *Controller) autoApproves(ctx context.Context, bp store.Blueprint, out outcome) (bool, []store.Artifact, error) {
+	st, _ := c.stepAt(out.stage)
+
+	v, found, err := c.gateReview(ctx, bp.ID, st, out.art)
+	if err != nil {
+		return false, nil, err
+	}
+
+	folded, err := c.folded(ctx, bp.ID, out.stage)
+	if err != nil {
+		return false, nil, err
+	}
+
+	auto, err := c.allAuto(ctx, bp, out.stage, folded)
+	if err != nil {
+		return false, nil, err
+	}
+
+	return auto && found && st.Reviewer != nil && v.passes(st.Reviewer.Threshold), folded, nil
+}
+
+// approveAuto records the auto policy's approval of every stage folded into
+// out's gate, then of out's own, with extra on that last announcement only:
+// one shown gate is one prompt. false when one could not be stored, which
+// fails the blueprint.
+func (c *Controller) approveAuto(ctx context.Context, au audit, id string, out outcome, folded []store.Artifact, extra map[string]any) bool {
+	for _, f := range folded {
+		if !c.decide(ctx, au, id, f.Stage, f.Version, store.GateApprove, "", store.ResponderAuto, "") {
+			return false
+		}
+	}
+
+	return c.decideWith(ctx, au, id, out.stage, out.art.Version, store.GateApprove, "", store.ResponderAuto, "", extra)
 }
 
 // allAuto reports whether stageID and every stage folded into its gate are
@@ -349,7 +366,9 @@ func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint,
 }
 
 // gateShown reports whether stageID's gate for version was shown. A shown
-// gate stays with the human it was put to, whatever the policy says now.
+// gate stays with its human when policies change through a gate reply; a
+// mode switch into any mode but default decides a shown gate whose policies are now
+// auto and whose verdict passes.
 func (c *Controller) gateShown(ctx context.Context, id, stageID string, version int) (bool, error) {
 	events, err := c.opts.Store.ListEventsOfKind(ctx, id, EventGate)
 	if err != nil {

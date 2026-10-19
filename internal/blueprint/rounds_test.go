@@ -3,6 +3,7 @@ package blueprint
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -432,4 +433,95 @@ func TestRoundState_NamesTheFindingsItsBuilderRoundWasGiven(t *testing.T) {
 	assert.Equal(t, []string{"R2", "R4"}, roundState{Findings: []string{"R2", "R4"}}.findingIDs())
 	assert.Equal(t, []string{"R1", "R2"}, roundState{RevisedFor: 2}.findingIDs(), "a snapshot stored before findings had ids")
 	assert.Empty(t, roundState{}.findingIDs())
+}
+
+// handedOverRound is BP1's round 1, handed to the responder after the human
+// answered Q1 and decided A1 (accepted) and A2 (turned into a question); the
+// responder answered Q2, whose row its run wrote, could not answer Q3, and
+// accepted A3.
+func handedOverRound() roundState {
+	return roundState{
+		Number: 1, Attempt: 1, BuilderRound: 1, PostedBy: 1, RunID: 1, Change: changeAnswers,
+		HandedOver: &handover{Answered: []int{1}, Decided: []string{"A1", "A2"}},
+		Frame: protocol.LogRound{
+			Persona: "product owner", Stage: "intake", Responder: true,
+			Questions: []protocol.RoundQuestion{
+				{Number: 1, Title: "Deploy", Text: "Helm or Kustomize?", Options: []protocol.RoundOption{{Title: "Helm"}, {Title: "Kustomize"}}},
+				{Number: 2, Title: "Users", Text: "Who uses it?"},
+				{Number: 3, Title: "Region", Text: "Which region?"},
+			},
+			Answers: []protocol.RoundAnswer{{Number: 1, Option: 2}, {Number: 2, Text: "operators"}, {Number: 3, Text: "no answer; decide yourself"}},
+			Assumptions: []protocol.RoundAssumption{
+				{ID: "A1", Text: "One cluster per environment."}, {ID: "A2", Text: "Nightly backups are enough."}, {ID: "A3", Text: "No multi-region."},
+			},
+			Decisions: []protocol.AssumptionDecision{{ID: "A1", Accept: true}, {ID: "A2", Accept: false}, {ID: "A3", Accept: true}},
+		},
+	}
+}
+
+// closeHandedOver closes handedOverRound on BP1 with the responder's row for
+// Q2 already written, as its run writes it.
+func closeHandedOver(t *testing.T) (*Controller, *store.Store, roundState) {
+	t.Helper()
+
+	c, st, _, _ := newController(t, artifactRun("# Need"))
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	require.NoError(t, st.AddQuestion(ctx, store.Question{
+		BlueprintID: "BP1", RunID: 1, Stage: "intake", Number: 2, Text: "Who uses it?", Answer: "operators",
+		Responder: store.ResponderAuto, Assumption: true, AnsweredAt: time.Now().UTC(),
+	}))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	closed, err := c.closeRound(ctx, sessionOf(t, c, "BP1").audit, bp, handedOverRound())
+	require.NoError(t, err)
+
+	return c, st, closed
+}
+
+func TestCloseRound_AHandedOverRoundRecordsOnlyTheHumansAnswers(t *testing.T) {
+	_, st, closed := closeHandedOver(t)
+
+	assert.True(t, closed.Frame.Closed)
+	assert.Equal(t, []string{"A2"}, closed.Converted, "the human's conversion stands")
+
+	qs, err := st.ListQuestions(context.Background(), "BP1")
+	require.NoError(t, err)
+
+	who := map[int]string{}
+	for _, q := range qs {
+		who[q.Number] = q.Responder
+	}
+
+	assert.Equal(t, map[int]string{1: store.ResponderHuman, 2: store.ResponderAuto}, who, "Q3, which the responder could not answer, is the stage's to decide")
+}
+
+func TestAcceptedAssumptions_AHandedOverRoundConfirmsOnlyTheHumansAcceptances(t *testing.T) {
+	c, _, _ := closeHandedOver(t)
+
+	accepted, err := c.acceptedAssumptions(context.Background(), "BP1")
+	require.NoError(t, err)
+	require.Len(t, accepted, 1)
+	assert.Equal(t, "A1", accepted[0].ID)
+	assert.Equal(t, acceptanceTag(1, "A1"), accepted[0].Tag)
+}
+
+func TestContinuation_AHandedOverRoundSaysWhoDecidedEach(t *testing.T) {
+	s := handedOverRound()
+
+	var answers strings.Builder
+
+	writeRoundAnswers(&answers, s)
+	assertAttributed(t, answers.String())
+
+	var tab strings.Builder
+
+	writeRoundAssumptions(&tab, s, []acceptedAssumption{{Tag: acceptanceTag(1, "A1"), Round: 1, ID: "A1"}})
+
+	text := tab.String()
+
+	assert.Contains(t, text, acceptanceTag(1, "A1"), "the human's acceptance is cited by its tag")
+	assert.NotContains(t, text, acceptanceTag(1, "A3"), "the responder's acceptance has no tag")
 }

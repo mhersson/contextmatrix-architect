@@ -436,6 +436,34 @@ func TestView_States(t *testing.T) {
 			},
 		},
 		{
+			name: "the responder answering a builder round handed over",
+			setup: func(t *testing.T, c *Controller, st *store.Store) {
+				ctx := context.Background()
+
+				through(t, c, st, "intake")
+				ran(t, st, "slicing", store.RunKindStage, 1, 1, 0.1)
+				put(t, st, "slicing", stageData("slicing"))
+				ran(t, st, "slicing", store.RunKindReviewer, 1, 1, 0.05)
+
+				asked, err := st.StartRun(ctx, store.Run{
+					BlueprintID: viewID, Stage: "slicing", Kind: store.RunKindStage, Attempt: 1, Round: 2,
+					Status: store.RunRunning, Model: "session/model", StartedAt: time.Now().UTC(),
+				})
+				require.NoError(t, err)
+				require.NoError(t, st.EndRun(ctx, asked, store.RunAsked, "round", store.RunUsage{}, time.Now().UTC()))
+
+				appendEvent(t, st, EventRound, roundState{
+					Number: 1, Attempt: 1, BuilderRound: 2, PostedBy: asked, RunID: asked, Change: changeHandedOver, HandedOver: &handover{},
+					Frame: protocol.LogRound{Stage: "slicing", Responder: true, Questions: []protocol.RoundQuestion{{Number: 1, Text: "Who owns it?"}}},
+				}.payload())
+				flying(t, c, st, "slicing", store.RunKindResponder, 1)
+			},
+			check: func(t *testing.T, v protocol.BlueprintView) {
+				assert.Equal(t, stepRevising, stepOf(t, v, "slicing").Status, "as the builder round's own responder reads")
+				assert.Nil(t, v.Open, "a handed-over round waits for nobody")
+			},
+		},
+		{
 			name: "revised with what it addressed",
 			setup: func(t *testing.T, c *Controller, st *store.Store) {
 				through(t, c, st, "intake")

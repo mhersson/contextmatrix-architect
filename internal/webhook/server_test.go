@@ -37,6 +37,7 @@ type stubController struct {
 	exports   []string
 	policies  []string
 	caps      []string
+	modes     []string
 	resumes   []string
 	ends      []string
 	startErr  error
@@ -110,6 +111,16 @@ func (s *stubController) SetCap(ctx context.Context, id, value, msgID string) er
 	defer s.mu.Unlock()
 
 	s.caps = append(s.caps, id+"|"+value+"|"+msgID)
+	s.ctxErrs = append(s.ctxErrs, ctx.Err())
+
+	return nil
+}
+
+func (s *stubController) SetMode(ctx context.Context, id, mode, msgID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.modes = append(s.modes, id+"|"+mode+"|"+msgID)
 	s.ctxErrs = append(s.ctxErrs, ctx.Err())
 
 	return nil
@@ -624,6 +635,7 @@ func TestMessage_CommandsAreRouted(t *testing.T) {
 		wantExports  int
 		wantPolicies []string
 		wantCaps     []string
+		wantModes    []string
 		wantResumes  []string
 		wantMessages int
 	}{
@@ -632,6 +644,10 @@ func TestMessage_CommandsAreRouted(t *testing.T) {
 		{text: "Gate Grounding HUMAN", wantPolicies: []string{"BP1|grounding|human|m-Gate Grounding HUMAN"}},
 		{text: "cap 4", wantCaps: []string{"BP1|4|m-cap 4"}},
 		{text: "Cap Off", wantCaps: []string{"BP1|off|m-Cap Off"}},
+		{text: "mode auto", wantModes: []string{"BP1|auto|m-mode auto"}},
+		{text: "Mode AUTO+EMIT", wantModes: []string{"BP1|auto+emit|m-Mode AUTO+EMIT"}},
+		{text: "mode fast", wantMessages: 1},
+		{text: "mode auto now", wantMessages: 1},
 		{text: "cap 4 now", wantMessages: 1},
 		{text: "cap four", wantMessages: 1},
 		{text: "resume", wantResumes: []string{"BP1|m-resume"}},
@@ -656,6 +672,7 @@ func TestMessage_CommandsAreRouted(t *testing.T) {
 			assert.Len(t, ctl.exports, tt.wantExports)
 			assert.Equal(t, tt.wantPolicies, ctl.policies)
 			assert.Equal(t, tt.wantCaps, ctl.caps)
+			assert.Equal(t, tt.wantModes, ctl.modes)
 			assert.Equal(t, tt.wantResumes, ctl.resumes)
 			assert.Len(t, ctl.messages, tt.wantMessages)
 		})

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"maps"
 	"strings"
 	"testing"
 
@@ -79,6 +80,18 @@ func TestLogEntryFor(t *testing.T) {
 		{"a cap raise that resumes a stage", blueprint.Event{Kind: blueprint.EventCap, BlueprintID: "S1", Payload: map[string]any{
 			"from": 2.0, "to": 4.0, "resumes": "solution_design",
 		}}, "system", []string{"$2.00", "$4.00", "Solution design"}, false},
+		{"a mode switch", blueprint.Event{Kind: blueprint.EventMode, BlueprintID: "S1", Payload: map[string]any{
+			"from": "default", "to": "auto+emit",
+		}}, "system", []string{"Default", "Auto + emit"}, false},
+		{"a mode switch that hands a round over", blueprint.Event{Kind: blueprint.EventMode, BlueprintID: "S1", Payload: map[string]any{
+			"from": "default", "to": "auto", "hands_over": 3,
+		}}, "system", []string{"Default", "Auto", "3"}, false},
+		{"a mode switch that decides a gate", blueprint.Event{Kind: blueprint.EventMode, BlueprintID: "S1", Payload: map[string]any{
+			"from": "default", "to": "auto", "gate": "shape",
+		}}, "system", []string{"Default", "Auto", "Shape"}, false},
+		{"a refused mode switch", blueprint.Event{Kind: blueprint.EventMode, BlueprintID: "S1", Payload: map[string]any{
+			"from": "yolo", "to": "default", "reason": "emission_started", "refused": "Emission has started, so the mode stays yolo.",
+		}}, "system", []string{"Emission has started, so the mode stays yolo."}, false},
 		{"a resume that runs a stopped stage", blueprint.Event{Kind: blueprint.EventResume, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "solution_design", "message_id": "m1",
 		}}, "system", []string{"Solution design"}, false},
@@ -1155,4 +1168,45 @@ func TestLogEntryFor_ASignoffShowsItsCrossFindingsAndTheReason(t *testing.T) {
 	}})
 	require.True(t, ok)
 	assert.Contains(t, entry.Content, "the release check covers it")
+}
+
+func TestLogEntryFor_TheModesApprovalOfAShownSignoffClosesItsPrompt(t *testing.T) {
+	cases := []struct {
+		name   string
+		extra  map[string]any
+		marked bool
+	}{
+		{name: "shown, then approved by the mode", extra: map[string]any{"responder": "auto", "shown": true}, marked: true},
+		{name: "approved by the mode before it was shown", extra: map[string]any{"responder": "auto"}},
+		{name: "approved by a human", extra: map[string]any{"responder": "human"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := map[string]any{"stage": "signoff", "decision": "approve", "version": 3}
+			maps.Copy(p, tc.extra)
+
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: p})
+			require.True(t, ok)
+			assert.Equal(t, "system", entry.Type)
+
+			if !tc.marked {
+				assert.Nil(t, entry.Marker)
+
+				return
+			}
+
+			require.NotNil(t, entry.Marker)
+			assert.Equal(t, protocol.LogMarker{Kind: "decision", Stage: "signoff", Version: 3}, *entry.Marker)
+		})
+	}
+}
+
+func TestLogEntryFor_TheModesApprovalOfAShownGateNamesItsSlice(t *testing.T) {
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{
+		"stage": "solution_design@SL2", "decision": "approve", "version": 2, "responder": "auto", "shown": true,
+	}})
+	require.True(t, ok)
+	require.NotNil(t, entry.Marker)
+	assert.Equal(t, protocol.LogMarker{Kind: "decision", Stage: "solution_design", Slice: "SL2", Version: 2}, *entry.Marker)
 }

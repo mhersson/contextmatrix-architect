@@ -241,7 +241,10 @@ type Controller struct {
 	// and a close. Per blueprint, not per session: a reopen attaches a new
 	// session while the ended one's run may still post.
 	roundLocks map[string]*sync.Mutex
-	closing    bool
+	// modeLocks serialize each blueprint's mode switches with its sign-off
+	// approvals, so a switch lands before an approval or is refused after it.
+	modeLocks map[string]*sync.Mutex
+	closing   bool
 }
 
 // New builds a Controller.
@@ -261,6 +264,7 @@ func New(opts Options) *Controller {
 	c := &Controller{
 		opts: opts, sessions: map[string]*session{}, runs: map[string]*run{}, watches: map[string]*watcher{},
 		flights: map[string][]*flight{}, roundLocks: map[string]*sync.Mutex{},
+		modeLocks: map[string]*sync.Mutex{},
 	}
 	c.live = newLiveHub(c.View, opts.Logger)
 
@@ -430,9 +434,11 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 
 // interruptedStage marks every run a crash left running as interrupted and
 // returns the stage of the latest such stage run, to re-run. A responder run
-// left running sat inside its stage's run, so the stage run alone is re-run.
-// A builder round is not returned: the critique runs that round again, in
-// its attempt. Empty means no stage is re-run. The caller holds the run slot.
+// left running sat inside its stage's run, which alone is re-run, or answered
+// a handed-over round, whose resume answers what is left; it is never re-run
+// itself. A builder round is not returned: the critique runs that round
+// again, in its attempt. Empty means no stage is re-run. The caller holds the
+// run slot.
 func (c *Controller) interruptedStage(ctx context.Context, bp store.Blueprint) (string, error) {
 	left, err := c.leftRunning(ctx, bp.ID)
 	if err != nil || len(left) == 0 {
@@ -1096,6 +1102,20 @@ func (c *Controller) claimLocked(id string) (*run, context.Context, bool) {
 	return r, ctx, true
 }
 
+// claimAttached takes id's run slot for sess while it is attached and the
+// controller is not closing; busy says another run holds the slot, read under
+// the same lock as the claim.
+func (c *Controller) claimAttached(id string, sess *session) (r *run, runCtx context.Context, claimed, busy bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.closing && c.sessions[id] == sess {
+		r, runCtx, claimed = c.claimLocked(id)
+	}
+
+	return r, runCtx, claimed, c.runs[id] != nil && !claimed
+}
+
 // claimAfterEnd takes id's run slot for sess once prev, the ended session's
 // run, has left it, waiting at most endedRunWait. It fails when the wait runs
 // out, or when by then an abort has reached prev, Shutdown has begun, sess is
@@ -1165,6 +1185,20 @@ func (c *Controller) roundLock(id string) *sync.Mutex {
 	if l == nil {
 		l = &sync.Mutex{}
 		c.roundLocks[id] = l
+	}
+
+	return l
+}
+
+// modeLock is blueprint id's mode lock.
+func (c *Controller) modeLock(id string) *sync.Mutex {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	l := c.modeLocks[id]
+	if l == nil {
+		l = &sync.Mutex{}
+		c.modeLocks[id] = l
 	}
 
 	return l

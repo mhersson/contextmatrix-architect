@@ -69,6 +69,11 @@ const (
 	// EventCap records a cap <usd>|off reply: the cap it changed from and to
 	// and the stage it resumes, or why it changed nothing.
 	EventCap = "cap"
+	// EventMode records a mode <m> reply: the mode it switched from and to,
+	// the round it handed to the responder, the step key of the stage gate it
+	// decided (gate) and whether it ran the sign-off again, or why it
+	// changed nothing.
+	EventMode = "mode"
 	// EventResume records a resume or continue reply: the stopped stage it
 	// runs again, or that nothing waits to resume and the stage running.
 	EventResume = "resume"

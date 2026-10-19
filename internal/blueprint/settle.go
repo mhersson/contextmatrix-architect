@@ -14,12 +14,16 @@ import (
 // no answers gets; it reports the reply and stops nothing.
 const reasonStaleReply = "stale_reply"
 
-// segmentStep is what runs next on a run slot: a stage run, a critique, or
-// a run that goes on from a round (seg). The zero step runs nothing.
+// segmentStep is what runs next on a run slot: a stage run, a critique, a
+// run that goes on from a round (seg), or the responder's answers to a
+// handed-over round. The zero step runs nothing.
 type segmentStep struct {
 	stage    string
 	critique bool
 	seg      *round
+	// handover has the auto responder answer what a handed-over round still
+	// holds open.
+	handover bool
 }
 
 // Reply stores a round's answers and assumption decisions as far as they fit
@@ -146,9 +150,9 @@ func (c *Controller) settleOn(ctx context.Context, r *run, id string) {
 }
 
 // follow runs what follows the round the pipeline stands at on slot r,
-// which the caller holds: the continuation once the round is answered, a
-// chat run for chat its stage has not seen, else nothing and the slot is
-// released. wake runs a stalled round again: a
+// which the caller holds: the continuation once the round is answered, the
+// responder for a handed-over round, a chat run for chat its stage has not
+// seen, else nothing and the slot is released. wake runs a stalled round again: a
 // message arrived. A round that cannot be read or closed fails the
 // blueprint.
 func (c *Controller) follow(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, wake bool) {
@@ -171,8 +175,9 @@ func (c *Controller) follow(ctx, runCtx context.Context, r *run, sess *session, 
 
 // nextSegment is what follows the round the pipeline stands at, for the
 // holder of the run slot with nothing in flight: the continuation once every
-// question has an answer (the round is closed first), a chat run while chat
-// its stage has not seen waits, or nothing while the round waits for
+// question has an answer (the round is closed first), the responder's
+// answers while a handed-over round holds questions open, a chat run while
+// chat its stage has not seen waits, or nothing while the round waits for
 // answers, which leaves the blueprint waiting. A stalled
 // round, whose run after it failed or was aborted, runs again only when
 // wake is set: a message arrived. The caller holds the run slot.
@@ -223,6 +228,8 @@ func (c *Controller) nextSegment(ctx context.Context, sess *session, bp store.Bl
 		}
 
 		return segmentStep{stage: s.Frame.Stage, seg: rd}, nil
+	case roundRespond:
+		return segmentStep{stage: s.Frame.Stage, handover: true}, nil
 	default:
 		c.setState(ctx, bp.ID, StateWaiting)
 
@@ -318,7 +325,8 @@ func (c *Controller) chatSegment(ctx context.Context, bp store.Blueprint, s roun
 
 // atRound handles a message the round the pipeline stands at takes no chat
 // from, while nothing runs: a note the stage's later runs get. When the run
-// after a closed round failed or was aborted, the note runs it again.
+// after a closed round failed or was aborted, the note runs it again, and on
+// a handed-over round the responder answers what is left.
 func (c *Controller) atRound(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, place roundPlace, text, msgID string) error {
 	s := place.state
 
@@ -337,9 +345,10 @@ func (c *Controller) atRound(ctx, runCtx context.Context, r *run, sess *session,
 
 // resumeRound acts on the round a reopened blueprint stands at, on slot r,
 // which the caller holds: an open round is shown again with what is stored
-// and waits, or has a chat run answer chat its stage has not seen, an
-// answered one closes and its continuation runs, and a stalled one waits
-// for the next message.
+// and waits, or has a chat run answer chat its stage has not seen, a
+// handed-over one has the responder answer what is left, an answered one
+// closes and its continuation runs, and a stalled one waits for the next
+// message.
 func (c *Controller) resumeRound(ctx context.Context, r *run, sess *session, bp store.Blueprint, place roundPlace) {
 	bg := context.WithoutCancel(ctx)
 

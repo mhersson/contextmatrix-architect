@@ -84,6 +84,9 @@ type record struct {
 	// when none waits.
 	round      int
 	roundStage string
+	// handedRound is the builder round an open round handed to the
+	// responder was asked in; 0 when there is none.
+	handedRound int
 	// policies is each stage's gate policy, its question policy when it has no gate.
 	policies map[string]string
 	// steps is the blueprint's pipeline and pieces the slices it repeats
@@ -225,7 +228,7 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 	}
 
 	for _, st := range c.opts.Pack.Stages {
-		if rec.policies[st.ID], err = c.resolvePolicy(bp, replies, st.ID, true); err != nil {
+		if rec.policies[st.ID], err = c.resolvePolicy(bp.Mode, replies, st.ID, true); err != nil {
 			return record{}, err
 		}
 	}
@@ -243,7 +246,12 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 		return record{}, err
 	}
 
-	if found && !place.state.Frame.Closed {
+	switch {
+	case !found || place.state.Frame.Closed:
+	case place.state.HandedOver != nil:
+		// A handed-over round waits for nobody: the responder answers it.
+		rec.handedRound = place.state.BuilderRound
+	default:
 		rec.round, rec.roundStage = place.state.Number, place.state.Frame.Stage
 	}
 
@@ -634,7 +642,9 @@ func (rec record) stageStatus(st pipelineStep, i, current int) string {
 		switch {
 		case f.kind == store.RunKindReviewer:
 			return stepReviewing
-		case f.kind == store.RunKindStage && f.round > 1:
+		// A responder run outside its stage's run answers a handed-over
+		// round, and reads as the run that asked it would.
+		case f.kind == store.RunKindStage && f.round > 1, f.kind == store.RunKindResponder && rec.handedRound > 1:
 			return stepRevising
 		default:
 			return stepRunning

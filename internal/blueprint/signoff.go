@@ -126,9 +126,35 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 		_ = client.Close()
 	}
 
-	auto := emitsOnItsOwn(bp.Mode)
 	critical := criticalCross(crossOf(out.art))
 	payload := c.signoffPayload(bg, au, bp, out, draft, pf, pfErr)
+
+	// The mode's approval of a sign-off a human was shown closes its prompt
+	// in the panel, as a reply would. A read that fails only loses that.
+	var approval map[string]any
+
+	if shown, err := c.shownSignoff(bg, bp.ID, out.art.Version); err != nil {
+		c.opts.Logger.Warn("blueprint: read the shown sign-off", "blueprint", bp.ID, "error", au.text(err.Error()))
+	} else if shown != nil {
+		approval = map[string]any{"shown": true}
+	}
+
+	// The mode is read, and an automatic approval recorded, under the mode
+	// lock: a switch lands before the read or is refused after the approval.
+	lock := c.modeLock(bp.ID)
+	lock.Lock()
+
+	// The stored mode, not bp's: a chain of runs holds bp from its start, and
+	// a mode switch applies to the sign-off it reaches.
+	cur, err := c.opts.Store.GetBlueprint(bg, bp.ID)
+	if err != nil {
+		lock.Unlock()
+		c.fail(bg, au, bp.ID, 0, "sign-off: "+err.Error())
+
+		return
+	}
+
+	auto := emitsOnItsOwn(cur.Mode)
 
 	// Steps do not stop it: creating the cards does not need them, and they
 	// are shown again with the emitted cards. The approval goes first and
@@ -136,7 +162,10 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	// leaves an approved sign-off the restart emits, never an unapproved
 	// record.
 	if auto && !critical && ctx.Err() == nil && pfErr == nil && len(pf.Blocking) == 0 && len(pf.Warnings) == 0 {
-		if !c.decide(bg, au, bp.ID, signoffStage, out.art.Version, store.GateApprove, "", store.ResponderAuto, "") {
+		decided := c.decideWith(bg, au, bp.ID, signoffStage, out.art.Version, store.GateApprove, "", store.ResponderAuto, "", approval)
+		lock.Unlock()
+
+		if !decided {
 			return
 		}
 
@@ -145,6 +174,8 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 
 		return
 	}
+
+	lock.Unlock()
 
 	// A sign-off Shutdown cut short is not shown: the restart runs it again.
 	if c.closingDown() {
@@ -432,7 +463,14 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 				extra = map[string]any{"override_reason": feedback}
 			}
 
-			if c.decideWith(ctx, sess.audit, bp.ID, signoffStage, out.art.Version, store.GateApprove, feedback, store.ResponderHuman, msgID, extra) {
+			// Under the mode lock, so a switch lands before the approval or
+			// is refused after it.
+			lock := c.modeLock(bp.ID)
+			lock.Lock()
+			decided := c.decideWith(ctx, sess.audit, bp.ID, signoffStage, out.art.Version, store.GateApprove, feedback, store.ResponderHuman, msgID, extra)
+			lock.Unlock()
+
+			if decided {
 				c.launchEnd(runCtx, r, sess, bp, out)
 
 				return nil

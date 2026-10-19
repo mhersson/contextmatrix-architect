@@ -90,7 +90,7 @@ context window; never use film references.
 CM chat panel (the only client)
      |  internal/webhook (backendkit webhookcore + logbridge:
      |  session start, /message, /logs SSE, end-session, the blueprint view, artifacts and live SSE)
-     |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, cap <usd>|off, resume|continue, outcomes, lesson decision
+     |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, cap <usd>|off, mode <m>, resume|continue, outcomes, lesson decision
      |  events out: stage progress, tool calls, questions, gates, cost
 controller (internal/blueprint)     blueprint state machine, gates, responder policy, cost cap
      |
@@ -202,8 +202,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   last answer arrived meanwhile closes once it ends. The reply reaches the panel only in the round's
   chat; the chat run's text and its `answer_chat` call stay in the record.
   A chat run that fails or is aborted leaves its messages until the user
-  writes, answers again or replies `continue`: the chat runs again, or the
-  continuation of the answered round gets them.
+  writes, answers again, replies `continue` or switches the mode so the round
+  goes to the responder: the chat runs again, or the continuation of the
+  answered round gets them.
   Under `auto` a responder run answers each question inside the asking run
   (see Interaction), every assumption on the tab is accepted, the round is
   shown answered and read-only, and the stage continues at once.
@@ -365,7 +366,7 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   it folds into and when, which stages repeat per slice and which collapses
   with one slice, and the `gate <stage> human|auto` reply that
   changes it, so the operator can change a policy before solution design
-  spends anything.
+  spends anything. A mode switch posts it again.
 - Every stage that interviews (intake, slicing, shared decisions and solution
   design) reads the code, so it states what the code answers as a finding and
   asks only what neither the code nor the need settles.
@@ -767,9 +768,10 @@ model-judged rows are the readiness stage.
 
 Every stage has a responder policy for its questions and one for its gate.
 Both resolve, first match winning, from the blueprint's latest
-`gate <stage> human|auto` reply, which sets both, then the mode (every mode
-but default makes both `auto`), then the pack: the stage's `policy` for its
-questions, and its `gate_policy` for its gate, which defaults to `policy`.
+`gate <stage> human|auto` reply, which sets both, then the mode as stored
+when the question or gate comes (every mode but default makes both `auto`),
+then the pack: the stage's `policy` for its questions, and its `gate_policy`
+for its gate, which defaults to `policy`.
 In the default pack intake's questions go to a human and its gate is `auto`.
 A stage that declares the `assumptions` check records what it decides
 itself as data, and every responder answer is recorded as an assumption;
@@ -822,7 +824,9 @@ turned into a question, a later round of the attempt must be posted before
 the stage may submit. Under the human policy every stated assumption must
 have a basis. Under `auto` each assumption is accepted automatically, logged
 on the round, and keeps the status its basis gives it, never `confirmed`; no
-auto round records an acceptance. The stage submits each assumption as a
+auto round records an acceptance. On a round a mode switch handed to the
+responder, the acceptances and conversions the human made before it stand
+and the rest are the responder's. The stage submits each assumption as a
 standalone sentence, or as `{"text": "<sentence>", "basis": "<tag>"}` when it
 rests on an answered question (`Q<n>`) or an accepted assumption
 (`round<n>.A<k>`). The check refuses a sentence that points at other text
@@ -873,7 +877,8 @@ without a reply it falls through to `auto`, logged as such).
 ### Modes
 
 The mode is chosen in the panel's new-session dialog and recorded on the
-blueprint.
+blueprint; a `mode <m>` reply switches it until emission starts (see
+Sessions), and every question, gate and sign-off reads it as it stands then.
 
 - **Default**: policies as the pack sets them. The embedded pack makes
   intake, slicing, shared decisions and solution design `human` and every
@@ -940,8 +945,15 @@ text lists `reject slicing` always and the others with two or more slices;
 one that names no step of the blueprint is a note with a hint. `auto+emit`
 and `yolo` approve on their own when preflight runs and finds nothing
 blocking and no warning, never over a critical finding across the blueprint,
-and stop for a human otherwise. Every decision is a row in `gates`. Then, in
-order:
+and stop for a human otherwise. The sign-off reads the mode as it stands
+when it decides, under a lock a `mode` reply shares, so a switch lands
+before an approval or is refused after it; a switch into `auto+emit` or
+`yolo` while a sign-off waits for a human runs it again, preflight
+included, and when the mode approves a sign-off or a stage gate that was
+shown, that decision's transcript row carries a `decision` marker (the
+stage, its slice and the version; a folded stage's row carries none) that
+closes the shown prompt in the panel. Every decision is a row in `gates`.
+Then, in order:
 
 1. **Preflight**, at sign-off and again at the start of every emission
    attempt, reading CM each time. Blocking: a card's project is missing in
@@ -1041,6 +1053,7 @@ Replies the server understands, besides a round's structured answers:
 | `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At a slice's design gate, `reject slicing <feedback>` runs slicing and everything after it again, and `reject shared_decisions <feedback>` the shared decisions and every slice. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition, every slice's in slice order, with the feedback. `reject slicing <feedback>` runs slicing and everything after it again, `reject SL<n> <feedback>` that slice's design and every later slice, and `reject shared_decisions <feedback>` the shared decisions and every slice; the sign-off records its rejection first, then a rejection of the step that runs again, and the replaced versions superseded. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
 | `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round or gate keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
 | `cap <usd>`, `cap off`        | Sets the blueprint's cost cap (see below); CM sends it when the person clicks the cost in the sheet header. Exactly two words, the amount one plain decimal number, so an answer that starts with "cap" stays an answer. Works while a stage runs. |
+| `mode default\|auto\|auto+emit\|yolo` | Switches the blueprint's mode; every later question, gate and the sign-off follow the new one, and the gate plan, once posted, is posted again. Into `auto+emit` or `yolo`, a sign-off waiting for a human runs again, preflight included, and approves itself unless a critical finding across the blueprint or preflight stops it. Into any mode but default, the round waiting for a human goes to the auto responder at once when its stage's policy is now `auto` (a `gate` reply still wins): it turns read-only, the answers and decisions already sent stay the human's, the responder answers each open question and every undecided assumption is accepted, and the stage then continues; a switch back to default after that leaves it with the responder, and `continue`, the next message or a reopen finishes one an abort or a restart cut short. Into `auto`, `auto+emit` or `yolo`, a stage gate shown only because its policy asked a human is approved when the policies are now `auto` (a `gate` reply still wins) and its reviewer's verdict passes, and the pipeline goes on; one shown because its verdict did not pass stays with its human, as it would in auto, and a switch back to default decides no gate. A round whose asking run read the policy before the switch and had not yet ended on it stays with its human too. Exactly two words, the mode one of the four, case ignored, so an answer that starts with "mode" stays an answer. Works while a stage runs. Refused, changing nothing, for the mode in effect, once emission has started (the sign-off approved) and after the pipeline ended. The stored mode survives a reopen: a later start's mode is ignored, as its cap is. Each reply is a `mode` event with the switch, or the refusal's reason (`unchanged`, `emission_started`, `ended`). |
 | `resume`, `continue`          | Runs the stopped stage again once, as a retry message would but storing no note (see below); a stage the cap stopped runs too and meets the cap again. The whole message, case ignored, so an answer that starts with either word stays an answer. While a run is in flight, or where nothing is stopped (an open gate, a round waiting for answers, the sign-off, an ended pipeline, no need yet), nothing starts and the panel says so. Each reply is a `resume` event with the stage it runs again, or with `nothing` and the stage `running`, if any. |
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
@@ -1163,7 +1176,12 @@ frames on the session's chat stream.
   blueprint and per-run caps, and whether every run was priced.
   While a round waits, its stage's step is waiting and no run is in
   flight; while a chat run answers its chat, the step is running and the
-  round stays the open prompt. Every artifact version is listed with its
+  round stays the open prompt. A round a mode switch handed to the
+  responder is no open prompt: nobody waits for the operator on it, and its
+  stage's step reads as an auto round's would at the same point: running, or
+  revising in a builder round, while the responder answers, and as after an
+  aborted run of its stage once an abort stops the responder.
+  Every artifact version is listed with its
   status (current, reviewing, at_gate, approved, rejected, superseded,
   folded), who decided
   its gate (you, or automatically: a stage gate the auto policy approved on
@@ -1390,6 +1408,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Panel: the blueprint pane (scale bar, sheet, transcript markers), read through CM proxies of the architect's signed view and artifact endpoints, with its live stream relayed on the session's chat stream (protocol v0.26.0) | blueprint UI |
 | A research setting (`off` or `search`, off by default) with the search provider and its key in CM's configuration, sent as `ArchitectStart.Research` (protocol v0.27.0) | research |
 | Panel: clicking the cost in the sheet header asks for a new cap and sends `cap <usd>` or `cap off` as a chat message hidden from the transcript | cost cap |
+| Panel: the blueprint scale bar has a mode cell next to the cost cell; clicking it offers the same four modes as the new-session dialog and posts the choice to the session's mode endpoint, which sends `mode <m>` as a session command and records the mode on the session row that every later start carries; the cell is locked once the pipeline has ended or the sign-off is approved (state `emitting`, `emitted` or `done`, or the sign-off step `done`); picking yolo turns the button into "Switch and run"; the pane header's pill only displays the mode, `view.mode` once a view has loaded and the session row's before | mode switch |
 | CM sends the session model's context window from its model catalog as `ArchitectStart.ContextWindow`, through the same lookup as the price (`Rate`), 0 when it does not know it; panel: a reviewer's verdict renders as a review card from the `review` marker, with the summary, the round of the most rounds and the reviewer's notes on re-checked findings (protocol v0.30.0) | context fix and review card |
 | Panel: the review popover and the gate bar show the findings ledger (id, severity, the reviewer's status, the builder's claim beside it), and the tester persona has a display name (protocol v0.28.0) | reviewers |
 | Pin protocol v0.29.0, since `internal/chat` decodes `LogMarker` and `LogRound`; panel: slice tabs under the stage tabs and a grouped scale bar, only with two or more slices; the artifact proxy forwards `?slice=SL<n>`, checked against `^SL[1-9][0-9]{0,2}$`; the gate bar renders "Reject shared decisions" like any action; the new `shared_decisions` stage displays with tab "Shared", name "Shared decisions", title "Shared decisions", noun "shared decisions" and doing "settling the shared decisions" | slices |

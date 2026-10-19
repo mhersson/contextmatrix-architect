@@ -556,11 +556,12 @@ func (c *Controller) need(ctx, runCtx context.Context, r *run, sess *session, bp
 
 // stopPoint is where a pipeline with no run in flight stands stopped: a
 // pending model stage, a gated stage whose critique (its review or builder
-// round) is pending, a round whose continuation or chat run is pending
-// (round.stalled when that run failed or was aborted), or the first stage,
-// before its first artifact, with a need stored. fold is the fold to record
-// before the stage runs. byCap says the blueprint cap stopped it (see
-// stoppedByCap), and capUSD is the cap it stopped under.
+// round) is pending, a round whose continuation or chat run, or whose
+// handed-over questions, are pending (round.stalled when that run failed or
+// was aborted), or the first stage, before its first artifact, with a need
+// stored. fold is the fold to record before the stage runs. byCap says the
+// blueprint cap stopped it (see stoppedByCap), and capUSD is the cap it
+// stopped under.
 type stopPoint struct {
 	stage    string
 	critique bool

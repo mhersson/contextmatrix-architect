@@ -140,6 +140,17 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 
 	c.setState(bg, bp.ID, StateEmitting)
 
+	// The stored mode, not bp's: a chain of runs holds bp from its start, and
+	// a switch before the approval decides whether the run starts.
+	cur, err := c.opts.Store.GetBlueprint(bg, bp.ID)
+	if err != nil {
+		c.emitError(ctx, au, bp.ID, err)
+
+		return
+	}
+
+	bp = cur
+
 	draft, err := c.draft(bg, bp.ID)
 	if err != nil {
 		c.emitError(ctx, au, bp.ID, err)

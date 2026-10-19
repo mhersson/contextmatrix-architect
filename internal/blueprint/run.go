@@ -94,9 +94,12 @@ func (c *Controller) launchStep(ctx context.Context, r *run, sess *session, bp s
 
 			var end stageEnd
 
-			if step.critique {
+			switch {
+			case step.handover:
+				end = c.respondHandedOver(ctx, r, sess, bp)
+			case step.critique:
 				end = c.critique(ctx, r, sess, bp, stageID)
-			} else {
+			default:
 				end = c.runStage(ctx, r, sess, bp, stageID, step.seg)
 			}
 
