@@ -1,5 +1,5 @@
 name: default
-version: "0.18"
+version: "0.19"
 stages:
   - id: intake
     persona: product_owner

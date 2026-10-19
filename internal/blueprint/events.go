@@ -24,6 +24,9 @@ type Event struct {
 	// runs per slice with two or more slices, so text a person reads names
 	// a per-slice step's slice.
 	Sliced bool
+	// Plain is set on the way to the sink and never stored: the blueprint
+	// runs in plain language, so what a person reads is worded plainly.
+	Plain bool
 }
 
 // Event kinds.
@@ -187,6 +190,13 @@ func (a audit) event(ctx context.Context, e Event) {
 	if a.c.opts.Sink != nil {
 		// The caller's cancel must not hide the slices from the sink.
 		e.Sliced = a.c.sliced(context.WithoutCancel(ctx), e.BlueprintID)
+
+		// A read error leaves it false: the sink then words the event as
+		// without the toggle.
+		if bp, err := a.c.opts.Store.GetBlueprint(context.WithoutCancel(ctx), e.BlueprintID); err == nil {
+			e.Plain = bp.PlainLanguage
+		}
+
 		a.c.opts.Sink(e)
 	}
 

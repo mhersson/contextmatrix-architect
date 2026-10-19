@@ -115,7 +115,7 @@ func (c *Controller) View(ctx context.Context, id string) (protocol.BlueprintVie
 	}
 
 	return protocol.BlueprintView{
-		ID: bp.ID, Mode: bp.Mode, State: rec.state(), EndReason: c.endReason(rec),
+		ID: bp.ID, Mode: bp.Mode, PlainLanguage: bp.PlainLanguage, State: rec.state(), EndReason: c.endReason(rec),
 		Seq:      uint64(rec.seq), //nolint:gosec // event ids are positive
 		Pipeline: c.pipeline(rec), Current: rec.current(), Open: rec.open(),
 		Cost: rec.cost(), Artifacts: c.artifactRefs(rec), Slices: rec.sliceList(),

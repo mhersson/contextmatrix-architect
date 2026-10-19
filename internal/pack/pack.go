@@ -63,11 +63,12 @@ const (
 	PolicyAuto  = "auto"
 )
 
-// The instructions every reviewer or responder run reads, under stages/.
-// No stage may take these ids.
+// The instructions every reviewer, responder or plain-language run reads,
+// under stages/. No stage may take these ids.
 const (
 	reviewInstructions    = "review"
 	responderInstructions = "responder"
+	plainInstructions     = "plain"
 )
 
 // stepSeparator joins a per-slice stage's id and its slice in a step key;
@@ -181,6 +182,7 @@ type Pack struct {
 	card         string
 	review       string
 	responder    string
+	plain        string
 }
 
 // LoadEmbedded loads the pack compiled into the binary.
@@ -324,6 +326,13 @@ func load(fsys fs.FS) (*Pack, error) {
 
 	p.responder = string(responder)
 
+	plain, err := optionalFile(fsys, path.Join("stages", plainInstructions+".md"), "", "")
+	if err != nil {
+		return nil, err
+	}
+
+	p.plain = string(plain)
+
 	return p, nil
 }
 
@@ -406,7 +415,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 		return fmt.Errorf("pack: stage needs an id: %+v", s)
 	}
 
-	if s.ID == reviewInstructions || s.ID == responderInstructions {
+	if s.ID == reviewInstructions || s.ID == responderInstructions || s.ID == plainInstructions {
 		return fmt.Errorf("pack: stage id %q is reserved for the %s instructions", s.ID, s.ID)
 	}
 
@@ -641,6 +650,10 @@ func (p *Pack) ReviewInstructions() string { return p.review }
 // ResponderInstructions returns what every responder run reads; empty when
 // the pack has none, and then an auto question returns to its stage.
 func (p *Pack) ResponderInstructions() string { return p.responder }
+
+// PlainInstructions are added to every stage, responder and reviewer run of a
+// plain-language blueprint; empty when the pack has none.
+func (p *Pack) PlainInstructions() string { return p.plain }
 
 // StageName is how a stage id or a step key reads to a person: underscores
 // become spaces and the first letter is upper case. A per-slice step names

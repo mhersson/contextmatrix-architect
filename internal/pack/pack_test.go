@@ -286,6 +286,7 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "a reviewer with the cm tools", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4, tools: [cm]}\n", files: map[string]string{"stages/review.md": "x"}, want: "not code or research"},
 		{name: "a reviewer with an unknown tool group", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4, tools: [shell]}\n", files: map[string]string{"stages/review.md": "x"}, want: "not code or research"},
 		{name: "a reserved stage id", stage: "  - id: review\n    persona: po\n", files: map[string]string{"stages/review.md": "x"}, want: "reserved"},
+		{name: "the reserved plain id", stage: "  - id: plain\n    persona: po\n", files: map[string]string{"stages/plain.md": "x"}, want: "reserved"},
 		{name: "a dot in a stage id", stage: "  - id: s1.review\n    persona: po\n", files: map[string]string{"stages/s1.review.md": "x"}, want: "dot"},
 	}
 
@@ -370,6 +371,22 @@ func TestLoad_ResponderInstructionsAreOptional(t *testing.T) {
 	assert.Equal(t, "answer it", p.ResponderInstructions())
 }
 
+func TestLoad_PlainInstructionsAreOptional(t *testing.T) {
+	p, err := load(packFS("", nil))
+	require.NoError(t, err)
+	assert.Empty(t, p.PlainInstructions())
+
+	p, err = load(packFS("", map[string]string{"stages/plain.md": "word it plainly"}))
+	require.NoError(t, err)
+	assert.Equal(t, "word it plainly", p.PlainInstructions())
+}
+
+func TestLoadEmbedded_HasPlainInstructions(t *testing.T) {
+	p, err := LoadEmbedded()
+	require.NoError(t, err)
+	assert.NotEmpty(t, p.PlainInstructions())
+}
+
 func TestStageName(t *testing.T) {
 	t.Parallel()
 
@@ -430,7 +447,7 @@ func slicedPack(stagesYAML string) fstest.MapFS {
 		"card.md":          {Data: []byte("## Context\n")},
 	}
 
-	for _, id := range []string{"cut", "shared", "design", "cards", "check", "plain"} {
+	for _, id := range []string{"cut", "shared", "design", "cards", "check", "middle"} {
 		fsys["stages/"+id+".md"] = &fstest.MapFile{Data: []byte("instructions")}
 	}
 
@@ -443,7 +460,7 @@ const (
 	designYAML = "  - id: design\n    persona: po\n    per_slice: true\n    earlier_slices: [design, cards]\n    gate: true\n    reviewer: {persona: po, threshold: 4}\n"
 	cardsYAML  = "  - id: cards\n    persona: po\n    per_slice: true\n    earlier_slices: [design, cards]\n"
 	checkYAML  = "  - id: check\n    persona: po\n    consumes: [cards]\n    loops_to: cards\n    max_rounds: 2\n"
-	plainYAML  = "  - id: plain\n    persona: po\n"
+	middleYAML = "  - id: middle\n    persona: po\n"
 
 	wholeCardsYAML    = "  - id: cards\n    persona: po\n    tools: [code]\n    checks: [cards]\n"
 	wholeCriteriaYAML = "  - id: design\n    persona: po\n    checks: [criteria]\n    gate: true\n    reviewer: {persona: po, threshold: 4}\n"
@@ -476,18 +493,18 @@ func TestLoad_SliceKeysInvalid(t *testing.T) {
 		stages string
 		want   string
 	}{
-		{name: "a per-slice stage without a slicing stage", stages: plainYAML + designYAML, want: "needs an earlier stage that checks slices"},
+		{name: "a per-slice stage without a slicing stage", stages: middleYAML + designYAML, want: "needs an earlier stage that checks slices"},
 		{name: "a per-slice stage before slicing", stages: designYAML + cutYAML, want: "needs an earlier stage that checks slices"},
 		{
 			name:   "the slicing stage itself per-slice",
 			stages: strings.Replace(cutYAML, "    fold: {field: slices, max: 1}\n", "    per_slice: true\n", 1) + designYAML + cardsYAML,
 			want:   "needs an earlier stage that checks slices",
 		},
-		{name: "per-slice stages apart", stages: cutYAML + designYAML + plainYAML + cardsYAML, want: "apart from the other per-slice stages"},
+		{name: "per-slice stages apart", stages: cutYAML + designYAML + middleYAML + cardsYAML, want: "apart from the other per-slice stages"},
 		{name: "per_slice and shared", stages: cutYAML + strings.Replace(designYAML, "per_slice: true", "per_slice: true\n    shared: true", 1), want: "both per_slice and shared"},
 		{name: "a per-slice stage that folds", stages: cutYAML + strings.Replace(designYAML, "gate: true", "gate: true\n    fold: {field: slices, max: 1}", 1) + cardsYAML, want: "cannot fold"},
 		{name: "a per-slice stage that loops", stages: cutYAML + designYAML + strings.Replace(cardsYAML, "earlier_slices", "loops_to: design\n    max_rounds: 2\n    earlier_slices", 1), want: "cannot loop"},
-		{name: "earlier_slices on a whole-blueprint stage", stages: cutYAML + designYAML + cardsYAML + "  - id: plain\n    persona: po\n    earlier_slices: [design]\n", want: "is not per_slice"},
+		{name: "earlier_slices on a whole-blueprint stage", stages: cutYAML + designYAML + cardsYAML + "  - id: middle\n    persona: po\n    earlier_slices: [design]\n", want: "is not per_slice"},
 		{name: "earlier_slices naming a whole-blueprint stage", stages: cutYAML + strings.Replace(designYAML, "[design, cards]", "[cut]", 1), want: "is not a per-slice stage"},
 		{name: "a shared stage without a gate", stages: cutYAML + "  - id: shared\n    persona: po\n    shared: true\n" + designYAML + cardsYAML, want: "needs a gate"},
 		{name: "a shared stage before slicing", stages: sharedYAML + cutYAML + designYAML + cardsYAML, want: "sits between"},

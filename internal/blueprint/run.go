@@ -519,7 +519,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 
 	in := stage.Input{
 		Stage: st.ID, Persona: c.opts.Pack.Persona(st.Persona),
-		Instructions: c.opts.Pack.Instructions(st.Stage.ID), Task: task,
+		Instructions: withPlain(bp, c.opts.Pack.Instructions(st.Stage.ID), c.opts.Pack.PlainInstructions()), Task: task,
 	}
 
 	steps, pieces, err := c.steps(context.WithoutCancel(ctx), bp.ID)

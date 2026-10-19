@@ -294,7 +294,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 
 | Table         | Holds                                                                                                                        |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price and context window as CM sent them                                      |
+| blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price and context window as CM sent them, and whether it runs in plain language |
 | stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, whether it passed, its summary when it gave one, its findings ledger with ids, severities, statuses and the reviewer's notes, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes, or at the responder's answer under auto, or at the answer for one asked alone before rounds; an assumption a human accepted on a tab is recorded on its round, not here |
@@ -582,7 +582,7 @@ pack.yaml          stage order; per stage: persona, consumes,
                    slices' stages it reads (`earlier_slices`), and whether it
                    settles what every slice shares (`shared`)
 personas/*.md      role text, one file per persona
-stages/*.md        instructions, one file per stage, review.md for every reviewer run and responder.md for every responder run
+stages/*.md        instructions, one file per stage, review.md for every reviewer run, responder.md for every responder run and plain.md (optional) for every run of a plain-language blueprint
 card.md            the card body template
 lists.yaml         data for mechanical checks: required sections, stripped headings,
                    defect phrases, maintenance labels and verbs, forbidden content,
@@ -907,6 +907,18 @@ Sessions), and every question, gate and sign-off reads it as it stands then.
 The architect's cost cap bounds the architect. The CM runs a yolo blueprint
 starts are bounded by CM's per-card guardrails, not by the architect.
 
+### Plain language
+
+A blueprint started with the plain-language toggle (`plain_language` on the
+start, stored at creation and never changed by a later start) asks the person
+driving it only what they can answer and shows technical decisions only
+through what they mean for that person. The technical record is unchanged:
+every question, answer, decision and assumption is stored, sent to later
+stages, put on the cards and exported exactly as without it. Every stage,
+responder and reviewer run of such a blueprint gets the pack's
+`stages/plain.md` after its own instructions. The view carries
+`plain_language`, and the export's summary says so.
+
 ## Tools
 
 | Group    | Tools                                                                                                   | Notes                                                                                                                                             |
@@ -1040,11 +1052,12 @@ The Outcomes stage closes the loop from emitted cards back to the contract.
 ## Sessions
 
 The only surface is a blueprint session in CM's chat panel. The new-session
-dialog picks the target projects, the mode and a cost cap. The need is stated
-there, questions and gates are answered there, and the stage's progress, tool
-calls and cost stream into it as log entries. The binary,
-`contextmatrix-architect`, has one server command, `serve`, plus the
-`config defaults` and `config validate` helpers.
+dialog picks the target projects, the mode, a cost cap and whether the
+blueprint runs in plain language. The need is stated there, questions and
+gates are answered there, and the stage's progress, tool calls and cost
+stream into it as log entries. The binary, `contextmatrix-architect`, has one
+server command, `serve`, plus the `config defaults` and `config validate`
+helpers.
 
 Replies the server understands, besides a round's structured answers:
 
@@ -1321,7 +1334,7 @@ frames on the session's chat stream.
 
 - Go 1.27, `contextmatrix-harness` v0.26.0 (loop, llm client, jailed read
   tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.9.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.32.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.34.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base

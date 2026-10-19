@@ -83,6 +83,9 @@ type StartInput struct {
 	// ContextWindow is the session model's context length from CM; 0 when
 	// CM does not know it.
 	ContextWindow int
+	// PlainLanguage is the new-blueprint dialog's toggle; only the start that
+	// creates the blueprint sets it.
+	PlainLanguage bool
 	// MCPAPIKey lists CM's projects for the code stages.
 	MCPAPIKey string
 	// GitCredentialsToken is the bearer CM mints repository credentials for.
@@ -412,17 +415,22 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 		now := c.opts.Now().UTC()
 		bp = store.Blueprint{
 			ID: in.ID, Projects: in.Projects, Mode: in.Mode, CostCapUSD: in.CostCapUSD,
-			Model: in.Model, Price: in.Price, ContextWindow: in.ContextWindow, State: string(StateNew), CreatedAt: now, UpdatedAt: now,
+			Model: in.Model, Price: in.Price, ContextWindow: in.ContextWindow, PlainLanguage: in.PlainLanguage, State: string(StateNew), CreatedAt: now, UpdatedAt: now,
 		}
 
 		if err := c.opts.Store.CreateBlueprint(ctx, bp); err != nil {
 			return store.Blueprint{}, fmt.Errorf("blueprint: start: %w", err)
 		}
 
-		au.event(ctx, Event{Kind: EventCreated, BlueprintID: in.ID, Payload: map[string]any{
+		created := map[string]any{
 			"projects": in.Projects, "mode": in.Mode, "cost_cap_usd": in.CostCapUSD, "model": in.Model, "priced": in.Price != nil,
 			"context_window": in.ContextWindow,
-		}})
+		}
+		if in.PlainLanguage {
+			created["plain_language"] = true
+		}
+
+		au.event(ctx, Event{Kind: EventCreated, BlueprintID: in.ID, Payload: created})
 	case err != nil:
 		return store.Blueprint{}, fmt.Errorf("blueprint: start: %w", err)
 	default:

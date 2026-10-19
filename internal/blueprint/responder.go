@@ -129,7 +129,7 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion) (p
 		parent: iv.sink,
 		in: stage.Input{
 			Stage: stageID + ".responder", Persona: c.opts.Pack.Persona(iv.st.Persona),
-			Instructions: c.opts.Pack.ResponderInstructions(), Task: task, Tools: iv.tools,
+			Instructions: withPlain(iv.bp, c.opts.Pack.ResponderInstructions(), c.opts.Pack.PlainInstructions()), Task: task, Tools: iv.tools,
 			Validate: func(_ context.Context, art stage.Artifact) error {
 				_, err := parseAnswer(art.Data)
 

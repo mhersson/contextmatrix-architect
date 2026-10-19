@@ -71,8 +71,14 @@ func blueprintMD(b Bundle) string {
 	var sb strings.Builder
 
 	fmt.Fprintf(&sb, "# Blueprint %s\n\n", b.Blueprint.ID)
-	fmt.Fprintf(&sb, "- Projects: %s\n- Mode: %s\n- State: %s\n- Cost cap: %.2f USD\n- Created: %s\n\n",
-		strings.Join(b.Blueprint.Projects, ", "), b.Blueprint.Mode, b.Blueprint.State, b.Blueprint.CostCapUSD, b.Blueprint.CreatedAt.Format("2006-01-02 15:04 UTC"))
+	fmt.Fprintf(&sb, "- Projects: %s\n- Mode: %s\n", strings.Join(b.Blueprint.Projects, ", "), b.Blueprint.Mode)
+
+	if b.Blueprint.PlainLanguage {
+		sb.WriteString("- Plain language: on\n")
+	}
+
+	fmt.Fprintf(&sb, "- State: %s\n- Cost cap: %.2f USD\n- Created: %s\n\n",
+		b.Blueprint.State, b.Blueprint.CostCapUSD, b.Blueprint.CreatedAt.Format("2006-01-02 15:04 UTC"))
 
 	sb.WriteString("## Runs\n\n| Run | Stage | Kind | Attempt | Round | Status | Model | Cost USD | Prompt | Completion |\n|---|---|---|---|---|---|---|---|---|---|\n")
 
