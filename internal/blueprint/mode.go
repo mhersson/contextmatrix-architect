@@ -94,7 +94,9 @@ func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error 
 // assumption left undecided is accepted. The run slot is poked: a free one
 // is claimed and returned for the caller to settle, a held one acts on the
 // round when it is released. It returns the round's number, 0 when nothing
-// was handed over. The caller has stored the new mode.
+// was handed over. The caller has stored the new mode. A round whose run
+// read the policy before the switch and has not yet ended on it is not found
+// and stays with its human.
 func (c *Controller) handOver(ctx context.Context, sess *session, bp store.Blueprint, msgID string) (int, *run, context.Context, error) {
 	if c.opts.Pack.ResponderInstructions() == "" {
 		return 0, nil, nil, nil
@@ -145,8 +147,8 @@ func (c *Controller) handOver(ctx context.Context, sess *session, bp store.Bluep
 // cancel or a restart answers only what is left, and a question a row
 // already answers (a store cut short before its snapshot) takes that answer.
 // stageAsked hands the round to nextSegment, which closes it and continues
-// the stage; tools that cannot be prepared fail the blueprint, and a cancel
-// leaves it idle.
+// the stage; tools that cannot be prepared, or answers that cannot be
+// stored, fail the blueprint, and a cancel leaves it idle.
 func (c *Controller) respondHandedOver(ctx context.Context, r *run, sess *session, bp store.Blueprint) stageEnd {
 	bg := context.WithoutCancel(ctx)
 	au := sess.audit
@@ -265,13 +267,27 @@ func (c *Controller) respondHandedOver(ctx context.Context, r *run, sess *sessio
 	lock.Lock()
 	defer lock.Unlock()
 
+	stillOpen := func() (roundState, bool) {
+		cur, ok := c.newestRound(bg, bp.ID)
+
+		return cur, ok && cur.Number == s.Number && !cur.Frame.Closed && !cur.complete()
+	}
+
 	// A chat run that held the slot at the handover may have put new
 	// assumptions on the tab since; the responder accepts them too, so the
 	// round is complete and closes.
-	if cur, ok := c.newestRound(bg, bp.ID); ok && cur.Number == s.Number && !cur.Frame.Closed && !cur.complete() {
+	if cur, ok := stillOpen(); ok {
 		next := acceptUndecided(cur)
 		next.Change, next.MessageID, next.Dropped = changeResponded, "", 0
 		c.putRound(bg, au, bp.ID, 0, next)
+	}
+
+	// Still open, the round's stores failed: another pass would spin without
+	// a model call to slow it, so the blueprint fails and continue retries.
+	if _, ok := stillOpen(); ok {
+		c.fail(bg, au, bp.ID, 0, fmt.Sprintf("the responder's answers to round %d could not be stored", s.Number))
+
+		return stageStopped
 	}
 
 	return stageAsked

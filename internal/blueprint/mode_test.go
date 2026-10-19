@@ -2,8 +2,10 @@ package blueprint
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -849,6 +851,46 @@ func TestSetMode_AnAnswerAChatRunDropsAfterTheHandoverIsTheResponders(t *testing
 	assert.NotContains(t, q1, answeredByUser)
 }
 
+func TestSetMode_AHandoverWhoseAnswersCannotBeStoredFailsInsteadOfSpinning(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "architect.db")
+
+	st, err := store.Open(ctx, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	c, _, runner, _, _ := newPipelineOn(t, st, handoverScript(), nil)
+
+	drive(t, c, "BP1")
+
+	// A second connection refuses every store of the responder's answers on
+	// the round, as a full disk would, while reads still work.
+	raw, err := sql.Open("sqlite", "file:"+path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+
+	_, err = raw.ExecContext(ctx, fmt.Sprintf(`CREATE TRIGGER probe BEFORE INSERT ON events
+		WHEN NEW.kind = '%s' AND json_extract(NEW.payload, '$.change') = '%s'
+		BEGIN SELECT RAISE(ABORT, 'disk full'); END`, EventRound, changeResponded))
+	require.NoError(t, err)
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	c.Wait("BP1")
+
+	assert.Equal(t, string(StateFailed), stateOf(t, st, "BP1"))
+	assert.Len(t, inputsOf(runner, "intake.responder"), 2, "one pass, then the blueprint stops")
+	assert.False(t, latestRound(t, c, "BP1", 1).Frame.Closed)
+
+	_, err = raw.ExecContext(ctx, `DROP TRIGGER probe`)
+	require.NoError(t, err)
+
+	require.NoError(t, c.Resume(ctx, "BP1", "m-continue"))
+	c.Wait("BP1")
+
+	assert.True(t, latestRound(t, c, "BP1", 1).Frame.Closed, "continue stores the answers the responder's rows hold")
+	assert.Len(t, inputsOf(runner, "intake.responder"), 2, "no question is answered twice")
+}
+
 func TestSetMode_AStalledRoundHandedOverIsAnsweredAndItsStageGoesOn(t *testing.T) {
 	script := handoverScript()
 	asking := script["intake"]
@@ -860,7 +902,7 @@ func TestSetMode_AStalledRoundHandedOverIsAnsweredAndItsStageGoesOn(t *testing.T
 		return asking(ctx, in)
 	}
 
-	c, st, runner, _, _ := newPipeline(t, script)
+	c, st, runner, rec, _ := newPipeline(t, script)
 	ctx := context.Background()
 
 	drive(t, c, "BP1")
@@ -882,7 +924,8 @@ func TestSetMode_AStalledRoundHandedOverIsAnsweredAndItsStageGoesOn(t *testing.T
 	}
 
 	assert.True(t, continued, "the stage continues from its conversation")
-	assert.NotEqual(t, string(StateRunning), stateOf(t, st, "BP1"), "no run is left to end the running state")
+	assert.True(t, rec.has(EventSignOff), "the pipeline goes on to the sign-off")
+	assert.Equal(t, string(StateWaiting), stateOf(t, st, "BP1"), "the sign-off waits for a human under auto")
 }
 
 func TestRowAnswer_TakesTheOptionARowNamesElseItsText(t *testing.T) {
