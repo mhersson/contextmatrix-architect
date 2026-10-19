@@ -184,6 +184,9 @@ type Project struct {
 	Repo   string  `json:"repo"`
 	Repos  []Repo  `json:"repos"`
 	Verify *Verify `json:"verify"`
+	// POC is set on a project ContextMatrix flags as a proof of concept; a
+	// ContextMatrix that predates the flag omits it, which reads as false.
+	POC bool `json:"poc"`
 
 	Types      []string `json:"types"`
 	Priorities []string `json:"priorities"`

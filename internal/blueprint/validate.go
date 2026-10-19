@@ -85,6 +85,9 @@ const problemsKey = "check_problems"
 type stageChecks struct {
 	cards   *validatorState
 	bounded []*validatorState
+	// poc is the run's one read of which targets are proofs of concept,
+	// which its responder is told.
+	poc []string
 }
 
 // unresolved is what the bounded checks found on the latest submit; once the

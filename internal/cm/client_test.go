@@ -36,7 +36,7 @@ func testServer(t *testing.T, wantKey string) *testCM {
 	mcp.AddTool(server, &mcp.Tool{Name: "list_projects", Description: "list"},
 		func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 			text := `{"projects":[` +
-				`{"name":"alpha","prefix":"ALPHA","repo":"https://github.com/acme/alpha","verify":{"command":"make test"}},` +
+				`{"name":"alpha","prefix":"ALPHA","repo":"https://github.com/acme/alpha","verify":{"command":"make test"},"poc":true},` +
 				`{"name":"beta","repos":[{"name":"api","url":"https://github.com/acme/beta-api","primary":true},{"name":"web","url":"https://github.com/acme/beta-web"}]}` +
 				`]}`
 
@@ -88,9 +88,11 @@ func TestListProjects(t *testing.T) {
 	require.NotNil(t, projects[0].Verify)
 	assert.Equal(t, "make test", projects[0].Verify.Command)
 	assert.Equal(t, "ALPHA", projects[0].Prefix)
+	assert.True(t, projects[0].POC)
 
 	assert.Equal(t, []string{"https://github.com/acme/beta-api", "https://github.com/acme/beta-web"}, projects[1].RepoURLs())
 	assert.Nil(t, projects[1].Verify)
+	assert.False(t, projects[1].POC, "an absent poc reads false, as from a ContextMatrix that predates it")
 }
 
 func TestConnect_WrongKeyFails(t *testing.T) {

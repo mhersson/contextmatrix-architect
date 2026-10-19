@@ -683,7 +683,14 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 	// number, not round: round is the builder round type in this package.
 	number, threshold := len(past)+1, st.Reviewer.Threshold
 
-	task, err := c.reviewTask(bg, bp, st, art, attempt, prior)
+	poc, err := c.pocProjects(ctx, sess, bp, st)
+	if err != nil {
+		c.sideFailed(ctx, r, au, bp.ID, st.ID, err)
+
+		return review{}, false
+	}
+
+	task, err := c.reviewTask(bg, bp, st, art, attempt, prior, poc)
 	if err != nil {
 		c.fail(bg, au, bp.ID, 0, err.Error())
 
@@ -752,13 +759,14 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 }
 
 // reviewTask is what a reviewer judges: the stage's inputs, the questions
-// it got answered, the assumptions, the gate feedback the attempt addresses,
-// the artifacts folded into its gate, each with the gate feedback its own
-// attempt addresses, the artifact, whose data holds any problems it was
-// accepted with, the user's notes, and, from the attempt's second round,
+// it got answered, the assumptions, the target projects that are proofs of
+// concept when the stage shapes cards, the gate feedback the attempt
+// addresses, the artifacts folded into its gate, each with the gate feedback
+// its own attempt addresses, the artifact, whose data holds any problems it
+// was accepted with, the user's notes, and, from the attempt's second round,
 // every earlier finding with the builder's claim beside it, and the score
 // that passes.
-func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipelineStep, art store.Artifact, attempt int, prior findingList) (string, error) {
+func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipelineStep, art store.Artifact, attempt int, prior findingList, poc []string) (string, error) {
 	var b strings.Builder
 
 	if err := c.writeInputs(ctx, &b, bp, st, false, "review task"); err != nil {
@@ -776,6 +784,7 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipe
 	}
 
 	c.writeEdgeCases(&b, st)
+	writePOC(&b, poc)
 
 	if st.Gate {
 		if err := c.writeGateFeedback(ctx, &b, bp, st, attempt); err != nil {

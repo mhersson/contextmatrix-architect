@@ -35,6 +35,9 @@ type interviewer struct {
 	// the asking run's, which a responder's cost is charged to.
 	tools []tools.Tool
 	sink  *harnessSink
+	// poc is the run's read of which targets are proofs of concept, which
+	// its responder is told.
+	poc []string
 	// max caps the questions the run's attempt may ask under auto, 0 none;
 	// asked counts them, the attempt's earlier runs included.
 	max, asked int

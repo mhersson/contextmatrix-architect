@@ -296,7 +296,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	iv := &interviewer{
 		c: c, bp: bp, st: st, sess: sess, r: r, runID: runID, attempt: attempt, builderRound: number,
-		tools: in.Tools, sink: sink, max: st.MaxQuestions, asked: asked,
+		tools: in.Tools, sink: sink, poc: checks.poc, max: st.MaxQuestions, asked: asked,
 	}
 	if rd != nil {
 		iv.findings, iv.qround, iv.seen = rd.findings, rd.qround, rd.seen
@@ -502,7 +502,12 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blueprint, runID int64, st pipelineStep) (stage.Input, stageChecks, func(), error) {
 	noop := func() {}
 
-	task, err := c.taskFor(context.WithoutCancel(ctx), bp, st)
+	poc, err := c.pocProjects(ctx, sess, bp, st)
+	if err != nil {
+		return stage.Input{}, stageChecks{}, nil, err
+	}
+
+	task, err := c.taskFor(context.WithoutCancel(ctx), bp, st, poc)
 	if err != nil {
 		return stage.Input{}, stageChecks{}, nil, err
 	}
@@ -575,7 +580,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	}
 
 	var (
-		checks     stageChecks
+		checks     = stageChecks{poc: poc}
 		validators []func(context.Context, stage.Artifact) error
 	)
 
