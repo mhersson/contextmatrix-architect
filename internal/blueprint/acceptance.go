@@ -33,10 +33,11 @@ type acceptanceData struct {
 
 // criteriaValidator refuses acceptance that does not stand, as
 // fatalValidator bounds it: acceptance of another shape, or a slice without
-// criteria, leaves the cards nothing to carry.
-func (c *Controller) criteriaValidator(bp store.Blueprint, stageID string) (func(context.Context, stage.Artifact) error, *validatorState) {
+// criteria, leaves the cards nothing to carry. poc is the target projects the
+// run was told are proofs of concept.
+func (c *Controller) criteriaValidator(bp store.Blueprint, stageID string, poc []string) (func(context.Context, stage.Artifact) error, *validatorState) {
 	return fatalValidator("criteria", []string{"shape", "no_slices", "slice_missing", "slice_empty"}, func(ctx context.Context, a stage.Artifact) ([]string, error) {
-		return c.criteriaProblems(ctx, bp, stageID, a.Data)
+		return c.criteriaProblems(ctx, bp, stageID, a.Data, poc)
 	})
 }
 
@@ -45,7 +46,7 @@ func (c *Controller) criteriaValidator(bp store.Blueprint, stageID string) (func
 // criterion with a unique id, a target project and text; every manual check
 // with a unique id and text. A per-slice acceptance takes no id an earlier
 // slice's holds. Then the traces traceProblems checks.
-func (c *Controller) criteriaProblems(ctx context.Context, bp store.Blueprint, stageID string, data map[string]any) ([]string, error) {
+func (c *Controller) criteriaProblems(ctx context.Context, bp store.Blueprint, stageID string, data map[string]any, poc []string) ([]string, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return nil, fmt.Errorf("encode the criteria: %w", err)
@@ -119,7 +120,7 @@ func (c *Controller) criteriaProblems(ctx context.Context, bp store.Blueprint, s
 		return nil, err
 	}
 
-	trace, err := c.traceProblems(ctx, bp, stageID, raw)
+	trace, err := c.traceProblems(ctx, bp, stageID, raw, poc)
 	if err != nil {
 		return nil, err
 	}
@@ -128,14 +129,16 @@ func (c *Controller) criteriaProblems(ctx context.Context, bp store.Blueprint, s
 }
 
 // traces is what acceptance's data says beyond its criteria: the outcomes
-// each criterion and manual check proves and each slice's edge-case sweep.
-// It is read apart from acceptanceData, so a malformed trace is a problem of
-// its own, never the shape problem that fails the run.
+// each criterion and manual check proves, each criterion's project and each
+// slice's edge-case sweep. It is read apart from acceptanceData, so a
+// malformed trace is a problem of its own, never the shape problem that
+// fails the run.
 type traces struct {
 	Slices []struct {
 		ID       string `json:"id"`
 		Criteria []struct {
 			ID       string          `json:"id"`
+			Project  string          `json:"project"`
 			Outcomes json.RawMessage `json:"outcomes"`
 		} `json:"criteria"`
 		Manual []struct {
@@ -169,8 +172,9 @@ func citedOutcomes(raw json.RawMessage) ([]string, bool) {
 // outcome, every criterion cites at least one, a manual check may, and none
 // cites an unknown one; on the last slice's acceptance, or one for the whole
 // blueprint, every outcome is cited by some slice's criterion or manual
-// check. When the pack lists edge cases, every slice sweeps each once.
-func (c *Controller) traceProblems(ctx context.Context, bp store.Blueprint, key string, raw []byte) ([]string, error) {
+// check. When the pack lists edge cases, every slice sweeps each once, as
+// sweepProblems judges a slice that touches a POC project.
+func (c *Controller) traceProblems(ctx context.Context, bp store.Blueprint, key string, raw []byte, poc []string) ([]string, error) {
 	var d traces
 	if json.Unmarshal(raw, &d) != nil {
 		// acceptanceData decoded the same data; a trace cannot fail it.
@@ -199,6 +203,21 @@ func (c *Controller) traceProblems(ctx context.Context, bp store.Blueprint, key 
 	}
 	cases := c.opts.Pack.Lists().EdgeCases
 
+	isPOC := map[string]bool{}
+	for _, name := range poc {
+		isPOC[name] = true
+	}
+
+	var touched map[string][]string
+
+	// Only a blueprint with a POC target needs what slicing says each slice
+	// touches; without one every slice sweeps.
+	if len(cases) > 0 && len(poc) > 0 {
+		if touched, err = c.sliceProjects(ctx, bp.ID); err != nil {
+			return nil, err
+		}
+	}
+
 	var out []string
 
 	check := func(where string, trace json.RawMessage, required bool) {
@@ -224,10 +243,20 @@ func (c *Controller) traceProblems(ctx context.Context, bp store.Blueprint, key 
 	for _, s := range d.Slices {
 		slice := strings.TrimSpace(s.ID)
 		ids := map[string]bool{}
+		onPOC := map[string]bool{}
+		projects := slices.Clone(touched[slice])
 
 		for _, cr := range s.Criteria {
-			ids[strings.TrimSpace(cr.ID)] = true
-			check(strings.TrimSpace(cr.ID), cr.Outcomes, true)
+			id := strings.TrimSpace(cr.ID)
+			ids[id] = true
+
+			projects = append(projects, cr.Project)
+
+			if isPOC[cr.Project] {
+				onPOC[id] = true
+			}
+
+			check(id, cr.Outcomes, true)
 		}
 
 		for _, m := range s.Manual {
@@ -236,7 +265,7 @@ func (c *Controller) traceProblems(ctx context.Context, bp store.Blueprint, key 
 		}
 
 		if len(cases) > 0 {
-			out = append(out, sweepProblems(slice, s.Sweep, cases, ids)...)
+			out = append(out, sweepProblems(slice, s.Sweep, cases, ids, onPOC, onlyPOC(projects, isPOC))...)
 		}
 	}
 
@@ -292,11 +321,21 @@ func (c *Controller) traceProblems(ctx context.Context, bp store.Blueprint, key 
 // sweepProblems checks one slice's sweep against the pack's edge cases:
 // one entry per case, matched case-insensitively after trimming, each
 // settled by ids of the slice's own criteria or manual checks, or not
-// applicable with a one-sentence reason, never both.
-func sweepProblems(slice string, raw json.RawMessage, cases []string, ids map[string]bool) []string {
+// applicable with a one-sentence reason, never both. A criterion on a POC
+// project (onPOC) settles nothing: the case would reach that project's card
+// as an edge-case test, the demand a POC is spared; a manual check reaches
+// no card and still settles. A slice whose projects are all POC (allPOC)
+// may leave its sweep out, null, empty or short of cases; an entry it does
+// give is judged as any other.
+func sweepProblems(slice string, raw json.RawMessage, cases []string, ids, onPOC map[string]bool, allPOC bool) []string {
+	absent := len(raw) == 0 || string(raw) == "null"
+	if absent && allPOC {
+		return nil
+	}
+
 	var entries []map[string]json.RawMessage
 
-	if len(raw) == 0 || string(raw) == "null" || json.Unmarshal(raw, &entries) != nil {
+	if absent || json.Unmarshal(raw, &entries) != nil {
 		return []string{problem(slice, "sweep_missing",
 			`the slice needs a sweep, one {"condition": "<case>", "settled_by": ["<id>"]} or {"condition": "<case>", "not_applicable": "<why>"} entry for each of: `+strings.Join(cases, ", "))}
 	}
@@ -351,10 +390,18 @@ func sweepProblems(slice string, raw json.RawMessage, cases []string, ids map[st
 		}
 
 		for _, id := range settled {
-			if !ids[strings.TrimSpace(id)] {
+			switch key := strings.TrimSpace(id); {
+			case !ids[key]:
 				out = append(out, problem(where, "sweep_settled", fmt.Sprintf("%s is no criterion or manual check of %s", id, slice)))
+			case onPOC[key]:
+				out = append(out, problem(where, "sweep_poc", fmt.Sprintf(
+					`%s is a criterion on a POC project, so it settles no case: settle %s with a criterion on another project or a manual check, or record it not_applicable with the reason "POC project"`, id, name)))
 			}
 		}
+	}
+
+	if allPOC {
+		return out
 	}
 
 	for _, edge := range cases {

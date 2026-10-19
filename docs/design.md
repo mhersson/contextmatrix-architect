@@ -473,21 +473,50 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   among them, or a per-slice acceptance's own slice alone, and each with at
   least one criterion; every criterion has an id of its own, never one an
   earlier slice's acceptance holds, a target project and its text, and every
-  manual check such an id and its text. Each criterion cites the outcomes
-  it proves (`outcomes`, ids an earlier step states) and a manual check may;
+  manual check such an id and its text. Each criterion cites the outcomes it
+  proves (`outcomes`, ids an earlier step states) and a manual check may;
   each slice sweeps the pack's edge cases (lists.yaml `edge_cases`, matched
-  case-insensitively after trimming), one entry per case, settled by the
-  slice's own criteria or manual checks or recorded not applicable with a
-  reason; and the last slice's acceptance, or one for the whole blueprint,
-  leaves no outcome uncited (`criterion_outcomes`, `sweep_missing`,
-  `sweep_unknown`, `sweep_duplicate`, `sweep_settled`, `outcome_uncovered`).
-  The traces are read apart from the criteria, so a malformed one is never
-  `shape`. A blueprint whose earlier steps state no outcome, as one stored
-  before outcomes, needs no outcome traces. The acceptance task and its
-  tester's task list the edge cases, and the tester checks the sweep and the
-  traces. At decomposition, acceptance data that does not decode
-  (`criteria_unreadable`) or defines no criterion (`criteria_empty`) is a
-  contract finding, not a stalled run.
+  case-insensitively after trimming; but see POC projects, below), one entry
+  per case, settled by the slice's own criteria or manual checks or recorded
+  not applicable with a reason; and the last slice's acceptance, or one for
+  the whole blueprint, leaves no outcome uncited (`criterion_outcomes`,
+  `sweep_missing`, `sweep_unknown`, `sweep_duplicate`, `sweep_settled`,
+  `sweep_poc`, `outcome_uncovered`). The traces are read apart from the
+  criteria, so a malformed one is never `shape`. A blueprint whose earlier
+  steps state no outcome, as one stored before outcomes, needs no outcome
+  traces. The acceptance task and its tester's task list the edge cases, and
+  the tester checks the sweep and the traces. At decomposition, acceptance
+  data that does not decode (`criteria_unreadable`) or defines no criterion
+  (`criteria_empty`) is a contract finding, not a stalled run.
+- A target project ContextMatrix flags as a proof of concept (POC; `poc` in
+  the project config `list_projects` returns, absent reads false) changes
+  what its cards demand, never the design. A run that writes or judges what
+  a card demands (the stage that checks criteria, the stage that checks
+  cards, a stage that checks a readiness verdict or loops to the cards, and
+  their reviewers) reads the flags from ContextMatrix again as it starts,
+  and its task names the target projects that are POC; the auto responder
+  answering such a run's questions is told its run's targets. The controller
+  reads no flag for intake, slicing, the designs and grounding, or their
+  reviewers, and their tasks name none. A read that fails fails that run, as
+  a failed checkout does, and the next message, or `resume`, runs it again
+  and reads again. A flag changed during a blueprint reaches the runs that
+  start after it; what earlier runs settled stands. Acceptance's check uses
+  the flags its own run read; a run that resumes a conversation, after a
+  question round or a review, reads again for its check and its responder
+  while the conversation keeps the list it was first told. A slice whose
+  projects (the ones slicing names for it and the ones its criteria target)
+  are all POC may leave its sweep out, null, empty or short of cases, and in
+  any slice a criterion on a POC project settles no case (`sweep_poc`,
+  bounded, never fatal), so an edge case that lives only in a POC project is
+  recorded not applicable with the reason "POC project"; a manual check
+  still settles one. The tester judges POC criteria on clarity and
+  buildability, not hardening, and flags one that proves an edge case.
+  Decomposition writes a POC card's Tests expected as the tests of the main
+  behaviour and of what its criteria demand, and no other edge-case tests;
+  the section stays required. Readiness judges a POC card on clarity and
+  buildability: Tests expected that covers the main behaviour and the card's
+  criteria is ready, and one that asks for edge-case tests its criteria do
+  not demand is a finding, and a criterion the card must carry never is one.
 - A gate folds when the pack's condition on its artifact holds and the gate
   it folds into has the same gate policy: the slicing gate folds into the
   solution design gate when there is exactly one slice. Folding is decided
@@ -663,7 +692,7 @@ release.
 | Where               | Files, functions and types in this repo, verified at a sha. For wiring changes, every call site.            |
 | Solution            | The decided approach. Binding constraints are restated in the criteria, since nothing else reaches review. |
 | Acceptance criteria | Numbered. Each is a test or command checkable in the working tree.                                         |
-| Tests expected      | The test cases to write.                                                                                   |
+| Tests expected      | The test cases to write; for a POC project's card, the main behaviour and what its criteria demand only.   |
 | Out of scope        | Explicit non-goals.                                                                                        |
 
 **Never**
@@ -754,26 +783,27 @@ only these reach the sign-off and the cards.
 **The responder run** is a separate harness run with the persona of the
 stage that asks (the product owner for intake questions, the system designer
 for design questions) and `stages/responder.md`. It gets the need, the
-asking stage's inputs, the gate feedback the asking attempt addresses, the
-user's notes, every answer so far and that stage's read tools, never the
-asker's transcript, so the asker cannot answer itself conveniently. It
-returns the answer, its reasoning, whether it is grounded and its evidence.
-The answer reads verified only when it is grounded and its evidence cites a
-source tag that a tool call of that same run returned (tags in the task, the
-inputs or its own prose do not count); the checked result is what is
-recorded. When it cannot ground the answer it still decides, and the answer
-is recorded as an `assumed` assumption keyed by its question number
-(`Q<n>`; a verified answer reads `verified`, with the evidence kept in the
-`answer` event, so a row stored without it reads `assumed`). That entry is
-listed only while no stated assumption rests on the answer (see below). The
-sign-off lists every assumption, riskiest first; the export and the playbook
-description list every assumption, so whoever reviews the result sees which
-decisions the AI made. A responder that fails leaves its question to the
-stage, which decides it and records an assumption where it can; under a pack
-without `stages/responder.md` an auto round is refused and the stage decides
-every question. On a priced model a responder spends
-from the asking run's cost cap; one a cap refuses (the asking run's spent,
-or less than its floor left of the blueprint's) leaves its question to the
+asking stage's inputs, the target projects that are proofs of concept when
+the asking stage shapes cards, the gate feedback the asking attempt
+addresses, the user's notes, every answer so far and that stage's read
+tools, never the asker's transcript, so the asker cannot answer itself
+conveniently. It returns the answer, its reasoning, whether it is grounded
+and its evidence. The answer reads verified only when it is grounded and its
+evidence cites a source tag that a tool call of that same run returned (tags
+in the task, the inputs or its own prose do not count); the checked result
+is what is recorded. When it cannot ground the answer it still decides, and
+the answer is recorded as an `assumed` assumption keyed by its question
+number (`Q<n>`; a verified answer reads `verified`, with the evidence kept
+in the `answer` event, so a row stored without it reads `assumed`). That
+entry is listed only while no stated assumption rests on the answer (see
+below). The sign-off lists every assumption, riskiest first; the export and
+the playbook description list every assumption, so whoever reviews the
+result sees which decisions the AI made. A responder that fails leaves its
+question to the stage, which decides it and records an assumption where it
+can; under a pack without `stages/responder.md` an auto round is refused and
+the stage decides every question. On a priced model a responder spends from
+the asking run's cost cap; one a cap refuses (the asking run's spent, or
+less than its floor left of the blueprint's) leaves its question to the
 stage too.
 
 **Assumptions are data.** Before it submits, a stage that declares the
@@ -1365,6 +1395,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Pin protocol v0.29.0, since `internal/chat` decodes `LogMarker` and `LogRound`; panel: slice tabs under the stage tabs and a grouped scale bar, only with two or more slices; the artifact proxy forwards `?slice=SL<n>`, checked against `^SL[1-9][0-9]{0,2}$`; the gate bar renders "Reject shared decisions" like any action; the new `shared_decisions` stage displays with tab "Shared", name "Shared decisions", title "Shared decisions", noun "shared decisions" and doing "settling the shared decisions" | slices |
 | Pin protocol v0.31.0; panel: a review card reads "sent back" from ArtifactReview.SentBack, "passed" otherwise when it passed, else "failed", and its explanation states the settle rule; a blueprint session's pane header shows the view's cost.spent_usd; a design sheet with one slice entry drops the slice heading | review settle |
 | Pin protocol v0.32.0; panel: step statuses `stopped` (the failed ink, "Stopped the pipeline") and `not_reached` (its own quiet tone, "Not reached", never clickable); on an `ended` view the current step is the stopped one and the where line reads "Stopped: <end_reason>"; a feedback box labelled by its action's `ask`; Outcomes tables on the need, shared decisions and design sheets; an Outcomes column and an Edge cases table per slice on the acceptance sheet; an "Across the blueprint" table on the readiness and sign-off sheets, and the sign-off's override reason; `A<n>` and `O<n>` basis chips | quality checks |
+| `poc` on the project config, switched only by a human in Project Settings and returned in `list_projects`' project config, omitted when false | POC projects |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

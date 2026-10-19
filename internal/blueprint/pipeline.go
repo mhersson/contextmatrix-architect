@@ -748,8 +748,9 @@ func (c *Controller) report(ctx context.Context, sess *session, bp store.Bluepri
 // order, a per-slice step's for its own slice, then each earlier slice's
 // after them; for a stage run again after a rejection at its gate, the
 // rejected artifact and every feedback; for a loop's target, its last
-// submit and the loop's findings.
-func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pipelineStep) (string, error) {
+// submit and the loop's findings; and for a run that shapes cards the target
+// projects that are proofs of concept (poc, from pocProjects).
+func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pipelineStep, poc []string) (string, error) {
 	var b strings.Builder
 
 	if err := c.writeInputs(ctx, &b, bp, st, false, "task"); err != nil {
@@ -765,6 +766,7 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pipelin
 	}
 
 	c.writeEdgeCases(&b, st)
+	writePOC(&b, poc)
 
 	if st.Gate {
 		if err := c.writeGateFeedback(ctx, &b, bp, st, 0); err != nil {
@@ -784,7 +786,7 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pipelin
 }
 
 // writeEdgeCases gives a stage that checks criteria, and its reviewer, the
-// pack's edge cases every slice's sweep covers; nothing when the pack lists
+// pack's edge cases a slice's sweep covers; nothing when the pack lists
 // none.
 func (c *Controller) writeEdgeCases(b *strings.Builder, st pipelineStep) {
 	cases := c.opts.Pack.Lists().EdgeCases
@@ -792,7 +794,7 @@ func (c *Controller) writeEdgeCases(b *strings.Builder, st pipelineStep) {
 		return
 	}
 
-	b.WriteString("## Edge cases to sweep\n\nEvery slice's sweep gives each one entry:\n\n")
+	b.WriteString("## Edge cases to sweep\n\nA slice's sweep gives each one entry:\n\n")
 
 	for _, edge := range cases {
 		b.WriteString("- " + edge + "\n")

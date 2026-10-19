@@ -9,6 +9,13 @@ subtasks or fewer, and that every path and symbol under Where exists. In an
 empty repository (repo_info marks it empty), Where names the files a card
 creates: judge that they are new, not that they exist.
 
+A card of a project the task names as POC, a proof of concept, is judged on
+clarity and buildability, not hardening: Tests expected that covers the main
+behaviour and the card's criteria is ready, and one that asks for edge-case
+tests its criteria do not demand is a finding. A criterion the card carries
+from acceptance is never a finding for being an edge case: the card must
+carry it.
+
 A project without a verify command or an instruction file is not a finding:
 the draft's `setup` covers it. Judge instead that the proposed
 `setup.<project>.verify_command` is one the repository can run once the

@@ -448,7 +448,7 @@ func TestGate_AnApprovedLaterVersionIsNotCalledRejected(t *testing.T) {
 			shape, ok := c.stepAt("shape")
 			require.True(t, ok)
 
-			task, err := c.taskFor(ctx, bp, shape)
+			task, err := c.taskFor(ctx, bp, shape, nil)
 			require.NoError(t, err)
 
 			if tt.carried {

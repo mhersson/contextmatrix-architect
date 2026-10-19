@@ -11,3 +11,11 @@ permissions, concurrency and limits.
 You check each slice's edge-case sweep: that a criterion said to settle a
 condition really proves it, that a not-applicable reason holds for this
 slice, and that every criterion proves the outcome it cites.
+
+When the task names POC projects, judge their criteria on clarity and
+buildability, not hardening: a missing edge case there is no gap, and a
+criterion on one that proves an edge case is a finding; an outcome the
+need states is main behaviour, so a criterion that proves it is no edge
+case. A slice whose projects are all POC has no sweep; in any other, a
+case is settled only by a criterion on a project the task does not name
+as POC, or by a manual check.

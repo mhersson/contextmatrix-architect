@@ -21,7 +21,8 @@ reaches the reviewer.
 
 ## Tests expected
 
-The test cases to write, by name and behaviour.
+The test cases to write, by name and behaviour. For a project the task
+names as POC, the main behaviour and what the criteria demand only.
 
 ## Out of scope
 

@@ -170,12 +170,12 @@ func TestCriteria_ASliceAcceptanceCoversItsSliceWithIDsOfItsOwn(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			validate, _ := c.criteriaValidator(bp, "acceptance@SL2")
+			validate, _ := c.criteriaValidator(bp, "acceptance@SL2", nil)
 			refusedFor(t, validate, tt.data, tt.want)
 		})
 	}
 
-	first, _ := c.criteriaValidator(bp, "acceptance@SL1")
+	first, _ := c.criteriaValidator(bp, "acceptance@SL1", nil)
 	refusedFor(t, first, sliceAcceptance("SL1", "AC1", "MC1"), "")
 }
 
@@ -299,7 +299,7 @@ func TestFatalChecks_TheLastSubmitIsRefusedOnlyOverWhatLeavesNothingToBuildOn(t 
 		return v
 	}
 	criteria := func() func(context.Context, stage.Artifact) error {
-		v, _ := c.criteriaValidator(bp, "acceptance@SL2")
+		v, _ := c.criteriaValidator(bp, "acceptance@SL2", nil)
 
 		return v
 	}

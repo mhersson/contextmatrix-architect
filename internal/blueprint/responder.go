@@ -119,7 +119,7 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion) (p
 		return fmt.Errorf("no answer (%w); decide yourself and, where this stage records assumptions, record the decision as one", err)
 	}
 
-	task, err := c.responderTask(bg, iv.bp, iv.st, iv.attempt, q)
+	task, err := c.responderTask(bg, iv.bp, iv.st, iv.attempt, iv.poc, q)
 	if err != nil {
 		return protocol.RoundAnswer{}, undecided(err)
 	}
@@ -195,15 +195,18 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion) (p
 }
 
 // responderTask is what a responder is given: the target projects, the
-// need, the asking stage's inputs, the gate feedback the asking attempt
-// addresses, the user's notes, every answer so far and the question with its
-// options and context.
-func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st pipelineStep, attempt int, q protocol.RoundQuestion) (string, error) {
+// need, the asking stage's inputs, the target projects that are proofs of
+// concept when the asking stage shapes cards, the gate feedback the asking
+// attempt addresses, the user's notes, every answer so far and the question
+// with its options and context.
+func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st pipelineStep, attempt int, poc []string, q protocol.RoundQuestion) (string, error) {
 	var b strings.Builder
 
 	if err := c.writeInputs(ctx, &b, bp, st, true, "responder task"); err != nil {
 		return "", err
 	}
+
+	writePOC(&b, poc)
 
 	if st.Gate {
 		if err := c.writeGateFeedback(ctx, &b, bp, st, attempt); err != nil {
