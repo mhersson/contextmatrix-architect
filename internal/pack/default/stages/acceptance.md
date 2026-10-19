@@ -29,6 +29,17 @@ case either name this slice's criteria or manual checks that settle it,
 a criterion when none does, or say in one sentence why it cannot happen
 here, `{"condition": "<the case>", "not_applicable": "<why>"}`.
 
+The task may name POC projects: proofs of concept, whose cards are
+judged on whether the code does what the slice promises, not on
+hardening. A criterion on a POC project proves the main behaviour, never
+an edge case; an outcome the need states is main behaviour, so a
+criterion that proves it is no edge case. A slice whose projects, in
+slicing and in its criteria, are all POC has no sweep: leave `sweep`
+out. Any other slice sweeps as above, but only a criterion on a project
+the task does not name as POC, or a manual check, settles a case; an
+edge case that lives only in a POC project is
+`{"condition": "<the case>", "not_applicable": "POC project"}`.
+
 Produce markdown with a `## <slice id>` section for each slice you write criteria for listing its
 criteria and manual checks. Submit with a data object
 `{"slices": [{"id": "SL1", "criteria": [{"id": "AC1", "project": "<name>", "text": "<the test or command and what passes>", "outcomes": ["O1"]}], "manual": [{"id": "MC1", "text": "<the check a human makes>", "outcomes": ["O2"]}], "sweep": [{"condition": "<an edge case>", "settled_by": ["AC1"]}, {"condition": "<an edge case>", "not_applicable": "<why>"}]}]}`.

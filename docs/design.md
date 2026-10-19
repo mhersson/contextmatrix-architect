@@ -473,21 +473,21 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   among them, or a per-slice acceptance's own slice alone, and each with at
   least one criterion; every criterion has an id of its own, never one an
   earlier slice's acceptance holds, a target project and its text, and every
-  manual check such an id and its text. Each criterion cites the outcomes
-  it proves (`outcomes`, ids an earlier step states) and a manual check may;
+  manual check such an id and its text. Each criterion cites the outcomes it
+  proves (`outcomes`, ids an earlier step states) and a manual check may;
   each slice sweeps the pack's edge cases (lists.yaml `edge_cases`, matched
-  case-insensitively after trimming), one entry per case, settled by the
-  slice's own criteria or manual checks or recorded not applicable with a
-  reason; and the last slice's acceptance, or one for the whole blueprint,
-  leaves no outcome uncited (`criterion_outcomes`, `sweep_missing`,
-  `sweep_unknown`, `sweep_duplicate`, `sweep_settled`, `outcome_uncovered`).
-  The traces are read apart from the criteria, so a malformed one is never
-  `shape`. A blueprint whose earlier steps state no outcome, as one stored
-  before outcomes, needs no outcome traces. The acceptance task and its
-  tester's task list the edge cases, and the tester checks the sweep and the
-  traces. At decomposition, acceptance data that does not decode
-  (`criteria_unreadable`) or defines no criterion (`criteria_empty`) is a
-  contract finding, not a stalled run.
+  case-insensitively after trimming; but see POC projects, below), one entry
+  per case, settled by the slice's own criteria or manual checks or recorded
+  not applicable with a reason; and the last slice's acceptance, or one for
+  the whole blueprint, leaves no outcome uncited (`criterion_outcomes`,
+  `sweep_missing`, `sweep_unknown`, `sweep_duplicate`, `sweep_settled`,
+  `sweep_poc`, `outcome_uncovered`). The traces are read apart from the
+  criteria, so a malformed one is never `shape`. A blueprint whose earlier
+  steps state no outcome, as one stored before outcomes, needs no outcome
+  traces. The acceptance task and its tester's task list the edge cases, and
+  the tester checks the sweep and the traces. At decomposition, acceptance
+  data that does not decode (`criteria_unreadable`) or defines no criterion
+  (`criteria_empty`) is a contract finding, not a stalled run.
 - A target project ContextMatrix flags as a proof of concept (POC; `poc` in
   the project config `list_projects` returns, absent reads false) changes
   what its cards demand, never the design. A run that writes or judges what
@@ -495,12 +495,22 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   cards, a stage that checks a readiness verdict or loops to the cards, and
   their reviewers) reads the flags from ContextMatrix again as it starts,
   and its task names the target projects that are POC; the auto responder
-  answering such a run's questions is told the same targets. The controller
+  answering such a run's questions is told its run's targets. The controller
   reads no flag for intake, slicing, the designs and grounding, or their
   reviewers, and their tasks name none. A read that fails fails that run, as
   a failed checkout does, and the next message, or `resume`, runs it again
   and reads again. A flag changed during a blueprint reaches the runs that
-  start after it; what earlier runs settled stands.
+  start after it; what earlier runs settled stands. Acceptance's check uses
+  the flags its own run read; a run that resumes a conversation, after a
+  question round or a review, reads again for its check and its responder
+  while the conversation keeps the list it was first told. A slice whose
+  projects (the ones slicing names for it and the ones its criteria target)
+  are all POC may leave its sweep out, null, empty or short of cases, and in
+  any slice a criterion on a POC project settles no case (`sweep_poc`,
+  bounded, never fatal), so an edge case that lives only in a POC project is
+  recorded not applicable with the reason "POC project"; a manual check
+  still settles one. The tester judges POC criteria on clarity and
+  buildability, not hardening, and flags one that proves an edge case.
 - A gate folds when the pack's condition on its artifact holds and the gate
   it folds into has the same gate policy: the slicing gate folds into the
   solution design gate when there is exactly one slice. Folding is decided

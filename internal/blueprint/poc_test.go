@@ -293,3 +293,25 @@ func TestPOC_AnUnreadableFlagStopsTheTestersReview(t *testing.T) {
 
 	assert.NotEmpty(t, inputsOf(runner, "acceptance.review"), "the next message reads the flags again and the tester's review runs")
 }
+
+func TestPOC_AnAllPOCSliceMaySkipItsSweep(t *testing.T) {
+	sweepless := func(got *error) stageScript {
+		s := dialogScript()
+		s["acceptance"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+			*got = in.Validate(ctx, stage.Artifact{Body: "# Acceptance", Data: goodAcceptance()})
+
+			return done("# Acceptance", goodAcceptance()), nil
+		}
+
+		return s
+	}
+
+	var plain, poc error
+
+	runTraced(t, listAlpha, sweepless(&plain))
+	runTraced(t, listAlphaPOC, sweepless(&poc))
+
+	require.Error(t, plain)
+	assert.Contains(t, plain.Error(), ": sweep_missing: ", "a production slice sweeps")
+	assert.NoError(t, poc, "alpha is a proof of concept, so SL1 skips its sweep")
+}

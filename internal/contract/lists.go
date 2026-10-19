@@ -34,7 +34,9 @@ type Lists struct {
 	DanglingReferences []string `yaml:"dangling_references"`
 	// EdgeCases are the conditions acceptance sweeps for every slice: each
 	// settled by criteria or manual checks of the slice, or recorded not
-	// applicable with a reason. Matched case-insensitively after trimming.
+	// applicable with a reason. Matched case-insensitively after trimming. A
+	// slice whose projects are all proofs of concept may skip the sweep, and
+	// a criterion on such a project settles no case.
 	EdgeCases []string `yaml:"edge_cases"`
 }
 

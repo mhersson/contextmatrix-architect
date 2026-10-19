@@ -2,6 +2,8 @@ package blueprint
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -74,4 +76,49 @@ func writePOC(b *strings.Builder, poc []string) {
 	}
 
 	b.WriteString("\n")
+}
+
+// sliceProjects maps each slice of slicing's newest version, SL<n> by its
+// position as piecesOf names slices, to the projects slicing says it
+// touches; nil when the pack has no slicing stage or slicing has no version
+// yet, and then a slice's criteria alone say what it touches. Data that does
+// not decode reads as no slices: slicing's own check refuses it.
+func (c *Controller) sliceProjects(ctx context.Context, id string) (map[string][]string, error) {
+	sid := c.opts.Pack.SlicingStage()
+	if sid == "" {
+		return nil, nil
+	}
+
+	art, err := c.opts.Store.LatestArtifact(ctx, id, sid)
+
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("read %s: %w", c.stepName(ctx, id, sid), err)
+	}
+
+	var d struct {
+		Slices []struct {
+			Projects []string `json:"projects"`
+		} `json:"slices"`
+	}
+
+	if len(art.Data) == 0 || json.Unmarshal(art.Data, &d) != nil {
+		return nil, nil
+	}
+
+	out := map[string][]string{}
+	for i, s := range d.Slices {
+		out[sliceID(i+1)] = s.Projects
+	}
+
+	return out, nil
+}
+
+// onlyPOC reports whether a slice touches at least one project and every
+// one is a proof of concept. A project the flags do not hold counts as
+// production, the safe side.
+func onlyPOC(projects []string, isPOC map[string]bool) bool {
+	return len(projects) > 0 && !slices.ContainsFunc(projects, func(p string) bool { return !isPOC[p] })
 }

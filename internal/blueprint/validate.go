@@ -86,7 +86,7 @@ type stageChecks struct {
 	cards   *validatorState
 	bounded []*validatorState
 	// poc is the run's one read of which targets are proofs of concept,
-	// which its responder is told.
+	// which its criteria check judges by and its responder is told.
 	poc []string
 }
 

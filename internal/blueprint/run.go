@@ -502,6 +502,8 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blueprint, runID int64, st pipelineStep) (stage.Input, stageChecks, func(), error) {
 	noop := func() {}
 
+	// One read serves the run's task and its checks, so the model and the
+	// checks agree on which projects are proofs of concept.
 	poc, err := c.pocProjects(ctx, sess, bp, st)
 	if err != nil {
 		return stage.Input{}, stageChecks{}, nil, err
@@ -602,7 +604,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	}
 
 	if slices.Contains(st.Checks, pack.CheckCriteria) {
-		bounded(c.criteriaValidator(bp, st.ID))
+		bounded(c.criteriaValidator(bp, st.ID, poc))
 	}
 
 	if slices.Contains(st.Checks, pack.CheckOutcomes) {

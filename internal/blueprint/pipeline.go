@@ -786,7 +786,7 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pipelin
 }
 
 // writeEdgeCases gives a stage that checks criteria, and its reviewer, the
-// pack's edge cases every slice's sweep covers; nothing when the pack lists
+// pack's edge cases a slice's sweep covers; nothing when the pack lists
 // none.
 func (c *Controller) writeEdgeCases(b *strings.Builder, st pipelineStep) {
 	cases := c.opts.Pack.Lists().EdgeCases
@@ -794,7 +794,7 @@ func (c *Controller) writeEdgeCases(b *strings.Builder, st pipelineStep) {
 		return
 	}
 
-	b.WriteString("## Edge cases to sweep\n\nEvery slice's sweep gives each one entry:\n\n")
+	b.WriteString("## Edge cases to sweep\n\nA slice's sweep gives each one entry:\n\n")
 
 	for _, edge := range cases {
 		b.WriteString("- " + edge + "\n")

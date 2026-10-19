@@ -60,7 +60,8 @@ dangling_references:
 
 # The conditions acceptance sweeps for every slice: each is settled by
 # criteria or manual checks of the slice, or recorded not applicable with a
-# reason.
+# reason. A slice whose projects are all proofs of concept may skip the
+# sweep, and a criterion on a proof-of-concept project settles no case.
 edge_cases:
   - Empty or missing input
   - Partial failure
