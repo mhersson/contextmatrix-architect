@@ -945,14 +945,15 @@ text lists `reject slicing` always and the others with two or more slices;
 one that names no step of the blueprint is a note with a hint. `auto+emit`
 and `yolo` approve on their own when preflight runs and finds nothing
 blocking and no warning, never over a critical finding across the blueprint,
-and stop for a human otherwise. The sign-off reads the mode as it stands when it decides, under a lock a
-`mode` reply shares, so a switch lands before an approval or is refused
-after it; a switch into `auto+emit` or `yolo` while a sign-off waits for a
-human runs it again, preflight included, and when the mode approves a
-sign-off or a stage gate that was shown, that decision's transcript row
-carries a `decision` marker (the stage, its slice and the version; a folded
-stage's row carries none) that closes the shown prompt in the panel. Every decision is a row in `gates`. Then, in
-order:
+and stop for a human otherwise. The sign-off reads the mode as it stands
+when it decides, under a lock a `mode` reply shares, so a switch lands
+before an approval or is refused after it; a switch into `auto+emit` or
+`yolo` while a sign-off waits for a human runs it again, preflight
+included, and when the mode approves a sign-off or a stage gate that was
+shown, that decision's transcript row carries a `decision` marker (the
+stage, its slice and the version; a folded stage's row carries none) that
+closes the shown prompt in the panel. Every decision is a row in `gates`.
+Then, in order:
 
 1. **Preflight**, at sign-off and again at the start of every emission
    attempt, reading CM each time. Blocking: a card's project is missing in
@@ -1407,7 +1408,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Panel: the blueprint pane (scale bar, sheet, transcript markers), read through CM proxies of the architect's signed view and artifact endpoints, with its live stream relayed on the session's chat stream (protocol v0.26.0) | blueprint UI |
 | A research setting (`off` or `search`, off by default) with the search provider and its key in CM's configuration, sent as `ArchitectStart.Research` (protocol v0.27.0) | research |
 | Panel: clicking the cost in the sheet header asks for a new cap and sends `cap <usd>` or `cap off` as a chat message hidden from the transcript | cost cap |
-| Panel: the blueprint pane's header shows the mode next to the cost cap; clicking it offers the same four modes as the new-session dialog and sends `mode <m>` as a chat message hidden from the transcript, locked once emission has started; yolo asks for the same confirmation as at creation | mode switch |
+| Panel: the blueprint scale bar has a mode cell next to the cost cell; clicking it offers the same four modes as the new-session dialog and posts the choice to the session's mode endpoint, which sends `mode <m>` as a session command and records the mode on the session row that every later start carries; the cell is locked once the pipeline has ended or the sign-off is approved (state `emitting`, `emitted` or `done`, or the sign-off step `done`); picking yolo turns the button into "Switch and run"; the pane header's pill only displays the mode, `view.mode` once a view has loaded and the session row's before | mode switch |
 | CM sends the session model's context window from its model catalog as `ArchitectStart.ContextWindow`, through the same lookup as the price (`Rate`), 0 when it does not know it; panel: a reviewer's verdict renders as a review card from the `review` marker, with the summary, the round of the most rounds and the reviewer's notes on re-checked findings (protocol v0.30.0) | context fix and review card |
 | Panel: the review popover and the gate bar show the findings ledger (id, severity, the reviewer's status, the builder's claim beside it), and the tester persona has a display name (protocol v0.28.0) | reviewers |
 | Pin protocol v0.29.0, since `internal/chat` decodes `LogMarker` and `LogRound`; panel: slice tabs under the stage tabs and a grouped scale bar, only with two or more slices; the artifact proxy forwards `?slice=SL<n>`, checked against `^SL[1-9][0-9]{0,2}$`; the gate bar renders "Reject shared decisions" like any action; the new `shared_decisions` stage displays with tab "Shared", name "Shared decisions", title "Shared decisions", noun "shared decisions" and doing "settling the shared decisions" | slices |
