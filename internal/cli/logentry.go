@@ -622,17 +622,40 @@ func stringsOf(v any) []string {
 	}
 }
 
-// signoffText renders the sign-off: the body (the entries in playbook order,
-// the playbook and the preflight result) and the reply line that decides it,
-// which starts with its separator. sliced names a step's slice, and lists
-// the typed rejections.
+// signoffText renders the sign-off: the body (readiness's findings across
+// the blueprint, the entries in playbook order, the playbook and the
+// preflight result) and the reply line that decides it, which starts with
+// its separator. sliced names a step's slice, and lists the typed
+// rejections.
 func signoffText(p map[string]any, sliced bool) (body, reply string) {
 	var b strings.Builder
 
-	if auto, _ := p["auto_stopped"].(bool); auto {
+	cross := anyMaps(p["cross"])
+	critical := slices.ContainsFunc(cross, func(f map[string]any) bool { return str(f["severity"]) == "critical" })
+
+	switch auto, _ := p["auto_stopped"].(bool); {
+	case auto && critical:
+		b.WriteString("**Sign-off needed.** This mode emits on its own, but readiness found a critical problem across the blueprint.\n\n")
+	case auto:
 		b.WriteString("**Sign-off needed.** This mode emits on its own, but preflight found something for a human.\n\n")
-	} else {
+	default:
 		b.WriteString("**Sign-off.** Readiness passed the cards.\n\n")
+	}
+
+	if len(cross) > 0 {
+		b.WriteString("Across the blueprint, readiness found:\n")
+
+		for _, f := range cross {
+			fmt.Fprintf(&b, "- %s (%s) %s", str(f["id"]), str(f["severity"]), str(f["text"]))
+
+			if refs := stringsOf(f["refs"]); len(refs) > 0 {
+				b.WriteString(" [" + strings.Join(refs, ", ") + "]")
+			}
+
+			b.WriteString("\n")
+		}
+
+		b.WriteString("\n")
 	}
 
 	cards := map[string]map[string]any{}
@@ -724,6 +747,10 @@ func signoffText(p map[string]any, sliced bool) (body, reply string) {
 
 	body = strings.TrimSuffix(b.String(), "\n")
 	reply = "\n\nReply `approve` to emit the cards"
+
+	if critical {
+		reply = "\n\nReply `approve <reason>` to emit the cards over the critical findings"
+	}
 
 	if len(warnings) > 0 {
 		reply += " (this also overrides the warnings)"
@@ -1049,6 +1076,8 @@ func decidedText(p map[string]any, sliced bool) string {
 	}
 
 	switch {
+	case str(p["override_reason"]) != "":
+		return "Approved over the critical findings: " + str(p["override_reason"]) + ". Emission starts."
 	case reject && str(p["reruns"]) != "":
 		return fmt.Sprintf("Rejected. %s runs again with your feedback, and everything after it.", pack.StageName(str(p["reruns"]), sliced))
 	case reject:
@@ -1149,7 +1178,7 @@ func actionsPrompt(id, text string, v any) *protocol.LogPrompt {
 
 	for _, a := range anyMaps(v) {
 		feedback, _ := a["feedback"].(bool)
-		actions = append(actions, protocol.LogAction{Label: str(a["label"]), Reply: str(a["reply"]), Feedback: feedback})
+		actions = append(actions, protocol.LogAction{Label: str(a["label"]), Reply: str(a["reply"]), Feedback: feedback, Ask: str(a["ask"])})
 	}
 
 	if len(actions) == 0 {

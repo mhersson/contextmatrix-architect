@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -1331,4 +1332,229 @@ func TestSignoff_AnAutomaticApprovalRecordsWhatItApproved(t *testing.T) {
 	}
 
 	assert.True(t, found, "the Sign-off tab has its artifact")
+}
+
+// crossScript is happyScript whose readiness passes the cards with findings
+// across the blueprint, minor first, and a critical one when critical.
+func crossScript(critical bool) stageScript {
+	severity := severityMajor
+	if critical {
+		severity = severityCritical
+	}
+
+	data := readiness(true)
+	data["cross"] = []any{
+		map[string]any{"id": "X1", "severity": "minor", "text": "D1's title repeats its project.", "refs": []any{"D1"}},
+		map[string]any{"id": "X2", "severity": severity, "text": "No criterion proves O1.", "refs": []any{"O1"}},
+	}
+
+	script := happyScript()
+	script["readiness"] = returns("# Ready", data)
+
+	return script
+}
+
+func TestSignoff_ACriticalFindingAcrossTheBlueprintWantsAReason(t *testing.T) {
+	c, st, _, rec, _ := newPipeline(t, crossScript(true))
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	c.opts.ExportDir = t.TempDir()
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+
+	so, ok := rec.first(EventSignOff)
+	require.True(t, ok)
+
+	var ids []any
+	for _, f := range anyList(so.Payload["cross"]) {
+		ids = append(ids, f.(map[string]any)["id"])
+	}
+
+	assert.Equal(t, []any{"X2", "X1"}, ids, "critical first")
+
+	approve := anyList(so.Payload["actions"])[0].(map[string]any)
+	assert.Equal(t, "approve", approve["reply"])
+	assert.Equal(t, true, approve["feedback"])
+	assert.NotEmpty(t, approve["ask"])
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	gates, err := st.ListGates(ctx, "BP1", signoffStage)
+	require.NoError(t, err)
+	assert.Empty(t, gates, "a bare approve decides nothing")
+	assert.Empty(t, fake.titles())
+
+	notes := rec.all(EventNote)
+	require.NotEmpty(t, notes)
+	assert.NotEmpty(t, notes[len(notes)-1].Payload["hint"])
+	assert.NotEqual(t, signoffHint, notes[len(notes)-1].Payload["hint"], "the bare approve's note asks for a reason")
+
+	require.NoError(t, c.Message(ctx, "BP1", "looks fine to me", "m3b"))
+	c.Wait("BP1")
+
+	notes = rec.all(EventNote)
+	require.NotEmpty(t, notes)
+	assert.NotEmpty(t, notes[len(notes)-1].Payload["hint"])
+	assert.NotEqual(t, signoffHint, notes[len(notes)-1].Payload["hint"], "other text is not told to send a bare approve")
+
+	const reason = "O1 is proved by the manual check the team runs each release"
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve "+reason, "m4"))
+	c.Wait("BP1")
+
+	gates, err = st.ListGates(ctx, "BP1", signoffStage)
+	require.NoError(t, err)
+	require.Len(t, gates, 1)
+	assert.Equal(t, store.GateApprove, gates[0].Decision)
+	assert.Equal(t, reason, gates[0].Feedback)
+	assert.Equal(t, []string{"Add the thing"}, fake.titles(), "emission runs")
+
+	var decided Event
+
+	for _, e := range rec.all(EventDecided) {
+		if e.Payload["stage"] == signoffStage {
+			decided = e
+		}
+	}
+
+	assert.Equal(t, reason, decided.Payload["override_reason"])
+
+	art, err := c.Artifact(ctx, "BP1", signoffStage, "", 1)
+	require.NoError(t, err)
+
+	var data map[string]any
+	require.NoError(t, json.Unmarshal(art.Data, &data))
+	assert.Equal(t, reason, data["override_reason"])
+
+	require.NoError(t, c.Export(ctx, "BP1", "m5"))
+
+	ev, ok := rec.first(EventExported)
+	require.True(t, ok)
+
+	dir, _ := ev.Payload["path"].(string)
+	summary, err := os.ReadFile(filepath.Join(dir, "blueprint.md")) //nolint:gosec // the test's own export dir
+	require.NoError(t, err)
+	assert.Contains(t, string(summary), reason, "the export records the reason")
+}
+
+func TestSignoff_WithoutACriticalFindingApproveWantsNoReason(t *testing.T) {
+	c, _, _, rec, _ := newPipeline(t, crossScript(false))
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+
+	drive(t, c, "BP1")
+
+	so, ok := rec.first(EventSignOff)
+	require.True(t, ok)
+
+	approve := anyList(so.Payload["actions"])[0].(map[string]any)
+	assert.Equal(t, false, approve["feedback"])
+	assert.NotContains(t, approve, "ask")
+
+	require.NoError(t, c.Message(context.Background(), "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	assert.Equal(t, []string{"Add the thing"}, fake.titles())
+}
+
+func TestSignoff_AnEmittingModeStopsOverACriticalFinding(t *testing.T) {
+	c, _, _, rec, _ := newPipeline(t, crossScript(true))
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeAutoEmit
+	driveIn(t, c, in)
+
+	assert.Empty(t, fake.titles(), "nothing is emitted over a critical finding")
+
+	so, ok := rec.first(EventSignOff)
+	require.True(t, ok)
+	assert.Equal(t, true, so.Payload["auto_stopped"])
+}
+
+func TestSignoff_ABareApproveResumesAnEmissionApprovedOverACriticalFinding(t *testing.T) {
+	data := readinessFor(true, "D1", "D2")
+	data["cross"] = []any{map[string]any{"id": "X1", "severity": "critical", "text": "No criterion proves O1.", "refs": []any{"O1"}}}
+
+	script := twoCardScript()
+	script["readiness"] = returns("# Ready", data)
+
+	c, st, _, _, _ := newPipeline(t, script)
+	ctx := context.Background()
+	fake := newFakeCM()
+	fake.failCreate["Wire the parser"] = 1
+	c.opts.ConnectCM = fake.connect
+
+	drive(t, c, "BP1")
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve the release check covers O1", "m3"))
+	c.Wait("BP1")
+
+	require.Equal(t, []string{"Add the parser"}, fake.titles(), "emission stopped partway")
+	require.Equal(t, string(StateIdle), stateOf(t, st, "BP1"))
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m4"))
+	c.Wait("BP1")
+
+	assert.Equal(t, []string{"Add the parser", "Wire the parser"}, fake.titles(), "a bare approve resumes it")
+	assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
+}
+
+func TestCrossOf_NeverDropsACriticalFindingForAMalformedField(t *testing.T) {
+	tests := []struct {
+		name     string
+		cross    string
+		wantIDs  []string
+		critical bool
+	}{
+		{"refs that are not a list", `[{"id": "X1", "severity": "critical", "text": "t", "refs": "AC4"}]`, []string{"X1"}, true},
+		{"an id that is not a string", `[{"id": 7, "severity": "Critical ", "text": "t"}]`, []string{""}, true},
+		{"a text that is not a string", `[{"id": "X1", "severity": "critical", "text": ["t"]}]`, []string{"X1"}, true},
+		{"entries that are not objects", `["x", 3, {"id": "X2", "severity": "minor", "text": "t"}]`, []string{"X2"}, false},
+		{"critical sorts first", `[{"id": "X1", "severity": "minor", "text": "t"}, {"id": "X2", "severity": "critical", "text": "t"}]`, []string{"X2", "X1"}, true},
+		{"none", `null`, nil, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			list := crossOf(store.Artifact{Data: []byte(`{"cross": ` + tc.cross + `}`)})
+
+			var ids []string
+			for _, f := range list {
+				ids = append(ids, f.ID)
+			}
+
+			assert.Equal(t, tc.wantIDs, ids)
+			assert.Equal(t, tc.critical, criticalCross(list))
+		})
+	}
+}
+
+func TestSignoffActions_TheCriticalApproveWinsOverWarnings(t *testing.T) {
+	tests := []struct {
+		name               string
+		warnings, critical bool
+		label              string
+		feedback           bool
+		ask                bool
+	}{
+		{"neither", false, false, "Approve", false, false},
+		{"warnings", true, false, "Approve and override warnings", false, false},
+		{"critical", false, true, "Approve over critical findings", true, true},
+		{"both", true, true, "Approve over critical findings", true, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			approve := signoffActions(tc.warnings, tc.critical)[0]
+
+			assert.Equal(t, store.GateApprove, approve.Reply)
+			assert.Equal(t, tc.label, approve.Label)
+			assert.Equal(t, tc.feedback, approve.Feedback)
+			assert.Equal(t, tc.ask, approve.Ask != "")
+		})
+	}
 }

@@ -854,8 +854,10 @@ blueprint.
   intake, changes a stage's policy for this blueprint.
 - **`auto`**: every policy `auto`. Stops before emission. Cards auto-vet in
   CM on the non-Jira path, so this stop is the only human backstop.
-- **`auto+emit`**: as above, then emits the playbook and stops. When it
-  approves a clean sign-off itself, it records what it approved, for the sheet.
+- **`auto+emit`**: as above, then emits the playbook and stops. It never
+  approves over a critical finding across the blueprint: the sign-off stops
+  for a human. When it approves a clean sign-off itself, it records what it
+  approved, for the sheet.
 - **`yolo`**: as `auto+emit`, then starts the run, unless a card's repository
   has no commits: the cards are emitted, the session is told to push a first
   commit and reply `approve`, and no run starts until then. A single card is
@@ -889,22 +891,27 @@ Cards that pass readiness go to sign-off. When decomposition ran per slice,
 the sign-off, preflight and emission read one draft: every slice's latest
 cards, manual entries and order in slice order, with each project's setup as
 the earliest slice that sets it gives it and the last slice's title, so the
-blueprint ends in one playbook across every project. Default and `auto` modes
-show the sign-off (the entries in playbook order with the card that also writes
-`AGENTS.md` marked, the playbook title, the assumptions and the preflight
-result) and wait: `approve` emits, and `reject <feedback>` stores the
-feedback and re-runs decomposition, every slice's in slice order, and
-readiness with it, the three readiness rounds counted again from the
-rejection. `reject slicing <feedback>` runs slicing and everything after
-it again, `reject SL<n> <feedback>` slice n's design and everything after
-it, earlier slices staying, and `reject shared_decisions <feedback>` the
-shared decisions and every slice. Those are typed and never offered as
-buttons; the sign-off's text lists `reject slicing` always and the others
-with two or more slices; one that names no step of the blueprint is a note
-with a hint. `auto+emit` and `yolo`
-approve on their own when preflight runs and finds nothing blocking and no
-warning, and stop for a human otherwise. Every decision is a row in `gates`.
-Then, in order:
+blueprint ends in one playbook across every project. Default and `auto`
+modes show the sign-off (the entries in playbook order with the card that
+also writes `AGENTS.md` marked, the playbook title, the assumptions, the
+preflight result and, at the top, readiness's findings across the blueprint,
+critical first) and wait: `approve` emits (over a critical finding it takes
+a reason, `approve <reason>`, which the button asks for: recorded as the
+approval's feedback and the decided event's `override_reason`, served in the
+sign-off's data and kept by the export; a bare `approve` is then a note
+asking for it), and `reject <feedback>` stores the feedback and re-runs
+decomposition, every slice's in slice order, and readiness with it, the
+three readiness rounds counted again from the rejection. `reject slicing
+<feedback>` runs slicing and everything after it again, `reject SL<n>
+<feedback>` slice n's design and everything after it, earlier slices
+staying, and `reject shared_decisions <feedback>` the shared decisions and
+every slice. Those are typed and never offered as buttons; the sign-off's
+text lists `reject slicing` always and the others with two or more slices;
+one that names no step of the blueprint is a note with a hint. `auto+emit`
+and `yolo` approve on their own when preflight runs and finds nothing
+blocking and no warning, never over a critical finding across the blueprint,
+and stop for a human otherwise. Every decision is a row in `gates`. Then, in
+order:
 
 1. **Preflight**, at sign-off and again at the start of every emission
    attempt, reading CM each time. Blocking: a card's project is missing in

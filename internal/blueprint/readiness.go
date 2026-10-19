@@ -2,6 +2,7 @@ package blueprint
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"slices"
@@ -185,6 +186,80 @@ func crossProblems(v any) []string {
 		if !refsOK {
 			out = append(out, problem(where, "cross_refs", `refs is a list of the ids the finding names, such as ["DEC2", "AC4"]`))
 		}
+	}
+
+	return out
+}
+
+// crossFinding is one finding readiness made across the blueprint.
+type crossFinding struct {
+	ID       string
+	Severity string
+	Text     string
+	Refs     []string
+}
+
+// crossOf reads a readiness verdict's findings across the blueprint,
+// critical first, then major, then minor, each in its order. The data is a
+// model's, accepted after its check's last round, so only an entry that is
+// not an object is skipped: a malformed field reads as empty, so a critical
+// finding is never dropped for it, and a severity outside the set sorts last.
+func crossOf(art store.Artifact) []crossFinding {
+	var data struct {
+		Cross []json.RawMessage `json:"cross"`
+	}
+
+	if len(art.Data) == 0 || json.Unmarshal(art.Data, &data) != nil {
+		return nil
+	}
+
+	var out []crossFinding
+
+	for _, raw := range data.Cross {
+		var fields map[string]any
+		if json.Unmarshal(raw, &fields) != nil || fields == nil {
+			continue
+		}
+
+		id, _ := fields["id"].(string)
+		severity, _ := fields["severity"].(string)
+		text, _ := fields["text"].(string)
+		refs, _ := texts(fields["refs"])
+
+		out = append(out, crossFinding{ID: id, Severity: strings.ToLower(strings.TrimSpace(severity)), Text: text, Refs: refs})
+	}
+
+	rank := map[string]int{severityCritical: 0, severityMajor: 1, severityMinor: 2}
+	order := func(s string) int {
+		if r, ok := rank[s]; ok {
+			return r
+		}
+
+		return len(rank)
+	}
+
+	slices.SortStableFunc(out, func(a, b crossFinding) int { return order(a.Severity) - order(b.Severity) })
+
+	return out
+}
+
+// criticalCross reports a critical finding among list.
+func criticalCross(list []crossFinding) bool {
+	return slices.ContainsFunc(list, func(f crossFinding) bool { return f.Severity == severityCritical })
+}
+
+// crossPayload carries the findings in an event, as plain data, so masking
+// reaches every text.
+func crossPayload(list []crossFinding) []any {
+	out := make([]any, 0, len(list))
+
+	for _, f := range list {
+		entry := map[string]any{"id": f.ID, "severity": f.Severity, "text": f.Text}
+		if len(f.Refs) > 0 {
+			entry["refs"] = f.Refs
+		}
+
+		out = append(out, entry)
 	}
 
 	return out

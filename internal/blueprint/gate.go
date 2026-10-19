@@ -18,11 +18,13 @@ import (
 // gateAction is one reply a gate takes. Label and Reply are what the panel
 // offers, and a Feedback action needs text after its reply. Decision is what
 // the reply records; a stage gate's reject runs Target again, and the
-// sign-off's reject leaves the stage to re-run to the pack's loop.
+// sign-off's reject leaves the stage to re-run to the pack's loop. Ask labels
+// the text box a Feedback action opens; empty leaves the panel's own label.
 type gateAction struct {
 	Label    string
 	Reply    string
 	Feedback bool
+	Ask      string
 	Decision string
 	Target   string
 }
@@ -38,17 +40,19 @@ func stageGateActions(stageID string) []gateAction {
 
 // signoffActions are the replies the sign-off takes: approve, which also
 // overrides the warnings it was shown with, and reject with feedback, which
-// re-runs the loop's target stage.
-func signoffActions(warnings bool) []gateAction {
-	approve := "Approve"
-	if warnings {
-		approve = "Approve and override warnings"
+// re-runs the loop's target stage. Over a critical finding across the
+// blueprint, approve takes a reason, which it records.
+func signoffActions(warnings, critical bool) []gateAction {
+	approve := gateAction{Label: "Approve", Reply: store.GateApprove, Decision: store.GateApprove}
+
+	switch {
+	case critical:
+		approve.Label, approve.Feedback, approve.Ask = "Approve over critical findings", true, "Why approve over the critical findings?"
+	case warnings:
+		approve.Label = "Approve and override warnings"
 	}
 
-	return []gateAction{
-		{Label: approve, Reply: store.GateApprove, Decision: store.GateApprove},
-		{Label: "Reject", Reply: store.GateReject, Feedback: true, Decision: store.GateReject},
-	}
+	return []gateAction{approve, {Label: "Reject", Reply: store.GateReject, Feedback: true, Decision: store.GateReject}}
 }
 
 // matchAction finds the action a reply takes, the way CM's panel matches a
@@ -105,7 +109,12 @@ func actionsPayload(actions []gateAction) []any {
 	out := make([]any, 0, len(actions))
 
 	for _, a := range actions {
-		out = append(out, map[string]any{"label": a.Label, "reply": a.Reply, "feedback": a.Feedback})
+		m := map[string]any{"label": a.Label, "reply": a.Reply, "feedback": a.Feedback}
+		if a.Ask != "" {
+			m["ask"] = a.Ask
+		}
+
+		out = append(out, m)
 	}
 
 	return out
