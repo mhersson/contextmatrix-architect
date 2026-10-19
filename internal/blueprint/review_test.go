@@ -286,23 +286,20 @@ func TestReview_ALaterRoundReChecksTheLedger(t *testing.T) {
 		switch shapes.Add(1) {
 		case 1:
 			return done("# Shape", nil), nil
-		case 2:
-			return done("# Shape 2", map[string]any{"addressed": []any{entry("R1", "named the owner")}}), nil
 		default:
-			return done("# Shape 3", nil), nil
+			return done("# Shape 2", map[string]any{"addressed": []any{entry("R1", "named the owner")}}), nil
 		}
 	}
 	script["shape.review"] = verdicts(
 		scored(3, "name the owner"),
 		rechecked(5, []map[string]any{check("R1", findingFixed, "the owners table names one")}, newFinding(severityMinor, "spell out the acronym")),
-		fixed(5, "R1", "R2"),
 	)
 
 	c, st, runner, rec := newGated(t, script)
 	startGated(t, c, protocol.ArchitectModeDefault)
 
 	judged := inputsOf(runner, "shape.review")
-	require.GreaterOrEqual(t, len(judged), 2)
+	require.Len(t, judged, 2)
 	assert.Contains(t, judged[1].Task, "R1", "the second round gets the finding to re-check")
 	assert.Contains(t, judged[1].Task, "name the owner")
 	assert.Contains(t, judged[1].Task, "named the owner", "with the builder's claim beside it")
@@ -318,14 +315,14 @@ func TestReview_ALaterRoundReChecksTheLedger(t *testing.T) {
 		}
 	}
 
-	require.GreaterOrEqual(t, len(stored), 2)
+	require.Len(t, stored, 2)
 	assert.JSONEq(t, `{"score":5,"passed":true,"findings":[`+
 		`{"id":"R1","severity":"major","text":"name the owner","status":"fixed","verified_in":2,"note":"the owners table names one"},`+
 		`{"id":"R2","severity":"minor","text":"spell out the acronym","status":"open"}],`+
 		`"version":2,"attempt":1,"round":2}`, string(stored[1].Data))
 
 	events := rec.all(EventReview)
-	require.GreaterOrEqual(t, len(events), 2)
+	require.Len(t, events, 2)
 
 	second, _ := events[1].Payload["findings"].([]any)
 	require.Len(t, second, 2)
@@ -347,24 +344,21 @@ func TestReview_AFindingTheRoundRaisedCarriesNoClaim(t *testing.T) {
 		switch shapes.Add(1) {
 		case 1:
 			return done("# Shape", nil), nil
-		case 2:
+		default:
 			// As a third failing submit is accepted: the round was given R1 alone.
 			return done("# Shape 2", map[string]any{"addressed": []any{entry("R1", "named the owner"), entry("R2", "spelled it out")}}), nil
-		default:
-			return done("# Shape 3", nil), nil
 		}
 	}
 	script["shape.review"] = verdicts(
 		scored(3, "name the owner"),
 		rechecked(5, []map[string]any{check("R1", findingFixed, "")}, newFinding(severityMinor, "spell out the acronym")),
-		fixed(5, "R1", "R2"),
 	)
 
 	c, _, _, rec := newGated(t, script)
 	startGated(t, c, protocol.ArchitectModeDefault)
 
 	events := rec.all(EventReview)
-	require.GreaterOrEqual(t, len(events), 2)
+	require.Len(t, events, 2)
 
 	second, _ := events[1].Payload["findings"].([]any)
 	require.Len(t, second, 2)
@@ -1620,4 +1614,257 @@ func TestView_TheRoundCapIsTheRoundsAnAttemptRuns(t *testing.T) {
 	ref := refOf(t, v, "shape", 1)
 	require.NotNil(t, ref.Review)
 	assert.Equal(t, len(inputsOf(runner, "shape.review")), ref.Review.MaxRounds, "a version that never passes is reviewed that many times")
+}
+
+func TestView_AReviewSaysWhetherItSentTheArtifactBack(t *testing.T) {
+	open := func(severity string) string {
+		return fmt.Sprintf(`[{"id":"R1","severity":%q,"text":"name the owner","status":"open"}]`, severity)
+	}
+	fixedR1 := `[{"id":"R1","severity":"minor","text":"name the owner","status":"fixed","verified_in":2}]`
+
+	type verdict struct {
+		version, attempt, round, score int
+		findings                       string
+	}
+
+	type gateRow struct {
+		version  int
+		decision string
+	}
+
+	tests := []struct {
+		name     string
+		shapes   int // shape versions stored beyond v1
+		verdicts []verdict
+		shown    []int
+		gates    []gateRow
+		want     map[int]bool
+		sentTo   map[int]int // version to the first open finding's sent_to
+		passed   []int       // versions whose verdict passed
+	}{
+		{
+			name: "old minor loop, both reviewed", shapes: 1,
+			verdicts: []verdict{{1, 1, 1, 4, open("minor")}, {2, 1, 2, 4, fixedR1}},
+			shown:    []int{2},
+			want:     map[int]bool{1: true, 2: false}, sentTo: map[int]int{1: 2},
+		},
+		{
+			name: "old minor loop, revision unreviewed", shapes: 1,
+			verdicts: []verdict{{1, 1, 1, 4, open("minor")}},
+			want:     map[int]bool{1: true}, sentTo: map[int]int{1: 2},
+		},
+		{
+			name:     "a pass with a major open, newest",
+			verdicts: []verdict{{1, 1, 1, 4, open("major")}},
+			want:     map[int]bool{1: true}, sentTo: map[int]int{1: 2}, passed: []int{1},
+		},
+		{
+			name:     "the last round with a major open, gate shown",
+			verdicts: []verdict{{1, 1, maxReviewRounds, 2, open("major")}},
+			shown:    []int{1},
+			want:     map[int]bool{1: false},
+		},
+		{
+			name:     "an unsettled verdict whose gate was shown",
+			verdicts: []verdict{{1, 1, 1, 2, open("major")}},
+			shown:    []int{1},
+			want:     map[int]bool{1: false},
+		},
+		{
+			name:     "newest passing verdict with minors, no later version, no gate",
+			verdicts: []verdict{{1, 1, 1, 4, open("minor")}},
+			want:     map[int]bool{1: false}, passed: []int{1},
+		},
+		{
+			name: "rejected at its gate, a new attempt reviewed", shapes: 1,
+			verdicts: []verdict{{1, 1, 1, 4, open("minor")}, {2, 2, 1, 5, `[]`}},
+			gates:    []gateRow{{1, store.GateReject}},
+			want:     map[int]bool{1: false, 2: false},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, _, _ := newGated(t, gatedScript())
+			ctx := context.Background()
+
+			seedGated(t, st, protocol.ArchitectModeDefault)
+
+			for range tt.shapes {
+				_, err := st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: "shape", Body: "# shape"})
+				require.NoError(t, err)
+			}
+
+			for _, v := range tt.verdicts {
+				_, err := st.PutArtifact(ctx, store.Artifact{
+					BlueprintID: "BP1", Stage: reviewStage("shape"), Body: "# Review",
+					Data: fmt.Appendf(nil, `{"score":%d,"findings":%s,"version":%d,"attempt":%d,"round":%d}`, v.score, v.findings, v.version, v.attempt, v.round),
+				})
+				require.NoError(t, err)
+			}
+
+			for _, version := range tt.shown {
+				require.NoError(t, st.AppendEvent(ctx, store.Event{
+					Time: time.Now().UTC(), BlueprintID: "BP1", Kind: EventGate,
+					Payload: fmt.Appendf(nil, `{"stage":"shape","version":%d}`, version),
+				}))
+			}
+
+			for _, g := range tt.gates {
+				_, err := st.AddGate(ctx, store.Gate{
+					BlueprintID: "BP1", Stage: "shape", Version: g.version, Decision: g.decision,
+					Responder: store.ResponderHuman, DecidedAt: time.Now().UTC(),
+				})
+				require.NoError(t, err)
+			}
+
+			view, err := c.View(ctx, "BP1")
+			require.NoError(t, err)
+
+			for version, want := range tt.want {
+				ref := refOf(t, view, "shape", version)
+				require.NotNil(t, ref.Review, "v%d", version)
+				assert.Equal(t, want, ref.Review.SentBack, "v%d sent back", version)
+
+				if want {
+					continue
+				}
+
+				for _, f := range ref.Review.Findings {
+					assert.Zero(t, f.SentTo, "v%d finding %s sent to", version, f.ID)
+					assert.Zero(t, f.AddressedIn, "v%d finding %s addressed in", version, f.ID)
+				}
+			}
+
+			for version, to := range tt.sentTo {
+				ref := refOf(t, view, "shape", version)
+				require.NotEmpty(t, ref.Review.Findings)
+				assert.Equal(t, to, ref.Review.Findings[0].SentTo, "v%d finding sent to", version)
+			}
+
+			for _, version := range tt.passed {
+				assert.True(t, refOf(t, view, "shape", version).Review.Passed, "v%d passed", version)
+			}
+		})
+	}
+}
+
+func TestReview_ThePassingVerdictsSettleRule(t *testing.T) {
+	minorFirst := rechecked(4, nil, newFinding(severityMinor, "a"))
+
+	tests := []struct {
+		name     string
+		reviews  []map[string]any
+		wantRuns int
+		version  int
+		open     []string // ids of the findings the gate's review lists as not fixed
+	}{
+		{name: "minors only", reviews: []map[string]any{minorFirst, fixed(4, "R1")}, wantRuns: 1, version: 1, open: []string{"R1"}},
+		{name: "major open", reviews: []map[string]any{scored(4, "name the owner"), fixed(4, "R1")}, wantRuns: 2, version: 2},
+		{
+			name: "still-open major",
+			reviews: []map[string]any{
+				scored(4, "name the owner"),
+				rechecked(4, []map[string]any{check("R1", findingStillOpen, "")}),
+				fixed(4, "R1"),
+			},
+			wantRuns: 3, version: 3,
+		},
+		{
+			name:     "low score, minors only",
+			reviews:  []map[string]any{rechecked(3, nil, newFinding(severityMinor, "a")), fixed(4, "R1")},
+			wantRuns: 2, version: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			script := gatedScript()
+			script["shape.review"] = verdicts(tt.reviews...)
+
+			c, st, runner, rec := newGated(t, script)
+
+			startGated(t, c, protocol.ArchitectModeDefault)
+
+			assert.Len(t, inputsOf(runner, "shape.review"), tt.wantRuns)
+			assert.Len(t, inputsOf(runner, "shape"), tt.wantRuns)
+			assert.Len(t, shapeRounds(t, st), tt.wantRuns)
+
+			gate, ok := rec.first(EventGate)
+			require.True(t, ok)
+			assert.Equal(t, 1, rec.count(EventGate))
+			assert.Equal(t, tt.version, gate.Payload["version"])
+
+			verdict := reviewOf(t, gate)
+			assert.Equal(t, tt.version, verdict["judged"])
+
+			var open []string
+
+			for _, raw := range verdict["findings"].([]any) {
+				f := raw.(map[string]any)
+				if f["status"] != findingFixed {
+					open = append(open, f["id"].(string))
+				}
+			}
+
+			assert.Equal(t, tt.open, open)
+		})
+	}
+}
+
+func TestReview_AnAutoGateApprovesAPassWithMinorsOpen(t *testing.T) {
+	script := gatedScript()
+	script["shape.review"] = verdicts(rechecked(4, nil, newFinding(severityMinor, "a")), fixed(4, "R1"))
+
+	c, st, runner, _ := newGated(t, script)
+
+	startGated(t, c, protocol.ArchitectModeAuto)
+
+	assert.Len(t, inputsOf(runner, "shape.review"), 1)
+	assert.Len(t, inputsOf(runner, "shape"), 1)
+
+	gates, err := st.ListGates(context.Background(), "BP1", "shape")
+	require.NoError(t, err)
+	require.Len(t, gates, 1)
+	assert.Equal(t, store.GateApprove, gates[0].Decision)
+	assert.Equal(t, store.ResponderAuto, gates[0].Responder)
+	assert.Equal(t, 1, gates[0].Version)
+}
+
+func TestReview_AStoredPassWithMinorsOpensItsGateOnReopen(t *testing.T) {
+	c, st, runner, rec := newGated(t, gatedScript())
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	seedGated(t, st, protocol.ArchitectModeDefault)
+
+	id, err := st.StartRun(ctx, store.Run{BlueprintID: "BP1", Stage: "shape", Kind: store.RunKindReviewer, Attempt: 1, Round: 1, Status: store.RunRunning, StartedAt: now})
+	require.NoError(t, err)
+	require.NoError(t, st.EndRun(ctx, id, store.RunDone, "done", store.RunUsage{}, now))
+
+	_, err = st.PutArtifact(ctx, store.Artifact{
+		BlueprintID: "BP1", Stage: reviewStage("shape"), Body: "# Review",
+		Data: []byte(`{"score":4,"findings":[{"id":"R1","severity":"minor","text":"a","status":"open"}],"version":1,"attempt":1,"round":1}`),
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+
+	gate, ok := rec.first(EventGate)
+	require.True(t, ok)
+	assert.Equal(t, 1, gate.Payload["version"])
+	assert.Empty(t, stagesRun(runner))
+	assert.Empty(t, inputsOf(runner, "shape.review"))
+
+	view, err := c.View(ctx, "BP1")
+	require.NoError(t, err)
+
+	ref := refOf(t, view, "shape", 1)
+	require.NotNil(t, ref.Review)
+	assert.False(t, ref.Review.SentBack)
+
+	for _, f := range ref.Review.Findings {
+		assert.Zero(t, f.SentTo)
+	}
 }

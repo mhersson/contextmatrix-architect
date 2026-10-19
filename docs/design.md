@@ -215,8 +215,13 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   conversation. That run is offered only the run's terminal tools and made to
   call one (`tool_choice`, sent once more without it when the endpoint refuses
   that with a 400), with two turns, so a refused submit gets one retry. The
-  ledger and the transcript cover both runs. If the follow-up also stops with
-  text, the run failed. Reviewer and responder runs get the same follow-up.
+  ledger and the transcript cover both runs. A follow-up that ends without a
+  terminal call the run accepts, with text or with refused or malformed calls
+  in its two turns, fails the run with reason `terminal_refused` rather than
+  the harness's `max_turns`, its message naming the last refusal; `continue`
+  runs it again. A run cap that stops it keeps `max_cost`, and a first run
+  that already spent the cap gets no follow-up and ends with `max_cost`.
+  Reviewer and responder runs get the same follow-up.
 - **Critique loop inside a stage.** On submit, the mechanical checks run
   inside the run: a failing submit is returned to the model as the tool
   result and it submits again. The third failing submit is accepted: cards
@@ -242,20 +247,21 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   still open, so an open critical finding fails it whatever the score, and a
   score below the threshold must leave a finding open. The verdict and its
   ledger are stored as an artifact of the pseudo-stage `<stage>.review`. A
-  verdict that leaves a finding open or still open, a passing one included,
-  sends those findings, with the notes, answers and accepted assumptions the
-  builder's conversation has not seen, to that conversation, resumed from
-  its stored transcript for another round of the same attempt, and the
-  revision is reviewed again: no version reaches a gate unreviewed. A
-  verdict that passes with no finding open settles the artifact. Three
-  reviewer rounds per attempt: the third verdict goes to the gate whatever
-  it says, and one that does not pass waits for a human regardless of
-  policy. Each reviewer round is a harness run with its own cap, and so is
-  each builder round; the cost ledger sums them. The round is given its
-  findings by id, and its submit may list the ones it addressed in its data
-  as `addressed: [{finding, note}]`; an id the round was not given is
-  refused like any check problem, and the third failing submit is accepted
-  with its problems kept.
+  verdict that does not pass, or leaves a critical or major finding open or
+  still open, sends the unresolved findings, minors included, with the
+  notes, answers and accepted assumptions the builder's conversation has
+  not seen, to that conversation, resumed from its stored transcript for
+  another round of the same attempt, and the revision is reviewed again: no
+  version reaches a gate unreviewed. A passing verdict with only minor
+  findings open, or none, settles the artifact, and its open minors go to
+  the gate in the ledger. Three reviewer rounds per attempt: the third
+  verdict goes to the gate whatever it says, and one that does not pass
+  waits for a human regardless of policy. Each reviewer round is a harness
+  run with its own cap, and so is each builder round; the cost ledger sums
+  them. The round is given its findings by id, and its submit may list the
+  ones it addressed in its data as `addressed: [{finding, note}]`; an id the
+  round was not given is refused like any check problem, and the third
+  failing submit is accepted with its problems kept.
 - **A gate waits between runs.** The controller holds the stage's artifact and
   asks the client. Nothing runs meanwhile.
 - **A human rejection starts a new attempt**: a fresh run with the previous
@@ -453,9 +459,10 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   tests from this?). Readiness is decomposition's reviewer and gets none. A
   one-slice need costs ten runs when every review passes clean: intake and
   its review, slicing, solution design and its review, grounding, acceptance
-  and its review, decomposition and readiness, and each review that leaves
-  findings open adds a builder round and a review of its revision, at most
-  two of each per reviewed step, plus one continuation run per question round
+  and its review, decomposition and readiness, and each review that does not
+  settle (it fails the pass, or leaves a critical or major finding open) adds
+  a builder round and a review of its revision, at most two of each per
+  reviewed step, plus one continuation run per question round
   and one chat run per chat reply. A need cut into n slices, n of two or
   more, costs 7 + 6n runs on the same terms: slicing's own review, shared
   decisions and its review, and design and its review, grounding, acceptance
@@ -688,7 +695,7 @@ only these reach the sign-off and the cards.
 | Policy  | Questions                                                                                   | Gates                                                                 |
 | ------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | `human` | Asked in rounds in the CM session, one tab per question as `Q<n>` with its options and the recommended one marked. The run ends on the round, which waits as long as it takes, batches of answers included; every answer is recorded in `questions` when the round closes, and the stage resumes from its conversation. There is no limit on a human's questions. | Artifact shown with Approve and Reject; the reviewer's score is shown with it, with the ids of the critical findings it left open, and its ledger in the review line just above: each finding's id, severity and status, with the builder's claim beside a re-checked one; the gate shows the version the last round reviewed. The reply, clicked or typed, is `approve` or `reject <feedback>`. |
-| `auto`  | A responder run answers each question of the round inside the asking run, which then ends on the round; the stage continues at once with the answers. Each answer is recorded as an `[assumption]` with responder `auto`, and the round is shown read-only. `max_questions` caps the questions per attempt, its builder rounds included; a round past the cap is refused and the stage decides. | The reviewer's verdict decides: approved when it passes (at or above the threshold with no critical finding open) and leaves no finding open, or when the attempt's third verdict passes; otherwise the builder takes another round with the open findings and its revision is reviewed again, three reviewer rounds per attempt, then a human decides. |
+| `auto`  | A responder run answers each question of the round inside the asking run, which then ends on the round; the stage continues at once with the answers. Each answer is recorded as an `[assumption]` with responder `auto`, and the round is shown read-only. `max_questions` caps the questions per attempt, its builder rounds included; a round past the cap is refused and the stage decides. | The reviewer's verdict decides: approved when it passes (at or above the threshold with no critical finding open) and leaves no critical or major finding open, or when the attempt's third verdict passes; otherwise the builder takes another round with the open findings and its revision is reviewed again, three reviewer rounds per attempt, then a human decides. |
 
 **The responder run** is a separate harness run with the persona of the
 stage that asks (the product owner for intake questions, the system designer
@@ -1066,7 +1073,10 @@ frames on the session's chat stream.
   stored without one), the most rounds an attempt runs, the reviewer's
   summary, and the ledger, each finding with its id, severity, text and
   status and, for a re-checked one, the version it was verified in and the
-  reviewer's note.
+  reviewer's note. The review carries whether the verdict sent its version
+  back for a revision in the same attempt, read from the record (a later
+  version with no gate on this one, or a verdict that does not settle with no
+  gate yet) so a verdict stored under the earlier settle rule stays true.
   Each review lists every finding its round judged, and an earlier
   version's review is never rewritten. A rejected version
   stays rejected; any other is superseded once a newer one exists, or once
@@ -1181,7 +1191,7 @@ frames on the session's chat stream.
 
 - Go 1.27, `contextmatrix-harness` v0.26.0 (loop, llm client, jailed read
   tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.9.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.30.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.31.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
@@ -1271,6 +1281,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | CM sends the session model's context window from its model catalog as `ArchitectStart.ContextWindow`, through the same lookup as the price (`Rate`), 0 when it does not know it; panel: a reviewer's verdict renders as a review card from the `review` marker, with the summary, the round of the most rounds and the reviewer's notes on re-checked findings (protocol v0.30.0) | context fix and review card |
 | Panel: the review popover and the gate bar show the findings ledger (id, severity, the reviewer's status, the builder's claim beside it), and the tester persona has a display name (protocol v0.28.0) | reviewers |
 | Pin protocol v0.29.0, since `internal/chat` decodes `LogMarker` and `LogRound`; panel: slice tabs under the stage tabs and a grouped scale bar, only with two or more slices; the artifact proxy forwards `?slice=SL<n>`, checked against `^SL[1-9][0-9]{0,2}$`; the gate bar renders "Reject shared decisions" like any action; the new `shared_decisions` stage displays with tab "Shared", name "Shared decisions", title "Shared decisions", noun "shared decisions" and doing "settling the shared decisions" | slices |
+| Pin protocol v0.31.0; panel: a review card reads "sent back" from ArtifactReview.SentBack, "passed" otherwise when it passed, else "failed", and its explanation states the settle rule; a blueprint session's pane header shows the view's cost.spent_usd; a design sheet with one slice entry drops the slice heading | review settle |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

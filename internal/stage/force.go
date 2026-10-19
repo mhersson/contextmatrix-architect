@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/mhersson/contextmatrix-harness/events"
@@ -55,8 +56,8 @@ func toolChoice(offered []llm.Tool) json.RawMessage {
 // forceTerminal follows a run that stopped with text and no terminal call:
 // one more run on its conversation, offered only the terminal tools and
 // forced to call one. The result carries both runs' usage and the whole
-// conversation. A cost cap the first run spent leaves the first result as
-// it is.
+// conversation. A cost cap the first run spent gets no follow-up: the first
+// result is returned with reason max_cost, as a run the cap stopped.
 func forceTerminal(ctx context.Context, client llm.LLM, terminals []tools.Tool, emit *events.Emitter, cfg harness.Config, first harness.Result) (harness.Result, error) {
 	if len(terminals) == 0 {
 		return first, nil
@@ -65,6 +66,8 @@ func forceTerminal(ctx context.Context, client llm.LLM, terminals []tools.Tool, 
 	if cfg.MaxCostUSD > 0 {
 		left := cfg.MaxCostUSD - first.TotalCostUSD
 		if left <= 0 {
+			first.Reason = "max_cost"
+
 			return first, nil
 		}
 
@@ -79,10 +82,102 @@ func forceTerminal(ctx context.Context, client llm.LLM, terminals []tools.Tool, 
 	cfg.History = WithoutSystem(first.Messages)
 	cfg.MaxTurns = forcedTurns
 
-	second, err := harness.Run(ctx, forcedChoice{LLM: client}, tools.NewRegistry(terminals...), emit,
-		fmt.Sprintf(forcedReprompt, strings.Join(names, " or ")), cfg)
+	reprompt := fmt.Sprintf(forcedReprompt, strings.Join(names, " or "))
 
-	return merged(first, second), err
+	second, err := harness.Run(ctx, forcedChoice{LLM: client}, tools.NewRegistry(terminals...), emit, reprompt, cfg)
+
+	out := merged(first, second)
+
+	// Two turns that ended in text or in refused calls are not a turn limit
+	// the operator can act on: name what the model did instead.
+	if err == nil && second.CompletionArgs == nil && (second.Reason == "max_turns" || second.Reason == "done") {
+		out.Reason = ReasonTerminalRefused
+
+		return out, &RefusedError{Tools: names, Last: lastRefusal(second.Messages, reprompt, names)}
+	}
+
+	return out, err
+}
+
+// ReasonTerminalRefused is the reason of a forced follow-up that ended
+// without a terminal call the run accepted.
+const ReasonTerminalRefused = "terminal_refused"
+
+// RefusedError is a forced follow-up that ended without an accepted terminal
+// call. Last is the refusal of the last terminal call it made, empty when it
+// made none.
+type RefusedError struct {
+	Tools []string
+	Last  string
+}
+
+func (e *RefusedError) Error() string {
+	names := strings.Join(e.Tools, " or ")
+	if e.Last == "" {
+		return fmt.Sprintf("the model ended its turn without calling %s and did not call it when asked again", names)
+	}
+
+	return fmt.Sprintf("the model ended its turn without calling %s, and when asked again its calls were refused or malformed, the last: %s", names, e.Last)
+}
+
+func (e *RefusedError) Unwrap() error { return ErrNoArtifact }
+
+// lastRefusal is the refusal of the last terminal call in the part of msgs
+// after the last user message equal to reprompt.
+func lastRefusal(msgs []llm.Message, reprompt string, terminals []string) string {
+	start := 0
+
+	for i, m := range msgs {
+		if m.Role == "user" && m.Content == reprompt {
+			start = i + 1
+		}
+	}
+
+	var callID, argsJSON string
+
+	at := -1
+
+	for i := start; i < len(msgs); i++ {
+		if msgs[i].Role != "assistant" {
+			continue
+		}
+
+		for _, tc := range msgs[i].ToolCalls {
+			if slices.Contains(terminals, tc.Function.Name) {
+				callID, argsJSON, at = tc.ID, tc.Function.Arguments, i
+			}
+		}
+	}
+
+	if at < 0 {
+		return ""
+	}
+
+	// Decoded as the harness decodes arguments, so a malformed call is named
+	// by the same error the model was shown.
+	raw := strings.TrimSpace(argsJSON)
+	if raw == "" {
+		raw = "{}"
+	}
+
+	var args map[string]any
+	if err := json.Unmarshal([]byte(raw), &args); err != nil {
+		return "its arguments were not valid JSON: " + err.Error()
+	}
+
+	// Ids repeat across turns, so the result is looked for only among the
+	// tool messages that directly follow the call's own assistant message.
+	for _, m := range msgs[at+1:] {
+		if m.Role != "tool" {
+			break
+		}
+
+		if m.ToolCallID == callID {
+			return strings.TrimPrefix(m.Content, "tool error: ")
+		}
+	}
+
+	return ""
 }
 
 // merged is second with first's usage added, the conversation second's.

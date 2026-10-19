@@ -869,11 +869,29 @@ func decider(g store.Gate) string {
 	return byAutomatic
 }
 
+// sentBack reports whether v sent its version of st back for a revision
+// in the same attempt. Artifacts carry no attempt, but an attempt ends only
+// at a gate, so a later version is a revision exactly when no gate opened
+// or decided on this one; without one, a verdict that does not settle is
+// about to be answered.
+func (rec record) sentBack(st pipelineStep, v review) bool {
+	if rec.gated(st.ID, v.Version) {
+		return false
+	}
+
+	return rec.latest(st.ID) > v.Version || !settled(st.Stage, v)
+}
+
+// gated reports whether key's version reached a gate: shown, or decided.
+func (rec record) gated(key string, version int) bool {
+	return rec.shown[key][version] || slices.ContainsFunc(rec.gates[key], func(g store.Gate) bool { return g.Version == version })
+}
+
 // reviewOf is the reviewer's verdict on st's version: each finding still
-// open sent to the next version when the verdict sent the builder back, and
-// addressed in it, with its note, only when that version listed its id. Each
-// review lists every finding its round judged; an earlier version's review is
-// never rewritten.
+// open sent to the next version when the verdict sent the builder back (see
+// sentBack), and addressed in it, with its note, only when that version
+// listed its id. Each review lists every finding its round judged; an earlier
+// version's review is never rewritten.
 func (rec record) reviewOf(st pipelineStep, version int) *protocol.ArtifactReview {
 	if st.Reviewer == nil {
 		return nil
@@ -902,7 +920,7 @@ func (rec record) reviewOf(st pipelineStep, version int) *protocol.ArtifactRevie
 	out := &protocol.ArtifactReview{
 		Reviewer: st.Reviewer.Persona, Score: v.Score, Threshold: threshold,
 		Passed: v.passes(threshold), Round: cmp.Or(v.Round, 1),
-		MaxRounds: maxReviewRounds, Summary: v.Summary,
+		MaxRounds: maxReviewRounds, Summary: v.Summary, SentBack: rec.sentBack(st, v),
 		Findings: make([]protocol.ReviewFinding, 0, len(v.Findings)),
 	}
 
@@ -912,7 +930,7 @@ func (rec record) reviewOf(st pipelineStep, version int) *protocol.ArtifactRevie
 		})
 	}
 
-	if settled(st.Stage, v) {
+	if !out.SentBack {
 		return out
 	}
 

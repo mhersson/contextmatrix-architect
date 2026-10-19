@@ -520,7 +520,8 @@ func TestView_States(t *testing.T) {
 				require.NotNil(t, r)
 				assert.True(t, r.Passed)
 				assert.Equal(t, 1, r.Round)
-				assert.Equal(t, []protocol.ReviewFinding{{ID: "R1", Severity: "major", Text: "name the owner", Status: "open", SentTo: 2}}, r.Findings)
+				assert.False(t, r.SentBack, "its gate was shown, so nothing was sent back")
+				assert.Equal(t, []protocol.ReviewFinding{{ID: "R1", Severity: "major", Text: "name the owner", Status: "open"}}, r.Findings)
 			},
 		},
 		{
