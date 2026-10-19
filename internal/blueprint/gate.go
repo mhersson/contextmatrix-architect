@@ -18,11 +18,13 @@ import (
 // gateAction is one reply a gate takes. Label and Reply are what the panel
 // offers, and a Feedback action needs text after its reply. Decision is what
 // the reply records; a stage gate's reject runs Target again, and the
-// sign-off's reject leaves the stage to re-run to the pack's loop.
+// sign-off's reject leaves the stage to re-run to the pack's loop. Ask labels
+// the text box a Feedback action opens; empty leaves the panel's own label.
 type gateAction struct {
 	Label    string
 	Reply    string
 	Feedback bool
+	Ask      string
 	Decision string
 	Target   string
 }
@@ -38,17 +40,19 @@ func stageGateActions(stageID string) []gateAction {
 
 // signoffActions are the replies the sign-off takes: approve, which also
 // overrides the warnings it was shown with, and reject with feedback, which
-// re-runs the loop's target stage.
-func signoffActions(warnings bool) []gateAction {
-	approve := "Approve"
-	if warnings {
-		approve = "Approve and override warnings"
+// re-runs the loop's target stage. Over a critical finding across the
+// blueprint, approve takes a reason, which it records.
+func signoffActions(warnings, critical bool) []gateAction {
+	approve := gateAction{Label: "Approve", Reply: store.GateApprove, Decision: store.GateApprove}
+
+	switch {
+	case critical:
+		approve.Label, approve.Feedback, approve.Ask = "Approve over critical findings", true, "Why approve over the critical findings?"
+	case warnings:
+		approve.Label = "Approve and override warnings"
 	}
 
-	return []gateAction{
-		{Label: approve, Reply: store.GateApprove, Decision: store.GateApprove},
-		{Label: "Reject", Reply: store.GateReject, Feedback: true, Decision: store.GateReject},
-	}
+	return []gateAction{approve, {Label: "Reject", Reply: store.GateReject, Feedback: true, Decision: store.GateReject}}
 }
 
 // matchAction finds the action a reply takes, the way CM's panel matches a
@@ -105,7 +109,12 @@ func actionsPayload(actions []gateAction) []any {
 	out := make([]any, 0, len(actions))
 
 	for _, a := range actions {
-		out = append(out, map[string]any{"label": a.Label, "reply": a.Reply, "feedback": a.Feedback})
+		m := map[string]any{"label": a.Label, "reply": a.Reply, "feedback": a.Feedback}
+		if a.Ask != "" {
+			m["ask"] = a.Ask
+		}
+
+		out = append(out, m)
 	}
 
 	return out
@@ -405,9 +414,10 @@ func (c *Controller) resumeGate(ctx context.Context, r *run, sess *session, bp s
 // rejection and runs the stage again, and any other text is a note with a
 // hint. Approving a gate approves every stage folded into it; reject <stage>
 // <feedback> rejects a folded stage, which runs again with everything after
-// it. At a slice's design gate, reject <shared stage> <feedback> rejects the
-// shared decisions, which run again with every slice, and the versions they
-// replace are recorded superseded. The caller holds the run slot.
+// it. At a slice's design gate, reject slicing <feedback> and reject <shared
+// stage> <feedback> reject that earlier step, which runs again with every
+// slice, and the versions they replace are recorded superseded. The caller
+// holds the run slot.
 func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, out outcome, text, msgID string) error {
 	actions, folded, err := c.gateActions(ctx, bp.ID, out.stage)
 	if err != nil {
@@ -441,9 +451,11 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 
 	if action.Decision == store.GateReject {
 		// The rejection lands on the step that runs again: the gate's own, a
-		// stage folded into it, or a shared stage. A shared stage's own gate
-		// rejects it as any gate rejects its own stage.
-		version, shared := out.art.Version, false
+		// stage folded into it, or an earlier step the gate offers to reject
+		// (slicing, a shared stage). A shared stage's own gate rejects it as
+		// any gate rejects its own stage.
+		version, earlier := out.art.Version, false
+		folds := slices.ContainsFunc(folded, func(f store.Artifact) bool { return f.Stage == action.Target })
 
 		for _, f := range folded {
 			if f.Stage == action.Target {
@@ -451,7 +463,7 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 			}
 		}
 
-		if st, ok := c.stepAt(action.Target); ok && st.Shared && action.Target != out.stage {
+		if action.Target != out.stage && !folds {
 			art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, action.Target)
 			if err != nil {
 				c.release(bp.ID, r)
@@ -459,7 +471,7 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 				return fmt.Errorf("blueprint: gate: read %s: %w", c.stepName(ctx, bp.ID, action.Target), err)
 			}
 
-			version, shared = art.Version, true
+			version, earlier = art.Version, true
 		}
 
 		if !c.decide(ctx, sess.audit, bp.ID, action.Target, version, store.GateReject, feedback, store.ResponderHuman, msgID) {
@@ -473,7 +485,7 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 		recorded := true
 
 		switch {
-		case shared:
+		case earlier:
 			recorded = c.supersedeAfter(ctx, sess.audit, bp.ID, action.Target, msgID)
 		case action.Target != out.stage:
 			recorded = c.decide(ctx, sess.audit, bp.ID, out.stage, out.art.Version, store.GateSuperseded, action.Target, store.ResponderHuman, msgID)

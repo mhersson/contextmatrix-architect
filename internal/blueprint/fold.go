@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -124,8 +126,8 @@ func (c *Controller) folded(ctx context.Context, id, stageID string) ([]store.Ar
 }
 
 // rejectedAtGate returns the step a rejection at st's gate runs again, and
-// everything after it: a stage folded into the gate, or a shared stage the
-// gate offers to reject, whose latest version was rejected.
+// everything after it: a stage folded into the gate, or slicing or a shared
+// stage the gate offers to reject, whose latest version was rejected.
 func (c *Controller) rejectedAtGate(ctx context.Context, id string, st pipelineStep) (string, error) {
 	rejected, err := c.foldersDecided(ctx, id, st.ID, store.GateReject)
 	if err != nil {
@@ -136,12 +138,12 @@ func (c *Controller) rejectedAtGate(ctx context.Context, id string, st pipelineS
 		return rejected[0].Stage, nil
 	}
 
-	shared, err := c.sharedRejects(ctx, id, st.ID)
+	earlier, err := c.earlierRejects(ctx, id, st.ID)
 	if err != nil {
 		return "", err
 	}
 
-	return c.rejectedTarget(ctx, id, shared)
+	return c.rejectedTarget(ctx, id, earlier)
 }
 
 // rejectedTarget returns the target of the first of actions whose latest
@@ -172,12 +174,13 @@ func (c *Controller) rejectedTarget(ctx context.Context, id string, actions []ga
 	return "", nil
 }
 
-// sharedRejects are the replies that reject a shared stage at key's gate:
-// one per shared stage that ran, when key is its slice's first gated step,
-// the slice's design. Each runs the shared stage, and every slice from the
-// first, again. A collapsed shared stage is not run, whatever versions it
-// stored before a re-slice, so one slice offers none.
-func (c *Controller) sharedRejects(ctx context.Context, id, key string) ([]gateAction, error) {
+// earlierRejects are the replies that reject an earlier step at key's gate,
+// when key is its slice's first gated step, the slice's design: slicing,
+// unless it folded into this gate, whose fold offers it already, and every
+// shared stage that ran. Each runs that step again, and everything after
+// it. A collapsed shared stage is not run, whatever versions it stored
+// before a re-slice, so one slice offers no shared reject.
+func (c *Controller) earlierRejects(ctx context.Context, id, key string) ([]gateAction, error) {
 	steps, _, err := c.steps(ctx, id)
 	if err != nil {
 		return nil, err
@@ -191,17 +194,29 @@ func (c *Controller) sharedRejects(ctx context.Context, id, key string) ([]gateA
 	var out []gateAction
 
 	for _, s := range steps[:i] {
-		if !s.Shared || s.Collapsed {
+		slicing := slices.Contains(s.Checks, pack.CheckSlices)
+		if !slicing && (!s.Shared || s.Collapsed) {
 			continue
 		}
 
-		_, err := c.opts.Store.LatestArtifact(ctx, id, s.ID)
+		art, err := c.opts.Store.LatestArtifact(ctx, id, s.ID)
 
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			continue
 		case err != nil:
 			return nil, fmt.Errorf("blueprint: read %s: %w", c.stepName(ctx, id, s.ID), err)
+		}
+
+		if slicing {
+			d, err := c.gateDecision(ctx, id, s.ID, art.Version)
+			if err != nil {
+				return nil, err
+			}
+
+			if d == store.GateFold {
+				continue
+			}
 		}
 
 		out = append(out, gateAction{
@@ -265,8 +280,8 @@ func (c *Controller) foldersDecided(ctx context.Context, id, stageID, decision s
 // gateActions are the replies stageID's gate takes: approve and reject, and
 // for every stage folded into it, "reject <stage> <feedback>", which runs
 // that stage again and everything after it, and at a slice's design gate,
-// reject <shared stage> <feedback> for every shared stage that ran. It
-// returns the folded artifacts too.
+// reject slicing <feedback> and reject <shared stage> <feedback> for every
+// shared stage that ran. It returns the folded artifacts too.
 func (c *Controller) gateActions(ctx context.Context, id, stageID string) ([]gateAction, []store.Artifact, error) {
 	folded, err := c.folded(ctx, id, stageID)
 	if err != nil {
@@ -282,12 +297,12 @@ func (c *Controller) gateActions(ctx context.Context, id, stageID string) ([]gat
 		})
 	}
 
-	shared, err := c.sharedRejects(ctx, id, stageID)
+	earlier, err := c.earlierRejects(ctx, id, stageID)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	actions = append(actions, shared...)
+	actions = append(actions, earlier...)
 
 	return actions, folded, nil
 }

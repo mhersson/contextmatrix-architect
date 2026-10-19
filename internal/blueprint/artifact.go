@@ -39,11 +39,12 @@ type boardCard struct {
 // Artifact is one version of an artifact on blueprint id's sheet: a pack
 // stage's, with the problems its checks accepted it with; the sign-off of a
 // version shown or recorded as approved automatically, its data the
-// sign-off's payload; or the board (emission, version 1) once the cards
-// exist. The need as typed and the reviewer verdicts are not served here:
-// verdicts travel in the view. slice names a per-slice stage's slice;
-// ErrNotFound for an unknown blueprint, stage or version, and for a slice
-// the record or the stage does not hold.
+// sign-off's payload, with the reason a person approved it over a critical
+// finding; or the board (emission, version 1) once the cards exist. The need
+// as typed and the reviewer verdicts are not served here: verdicts travel in
+// the view. slice names a per-slice stage's slice; ErrNotFound for an unknown
+// blueprint, stage or version, and for a slice the record or the stage does
+// not hold.
 func (c *Controller) Artifact(ctx context.Context, id, stageID, slice string, version int) (protocol.BlueprintArtifact, error) {
 	if _, err := c.opts.Store.GetBlueprint(ctx, id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -103,7 +104,47 @@ func (c *Controller) signoffArtifact(ctx context.Context, id string, version int
 		return protocol.BlueprintArtifact{}, ErrNotFound
 	}
 
-	return protocol.BlueprintArtifact{Stage: signoffStage, Version: version, Data: found.Payload}, nil
+	data := found.Payload
+
+	reason, err := c.overrideReason(ctx, id, version)
+	if err != nil {
+		return protocol.BlueprintArtifact{}, err
+	}
+
+	if reason != "" {
+		var payload map[string]any
+		if err := json.Unmarshal(data, &payload); err != nil {
+			return protocol.BlueprintArtifact{}, fmt.Errorf("blueprint: decode the sign-off: %w", err)
+		}
+
+		payload["override_reason"] = reason
+
+		if data, err = json.Marshal(payload); err != nil {
+			return protocol.BlueprintArtifact{}, fmt.Errorf("blueprint: encode the sign-off: %w", err)
+		}
+	}
+
+	return protocol.BlueprintArtifact{Stage: signoffStage, Version: version, Data: data}, nil
+}
+
+// overrideReason is the reason a person gave to approve the sign-off of
+// version over a critical finding: the approval's feedback; "" when it was
+// approved without one or not approved.
+func (c *Controller) overrideReason(ctx context.Context, id string, version int) (string, error) {
+	gates, err := c.opts.Store.ListGates(ctx, id, signoffStage)
+	if err != nil {
+		return "", fmt.Errorf("blueprint: read the sign-off's decisions: %w", err)
+	}
+
+	reason := ""
+
+	for _, g := range gates {
+		if g.Version == version && g.Decision == store.GateApprove {
+			reason = g.Feedback
+		}
+	}
+
+	return reason, nil
 }
 
 // boardArtifact is the board: the emitted cards, with what the watch last

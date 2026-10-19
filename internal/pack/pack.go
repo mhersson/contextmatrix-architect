@@ -46,6 +46,15 @@ const (
 	// CheckCriteria checks acceptance's criteria and manual checks, and
 	// makes decomposition map every criterion to exactly one card.
 	CheckCriteria = "criteria"
+	// CheckOutcomes checks a submit's measurable outcomes: ids O<n> unique
+	// across the blueprint and after the highest an earlier step holds, each
+	// with its sentence; the first stage that checks them states at least
+	// one.
+	CheckOutcomes = "outcomes"
+	// CheckReadiness checks a readiness verdict: one well-formed entry per
+	// card, and its findings across the blueprint, each X<n> with a
+	// severity and its text.
+	CheckReadiness = "readiness"
 )
 
 // Responder policies: who answers a stage's questions and decides its gate.
@@ -374,6 +383,21 @@ func parseLists(raw []byte) (contract.Lists, error) {
 		}
 	}
 
+	seen := map[string]bool{}
+
+	for _, edge := range lists.EdgeCases {
+		key := strings.ToLower(strings.TrimSpace(edge))
+
+		switch {
+		case key == "":
+			return contract.Lists{}, errors.New("pack: lists.yaml: an edge_cases entry is blank")
+		case seen[key]:
+			return contract.Lists{}, fmt.Errorf("pack: lists.yaml: edge_cases lists %q twice", edge)
+		}
+
+		seen[key] = true
+	}
+
 	return lists, nil
 }
 
@@ -420,7 +444,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	}
 
 	for _, check := range s.Checks {
-		if check != CheckCards && check != CheckAssumptions && check != CheckDecisions && check != CheckSlices && check != CheckCriteria {
+		if !slices.Contains([]string{CheckCards, CheckAssumptions, CheckDecisions, CheckSlices, CheckCriteria, CheckOutcomes, CheckReadiness}, check) {
 			return fmt.Errorf("pack: stage %q: unknown check %q", s.ID, check)
 		}
 	}

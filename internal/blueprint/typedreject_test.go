@@ -2,10 +2,13 @@ package blueprint
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	protocol "github.com/mhersson/contextmatrix-protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -23,7 +26,7 @@ func TestSignoff_RejectASliceRunsItsDesignAndEveryLaterSlice(t *testing.T) {
 
 	signoff, ok := rec.first(EventSignOff)
 	require.True(t, ok)
-	assert.Equal(t, []string{"reject shared_decisions", "reject SL1", "reject SL2", "reject SL3"}, signoff.Payload["typed"])
+	assert.Equal(t, []string{"reject slicing", "reject shared_decisions", "reject SL1", "reject SL2", "reject SL3"}, signoff.Payload["typed"])
 
 	before, rowsBefore := len(stagesRun(runner)), len(gateRows(t, st))
 
@@ -253,7 +256,7 @@ func TestSignoff_OneSlicesHintsNameNoSlice(t *testing.T) {
 
 			signoff, ok := rec.first(EventSignOff)
 			require.True(t, ok)
-			require.Equal(t, []string{"reject SL1"}, signoff.Payload["typed"], "the payload keeps the raw replies")
+			require.Equal(t, []string{"reject slicing", "reject SL1"}, signoff.Payload["typed"], "the payload keeps the raw replies")
 
 			require.NoError(t, c.Message(context.Background(), "BP1", reply, "m2"))
 			c.Wait("BP1")
@@ -264,6 +267,7 @@ func TestSignoff_OneSlicesHintsNameNoSlice(t *testing.T) {
 			hint := notes[len(notes)-1].Payload["hint"]
 			assert.NotEmpty(t, hint)
 			assert.NotContains(t, hint, "SL1")
+			assert.Contains(t, hint, "reject slicing")
 		})
 	}
 }
@@ -358,4 +362,161 @@ func TestSignoff_AnEndBeforeATypedRejectsRerunResumesItOnTheReopen(t *testing.T)
 	require.Len(t, designs, 3)
 	assert.Contains(t, designs[2].Task, "export one report per team", "the reopen's run gets the feedback")
 	assert.Equal(t, 2, rec.count(EventSignOff), "the sign-off is shown again")
+}
+
+func TestRejectSlicing_EverySliceDesignGateOffersIt(t *testing.T) {
+	var slicings atomic.Int32
+
+	script := slicedScript()
+	script["slicing"] = func(context.Context, stage.Input) (stage.Output, error) {
+		if slicings.Add(1) == 1 {
+			return done("# Slices", twoSlices()), nil
+		}
+
+		return done("# Slices", threeSlices()), nil
+	}
+
+	c, st, runner, rec := newSliced(t, script)
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	approveUntil(t, c, rec, "solution_design@SL1")
+
+	first := lastGate(t, rec)
+	assert.Equal(t, []string{"approve", "reject", "reject slicing", "reject shared_decisions"}, gateReplies(first))
+	assert.Equal(t, "Reject slicing", gateLabels(first)[2])
+
+	approveUntil(t, c, rec, "solution_design@SL2")
+	assert.Equal(t, []string{"approve", "reject", "reject slicing", "reject shared_decisions"}, gateReplies(lastGate(t, rec)))
+
+	before := len(gateRows(t, st))
+
+	require.NoError(t, c.Message(ctx, "BP1", "reject slicing cut the exports by team", "m-slicing"))
+	c.Wait("BP1")
+
+	assert.Equal(t, []string{
+		"slicing@1:reject",
+		"shared_decisions@1:superseded", "solution_design@SL1@1:superseded", "acceptance@SL1@1:superseded", "solution_design@SL2@1:superseded",
+	}, gateRows(t, st)[before:], "the reject, then every later gated version it replaces, the design at the gate included")
+
+	slicingRuns := inputsOf(runner, "slicing")
+	require.Len(t, slicingRuns, 2)
+	assert.Contains(t, slicingRuns[1].Task, "cut the exports by team", "slicing runs again with the feedback")
+
+	approveUntil(t, c, rec, "solution_design@SL3")
+	assert.Len(t, inputsOf(runner, "shared_decisions"), 2, "everything after slicing runs again from the new slicing")
+}
+
+func TestRejectSlicing_ToFewerSlicesSupersedesTheDroppedSlice(t *testing.T) {
+	var slicings atomic.Int32
+
+	script := slicedScript()
+	script["slicing"] = func(context.Context, stage.Input) (stage.Output, error) {
+		if slicings.Add(1) == 1 {
+			return done("# Slices", twoSlices()), nil
+		}
+
+		return done("# Slices", oneSlice()), nil
+	}
+
+	c, _, _, rec := newSliced(t, script)
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	approveUntil(t, c, rec, "solution_design@SL2")
+	require.NoError(t, c.Message(ctx, "BP1", "reject slicing one slice is enough", "m-slicing"))
+	c.Wait("BP1")
+
+	gate := lastGate(t, rec)
+	assert.Equal(t, "solution_design@SL1", gate.Payload["stage"], "the new slicing folds into SL1's design gate")
+	assert.Equal(t, []string{"approve", "reject", "reject slicing"}, gateReplies(gate))
+
+	v, err := c.View(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Len(t, v.Slices, 1)
+	require.True(t, slices.ContainsFunc(v.Artifacts, func(r protocol.ArtifactRef) bool { return r.Slice == "SL2" }))
+
+	for _, r := range v.Artifacts {
+		if r.Slice == "SL2" {
+			assert.Equal(t, artSuperseded, r.Status, "%s %s v%d", r.Stage, r.Slice, r.Version)
+		}
+	}
+}
+
+func TestRejectSlicing_AtTheSignoff(t *testing.T) {
+	c, st, runner, rec := newSliced(t, slicedScript())
+	driveIn(t, c, autoStart("BP1"))
+
+	signoff, ok := rec.first(EventSignOff)
+	require.True(t, ok)
+	assert.Equal(t, []string{"reject slicing", "reject shared_decisions", "reject SL1", "reject SL2"}, signoff.Payload["typed"])
+
+	before, rowsBefore := len(stagesRun(runner)), len(gateRows(t, st))
+
+	require.NoError(t, c.Message(context.Background(), "BP1", "reject slicing put the UI first", "m2"))
+	c.Wait("BP1")
+
+	assert.Equal(t, []string{
+		"slicing", "shared_decisions",
+		"solution_design@SL1", "grounding@SL1", "acceptance@SL1", "decomposition@SL1",
+		"solution_design@SL2", "grounding@SL2", "acceptance@SL2", "decomposition@SL2", "readiness",
+	}, stagesRun(runner)[before:])
+
+	rows := gateRows(t, st)
+	assert.Equal(t, []string{"signoff@1:reject", "slicing@1:reject"}, rows[rowsBefore:rowsBefore+2])
+	assert.Equal(t, []string{
+		"shared_decisions@1:superseded", "solution_design@SL1@1:superseded", "acceptance@SL1@1:superseded",
+		"solution_design@SL2@1:superseded", "acceptance@SL2@1:superseded",
+	}, rows[rowsBefore+2:rowsBefore+7], "every later gated version the reject replaces")
+
+	var reruns []any
+
+	for _, e := range rec.all(EventDecided) {
+		if e.Payload["stage"] == signoffStage {
+			reruns = append(reruns, e.Payload["reruns"])
+		}
+	}
+
+	assert.Equal(t, []any{"slicing"}, reruns)
+}
+
+func TestRejectSlicing_AReopenAfterTheRejectRunsSlicing(t *testing.T) {
+	// The rejection at SL2's design gate is recorded and the process died
+	// before slicing ran again.
+	c, st := newSlicedView(t)
+	throughSliced(t, st, "decomposition@SL1")
+	ran(t, st, "solution_design@SL2", store.RunKindStage, 1, 1, 0.1)
+	put(t, st, "solution_design@SL2", nil)
+	gateRow(t, st, "slicing", 1, store.GateReject, store.ResponderHuman, "one slice is enough")
+
+	bp, err := st.GetBlueprint(context.Background(), viewID)
+	require.NoError(t, err)
+
+	out, _, err := c.position(context.Background(), bp)
+	require.NoError(t, err)
+	assert.Equal(t, "slicing", out.stage)
+}
+
+func TestRejectSlicing_AOneSliceDesignGateReopenedOffersItOnce(t *testing.T) {
+	script := slicedScript()
+	script["slicing"] = returns("# Slices", oneSlice())
+	script["readiness"] = returns("# Ready", readinessFor(true, "D1"))
+
+	c, _, _, rec := newSliced(t, script)
+	drive(t, c, "BP1")
+
+	for i := 0; i < 20 && !rec.has(EventSignOff); i++ {
+		require.NoError(t, c.Message(context.Background(), "BP1", "approve", fmt.Sprintf("approve-%d", i)))
+		c.Wait("BP1")
+	}
+
+	require.True(t, rec.has(EventSignOff))
+
+	// reject SL1 matches below two slices though it is not listed there.
+	require.NoError(t, c.Message(context.Background(), "BP1", "reject SL1 redo the design", "m2"))
+	c.Wait("BP1")
+
+	gate := lastGate(t, rec)
+	assert.Equal(t, "solution_design@SL1", gate.Payload["stage"])
+	assert.Equal(t, []string{"approve", "reject", "reject slicing"}, gateReplies(gate))
 }

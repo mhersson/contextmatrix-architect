@@ -3,10 +3,13 @@ package blueprint
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/mhersson/contextmatrix-architect/internal/contract"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
@@ -401,10 +404,219 @@ func assumptionsPayload(list []assumption) []any {
 	return out
 }
 
-// assumptionsValidator refuses a submit whose assumptions are not
+// normalText is s as the restatement checks compare it: lower case, runs
+// of letters, digits and the marks that belong to them joined by one space,
+// so case, spacing and punctuation never make a sentence new while accents
+// and vowel signs still do.
+func normalText(s string) string {
+	return strings.Join(strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r)
+	}), " ")
+}
+
+// citable is an assumption a later step cites instead of stating it again:
+// its id, an A<n> or an acceptance's tag, and its sentence as normalText
+// makes it.
+type citable struct {
+	id, norm string
+}
+
+// existingAssumptions lists what a submit of key may not state again: the
+// assumptions the steps before key state, by their A<n>, and those the user
+// accepted on another step's tabs, by their tag. key's own acceptances are
+// what it states with their tags as the basis, and its own earlier version
+// is what it replaces.
+func (c *Controller) existingAssumptions(ctx context.Context, id, key string, accepted []acceptedAssumption) ([]citable, error) {
+	list, err := c.assumptions(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	steps, _, err := c.steps(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	i := stepIndex(steps, key)
+
+	var out []citable
+
+	for _, a := range list {
+		if j := stepIndex(steps, a.Stage); strings.HasPrefix(a.ID, "A") && j >= 0 && j < i {
+			out = append(out, citable{id: a.ID, norm: normalText(a.Text)})
+		}
+	}
+
+	for _, a := range accepted {
+		if a.Stage != key {
+			out = append(out, citable{id: a.Tag, norm: normalText(a.Text)})
+		}
+	}
+
+	return out, nil
+}
+
+// restatements refuses each stated assumption whose sentence restates an
+// existing one, or an earlier entry of the same submit, case, spacing and
+// punctuation aside; an entry that gives the acceptance it restates as its
+// basis cites it. A new sentence passes.
+func restatements(data map[string]any, existing []citable) []string {
+	items, _ := data["assumptions"].([]any)
+	own := map[string]int{}
+
+	var out []string
+
+	for i, item := range items {
+		var text, basis string
+
+		switch e := item.(type) {
+		case string:
+			text = e
+		case map[string]any:
+			text, _ = e["text"].(string)
+			basis, _ = e["basis"].(string)
+		}
+
+		norm := normalText(text)
+		if norm == "" {
+			continue
+		}
+
+		if j, ok := own[norm]; ok {
+			out = append(out, fmt.Sprintf("assumption %d restates assumption %d of this submit; state it once", i+1, j))
+
+			continue
+		}
+
+		own[norm] = i + 1
+
+		for _, e := range existing {
+			if e.norm == norm && e.id != normalTag(basis) {
+				out = append(out, fmt.Sprintf("assumption %d restates %s; cite %s instead of stating it again", i+1, e.id, e.id))
+
+				break
+			}
+		}
+	}
+
+	return out
+}
+
+// withoutAssumptionIDs is data with any id a model wrote removed from its
+// assumption entries: the controller alone gives an id.
+func withoutAssumptionIDs(data map[string]any) map[string]any {
+	items, ok := data["assumptions"].([]any)
+	if !ok {
+		return data
+	}
+
+	out := make([]any, 0, len(items))
+
+	for _, item := range items {
+		if e, ok := item.(map[string]any); ok {
+			e = maps.Clone(e)
+			delete(e, "id")
+			item = e
+		}
+
+		out = append(out, item)
+	}
+
+	data = maps.Clone(data)
+	data["assumptions"] = out
+
+	return data
+}
+
+// numberAssumptions writes each stated assumption's blueprint-wide id into
+// data, as assumptions numbers them: after every assumption the latest
+// artifacts of the stating steps before key state. A sentence entry becomes
+// {id, text}; an entry that states nothing is left as it is. The ids agree
+// with the list while those artifacts stand, and every path that re-runs an
+// earlier stating step re-runs the later ones, which number again.
+func (c *Controller) numberAssumptions(ctx context.Context, id, key string, data map[string]any) (map[string]any, error) {
+	items, ok := data["assumptions"].([]any)
+	if !ok || len(items) == 0 {
+		return data, nil
+	}
+
+	steps, _, err := c.steps(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	i := stepIndex(steps, key)
+	if i < 0 {
+		return data, nil
+	}
+
+	n := 0
+
+	for _, s := range steps[:i] {
+		if s.Collapsed || !slices.Contains(s.Checks, pack.CheckAssumptions) {
+			continue
+		}
+
+		art, err := c.opts.Store.LatestArtifact(ctx, id, s.ID)
+
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			continue
+		case err != nil:
+			return nil, fmt.Errorf("read %s: %w", c.stepName(ctx, id, s.ID), err)
+		}
+
+		n += len(statedAssumptions(art))
+	}
+
+	out := make([]any, 0, len(items))
+
+	for _, item := range items {
+		var entry map[string]any
+
+		switch e := item.(type) {
+		case string:
+			entry = map[string]any{"text": e}
+		case map[string]any:
+			entry = maps.Clone(e)
+		}
+
+		if text, _ := entry["text"].(string); strings.TrimSpace(text) == "" {
+			out = append(out, item)
+
+			continue
+		}
+
+		n++
+		entry["id"] = fmt.Sprintf("A%d", n)
+		out = append(out, entry)
+	}
+
+	data = maps.Clone(data)
+	data["assumptions"] = out
+
+	return data, nil
+}
+
+// briefAssumptionLines lists assumptions for a model's task: the id, the
+// status and the sentence. It carries no answer or basis: the status says
+// whether the user confirmed it, and the sign-off and the cards carry
+// assumptionLines.
+func briefAssumptionLines(list []assumption) string {
+	lines := make([]string, 0, len(list))
+
+	for _, a := range list {
+		lines = append(lines, fmt.Sprintf("- %s (%s) %s", a.ID, a.Status, a.Text))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// assumptionsValidator refuses a submit of key whose assumptions are not
 // standalone sentences resting on the blueprint's answered questions and
-// accepted assumptions, as boundedValidator bounds it.
-func (c *Controller) assumptionsValidator(bp store.Blueprint) (func(context.Context, stage.Artifact) error, *validatorState) {
+// accepted assumptions, or that restate one an earlier step states or
+// another step's tab accepted, as boundedValidator bounds it.
+func (c *Controller) assumptionsValidator(bp store.Blueprint, key string) (func(context.Context, stage.Artifact) error, *validatorState) {
 	lists := c.opts.Pack.Lists()
 
 	return boundedValidator("assumptions", func(ctx context.Context, a stage.Artifact) ([]string, error) {
@@ -423,7 +635,12 @@ func (c *Controller) assumptionsValidator(bp store.Blueprint) (func(context.Cont
 			bases[q.Tag()] = true
 		}
 
-		return assumptionProblems(a.Data, lists, bases), nil
+		existing, err := c.existingAssumptions(ctx, bp.ID, key, accepted)
+		if err != nil {
+			return nil, err
+		}
+
+		return append(assumptionProblems(a.Data, lists, bases), restatements(a.Data, existing)...), nil
 	})
 }
 

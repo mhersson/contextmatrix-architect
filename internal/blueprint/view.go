@@ -21,16 +21,22 @@ const emissionStage = "emission"
 
 // What the view calls a pipeline step's state.
 const (
-	stepPending   = "pending"
-	stepRunning   = "running"
-	stepReviewing = "reviewing"
-	stepRevising  = "revising"
-	stepWaiting   = "waiting"
-	stepDone      = "done"
-	stepFailed    = "failed"
-	stepFolded    = "folded"
-	stepSkipped   = "skipped"
+	stepPending    = "pending"
+	stepRunning    = "running"
+	stepReviewing  = "reviewing"
+	stepRevising   = "revising"
+	stepWaiting    = "waiting"
+	stepDone       = "done"
+	stepFailed     = "failed"
+	stepFolded     = "folded"
+	stepSkipped    = "skipped"
+	stepStopped    = "stopped"
+	stepNotReached = "not_reached"
 )
+
+// viewEnded is the view's state for a pipeline that stopped before the
+// sign-off; the blueprint's row stays idle.
+const viewEnded = "ended"
 
 // What the view calls an artifact version's state.
 const (
@@ -106,7 +112,7 @@ func (c *Controller) View(ctx context.Context, id string) (protocol.BlueprintVie
 	}
 
 	return protocol.BlueprintView{
-		ID: bp.ID, Mode: bp.Mode, State: bp.State,
+		ID: bp.ID, Mode: bp.Mode, State: rec.state(), EndReason: c.endReason(rec),
 		Seq:      uint64(rec.seq), //nolint:gosec // event ids are positive
 		Pipeline: c.pipeline(rec), Current: rec.current(), Open: rec.open(),
 		Cost: rec.cost(), Artifacts: c.artifactRefs(rec), Slices: rec.sliceList(),
@@ -423,6 +429,72 @@ func (rec record) failed() bool {
 	return rec.last.Status == store.RunFailed || rec.bp.State == string(StateFailed)
 }
 
+// ended reports a pipeline that stopped before the sign-off: slicing that
+// holds no slices, cards the contract stopped, or readiness's rounds spent.
+// It is read from the record, so a blueprint that ended before the view
+// said so reads ended too.
+func (rec record) ended() bool { return rec.pos.end && !rec.pos.ready }
+
+// state is the view's lifecycle state: ended for an ended pipeline, whose
+// row stays idle, else the row's.
+func (rec record) state() string {
+	if rec.ended() {
+		return viewEnded
+	}
+
+	return rec.bp.State
+}
+
+// endReason says in one line why an ended pipeline stopped, by the step
+// whose artifact its end carries; "" when it has not ended.
+func (c *Controller) endReason(rec record) string {
+	if !rec.ended() {
+		return ""
+	}
+
+	st, ok := c.stepAt(rec.pos.art.Stage)
+	if !ok {
+		return ""
+	}
+
+	name := strings.ReplaceAll(st.Stage.ID, "_", " ")
+
+	switch {
+	case st.LoopsTo != "":
+		return fmt.Sprintf("%s still found problems after %d rounds", name, rec.pos.round)
+	case slices.Contains(st.Checks, pack.CheckCards):
+		return fmt.Sprintf("the cards still failed their contract checks after %d submits", maxContractRounds)
+	case slices.Contains(st.Checks, pack.CheckSlices):
+		return name + " holds no slices, so nothing after it can run"
+	default:
+		return ""
+	}
+}
+
+// unreached is the state of a step after the one that ended the pipeline:
+// skipped when its collapse is recorded, done or folded when it holds a
+// version from before the end (a loop's chain the end cut short), and
+// not_reached when nothing of it was stored for this slicing or a reject
+// superseded its version and it never ran again.
+func (rec record) unreached(st pipelineStep) string {
+	switch {
+	case st.Collapsed && rec.collapseRecorded(st.ID):
+		return stepSkipped
+	case st.Collapsed || rec.latest(st.ID) == 0 || rec.supersededByGate(st.ID, rec.latest(st.ID)):
+		return stepNotReached
+	case rec.folded(st.ID):
+		return stepFolded
+	default:
+		return stepDone
+	}
+}
+
+// collapseRecorded reports a fold row at version 0 on key: the record of a
+// shared stage that collapsed.
+func (rec record) collapseRecorded(key string) bool {
+	return slices.ContainsFunc(rec.gates[key], func(g store.Gate) bool { return g.Version == 0 && g.Decision == store.GateFold })
+}
+
 // supersededByGate reports whether a gates row records stageID's version
 // superseded, as a rejection of a stage folded into its gate does.
 func (rec record) supersededByGate(stageID string, version int) bool {
@@ -514,28 +586,37 @@ func (c *Controller) pipeline(rec record) []protocol.PipelineStep {
 	return steps
 }
 
-// currentIndex is the index of the step the pipeline stands at, the number
-// of steps once it ended, and -1 when the record cannot be placed.
+// currentIndex is the index of the step the pipeline stands at: on an
+// ended pipeline the step that stopped it, the number of steps once it
+// ended ready, and -1 when the record cannot be placed.
 func (rec record) currentIndex() int {
-	if rec.pos.end {
+	switch {
+	case rec.ended():
+		return stepIndex(rec.steps, rec.pos.art.Stage)
+	case rec.pos.end:
 		return len(rec.steps)
+	default:
+		return stepIndex(rec.steps, rec.pos.stage)
 	}
-
-	return stepIndex(rec.steps, rec.pos.stage)
 }
 
 // stageStatus is the state of step st at index i: done or folded behind the
 // current step, pending after it, and at it what its live run, open round,
 // gate or last run says. A collapsed shared stage is skipped, and while a
 // decomposition chain runs the per-slice steps after it that it does not
-// run are done.
+// run are done. On an ended pipeline the step that stopped it is stopped and
+// the steps after it read as unreached says.
 func (rec record) stageStatus(st pipelineStep, i, current int) string {
 	chained, _ := pack.SplitStep(rec.pos.stage)
 
 	switch {
+	case rec.ended() && current >= 0 && i > current:
+		return rec.unreached(st)
 	case st.Collapsed:
 		// Its collapse is a fold row at version 0, which is no fold.
 		return stepSkipped
+	case rec.ended() && i == current:
+		return stepStopped
 	case current >= 0 && i > current && rec.pos.chain && st.Slice != "" && st.Stage.ID != chained:
 		// A decomposition chain runs only the later slices' cards.
 		return stepDone
@@ -598,8 +679,9 @@ func (rec record) loopRound(st pipelineStep) int {
 }
 
 // signoffStep is the sign-off: pending until the pipeline ends ready,
-// skipped when it ends otherwise, then running until shown, waiting while
-// shown and undecided, and done once approved.
+// not reached when it ends otherwise, done when one was shown before that
+// end, then running until shown, waiting while shown and undecided, and
+// done once approved.
 func (rec record) signoffStep() protocol.PipelineStep {
 	step := protocol.PipelineStep{Stage: signoffStage, Gate: true, Policy: pack.PolicyHuman, Status: stepPending}
 
@@ -613,8 +695,11 @@ func (rec record) signoffStep() protocol.PipelineStep {
 
 	switch {
 	case !rec.pos.end:
+	case !rec.pos.ready && len(rec.signoffs) > 0:
+		// A sign-off shown before the end holds its versions.
+		step.Status = stepDone
 	case !rec.pos.ready:
-		step.Status = stepSkipped
+		step.Status = stepNotReached
 	default:
 		v := rec.pos.art.Version
 
@@ -636,7 +721,7 @@ func (rec record) signoffStep() protocol.PipelineStep {
 }
 
 // emissionStep is the board: done once the cards exist, running while they
-// are created, waiting when an approved emission stopped, skipped when the
+// are created, waiting when an approved emission stopped, not reached when the
 // pipeline ended without ready cards.
 func (rec record) emissionStep() protocol.PipelineStep {
 	step := protocol.PipelineStep{Stage: emissionStage, Status: stepPending}
@@ -652,7 +737,7 @@ func (rec record) emissionStep() protocol.PipelineStep {
 	case rec.emitted != nil:
 		step.Status, step.LatestVersion = stepDone, 1
 	case rec.pos.end && !rec.pos.ready:
-		step.Status = stepSkipped
+		step.Status = stepNotReached
 	case rec.bp.State == string(StateEmitting):
 		step.Status = stepRunning
 	case approved && rec.bp.State == string(StateFailed):

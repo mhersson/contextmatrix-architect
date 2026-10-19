@@ -64,6 +64,7 @@ func recommendedPosition(v any, given int, kept, marked []int) (int, error) {
 type submitArtifactTool struct {
 	validate func(context.Context, Artifact) error
 	drafts   *draftExtractor
+	mark     *terminalMark
 }
 
 func (submitArtifactTool) Name() string   { return submitArtifactName }
@@ -115,6 +116,16 @@ func (t submitArtifactTool) Execute(ctx context.Context, args map[string]any) (t
 	if t.validate != nil {
 		if err := t.validate(ctx, art); err != nil {
 			t.drafts.refuse(err.Error())
+
+			// A refusal for good ends the run on this call: answered as a
+			// successful terminal call, it spends no further model turn, and
+			// Run fails the run on the mark.
+			var fatal *FatalCheckError
+			if errors.As(err, &fatal) && t.mark != nil {
+				t.mark.fatal = fatal
+
+				return tools.Result{Text: "submit_artifact refused; the run stops: " + err.Error()}, nil
+			}
 
 			return tools.Result{}, fmt.Errorf("submit_artifact rejected: %w", err)
 		}

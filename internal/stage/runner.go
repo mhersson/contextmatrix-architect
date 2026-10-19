@@ -228,7 +228,7 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 			builtins = append(builtins, askQuestionsTool{iv: in.Interviewer, mark: mark})
 		}
 
-		builtins = append(builtins, submitArtifactTool{validate: in.Validate, drafts: drafts})
+		builtins = append(builtins, submitArtifactTool{validate: in.Validate, drafts: drafts, mark: mark})
 	}
 
 	reg := tools.NewRegistry(append(builtins, in.Tools...)...)
@@ -273,6 +273,12 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 
 	if err != nil {
 		return Output{Result: res}, fmt.Errorf("stage %s: %w", in.Stage, err)
+	}
+
+	if mark.fatal != nil {
+		res.Reason = ReasonFatalCheck
+
+		return Output{Result: res}, fmt.Errorf("stage %s: %w", in.Stage, mark.fatal)
 	}
 
 	if mark.asked {

@@ -32,6 +32,10 @@ type Lists struct {
 	// "as noted above": a card body or an assumption states the fact
 	// itself, since each stands alone once it leaves the blueprint.
 	DanglingReferences []string `yaml:"dangling_references"`
+	// EdgeCases are the conditions acceptance sweeps for every slice: each
+	// settled by criteria or manual checks of the slice, or recorded not
+	// applicable with a reason. Matched case-insensitively after trimming.
+	EdgeCases []string `yaml:"edge_cases"`
 }
 
 // Pattern is one named regular expression.

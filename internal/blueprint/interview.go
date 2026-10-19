@@ -58,11 +58,15 @@ func (iv *interviewer) Ask(ctx context.Context, rd stage.Round) (string, error) 
 		return "", err
 	}
 
+	c, bg := iv.c, context.WithoutCancel(ctx)
+
 	if err := iv.takesAssumptions(rd.Assumptions); err != nil {
 		return "", err
 	}
 
-	c, bg := iv.c, context.WithoutCancel(ctx)
+	if err := c.reposted(bg, iv.bp.ID, rd.Assumptions); err != nil {
+		return "", err
+	}
 
 	// Read at every round, so a gate reply during the run applies from the
 	// next round on.
@@ -202,11 +206,15 @@ func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, 
 		return "", err
 	}
 
+	c, bg := iv.c, context.WithoutCancel(ctx)
+
 	if err := iv.takesAssumptions(a.Assumptions); err != nil {
 		return "", err
 	}
 
-	c, bg := iv.c, context.WithoutCancel(ctx)
+	if err := c.reposted(bg, iv.bp.ID, a.Assumptions); err != nil {
+		return "", err
+	}
 
 	var added []stage.RoundQuestion
 
@@ -272,6 +280,41 @@ func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, 
 	iv.posted = next.Number
 
 	return fmt.Sprintf("Your reply is in round %d's chat. Your run ends here; the user answers in the block or writes again.", next.Number), nil
+}
+
+// reposted refuses an assumptions tab that posts again what the user
+// already accepted on a closed round's tab, case, spacing and punctuation
+// aside: the stage cites the acceptance's tag instead. An auto round
+// accepts nothing a person did.
+func (c *Controller) reposted(ctx context.Context, id string, tab []string) error {
+	if len(tab) == 0 {
+		return nil
+	}
+
+	accepted, err := c.acceptedAssumptions(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	var problems []string
+
+	for i, text := range tab {
+		norm := normalText(text)
+
+		for _, a := range accepted {
+			if norm != "" && normalText(a.Text) == norm {
+				problems = append(problems, fmt.Sprintf("assumption %d was accepted as %s already; leave it off the tab and cite %s instead", i+1, a.Tag, a.Tag))
+
+				break
+			}
+		}
+	}
+
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
+
+	return nil
 }
 
 // takesAssumptions refuses an assumptions tab on a stage that records no

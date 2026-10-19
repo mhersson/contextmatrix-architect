@@ -61,6 +61,27 @@ func TestDigestOf(t *testing.T) {
 		assert.Equal(t, []string{"GET /reports answers CSV"}, d.Contracts)
 	})
 
+	t.Run("criteria and manual checks carry the outcomes they cite", func(t *testing.T) {
+		traced := sliceAcceptance("SL1", "AC1", "MC1")
+		sl := traced["slices"].([]any)[0].(map[string]any)
+		sl["criteria"].([]any)[0].(map[string]any)["outcomes"] = []any{"O1", " O2 "}
+		sl["manual"].([]any)[0].(map[string]any)["outcomes"] = []any{"O3"}
+
+		d, ok := digestOf([]string{pack.CheckCriteria}, storedAs(t, traced))
+		require.True(t, ok)
+		assert.Equal(t, []string{"O1", "O2"}, d.Criteria[0].Outcomes)
+		assert.Equal(t, []string{"O3"}, d.Manual[0].Outcomes)
+	})
+
+	t.Run("a malformed trace reads as none and is no misfit", func(t *testing.T) {
+		traced := sliceAcceptance("SL1", "AC1", "MC1")
+		traced["slices"].([]any)[0].(map[string]any)["criteria"].([]any)[0].(map[string]any)["outcomes"] = "O1"
+
+		d, ok := digestOf([]string{pack.CheckCriteria}, storedAs(t, traced))
+		require.True(t, ok)
+		assert.Empty(t, d.Criteria[0].Outcomes)
+	})
+
 	t.Run("contracts at the top level are kept", func(t *testing.T) {
 		d, ok := digestOf([]string{pack.CheckDecisions}, storedAs(t, map[string]any{"contracts": []any{"GET /reports answers CSV"}}))
 		require.True(t, ok)
@@ -75,6 +96,15 @@ func TestDigestOf(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, []digestDecision{{ID: "DEC1", Text: "where the data lives", Chosen: "Postgres"}}, d.Decisions)
 		assert.Equal(t, []string{"GET /reports answers CSV"}, d.Contracts)
+	})
+
+	t.Run("a design's top-level outcomes are kept with their ids and text", func(t *testing.T) {
+		withOutcomes := twoDecisions()
+		withOutcomes["outcomes"] = []any{outcomeItem("O3", "A page loads within 2 s.\nOn a slow link.")}
+
+		d, ok := digestOf([]string{pack.CheckAssumptions, pack.CheckDecisions, pack.CheckOutcomes}, storedAs(t, withOutcomes))
+		require.True(t, ok)
+		assert.Equal(t, []digestLine{{ID: "O3", Text: "A page loads within 2 s."}}, d.Outcomes)
 	})
 
 	t.Run("an acceptance keeps every id with its first line", func(t *testing.T) {
@@ -235,4 +265,23 @@ func TestReadArtifact_TheRecordKeepsTheFirstLine(t *testing.T) {
 	assert.Equal(t, head, r.Stored(head+"\n\n## solution_design@SL1\n\nthe body"))
 	assert.Equal(t, r.Stored(head), r.Stored(r.Stored(head+"\n\nbody")), "storing again changes nothing")
 	assert.Equal(t, "an error text", r.Stored("an error text"), "anything else is kept as it is")
+}
+
+func TestDigestOf_Grounding(t *testing.T) {
+	d, ok := digestOf(nil, storedAs(t, map[string]any{
+		"projects": map[string]any{"alpha": map[string]any{"sha": "abc", "verify_command": "make test", "instruction_file": "AGENTS.md"}},
+		"verdicts": []any{map[string]any{"id": "A1", "status": "verified", "evidence": "[S1] the parser is Go"}},
+	}))
+	require.True(t, ok)
+	assert.Equal(t, map[string]digestProject{"alpha": {SHA: "abc", VerifyCommand: "make test", InstructionFile: "AGENTS.md"}}, d.Projects)
+	assert.Equal(t, []verdict{{ID: "A1", Status: "verified", Evidence: "[S1] the parser is Go"}}, d.Verdicts)
+
+	_, ok = digestOf(nil, storedAs(t, map[string]any{"projects": map[string]any{}}))
+	assert.False(t, ok, "no project is no digest")
+
+	_, ok = digestOf(nil, storedAs(t, map[string]any{"projects": map[string]any{"alpha": map[string]any{}}, "verdicts": []any{"verified"}}))
+	assert.False(t, ok, "a verdict of another shape keeps it whole")
+
+	_, ok = digestOf(nil, storedAs(t, map[string]any{"projects": map[string]any{"alpha": map[string]any{}}, "verdicts": []any{map[string]any{"status": "verified"}}}))
+	assert.False(t, ok, "a verdict without an id keeps it whole")
 }

@@ -84,7 +84,7 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	assert.Equal(t, PolicyHuman, design.Policy)
 	assert.Equal(t, 5, design.MaxQuestions)
 	assert.Contains(t, design.Tools, ToolCode)
-	assert.Equal(t, []string{CheckAssumptions, CheckDecisions}, design.Checks)
+	assert.Equal(t, []string{CheckAssumptions, CheckDecisions, CheckOutcomes}, design.Checks)
 	require.NotNil(t, design.Reviewer)
 	assert.Equal(t, "senior_developer", design.Reviewer.Persona)
 
@@ -93,6 +93,7 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	assert.True(t, intake.Gate)
 	assert.Equal(t, PolicyAuto, intake.GatePolicy, "intake's reviewer's verdict decides its gate")
 	assert.Equal(t, 3, intake.MaxQuestions)
+	assert.Equal(t, []string{CheckAssumptions, CheckOutcomes}, intake.Checks, "intake states the need's outcomes")
 
 	next := map[string]string{"intake": "system_designer", "slicing": "system_designer", "shared_decisions": "senior_developer", "solution_design": "senior_developer", "acceptance": "tester"}
 
@@ -115,7 +116,7 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	assert.Equal(t, PolicyHuman, shared.Policy)
 	assert.Equal(t, "system_designer", shared.Persona)
 	assert.Equal(t, []string{"intake", "slicing"}, shared.Consumes)
-	assert.Equal(t, []string{CheckAssumptions, CheckDecisions}, shared.Checks)
+	assert.Equal(t, []string{CheckAssumptions, CheckDecisions, CheckOutcomes}, shared.Checks)
 
 	for _, id := range []string{"solution_design", "grounding", "acceptance", "decomposition"} {
 		s, _ := p.Stage(id)
@@ -131,6 +132,7 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	readiness, _ := p.Stage("readiness")
 	assert.Equal(t, "decomposition", readiness.LoopsTo)
 	assert.Equal(t, 3, readiness.MaxRounds)
+	assert.Equal(t, []string{CheckReadiness}, readiness.Checks)
 	assert.Contains(t, readiness.Tools, ToolCode)
 	assert.False(t, readiness.PerSlice, "readiness judges every slice's cards at once")
 	assert.Contains(t, readiness.Consumes, "shared_decisions")
@@ -274,6 +276,8 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "loops_to without max_rounds", stage: "  - id: s2\n    persona: po\n    loops_to: s1\n", files: map[string]string{"stages/s2.md": "x"}, want: "max_rounds"},
 		{name: "bad regex", files: map[string]string{"lists.yaml": "forbidden_references:\n  - name: broken\n    pattern: '(['\n"}, want: "forbidden reference"},
 		{name: "blank dangling reference", files: map[string]string{"lists.yaml": "dangling_references: [\" \"]\n"}, want: "dangling_references"},
+		{name: "blank edge case", files: map[string]string{"lists.yaml": "edge_cases: [\" \"]\n"}, want: "edge_cases"},
+		{name: "an edge case listed twice", files: map[string]string{"lists.yaml": "edge_cases: [Limits, \" limits\"]\n"}, want: "edge_cases"},
 		{name: "unknown lists.yaml key", files: map[string]string{"lists.yaml": "required_section: [Context]\n"}, want: "lists.yaml"},
 		{name: "card checks without lists.yaml", stage: "    tools: [code]\n    checks: [cards]\n", files: map[string]string{"lists.yaml": ""}, want: "lists.yaml"},
 		{name: "card checks without card.md", stage: "    tools: [code]\n    checks: [cards]\n", files: map[string]string{"card.md": ""}, want: "card.md"},
@@ -524,4 +528,26 @@ func TestStepKey(t *testing.T) {
 		assert.Equal(t, tc.stage, stage)
 		assert.Equal(t, tc.slice, slice)
 	}
+}
+
+func TestLoad_AcceptsTheOutcomesCheck(t *testing.T) {
+	p, err := load(packFS("    checks: [outcomes]\n", nil))
+	require.NoError(t, err)
+
+	s1, _ := p.Stage("s1")
+	assert.Equal(t, []string{CheckOutcomes}, s1.Checks)
+}
+
+func TestLoad_AcceptsTheReadinessCheck(t *testing.T) {
+	p, err := load(packFS("    checks: [readiness]\n", nil))
+	require.NoError(t, err)
+
+	s1, _ := p.Stage("s1")
+	assert.Equal(t, []string{CheckReadiness}, s1.Checks)
+}
+
+func TestLoadEmbedded_ListsTheEdgeCases(t *testing.T) {
+	p, err := LoadEmbedded()
+	require.NoError(t, err)
+	assert.NotEmpty(t, p.Lists().EdgeCases, "acceptance sweeps the default pack's edge cases")
 }

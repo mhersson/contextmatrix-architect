@@ -11,7 +11,7 @@ require (
 	github.com/knadh/koanf/v2 v2.3.8
 	github.com/mhersson/contextmatrix-backendkit v0.9.0
 	github.com/mhersson/contextmatrix-harness v0.26.0
-	github.com/mhersson/contextmatrix-protocol v0.31.0
+	github.com/mhersson/contextmatrix-protocol v0.32.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1

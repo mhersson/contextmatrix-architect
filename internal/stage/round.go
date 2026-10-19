@@ -77,9 +77,13 @@ type Interviewer interface {
 }
 
 // terminalMark records that a round tool ended the run, so Run reports a
-// round instead of decoding an artifact. The harness runs a run's tool calls
-// one at a time on the run's goroutine.
-type terminalMark struct{ asked bool }
+// round instead of decoding an artifact, or that a check refused the
+// submit for good, so Run fails the run. The harness runs a run's tool
+// calls one at a time on the run's goroutine.
+type terminalMark struct {
+	asked bool
+	fatal *FatalCheckError
+}
 
 const assumptionsSchema = `{"type":"array","items":{"type":"string"},"description":"before you submit: the decisions you made that nobody confirmed, one standalone sentence each, for the person to accept or turn into a question"}`
 

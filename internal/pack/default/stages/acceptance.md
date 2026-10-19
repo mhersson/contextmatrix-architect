@@ -15,9 +15,23 @@ A check that inspects output states it in the form the design specifies (its
 JSON encoding, indentation, field order), or checks only the content; never a
 byte-exact form the design does not fix.
 
+Each criterion names the outcomes it proves by the ids the need and the
+designs give them, `"outcomes": ["O1"]`; a manual check may name outcomes
+too. Across the slices every outcome is proved by some criterion or manual
+check, and the last slice's acceptance closes any gap.
+
+Then sweep the slice for the edge cases the task lists. Think of what
+people actually meet: an empty search, a file half written when the
+process dies, a user without the role, two saves of one record at once, an
+old client against the new server, the largest upload accepted. For each
+case either name this slice's criteria or manual checks that settle it,
+`{"condition": "<the case as listed>", "settled_by": ["AC4", "MC2"]}`, adding
+a criterion when none does, or say in one sentence why it cannot happen
+here, `{"condition": "<the case>", "not_applicable": "<why>"}`.
+
 Produce markdown with a `## <slice id>` section for each slice you write criteria for listing its
 criteria and manual checks. Submit with a data object
-`{"slices": [{"id": "SL1", "criteria": [{"id": "AC1", "project": "<name>", "text": "<the test or command and what passes>"}], "manual": [{"id": "MC1", "text": "<the check a human makes>"}]}]}`.
+`{"slices": [{"id": "SL1", "criteria": [{"id": "AC1", "project": "<name>", "text": "<the test or command and what passes>", "outcomes": ["O1"]}], "manual": [{"id": "MC1", "text": "<the check a human makes>", "outcomes": ["O2"]}], "sweep": [{"condition": "<an edge case>", "settled_by": ["AC1"]}, {"condition": "<an edge case>", "not_applicable": "<why>"}]}]}`.
 Ids run on across slices: AC1, AC2, ... and MC1, MC2, ..., each after the highest an earlier slice's acceptance holds.
 
 When a reviewer's findings come back to you, each with an id such as R2,

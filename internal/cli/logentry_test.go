@@ -474,6 +474,15 @@ func TestLogEntryFor_Prompts(t *testing.T) {
 		}}, "text", &protocol.LogPrompt{ID: "gate:signoff:v4", Kind: "gate", Actions: []protocol.LogAction{
 			{Label: "Approve and override warnings", Reply: "approve"}, {Label: "Reject", Reply: "reject", Feedback: true},
 		}}},
+		{"a sign-off over a critical finding", blueprint.Event{Kind: blueprint.EventSignOff, Payload: map[string]any{
+			"version": 4, "cards": []any{}, "order": []any{}, "actions": []any{
+				map[string]any{"label": "Approve over critical findings", "reply": "approve", "feedback": true, "ask": "Why approve over the critical findings?"},
+				map[string]any{"label": "Reject", "reply": "reject", "feedback": true},
+			},
+		}}, "text", &protocol.LogPrompt{ID: "gate:signoff:v4", Kind: "gate", Actions: []protocol.LogAction{
+			{Label: "Approve over critical findings", Reply: "approve", Feedback: true, Ask: "Why approve over the critical findings?"},
+			{Label: "Reject", Reply: "reject", Feedback: true},
+		}}},
 		{"a sign-off stored before replies travelled with it", blueprint.Event{Kind: blueprint.EventSignOff, Payload: map[string]any{
 			"version": 4, "cards": []any{}, "order": []any{},
 		}}, "text", nil},
@@ -883,10 +892,11 @@ func TestLogEntryFor_ASignoffListsItsTypedRejections(t *testing.T) {
 
 	// With one slice nothing slice-related shows.
 	entry, ok = logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
-		"version": 1, "cards": []any{}, "order": []any{}, "typed": []any{"reject SL1"},
+		"version": 1, "cards": []any{}, "order": []any{}, "typed": []any{"reject slicing", "reject SL1"},
 	}})
 	require.True(t, ok)
 	assert.NotContains(t, entry.Content, "SL1")
+	assert.Contains(t, entry.Content, "`reject slicing <feedback>`", "slicing's typed reject is listed with any number of slices")
 }
 
 // With one slice nothing slice-related shows in the text; with two or more,
@@ -1129,4 +1139,20 @@ func TestLogEntryFor_AGateAndItsReviewNameTheStageNotItsID(t *testing.T) {
 	assert.Contains(t, gate.Content, name)
 	assert.Contains(t, gate.Prompt.Text, name)
 	assert.Contains(t, review.Content, name)
+}
+
+func TestLogEntryFor_ASignoffShowsItsCrossFindingsAndTheReason(t *testing.T) {
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
+		"version": 1, "cards": []any{}, "order": []any{},
+		"cross": []any{map[string]any{"id": "X2", "severity": "critical", "text": "No criterion proves O1.", "refs": []any{"O1"}}},
+	}})
+	require.True(t, ok)
+	assert.Contains(t, entry.Content, "X2")
+	assert.Contains(t, entry.Content, "No criterion proves O1.")
+
+	entry, ok = logEntryFor(blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{
+		"stage": "signoff", "decision": "approve", "responder": "human", "version": 1, "override_reason": "the release check covers it",
+	}})
+	require.True(t, ok)
+	assert.Contains(t, entry.Content, "the release check covers it")
 }

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 
+	"github.com/mhersson/contextmatrix-harness/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -300,42 +302,62 @@ func TestShared_AGatePlanAfterSlicingNamesThePackStageSlicingFoldsInto(t *testin
 	}
 }
 
-func TestShared_ASlicingWithNoSlicesEndsThePipelineWithItsProblems(t *testing.T) {
+func TestShared_ASlicingThatHoldsNoSlicesFailsItsRun(t *testing.T) {
 	empty := map[string]any{"slices": []any{}}
 
+	var runs atomic.Int32
+
 	script := slicedScript()
-	// The model keeps submitting no slices; the bounded check refuses twice
-	// and accepts the third as it is.
+	// The first run keeps submitting no slices: the check refuses twice and
+	// then for good, as the runner reports it. The run continue starts
+	// submits two slices.
 	script["slicing"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		for range maxContractRounds {
-			if err := in.Validate(ctx, stage.Artifact{Body: "# Slices", Data: empty}); err == nil {
-				return done("# Slices", empty), nil
-			}
+		if runs.Add(1) > 1 {
+			return done("# Slices", twoSlices()), nil
 		}
 
-		return stage.Output{}, errors.New("the slices check never accepted the submit")
+		var err error
+
+		for range maxContractRounds {
+			err = in.Validate(ctx, stage.Artifact{Body: "# Slices", Data: empty})
+		}
+
+		var refused *stage.FatalCheckError
+		if !errors.As(err, &refused) {
+			return stage.Output{}, fmt.Errorf("the third submit was not refused for good: %v", err)
+		}
+
+		return stage.Output{Result: harness.Result{Reason: stage.ReasonFatalCheck}}, fmt.Errorf("stage %s: %w", in.Stage, err)
 	}
 
 	c, st, runner, rec := newSliced(t, script)
+	ctx := context.Background()
+
 	drive(t, c, "BP1")
 
-	report, ok := rec.first(EventReport)
-	require.True(t, ok, "the pipeline ends at slicing")
-	assert.Equal(t, false, report.Payload["ready"])
-	assert.Equal(t, sliceProblems(empty, []string{"alpha"}), report.Payload["findings"], "the end carries the problems slicing was accepted with")
-	assert.Empty(t, stepRuns(runner, "shared_decisions", "solution_design", "grounding"), "no later stage runs, under any key")
-	assert.Empty(t, gateRows(t, st), "slicing folds into no design")
+	_, err := st.LatestArtifact(ctx, "BP1", "slicing")
+	require.ErrorIs(t, err, store.ErrNotFound, "a submit with no slices is never stored")
+	assert.False(t, rec.has(EventReport), "the pipeline does not end")
 
-	calls := runner.calls()
+	e := lastError(t, rec)
+	assert.Equal(t, stage.ReasonFatalCheck, e.Payload["reason"])
+	assert.Contains(t, e.Payload["message"], sliceProblems(empty, []string{"alpha"})[0], "the failure names the fatal problem")
 
-	require.NoError(t, c.Message(context.Background(), "BP1", "go on", "m2"))
+	all, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+
+	last := all[len(all)-1]
+	assert.Equal(t, "slicing", last.Stage)
+	assert.Equal(t, store.RunFailed, last.Status)
+	assert.Equal(t, stage.ReasonFatalCheck, last.Reason)
+
+	require.NoError(t, c.Resume(ctx, "BP1", "m2"))
 	c.Wait("BP1")
 
-	assert.Equal(t, calls, runner.calls(), "a message after the end starts no run")
+	assert.Equal(t, []string{"slicing", "slicing"}, stepRuns(runner, "slicing"), "continue runs slicing again")
 
-	note, ok := rec.first(EventNote)
-	require.True(t, ok)
-	assert.Equal(t, true, note.Payload["ended"])
+	_, err = st.LatestArtifact(ctx, "BP1", "slicing")
+	require.NoError(t, err)
 }
 
 func TestAfter_ASlicingWithNoSlices(t *testing.T) {
@@ -409,8 +431,9 @@ func TestShared_ASliceDesignGateRejectsTheSharedDecisions(t *testing.T) {
 	approveUntil(t, c, rec, "solution_design@SL1")
 
 	first := lastGate(t, rec)
-	require.Equal(t, []string{"approve", "reject", "reject shared_decisions"}, gateReplies(first))
-	assert.Equal(t, "Reject shared decisions", gateLabels(first)[2])
+	require.Equal(t, []string{"approve", "reject", "reject slicing", "reject shared_decisions"}, gateReplies(first))
+	assert.Equal(t, "Reject slicing", gateLabels(first)[2])
+	assert.Equal(t, "Reject shared decisions", gateLabels(first)[3])
 
 	approveUntil(t, c, rec, "solution_design@SL2")
 	require.NoError(t, c.Message(ctx, "BP1", "reject shared_decisions name exports by date", "m-shared"))

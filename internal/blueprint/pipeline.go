@@ -156,8 +156,9 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 		// A gated stage's artifact waits at its gate: approved, what follows
 		// it runs; rejected, the stage runs again.
 		if st.Gate {
-			// A rejection at this gate of a stage folded into it, or of a
-			// shared stage, runs that stage again, and everything after it.
+			// A rejection at this gate of a stage folded into it, or of an
+			// earlier stage (slicing, a shared stage), runs that stage again,
+			// and everything after it.
 			again, err := c.rejectedAtGate(ctx, bp.ID, st)
 			if err != nil {
 				return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
@@ -763,6 +764,8 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pipelin
 		return "", err
 	}
 
+	c.writeEdgeCases(&b, st)
+
 	if st.Gate {
 		if err := c.writeGateFeedback(ctx, &b, bp, st, 0); err != nil {
 			return "", err
@@ -780,9 +783,27 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pipelin
 	return b.String(), nil
 }
 
+// writeEdgeCases gives a stage that checks criteria, and its reviewer, the
+// pack's edge cases every slice's sweep covers; nothing when the pack lists
+// none.
+func (c *Controller) writeEdgeCases(b *strings.Builder, st pipelineStep) {
+	cases := c.opts.Pack.Lists().EdgeCases
+	if len(cases) == 0 || !slices.Contains(st.Checks, pack.CheckCriteria) {
+		return
+	}
+
+	b.WriteString("## Edge cases to sweep\n\nEvery slice's sweep gives each one entry:\n\n")
+
+	for _, edge := range cases {
+		b.WriteString("- " + edge + "\n")
+	}
+
+	b.WriteString("\n")
+}
+
 // writeAssumptions gives a stage that consumes a stage with stated
-// assumptions every assumption so far, each with its id and latest status:
-// the ids a verdict names.
+// assumptions every assumption so far, each with its id, latest status and
+// sentence: the ids a verdict or a decision names.
 func (c *Controller) writeAssumptions(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pipelineStep) error {
 	states := slices.ContainsFunc(st.Consumes, func(id string) bool {
 		consumed, _ := c.opts.Pack.Stage(id)
@@ -803,7 +824,7 @@ func (c *Controller) writeAssumptions(ctx context.Context, b *strings.Builder, b
 	}
 
 	b.WriteString("## Assumptions so far\n\nEach with its id and latest status; a verdict names the id:\n\n")
-	b.WriteString(assumptionLines(list, c.sliced(ctx, bp.ID)) + "\n\n")
+	b.WriteString(briefAssumptionLines(list) + "\n\n")
 
 	return nil
 }

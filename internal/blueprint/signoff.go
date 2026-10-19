@@ -22,6 +22,10 @@ const signoffStage = "signoff"
 
 const signoffHint = "Reply approve to emit the cards, or reject <feedback> to re-run the cards with your feedback."
 
+// signoffCriticalHint is signoffHint over a critical finding, where approve
+// takes a reason.
+const signoffCriticalHint = "Reply approve <reason> to emit the cards over the critical findings, or reject <feedback> to re-run the cards with your feedback."
+
 // emitsOnItsOwn reports whether a mode approves the sign-off itself.
 func emitsOnItsOwn(mode string) bool {
 	return mode == protocol.ArchitectModeAutoEmit || mode == protocol.ArchitectModeYolo
@@ -79,7 +83,8 @@ func (c *Controller) holdForSignoff(r *run) {
 // signoff acts on cards the pipeline ended ready with. Approved: emission,
 // resumed when it stopped partway. Undecided in an emitting mode: preflight,
 // then an automatic approval when nothing needs a human. Otherwise the
-// sign-off is shown and the blueprint waits for approve or reject.
+// sign-off is shown and the blueprint waits for approve or reject. An
+// emitting mode never approves over a critical finding across the blueprint.
 func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Blueprint, out outcome) {
 	bg := context.WithoutCancel(ctx)
 	au := sess.audit
@@ -122,6 +127,7 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	}
 
 	auto := emitsOnItsOwn(bp.Mode)
+	critical := criticalCross(crossOf(out.art))
 	payload := c.signoffPayload(bg, au, bp, out, draft, pf, pfErr)
 
 	// Steps do not stop it: creating the cards does not need them, and they
@@ -129,7 +135,7 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	// the record of what it approved after it, so a crash between the two
 	// leaves an approved sign-off the restart emits, never an unapproved
 	// record.
-	if auto && ctx.Err() == nil && pfErr == nil && len(pf.Blocking) == 0 && len(pf.Warnings) == 0 {
+	if auto && !critical && ctx.Err() == nil && pfErr == nil && len(pf.Blocking) == 0 && len(pf.Warnings) == 0 {
 		if !c.decide(bg, au, bp.ID, signoffStage, out.art.Version, store.GateApprove, "", store.ResponderAuto, "") {
 			return
 		}
@@ -146,7 +152,7 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	}
 
 	payload["auto_stopped"] = auto
-	payload["actions"] = actionsPayload(signoffActions(len(pf.Warnings) > 0))
+	payload["actions"] = actionsPayload(signoffActions(len(pf.Warnings) > 0, critical))
 
 	// The typed replies are never buttons; the transcript lists them.
 	if steps, _, err := c.steps(bg, bp.ID); err != nil {
@@ -160,11 +166,11 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 }
 
 // signoffPayload is what a sign-off carries: the cards in playbook order,
-// the manual checks, the playbook title, what preflight found and the
-// assumptions, riskiest first. Assumptions that cannot be read show as
-// none, and the log says why; an intake from before assumptions were data
-// gives its section's text, which the panel shows as it shows an older
-// sign-off.
+// the manual checks, the playbook title, what preflight found, readiness's
+// findings across the blueprint, critical first, and the assumptions,
+// riskiest first. Assumptions that cannot be read show as none, and the log
+// says why; an intake from before assumptions were data gives its section's
+// text, which the panel shows as it shows an older sign-off.
 func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blueprint, out outcome, draft contract.Draft, pf preflightResult, pfErr error) map[string]any {
 	var assumptions any = []any{}
 
@@ -202,6 +208,7 @@ func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blue
 	payload := map[string]any{
 		"version": out.art.Version, "cards": cards, "order": draft.Order, "manual": manual, "title": draft.Title,
 		"blocking": pf.Blocking, "warnings": pf.Warnings, "steps": pf.Steps, "assumptions": assumptions,
+		"cross": crossPayload(crossOf(out.art)),
 	}
 
 	if pfErr != nil {
@@ -212,16 +219,17 @@ func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blue
 }
 
 // typedRejects are the sign-off's typed replies that reject one step and run
-// it, and everything after it, again: reject SL<n> <feedback> for slice n's
-// design, its first gated step, and reject <shared stage> <feedback> for a
-// shared stage that ran. They are matched as replies are but never offered
-// as buttons, and come in pipeline order.
+// it, and everything after it, again: reject slicing <feedback>, reject
+// SL<n> <feedback> for slice n's design, its first gated step, and reject
+// <shared stage> <feedback> for a shared stage that ran. They are matched as
+// replies are but never offered as buttons, and come in pipeline order, so
+// a reopen that finds two picks the earliest.
 func typedRejects(steps []pipelineStep) []gateAction {
 	var out []gateAction
 
 	for _, s := range steps {
 		switch {
-		case s.Shared && !s.Collapsed:
+		case slices.Contains(s.Checks, pack.CheckSlices), s.Shared && !s.Collapsed:
 			out = append(out, gateAction{Reply: store.GateReject + " " + s.ID, Feedback: true, Decision: store.GateReject, Target: s.ID})
 		case firstGated(steps, s):
 			out = append(out, gateAction{Reply: store.GateReject + " " + s.Slice, Feedback: true, Decision: store.GateReject, Target: s.ID})
@@ -254,6 +262,13 @@ func quotedReplies(typed []gateAction) []string {
 // stepWord matches the word a typed sign-off rejection names a slice by.
 var stepWord = regexp.MustCompile(`(?i)^SL[0-9]+$`)
 
+// NamesASlice reports a typed rejection whose step word names a slice.
+func NamesASlice(reply string) bool {
+	word, _ := typedWord(reply)
+
+	return stepWord.MatchString(word)
+}
+
 // typedWord is the word after reject in text, cut at the first `:`, `,`, `;`
 // or `.` a person may type after it, with a space before the feedback or
 // not, and whether it was cut; "" when text is not reject followed by a
@@ -272,9 +287,9 @@ func typedWord(text string) (string, bool) {
 	return fields[1][:i], true
 }
 
-// namesAStep reports a reply that is reject followed by a slice's or a
-// shared stage's name, punctuation after it or not: a typed rejection,
-// never read as a plain one.
+// namesAStep reports a reply that is reject followed by a slice's, the
+// slicing stage's or a shared stage's name, punctuation after it or not: a
+// typed rejection, never read as a plain one.
 func (c *Controller) namesAStep(text string) bool {
 	word, _ := typedWord(text)
 	if word == "" {
@@ -282,7 +297,7 @@ func (c *Controller) namesAStep(text string) bool {
 	}
 
 	return stepWord.MatchString(word) || slices.ContainsFunc(c.opts.Pack.Stages, func(s pack.Stage) bool {
-		return s.Shared && strings.EqualFold(s.ID, word)
+		return (s.Shared || slices.Contains(s.Checks, pack.CheckSlices)) && strings.EqualFold(s.ID, word)
 	})
 }
 
@@ -360,12 +375,14 @@ func (c *Controller) rejectStep(ctx, runCtx context.Context, r *run, sess *sessi
 // atReadyEnd handles a message after the pipeline ended ready, matching it to
 // the sign-off's replies as a stage's gate does. Undecided:
 // approve emits, reject with feedback re-runs the loop's target stage, from
-// its first slice's step. reject SL<n> <feedback> and reject <shared stage>
-// <feedback> run that step and everything after it again; one that names no
-// step of the blueprint is a note with a hint.
+// its first slice's step. reject slicing <feedback>, reject SL<n> <feedback>
+// and reject <shared stage> <feedback> run that step and everything after it
+// again; one that names no step of the blueprint is a note with a hint.
 // Approved with emission unfinished: approve resumes it, and other text is
 // a note with that hint, or without one when the record cannot be read.
-// Anything else is a note. The caller holds the run slot.
+// Over a critical finding across the blueprint approve takes a reason, and a
+// bare approve is a note asking for it. Anything else is a note. The caller
+// holds the run slot.
 func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, out outcome, text, msgID string) error {
 	decision, err := c.gateDecision(ctx, bp.ID, signoffStage, out.art.Version)
 	if err != nil {
@@ -384,13 +401,17 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 	typed := typedRejects(steps)
 
 	// Below two slices, as sliced reads them, the typed replies still match,
-	// but no text names them: nothing slice-related shows.
+	// but only those naming no slice are listed: nothing slice-related shows.
 	listed := typed
 	if len(shownPieces(steps, pieces)) < 2 {
-		listed = nil
+		listed = slices.DeleteFunc(slices.Clone(typed), func(a gateAction) bool { return NamesASlice(a.Reply) })
 	}
 
-	action, feedback, matched := matchAction(text, append(signoffActions(false), typed...))
+	// Only an undecided sign-off wants the reason: once approved, a bare
+	// approve resumes a stopped emission or a held run.
+	critical := decision == "" && criticalCross(crossOf(out.art))
+
+	action, feedback, matched := matchAction(text, append(signoffActions(false, critical), typed...))
 	approve := matched && action.Decision == store.GateApprove
 	retarget := matched && action.Decision == store.GateReject && action.Target != ""
 	reject := matched && action.Decision == store.GateReject && action.Target == ""
@@ -404,7 +425,14 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 	case "":
 		switch {
 		case approve:
-			if c.decide(ctx, sess.audit, bp.ID, signoffStage, out.art.Version, store.GateApprove, "", store.ResponderHuman, msgID) {
+			// Over a critical finding the reply's text is the reason, which
+			// the decision and the sign-off's data keep.
+			var extra map[string]any
+			if critical {
+				extra = map[string]any{"override_reason": feedback}
+			}
+
+			if c.decideWith(ctx, sess.audit, bp.ID, signoffStage, out.art.Version, store.GateApprove, feedback, store.ResponderHuman, msgID, extra) {
 				c.launchEnd(runCtx, r, sess, bp, out)
 
 				return nil
@@ -433,11 +461,18 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 			return nil
 		case rejectWithoutFeedback(text):
 			note.Payload["hint"] = "Say what to change: reply reject <feedback>."
+		case critical && strings.EqualFold(strings.TrimSpace(text), store.GateApprove):
+			note.Payload["hint"] = "Readiness found a critical problem across the blueprint. Say why you approve over it: reply approve <reason>, or reject <feedback>."
 		default:
-			note.Payload["hint"] = signoffHint
+			hint := signoffHint
+			if critical {
+				hint = signoffCriticalHint
+			}
+
+			note.Payload["hint"] = hint
 
 			if len(listed) > 0 {
-				note.Payload["hint"] = signoffHint + " Or reply " + strings.Join(quotedReplies(listed), ", ") + " to run that step and everything after it again."
+				note.Payload["hint"] = hint + " Or reply " + strings.Join(quotedReplies(listed), ", ") + " to run that step and everything after it again."
 			}
 		}
 	case store.GateApprove:

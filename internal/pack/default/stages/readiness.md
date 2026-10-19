@@ -1,6 +1,6 @@
 # Readiness
 
-Input: every slice's cards, in slicing order, whole, with the need, the slices, the shared decisions, each slice's grounding, and each slice's design and acceptance as digests when there are two or more slices (`read_artifact` returns the whole); a read-only checkout of each target project.
+Input: every slice's cards, in slicing order, whole, with the need, the slices, the shared decisions, and each slice's design, grounding and acceptance, the design and acceptance as digests and grounding as its project facts and verdicts when there are two or more slices (`read_artifact` returns the whole); a read-only checkout of each target project.
 
 For every card, answer with the checkout open: could an agent with only this
 repository and this card finish it on the first attempt? Judge one
@@ -25,7 +25,22 @@ slice's card, or that relies on work that neither the code nor a card before
 it in the playbook delivers, is not ready, and its finding names the card it
 collides with or lacks.
 
+Then judge the blueprint as a whole, each artifact against the others:
+decisions, contracts, cards and assumptions that disagree; two assumptions
+that say one thing in different words; an outcome (O<n>) that no criterion
+or manual check proves; a contract that one side's cards keep and the
+other's do not. A card that does not deliver what its own criterion
+promises is that card's problem, in its `cards` entry; `cross` holds the
+problems between artifacts.
+Report each in `cross`, `{"id": "X1", "severity": "critical", "major" or
+"minor", "text": "<one sentence a person can act on>", "refs": ["<the ids
+it names, such as DEC2, AC4, D3, A5, O1, SL2>"]}`: critical when building
+as planned would deliver the wrong thing or break what the need promises,
+major when someone would have to guess, minor otherwise. These never send
+cards back. When nothing disagrees across the blueprint, `cross` is an
+empty list or left out; never invent a finding.
+
 Produce markdown with one `## <card id>: <title>` section per card holding
 `ready` or the findings that block it. Submit with a data object
-`{"cards": [{"id": "D1", "ready": true, "findings": []}]}`. A card with a
-finding is not ready.
+`{"cards": [{"id": "D1", "ready": true, "findings": []}], "cross": [{"id": "X1", "severity": "major", "text": "<the finding>", "refs": ["AC4"]}]}`.
+A card with a finding is not ready; judge every card once.
