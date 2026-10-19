@@ -1100,6 +1100,20 @@ func (c *Controller) claimLocked(id string) (*run, context.Context, bool) {
 	return r, ctx, true
 }
 
+// claimAttached takes id's run slot for sess while it is attached and the
+// controller is not closing; busy says another run holds the slot, read under
+// the same lock as the claim.
+func (c *Controller) claimAttached(id string, sess *session) (r *run, runCtx context.Context, claimed, busy bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.closing && c.sessions[id] == sess {
+		r, runCtx, claimed = c.claimLocked(id)
+	}
+
+	return r, runCtx, claimed, c.runs[id] != nil && !claimed
+}
+
 // claimAfterEnd takes id's run slot for sess once prev, the ended session's
 // run, has left it, waiting at most endedRunWait. It fails when the wait runs
 // out, or when by then an abort has reached prev, Shutdown has begun, sess is

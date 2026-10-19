@@ -369,3 +369,112 @@ func TestSetMode_AppliesWhenTheRecordCannotBePlaced(t *testing.T) {
 	assert.NotContains(t, onlyMode(t, rec).Payload, "reason")
 	assert.Equal(t, protocol.ArchitectModeAuto, storedMode(t, st))
 }
+
+func TestSetMode_AWaitingSignoffSwitchedToAnEmittingModeApprovesItself(t *testing.T) {
+	c, st, _, rec, _ := newPipeline(t, happyScript())
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	require.True(t, rec.has(EventSignOff))
+	require.Empty(t, fake.titles())
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAutoEmit, "m-mode"))
+	c.Wait("BP1")
+
+	assert.Equal(t, true, onlyMode(t, rec).Payload["signoff"])
+	assert.Equal(t, []string{"Add the thing"}, fake.titles())
+
+	gates, err := st.ListGates(ctx, "BP1", signoffStage)
+	require.NoError(t, err)
+	require.Len(t, gates, 1)
+	assert.Equal(t, store.GateApprove, gates[0].Decision)
+	assert.Equal(t, store.ResponderAuto, gates[0].Responder)
+
+	decided, ok := rec.first(EventDecided)
+	require.True(t, ok)
+	assert.Equal(t, true, decided.Payload["shown"], "the decision closes the sign-off prompt the human was shown")
+}
+
+func TestSignoff_AnApprovalBeforeTheSignoffWasShownClosesNoPrompt(t *testing.T) {
+	c, _, _, rec, _ := newPipeline(t, happyScript())
+	c.opts.ConnectCM = newFakeCM().connect
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeAutoEmit
+	driveIn(t, c, in)
+
+	decided, ok := rec.first(EventDecided)
+	require.True(t, ok)
+	assert.NotContains(t, decided.Payload, "shown")
+}
+
+func TestSetMode_AWaitingSignoffOverACriticalFindingStillStopsForAHuman(t *testing.T) {
+	c, st, _, rec, _ := newPipeline(t, crossScript(true))
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeYolo, "m-mode"))
+	c.Wait("BP1")
+
+	assert.Empty(t, fake.titles(), "nothing is emitted over a critical finding")
+
+	shown := rec.all(EventSignOff)
+	require.Len(t, shown, 2, "the sign-off runs again and stops")
+	assert.Equal(t, true, shown[1].Payload["auto_stopped"])
+
+	gates, err := st.ListGates(ctx, "BP1", signoffStage)
+	require.NoError(t, err)
+	assert.Empty(t, gates)
+	assert.Equal(t, string(StateWaiting), stateOf(t, st, "BP1"))
+}
+
+func TestSetMode_ASwitchToAModeThatStopsAtTheSignoffRunsNothing(t *testing.T) {
+	c, _, _, rec, _ := newPipeline(t, happyScript())
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+
+	connects := fake.connectCount()
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	c.Wait("BP1")
+
+	assert.NotContains(t, onlyMode(t, rec).Payload, "signoff")
+	assert.Equal(t, connects, fake.connectCount(), "no preflight runs")
+	assert.Len(t, rec.all(EventSignOff), 1)
+}
+
+func TestSetMode_BackToDefaultDuringTheAutomaticPreflightShowsTheSignoff(t *testing.T) {
+	c, st, _, rec, _ := newPipeline(t, happyScript())
+	fake := newFakeCM()
+	slow := newSlowCM(t, fake)
+	c.opts.ConnectCM = func(context.Context, string) (CMClient, error) { return slow, nil }
+	ctx := context.Background()
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeAutoEmit
+	require.NoError(t, c.Start(ctx, in))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	receive(t, slow.entered, "the preflight")
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeDefault, "m-mode"))
+	slow.free()
+	c.Wait("BP1")
+
+	assert.Empty(t, fake.titles())
+
+	so, ok := rec.first(EventSignOff)
+	require.True(t, ok, "the sign-off returns to the human")
+	assert.Equal(t, false, so.Payload["auto_stopped"])
+
+	gates, err := st.ListGates(ctx, "BP1", signoffStage)
+	require.NoError(t, err)
+	assert.Empty(t, gates)
+}

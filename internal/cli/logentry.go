@@ -153,6 +153,12 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventDecided:
 		entry.Type = "system"
 		entry.Content = decidedText(p, e.Sliced)
+
+		// The mode's approval of a sign-off already shown closes that prompt
+		// in the panel, as a reply would.
+		if shown, _ := p["shown"].(bool); shown {
+			entry.Marker = &protocol.LogMarker{Kind: "decision", Stage: str(p["stage"]), Version: int(num(p["version"]))}
+		}
 	case blueprint.EventAborted:
 		entry.Type = "system"
 		entry.Content = abortedText(p, e.Sliced)

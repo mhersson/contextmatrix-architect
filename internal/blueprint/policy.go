@@ -165,20 +165,8 @@ func (c *Controller) SetCap(ctx context.Context, id, value, msgID string) error 
 
 	// The slot is held while the stop is read, so nothing starts between
 	// the read and the resume.
-	c.mu.Lock()
-
-	var (
-		r       *run
-		runCtx  context.Context
-		claimed bool
-	)
-
-	if !c.closing && c.sessions[id] == sess {
-		r, runCtx, claimed = c.claimLocked(id)
-	}
-
-	payload["during_run"] = c.runs[id] != nil && !claimed
-	c.mu.Unlock()
+	r, runCtx, claimed, busy := c.claimAttached(id, sess)
+	payload["during_run"] = busy
 
 	var at stopPoint
 

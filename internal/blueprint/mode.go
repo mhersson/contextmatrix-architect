@@ -19,7 +19,9 @@ const (
 // and sign-off reads from the store; the start of a reopen never changes
 // it. A switch to the mode in effect, once emission has started or after
 // the pipeline ended, is refused and changes nothing. Like a gate reply it
-// works while a stage runs. An applied switch posts the gate plan again.
+// works while a stage runs. An applied switch posts the gate plan again. Into auto+emit or yolo, a
+// sign-off that waits for a human runs again, preflight included, and
+// approves itself under the rule the sign-off always follows.
 func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error {
 	c.mu.Lock()
 	sess, ok := c.sessions[id]
@@ -34,14 +36,82 @@ func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error 
 		return err
 	}
 
-	payload["during_run"] = c.running(id)
+	var (
+		r      *run
+		runCtx context.Context
+		end    outcome
+		signs  bool
+	)
+
+	if applied && emitsOnItsOwn(mode) {
+		r, runCtx, end, signs = c.claimWaitingSignoff(ctx, sess, bp)
+	}
+
+	if signs {
+		payload["signoff"] = true
+	}
+
+	payload["during_run"] = r == nil && c.running(id)
 	sess.audit.event(ctx, Event{Kind: EventMode, BlueprintID: id, Payload: payload})
 
 	if applied {
 		c.repostGatePlan(ctx, sess, bp)
 	}
 
+	if signs {
+		c.launchEnd(runCtx, r, sess, bp, end)
+	}
+
 	return nil
+}
+
+// claimWaitingSignoff takes the run slot while the blueprint waits at a
+// shown, undecided sign-off, for the caller to run it again; ok is false,
+// and the slot free, anywhere else. A held slot is left alone: its holder
+// reads the stored mode when it reaches a sign-off.
+func (c *Controller) claimWaitingSignoff(ctx context.Context, sess *session, bp store.Blueprint) (*run, context.Context, outcome, bool) {
+	r, runCtx, claimed, _ := c.claimAttached(bp.ID, sess)
+	if !claimed {
+		return nil, nil, outcome{}, false
+	}
+
+	out, waiting, err := c.waitingSignoff(ctx, bp)
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: read the sign-off a mode switch decides", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
+	}
+
+	if !waiting {
+		c.release(bp.ID, r)
+
+		return nil, nil, outcome{}, false
+	}
+
+	return r, runCtx, out, true
+}
+
+// waitingSignoff is the ready end whose sign-off was shown and waits for a
+// human's decision; false anywhere else.
+func (c *Controller) waitingSignoff(ctx context.Context, bp store.Blueprint) (outcome, bool, error) {
+	if c.cardsStage() == "" {
+		return outcome{}, false, nil
+	}
+
+	out, _, err := c.position(ctx, bp)
+	if err != nil || !out.end || !out.ready {
+		return outcome{}, false, err
+	}
+
+	decision, err := c.gateDecision(ctx, bp.ID, signoffStage, out.art.Version)
+	if err != nil || decision != "" {
+		return outcome{}, false, err
+	}
+
+	shown, err := c.shownSignoff(ctx, bp.ID, out.art.Version)
+	if err != nil || shown == nil {
+		return outcome{}, false, err
+	}
+
+	return out, true, nil
 }
 
 // switchMode refuses, or stores, a switch of blueprint id to mode under its

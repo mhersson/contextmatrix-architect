@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"maps"
 	"strings"
 	"testing"
 
@@ -1164,4 +1165,36 @@ func TestLogEntryFor_ASignoffShowsItsCrossFindingsAndTheReason(t *testing.T) {
 	}})
 	require.True(t, ok)
 	assert.Contains(t, entry.Content, "the release check covers it")
+}
+
+func TestLogEntryFor_TheModesApprovalOfAShownSignoffClosesItsPrompt(t *testing.T) {
+	cases := []struct {
+		name   string
+		extra  map[string]any
+		marked bool
+	}{
+		{name: "shown, then approved by the mode", extra: map[string]any{"responder": "auto", "shown": true}, marked: true},
+		{name: "approved by the mode before it was shown", extra: map[string]any{"responder": "auto"}},
+		{name: "approved by a human", extra: map[string]any{"responder": "human"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := map[string]any{"stage": "signoff", "decision": "approve", "version": 3}
+			maps.Copy(p, tc.extra)
+
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: p})
+			require.True(t, ok)
+			assert.Equal(t, "system", entry.Type)
+
+			if !tc.marked {
+				assert.Nil(t, entry.Marker)
+
+				return
+			}
+
+			require.NotNil(t, entry.Marker)
+			assert.Equal(t, protocol.LogMarker{Kind: "decision", Stage: "signoff", Version: 3}, *entry.Marker)
+		})
+	}
 }
