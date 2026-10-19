@@ -883,10 +883,11 @@ func TestLogEntryFor_ASignoffListsItsTypedRejections(t *testing.T) {
 
 	// With one slice nothing slice-related shows.
 	entry, ok = logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
-		"version": 1, "cards": []any{}, "order": []any{}, "typed": []any{"reject SL1"},
+		"version": 1, "cards": []any{}, "order": []any{}, "typed": []any{"reject slicing", "reject SL1"},
 	}})
 	require.True(t, ok)
 	assert.NotContains(t, entry.Content, "SL1")
+	assert.Contains(t, entry.Content, "`reject slicing <feedback>`", "slicing's typed reject is listed with any number of slices")
 }
 
 // With one slice nothing slice-related shows in the text; with two or more,

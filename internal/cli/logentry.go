@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -730,8 +731,14 @@ func signoffText(p map[string]any, sliced bool) (body, reply string) {
 
 	reply += ", or `reject <feedback>` to re-run decomposition with your feedback."
 
-	// Below two slices the typed replies name nothing a person was shown.
-	if typed := stringsOf(p["typed"]); sliced && len(typed) > 0 {
+	// Below two slices only the typed replies that name no slice are
+	// listed: nothing slice-related shows.
+	typed := stringsOf(p["typed"])
+	if !sliced {
+		typed = slices.DeleteFunc(slices.Clone(typed), blueprint.NamesASlice)
+	}
+
+	if len(typed) > 0 {
 		quoted := make([]string, 0, len(typed))
 		for _, t := range typed {
 			quoted = append(quoted, "`"+t+" <feedback>`")

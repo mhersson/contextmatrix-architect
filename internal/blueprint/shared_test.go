@@ -431,8 +431,9 @@ func TestShared_ASliceDesignGateRejectsTheSharedDecisions(t *testing.T) {
 	approveUntil(t, c, rec, "solution_design@SL1")
 
 	first := lastGate(t, rec)
-	require.Equal(t, []string{"approve", "reject", "reject shared_decisions"}, gateReplies(first))
-	assert.Equal(t, "Reject shared decisions", gateLabels(first)[2])
+	require.Equal(t, []string{"approve", "reject", "reject slicing", "reject shared_decisions"}, gateReplies(first))
+	assert.Equal(t, "Reject slicing", gateLabels(first)[2])
+	assert.Equal(t, "Reject shared decisions", gateLabels(first)[3])
 
 	approveUntil(t, c, rec, "solution_design@SL2")
 	require.NoError(t, c.Message(ctx, "BP1", "reject shared_decisions name exports by date", "m-shared"))

@@ -212,16 +212,17 @@ func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blue
 }
 
 // typedRejects are the sign-off's typed replies that reject one step and run
-// it, and everything after it, again: reject SL<n> <feedback> for slice n's
-// design, its first gated step, and reject <shared stage> <feedback> for a
-// shared stage that ran. They are matched as replies are but never offered
-// as buttons, and come in pipeline order.
+// it, and everything after it, again: reject slicing <feedback>, reject
+// SL<n> <feedback> for slice n's design, its first gated step, and reject
+// <shared stage> <feedback> for a shared stage that ran. They are matched as
+// replies are but never offered as buttons, and come in pipeline order, so
+// a reopen that finds two picks the earliest.
 func typedRejects(steps []pipelineStep) []gateAction {
 	var out []gateAction
 
 	for _, s := range steps {
 		switch {
-		case s.Shared && !s.Collapsed:
+		case slices.Contains(s.Checks, pack.CheckSlices), s.Shared && !s.Collapsed:
 			out = append(out, gateAction{Reply: store.GateReject + " " + s.ID, Feedback: true, Decision: store.GateReject, Target: s.ID})
 		case firstGated(steps, s):
 			out = append(out, gateAction{Reply: store.GateReject + " " + s.Slice, Feedback: true, Decision: store.GateReject, Target: s.ID})
@@ -254,6 +255,13 @@ func quotedReplies(typed []gateAction) []string {
 // stepWord matches the word a typed sign-off rejection names a slice by.
 var stepWord = regexp.MustCompile(`(?i)^SL[0-9]+$`)
 
+// NamesASlice reports a typed rejection whose step word names a slice.
+func NamesASlice(reply string) bool {
+	word, _ := typedWord(reply)
+
+	return stepWord.MatchString(word)
+}
+
 // typedWord is the word after reject in text, cut at the first `:`, `,`, `;`
 // or `.` a person may type after it, with a space before the feedback or
 // not, and whether it was cut; "" when text is not reject followed by a
@@ -272,9 +280,9 @@ func typedWord(text string) (string, bool) {
 	return fields[1][:i], true
 }
 
-// namesAStep reports a reply that is reject followed by a slice's or a
-// shared stage's name, punctuation after it or not: a typed rejection,
-// never read as a plain one.
+// namesAStep reports a reply that is reject followed by a slice's, the
+// slicing stage's or a shared stage's name, punctuation after it or not: a
+// typed rejection, never read as a plain one.
 func (c *Controller) namesAStep(text string) bool {
 	word, _ := typedWord(text)
 	if word == "" {
@@ -282,7 +290,7 @@ func (c *Controller) namesAStep(text string) bool {
 	}
 
 	return stepWord.MatchString(word) || slices.ContainsFunc(c.opts.Pack.Stages, func(s pack.Stage) bool {
-		return s.Shared && strings.EqualFold(s.ID, word)
+		return (s.Shared || slices.Contains(s.Checks, pack.CheckSlices)) && strings.EqualFold(s.ID, word)
 	})
 }
 
@@ -360,9 +368,9 @@ func (c *Controller) rejectStep(ctx, runCtx context.Context, r *run, sess *sessi
 // atReadyEnd handles a message after the pipeline ended ready, matching it to
 // the sign-off's replies as a stage's gate does. Undecided:
 // approve emits, reject with feedback re-runs the loop's target stage, from
-// its first slice's step. reject SL<n> <feedback> and reject <shared stage>
-// <feedback> run that step and everything after it again; one that names no
-// step of the blueprint is a note with a hint.
+// its first slice's step. reject slicing <feedback>, reject SL<n> <feedback>
+// and reject <shared stage> <feedback> run that step and everything after it
+// again; one that names no step of the blueprint is a note with a hint.
 // Approved with emission unfinished: approve resumes it, and other text is
 // a note with that hint, or without one when the record cannot be read.
 // Anything else is a note. The caller holds the run slot.
@@ -384,10 +392,10 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 	typed := typedRejects(steps)
 
 	// Below two slices, as sliced reads them, the typed replies still match,
-	// but no text names them: nothing slice-related shows.
+	// but only those naming no slice are listed: nothing slice-related shows.
 	listed := typed
 	if len(shownPieces(steps, pieces)) < 2 {
-		listed = nil
+		listed = slices.DeleteFunc(slices.Clone(typed), func(a gateAction) bool { return NamesASlice(a.Reply) })
 	}
 
 	action, feedback, matched := matchAction(text, append(signoffActions(false), typed...))

@@ -405,9 +405,10 @@ func (c *Controller) resumeGate(ctx context.Context, r *run, sess *session, bp s
 // rejection and runs the stage again, and any other text is a note with a
 // hint. Approving a gate approves every stage folded into it; reject <stage>
 // <feedback> rejects a folded stage, which runs again with everything after
-// it. At a slice's design gate, reject <shared stage> <feedback> rejects the
-// shared decisions, which run again with every slice, and the versions they
-// replace are recorded superseded. The caller holds the run slot.
+// it. At a slice's design gate, reject slicing <feedback> and reject <shared
+// stage> <feedback> reject that earlier step, which runs again with every
+// slice, and the versions they replace are recorded superseded. The caller
+// holds the run slot.
 func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, out outcome, text, msgID string) error {
 	actions, folded, err := c.gateActions(ctx, bp.ID, out.stage)
 	if err != nil {
@@ -441,9 +442,11 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 
 	if action.Decision == store.GateReject {
 		// The rejection lands on the step that runs again: the gate's own, a
-		// stage folded into it, or a shared stage. A shared stage's own gate
-		// rejects it as any gate rejects its own stage.
-		version, shared := out.art.Version, false
+		// stage folded into it, or an earlier step the gate offers to reject
+		// (slicing, a shared stage). A shared stage's own gate rejects it as
+		// any gate rejects its own stage.
+		version, earlier := out.art.Version, false
+		folds := slices.ContainsFunc(folded, func(f store.Artifact) bool { return f.Stage == action.Target })
 
 		for _, f := range folded {
 			if f.Stage == action.Target {
@@ -451,7 +454,7 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 			}
 		}
 
-		if st, ok := c.stepAt(action.Target); ok && st.Shared && action.Target != out.stage {
+		if action.Target != out.stage && !folds {
 			art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, action.Target)
 			if err != nil {
 				c.release(bp.ID, r)
@@ -459,7 +462,7 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 				return fmt.Errorf("blueprint: gate: read %s: %w", c.stepName(ctx, bp.ID, action.Target), err)
 			}
 
-			version, shared = art.Version, true
+			version, earlier = art.Version, true
 		}
 
 		if !c.decide(ctx, sess.audit, bp.ID, action.Target, version, store.GateReject, feedback, store.ResponderHuman, msgID) {
@@ -473,7 +476,7 @@ func (c *Controller) atGate(ctx, runCtx context.Context, r *run, sess *session, 
 		recorded := true
 
 		switch {
-		case shared:
+		case earlier:
 			recorded = c.supersedeAfter(ctx, sess.audit, bp.ID, action.Target, msgID)
 		case action.Target != out.stage:
 			recorded = c.decide(ctx, sess.audit, bp.ID, out.stage, out.art.Version, store.GateSuperseded, action.Target, store.ResponderHuman, msgID)
