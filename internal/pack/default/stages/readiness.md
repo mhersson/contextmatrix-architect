@@ -42,10 +42,10 @@ mockup without naming it in `mockup`.
 Then judge the blueprint as a whole, each artifact against the others:
 decisions, contracts, cards and assumptions that disagree; two assumptions
 that say one thing in different words; an outcome (O<n>) that no criterion
-or manual check proves; a contract that one side's cards keep and the
-other's do not. A card that does not deliver what its own criterion
-promises is that card's problem, in its `cards` entry; `cross` holds the
-problems between artifacts.
+or manual check proves; a contract, inside one project or between projects,
+that one side's cards keep and the other's do not. A card that does not
+deliver what its own criterion promises is that card's problem, in its
+`cards` entry; `cross` holds the problems between artifacts.
 Report each in `cross`, `{"id": "X1", "severity": "critical", "major" or
 "minor", "text": "<one sentence a person can act on>", "refs": ["<the ids
 it names, such as DEC2, AC4, D3, A5, O1, SL2>"]}`: critical when building
