@@ -1566,6 +1566,13 @@ frames on the session's chat stream.
   service's PATH. `state_dir` defaults to the XDG state directory, which
   `svc.sh` whitelists and creates. `serve` logs a
   warning at startup when rg is missing and starts anyway.
+- **Build.** `make build` and `make install` stamp the version, commit and
+  build time into `internal/buildinfo` with ldflags, and record the
+  first-parent merge history in `internal/buildinfo/history/merges.log`, which
+  the binary embeds. `/health` reports them as `build`, with the last 20
+  merged pull requests as the change list, through backendkit's shared
+  handler. A bare `go build` of a fresh clone reports no commit and an empty
+  list. ContextMatrix reads it for its About popup.
 - **Client.** The panel, through CM. Local use is
   `contextmatrix-architect serve` on the laptop pointed at a CM instance.
   There is no CM-less mode.
