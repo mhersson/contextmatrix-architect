@@ -4,13 +4,10 @@ WORKDIR /src
 # An empty state dir owned by the nonroot user, so a fresh volume mounted over
 # it inherits that ownership.
 RUN mkdir -p /state
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -o /contextmatrix-architect ./cmd/contextmatrix-architect
 # The harness grep and glob tools exec ripgrep; the static musl build runs on
 # distroless. Pinned by version and digest per architecture (14.1.1 ships no
-# aarch64 musl build, so the pin is 15.x).
+# aarch64 musl build, so the pin is 15.x). It sits above the sources, so a
+# rebuild, which always changes the stamped build layer, still reuses it.
 ARG TARGETARCH
 ARG RIPGREP_VERSION=15.2.0
 RUN set -eu; \
@@ -23,6 +20,17 @@ RUN set -eu; \
     echo "${sum}  /tmp/rg.tgz" | sha256sum -c -; \
     tar -xzf /tmp/rg.tgz -C /tmp; \
     install -m 0755 "/tmp/ripgrep-${RIPGREP_VERSION}-${arch}-unknown-linux-musl/rg" /usr/local/bin/rg
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+# make docker and CI's image job set these; they are empty in a plain docker
+# build.
+ARG VERSION=""
+ARG GIT_COMMIT=""
+ARG BUILD_TIME=""
+RUN CGO_ENABLED=0 go build -trimpath \
+      -ldflags="-X github.com/mhersson/contextmatrix-architect/internal/buildinfo.version=${VERSION} -X github.com/mhersson/contextmatrix-architect/internal/buildinfo.commit=${GIT_COMMIT} -X github.com/mhersson/contextmatrix-architect/internal/buildinfo.buildTime=${BUILD_TIME}" \
+      -o /contextmatrix-architect ./cmd/contextmatrix-architect
 
 FROM gcr.io/distroless/static-debian12:nonroot
 # The default state_dir is $XDG_STATE_HOME/contextmatrix-architect; this keeps

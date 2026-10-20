@@ -1572,7 +1572,9 @@ frames on the session's chat stream.
   the binary embeds. `/health` reports them as `build`, with the last 20
   merged pull requests as the change list, through backendkit's shared
   handler. A bare `go build` of a fresh clone reports no commit and an empty
-  list. ContextMatrix reads it for its About popup.
+  list. `make docker` passes the same values as build args, and CI's image job
+  writes the history and the args from a full-history checkout. ContextMatrix
+  reads it for its About popup.
 - **Client.** The panel, through CM. Local use is
   `contextmatrix-architect serve` on the laptop pointed at a CM instance.
   There is no CM-less mode.

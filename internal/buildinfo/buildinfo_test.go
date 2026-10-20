@@ -65,7 +65,7 @@ func TestInfo_CapsAtLimit(t *testing.T) {
 func TestHistoryCommands_MatchGitLogArgs(t *testing.T) {
 	root := os.DirFS("../..")
 
-	for _, file := range []string{"Makefile"} {
+	for _, file := range []string{"Makefile", ".github/workflows/ci.yaml"} {
 		t.Run(file, func(t *testing.T) {
 			assert.Equal(t, changelog.GitLogArgs, historyCommand(t, root, file))
 		})

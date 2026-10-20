@@ -28,5 +28,5 @@ fmt:
 	gofumpt -w .
 lint:
 	golangci-lint run
-docker:
-	docker build -t contextmatrix-architect:dev .
+docker: history
+	docker build --build-arg VERSION="$(VERSION)" --build-arg GIT_COMMIT="$(GIT_COMMIT)" --build-arg BUILD_TIME="$(BUILD_TIME)" -t contextmatrix-architect:dev .

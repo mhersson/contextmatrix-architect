@@ -8,3 +8,6 @@ docs/superpowers/
 **/*.db
 **/*.db-wal
 **/*.db-shm
+# A developer's local workspace points outside the context.
+go.work
+go.work.sum

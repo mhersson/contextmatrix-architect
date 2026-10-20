@@ -159,6 +159,11 @@ docker run --rm -p 9095:9095 \
   contextmatrix-architect:dev
 ```
 
+`make docker` passes the commit, build time and tag as build args and records
+the merge history first, and CI's image job does the same from a full-history
+checkout. A plain `docker build .` reports no commit or build time on
+`/health`.
+
 The image sets `XDG_STATE_HOME=/var/lib`, so the default `state_dir` is the
 volume. The state volume must be writable by uid 65532 (the distroless
 `nonroot` user). A fresh named volume inherits that ownership from the image; a
