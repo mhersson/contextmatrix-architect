@@ -2274,6 +2274,36 @@ func consequenceDesign(question, technical, consequence, tag string) func(contex
 	}
 }
 
+// answerFirstOpenRound decides the round the view shows open: option 1 for
+// every question and accept for every entry. It then waits.
+func answerFirstOpenRound(t *testing.T, c *Controller, id string) {
+	t.Helper()
+
+	view, err := c.View(context.Background(), id)
+	require.NoError(t, err)
+	require.NotNil(t, view.Open)
+
+	var n int
+
+	_, err = fmt.Sscanf(view.Open.PromptID, "round:%d", &n)
+	require.NoError(t, err)
+
+	round := latestRound(t, c, id, n)
+
+	var answers []protocol.RoundAnswer
+	for _, q := range round.Frame.Questions {
+		answers = append(answers, pick(q.Number, 1))
+	}
+
+	var decisions []protocol.AssumptionDecision
+	for _, a := range round.Frame.Assumptions {
+		decisions = append(decisions, accept(a.ID))
+	}
+
+	decide(t, c, id, n, answers, decisions...)
+	c.Wait(id)
+}
+
 func TestPlain_TheReviewerGetsTheAnswersConsequences(t *testing.T) {
 	const (
 		question    = "Should every member see the others' phone numbers?"
@@ -2321,4 +2351,329 @@ func TestPlain_TheReviewerGetsTheAnswersConsequences(t *testing.T) {
 	require.NotEmpty(t, reviews)
 	assert.Contains(t, reviews[0].Task, answered, "an answer's consequence reaches the reviewer only through the plain section")
 	assert.Contains(t, reviews[0].Task, unrestated, "so does a consequence the person was shown that the design does not state")
+}
+
+func TestPlain_TheSignoffCarriesAPlainSummary(t *testing.T) {
+	script := dialogScript()
+	script["intake"] = returns("# Need", map[string]any{"outcomes": []any{
+		map[string]any{"id": "O1", "text": "Plan a week of dinners in under five minutes."},
+		map[string]any{"id": "O2", "text": "Get one shopping list for the whole week."},
+	}})
+	script["slicing"] = returns("# Slices", map[string]any{"slices": []any{
+		map[string]any{"id": "SL1", "title": "The weekly planner", "value": "pick seven dinners from saved recipes", "projects": []any{"alpha"}},
+	}})
+	script["solution_design"] = consequenceDesign("Should two people in one household share their recipes?", "Recipes are saved per household.", "Everyone in a household sees the same recipes.", "round1.A1")
+
+	c, _, _, rec, _ := newDialog(t, script)
+	driveIn(t, c, plainStart("BP1"))
+	answerFirstOpenRound(t, c, "BP1")
+
+	so, ok := rec.first(EventSignOff)
+	require.True(t, ok)
+
+	sum, ok := so.Payload["plain_summary"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []any{"The weekly planner: pick seven dinners from saved recipes"}, anyList(sum["build"]))
+	assert.Equal(t, []any{"Plan a week of dinners in under five minutes.", "Get one shopping list for the whole week."}, anyList(sum["can_do"]))
+	require.NotEmpty(t, anyList(sum["accepted"]))
+
+	ids := map[any]bool{}
+
+	for _, a := range anyList(so.Payload["assumptions"]) {
+		if entry := a.(map[string]any); entry["consequence_accepted"] != nil {
+			ids[entry["id"]] = true
+		}
+	}
+
+	for _, a := range anyList(sum["accepted"]) {
+		assert.True(t, ids[a.(map[string]any)["id"]], "every accepted entry links to an assumption entry")
+	}
+}
+
+func TestPlain_AChangedDecisionIsFlagged(t *testing.T) {
+	const (
+		shown = "Everyone in a household sees the same recipes."
+		first = "Recipes are saved per household."
+	)
+
+	for name, tc := range map[string]struct {
+		restated    string
+		wantChanged bool
+	}{
+		"restated":  {"Recipes are saved per person.", true},
+		"unchanged": {"recipes are saved per household", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			script := dialogScript()
+			script["solution_design"] = consequenceDesign("Should two people in one household share their recipes?", first, shown, "round1.A1")
+
+			c, st, _, _, _ := newDialog(t, script)
+			driveIn(t, c, plainStart("BP1"))
+			answerFirstOpenRound(t, c, "BP1")
+
+			putData(t, st, "solution_design", map[string]any{"assumptions": []any{
+				map[string]any{"text": tc.restated, "basis": "round1.A1", "consequence": shown},
+			}})
+
+			ctx := context.Background()
+			bp, err := st.GetBlueprint(ctx, "BP1")
+			require.NoError(t, err)
+
+			list, err := c.assumptions(ctx, "BP1")
+			require.NoError(t, err)
+
+			sum := c.plainSummary(ctx, bp, list, "Title")
+			accepted := anyList(sum["accepted"])
+			require.Len(t, accepted, 1)
+
+			entry := accepted[0].(map[string]any)
+			assert.Equal(t, shown, entry["text"])
+
+			if tc.wantChanged {
+				assert.Equal(t, true, entry["changed"])
+			} else {
+				assert.NotContains(t, entry, "changed")
+			}
+		})
+	}
+}
+
+func TestPlain_AnAcceptedConsequenceIsFlaggedWhenALaterVersionRevisesIt(t *testing.T) {
+	for name, tc := range map[string]struct {
+		viaAnswer   bool
+		restated    string
+		revised     bool
+		later       string
+		wantChanged bool
+	}{
+		"its first statement words it otherwise":               {restated: recipesPrivate},
+		"an answer's, first stated otherwise":                  {viaAnswer: true, restated: recipesPrivate},
+		"a later version revises the consequence":              {restated: recipesShared, revised: true, later: recipesPrivate, wantChanged: true},
+		"a later version revises the consequence on an answer": {viaAnswer: true, restated: recipesShared, revised: true, later: recipesPrivate, wantChanged: true},
+		"a later version restates it unchanged":                {restated: recipesShared, revised: true, later: "everyone in a household sees the same recipes"},
+		"a later version drops the consequence":                {restated: recipesShared, revised: true},
+		"a later version adds a consequence":                   {revised: true, later: recipesPrivate},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := acceptedThenRestated(t, tc.viaAnswer, tc.restated)
+			ctx := context.Background()
+
+			if tc.revised {
+				list, err := c.assumptions(ctx, "BP1")
+				require.NoError(t, err)
+
+				first := byID(list)["A1"]
+				putData(t, c.opts.Store, "intake", map[string]any{"assumptions": []any{
+					map[string]any{"text": first.Text, "basis": first.Basis, "consequence": tc.later},
+				}})
+			}
+
+			bp, err := c.opts.Store.GetBlueprint(ctx, "BP1")
+			require.NoError(t, err)
+
+			list, err := c.assumptions(ctx, "BP1")
+			require.NoError(t, err)
+
+			accepted := anyList(c.plainSummary(ctx, bp, list, "Title")["accepted"])
+			require.Len(t, accepted, 1)
+
+			entry := accepted[0].(map[string]any)
+			assert.Equal(t, recipesShared, entry["text"], "the sentence the person accepted")
+
+			if tc.wantChanged {
+				assert.Equal(t, true, entry["changed"])
+			} else {
+				assert.NotContains(t, entry, "changed")
+			}
+		})
+	}
+}
+
+func TestPlain_TheSummaryFollowsTheRecordsRules(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a superseded answer is changed and the order is the list's", func(t *testing.T) {
+		c, _, _, _, _ := newDialog(t, dialogScript())
+
+		sum := c.plainSummary(ctx, store.Blueprint{ID: "BP9"}, []assumption{
+			{ID: "A2", Consequence: "Second.", ConsequenceAccepted: 1},
+			{ID: "A1", Consequence: "First.", ConsequenceAccepted: 1, SupersededBy: "Q4"},
+			{ID: "A3", Consequence: "Not accepted."},
+		}, "Title")
+
+		accepted := anyList(sum["accepted"])
+		require.Len(t, accepted, 2)
+		assert.Equal(t, "A2", accepted[0].(map[string]any)["id"])
+		assert.NotContains(t, accepted[0], "changed")
+		assert.Equal(t, "A1", accepted[1].(map[string]any)["id"])
+		assert.Equal(t, true, accepted[1].(map[string]any)["changed"])
+	})
+
+	t.Run("an accepted sentence is listed once, changed when any entry carrying it is", func(t *testing.T) {
+		c, _, _, _, _ := newDialog(t, dialogScript())
+
+		sum := c.plainSummary(ctx, store.Blueprint{ID: "BP9"}, []assumption{
+			{ID: "A1", Basis: "Q2", Consequence: "Everyone at home edits one list.", ConsequenceAccepted: 3},
+			{ID: "A2", Basis: "Q2", Consequence: "everyone at home edits one list", ConsequenceAccepted: 3, SupersededBy: "Q5"},
+			{ID: "A3", Basis: "Q4", Consequence: "Adding items needs internet.", ConsequenceAccepted: 3},
+		}, "Title")
+
+		accepted := anyList(sum["accepted"])
+		require.Len(t, accepted, 2)
+		assert.Equal(t, "A1", accepted[0].(map[string]any)["id"])
+		assert.Equal(t, true, accepted[0].(map[string]any)["changed"])
+		assert.Equal(t, "A3", accepted[1].(map[string]any)["id"])
+		assert.NotContains(t, accepted[1], "changed")
+	})
+
+	t.Run("without slicing the build is the title", func(t *testing.T) {
+		c, _, _, _, _ := newDialog(t, dialogScript())
+
+		sum := c.plainSummary(ctx, store.Blueprint{ID: "BP9"}, nil, "Recipe planner")
+		assert.Equal(t, []any{"Recipe planner"}, anyList(sum["build"]))
+		assert.Empty(t, anyList(sum["can_do"]))
+		assert.Empty(t, anyList(sum["accepted"]))
+	})
+
+	t.Run("a slice without a value gives its title and one without a title is skipped", func(t *testing.T) {
+		c, st, _, _, _ := newDialog(t, dialogScript())
+		driveIn(t, c, plainStart("BP1"))
+
+		putData(t, st, "slicing", map[string]any{"slices": []any{
+			map[string]any{"id": "SL1", "title": "Weekly planner", "value": ""},
+			map[string]any{"id": "SL2", "title": "", "value": "orphan value"},
+			map[string]any{"id": "SL3", "title": "Shopping list", "value": "one list for the week"},
+		}})
+
+		bp, err := st.GetBlueprint(ctx, "BP1")
+		require.NoError(t, err)
+
+		sum := c.plainSummary(ctx, bp, nil, "Title")
+		assert.Equal(t, []any{"Weekly planner", "Shopping list: one list for the week"}, anyList(sum["build"]))
+	})
+
+	t.Run("an accepted answer that is not superseded reads unchanged", func(t *testing.T) {
+		c, _, _, _, _ := newDialog(t, dialogScript())
+
+		sum := c.plainSummary(ctx, store.Blueprint{ID: "BP9"}, []assumption{
+			{ID: "Q1", Stage: "intake", Basis: "Q1", Consequence: "Kept.", ConsequenceAccepted: 1},
+		}, "Title")
+
+		accepted := anyList(sum["accepted"])
+		require.Len(t, accepted, 1)
+		assert.NotContains(t, accepted[0], "changed")
+	})
+
+	for name, tc := range map[string]struct {
+		versions    [][]any
+		text        string
+		wantChanged bool
+	}{
+		"the first version stating the basis decides, not the latest": {
+			versions:    [][]any{{"Other."}, {statedUnderTag("Recipes are saved per household.")}, {statedUnderTag("Recipes are saved per person.")}},
+			text:        "Recipes are saved per person.",
+			wantChanged: true,
+		},
+		"a basis first stated in a later version, equal to the text, is unchanged": {
+			versions: [][]any{{"Other."}, {statedUnderTag("Recipes are saved per household.")}},
+			text:     "Recipes are saved per household.",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, st, _, _, _ := newDialog(t, dialogScript())
+			driveIn(t, c, plainStart("BP1"))
+
+			for _, v := range tc.versions {
+				putData(t, st, "solution_design", map[string]any{"assumptions": v})
+			}
+
+			bp, err := st.GetBlueprint(ctx, "BP1")
+			require.NoError(t, err)
+
+			sum := c.plainSummary(ctx, bp, []assumption{
+				{ID: "A1", Stage: "solution_design", Text: tc.text, Basis: "round1.A1", Consequence: "Shared.", ConsequenceAccepted: 1},
+			}, "Title")
+
+			accepted := anyList(sum["accepted"])
+			require.Len(t, accepted, 1)
+
+			if tc.wantChanged {
+				assert.Equal(t, true, accepted[0].(map[string]any)["changed"])
+			} else {
+				assert.NotContains(t, accepted[0], "changed")
+			}
+		})
+	}
+}
+
+func statedUnderTag(text string) map[string]any {
+	return map[string]any{"text": text, "basis": "round1.A1"}
+}
+
+func TestPlain_AnAutoModeHasConsequencesButNothingAccepted(t *testing.T) {
+	script := dialogScript()
+	script["intake"] = splitIntake(make(chan string, 1))
+	script["intake.responder"] = respondsWithConsequence("On a shared server", listConsequence)
+
+	c, _, _, rec, _ := newDialog(t, script)
+	in := plainStart("BP1")
+	in.Mode = "auto"
+	driveIn(t, c, in)
+
+	for _, r := range mustRounds(t, c, "BP1") {
+		assert.False(t, r.Plain, "no round is put to a person")
+	}
+
+	assert.False(t, rec.has(EventGate))
+
+	so, ok := rec.first(EventSignOff)
+	if !ok {
+		so, ok = rec.first(EventSignOffAuto)
+	}
+
+	require.True(t, ok)
+
+	var consequences int
+
+	for _, a := range anyList(so.Payload["assumptions"]) {
+		entry := a.(map[string]any)
+
+		assert.NotContains(t, entry, "consequence_accepted")
+
+		if entry["consequence"] != nil {
+			consequences++
+		}
+	}
+
+	assert.Positive(t, consequences)
+
+	sum, ok := so.Payload["plain_summary"].(map[string]any)
+	require.True(t, ok)
+	assert.Empty(t, anyList(sum["accepted"]))
+}
+
+func TestPlain_OffTheSignoffHasNoSummary(t *testing.T) {
+	script := dialogScript()
+	script["intake"] = splitIntake(make(chan string, 1))
+	script["intake.responder"] = respondsWithConsequence("On a shared server", listConsequence)
+
+	c, _, _, rec, _ := newDialog(t, script)
+	driveIn(t, c, autoStart("BP1"))
+
+	so, ok := rec.first(EventSignOff)
+	if !ok {
+		so, ok = rec.first(EventSignOffAuto)
+	}
+
+	require.True(t, ok, "%v", rec.kinds())
+	assert.NotContains(t, so.Payload, "plain_summary")
+}
+
+func mustRounds(t *testing.T, c *Controller, id string) []roundState {
+	t.Helper()
+
+	rounds, err := c.rounds(context.Background(), id)
+	require.NoError(t, err)
+
+	return rounds
 }

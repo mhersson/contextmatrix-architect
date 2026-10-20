@@ -990,6 +990,22 @@ disguise?) and each consequence the artifact states or the attempt's rounds
 showed against its technical text (does it state the effect truly?); their
 findings count as any others. No extra model run guards the wording.
 
+The sign-off's data adds a plain summary, `plain_summary`, built from the
+record without a model run: `build`, a line per slice (its title and value);
+`can_do`, the need's outcomes; `accepted`, every consequence a person
+accepted, once, in the words they were shown, by the id of the first
+assumption that carries it, with `changed` when its answer was superseded or
+when its stage's versions state a decision resting on it differently since
+the first version that stated it. The decision is the stated assumption with
+that basis, and, on an answer's `Q<n>`, which several can share in one
+version, with that sentence too; the answer's own `Q<n>` entry is changed
+only when superseded. The latest consequence the versions give is compared
+with the first they gave, so a version that gives none changes nothing, and
+for an assumption accepted on a plain round's tab the latest sentence is
+compared with the first. A first statement that words the consequence
+otherwise than the person was shown is no change. Approve, reject and the
+rest of the sign-off work as without it.
+
 ## Tools
 
 | Group    | Tools                                                                                                   | Notes                                                                                                                                             |
@@ -1013,8 +1029,9 @@ blueprint ends in one playbook across every project. Default and `auto`
 modes show the sign-off (the entries in playbook order with the card that
 also writes `AGENTS.md` marked, the playbook title, the assumptions, the
 preflight result and, at the top, readiness's findings across the blueprint,
-critical first) and wait: `approve` emits (over a critical finding it takes
-a reason, `approve <reason>`, which the button asks for: recorded as the
+critical first and, on a plain-language blueprint, the plain summary) and
+wait: `approve` emits (over a critical finding it takes a reason, `approve
+<reason>`, which the button asks for: recorded as the
 approval's feedback and the decided event's `override_reason`, served in the
 sign-off's data and kept by the export; a bare `approve` is then a note
 asking for it), and `reject <feedback>` stores the feedback and re-runs

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -622,4 +623,176 @@ func (c *Controller) writePlainWording(ctx context.Context, b *strings.Builder, 
 	}
 
 	return nil
+}
+
+// plainTagForm is the form of an acceptance's tag, which is a basis a plain
+// round's acceptance gave a stated assumption.
+var plainTagForm = regexp.MustCompile(`^round\d+\.A\d+$`)
+
+// plainSummary is the sign-off's summary for a person: what will be built,
+// a line per slice; what they can do, the need's outcomes; and each
+// consequence they accepted, once, by the id of the first of the sign-off's
+// assumption entries that carry it. It is built from the record without a
+// model run, so it cannot drift from it. list is the sign-off's assumptions
+// in its order, empty when the sign-off falls back to prose.
+func (c *Controller) plainSummary(ctx context.Context, bp store.Blueprint, list []assumption, title string) map[string]any {
+	build := c.sliceLines(ctx, bp.ID)
+	if len(build) == 0 {
+		build = []any{title}
+	}
+
+	canDo := []any{}
+
+	if len(c.opts.Pack.Stages) > 0 {
+		art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, c.opts.Pack.Stages[0].ID)
+
+		switch {
+		case err != nil && !errors.Is(err, store.ErrNotFound):
+			c.opts.Logger.Warn("blueprint: plain summary outcomes", "blueprint", bp.ID, "error", err.Error())
+		case err == nil:
+			for _, o := range outcomesOf(art) {
+				canDo = append(canDo, o.Text)
+			}
+		}
+	}
+
+	accepted := []any{}
+
+	// A read error reads every entry as unchanged.
+	var versions []store.Artifact
+
+	if slices.ContainsFunc(list, func(a assumption) bool { return a.ConsequenceAccepted > 0 }) {
+		var err error
+		if versions, err = c.opts.Store.ListArtifacts(ctx, bp.ID); err != nil {
+			c.opts.Logger.Warn("blueprint: plain summary changes", "blueprint", bp.ID, "error", err.Error())
+		}
+	}
+
+	// Decisions resting on one acceptance carry its sentence alike: the
+	// person reads it once, at the first, changed when any of them changed.
+	listed := map[string]map[string]any{}
+
+	for _, a := range list {
+		if a.ConsequenceAccepted == 0 {
+			continue
+		}
+
+		entry, seen := listed[normalText(a.Consequence)]
+		if !seen {
+			entry = map[string]any{"id": a.ID, "text": a.Consequence}
+			listed[normalText(a.Consequence)] = entry
+			accepted = append(accepted, entry)
+		}
+
+		if changedSince(a, versions) {
+			entry["changed"] = true
+		}
+	}
+
+	return map[string]any{"build": build, "can_do": canDo, "accepted": accepted}
+}
+
+// sliceLines is a line per slice of the slicing stage's latest artifact: its
+// title, and its value after a colon when it has one. A read error is logged
+// and reads as no slices.
+func (c *Controller) sliceLines(ctx context.Context, id string) []any {
+	key := c.opts.Pack.SlicingStage()
+	if key == "" {
+		return nil
+	}
+
+	art, err := c.opts.Store.LatestArtifact(ctx, id, key)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			c.opts.Logger.Warn("blueprint: plain summary slices", "blueprint", id, "error", err.Error())
+		}
+
+		return nil
+	}
+
+	var data struct {
+		Slices []struct {
+			Title string `json:"title"`
+			Value string `json:"value"`
+		} `json:"slices"`
+	}
+
+	if len(art.Data) == 0 || json.Unmarshal(art.Data, &data) != nil {
+		return nil
+	}
+
+	var out []any
+
+	for _, s := range data.Slices {
+		title, value := strings.TrimSpace(s.Title), strings.TrimSpace(s.Value)
+
+		switch {
+		case title == "":
+			continue
+		case value != "":
+			out = append(out, title+": "+value)
+		default:
+			out = append(out, title)
+		}
+	}
+
+	return out
+}
+
+// changedSince reports whether a decision a person accepted the consequence
+// of has changed since: its answer was superseded, or its stage's versions
+// (in versions, in storage order) state it differently since the first that
+// stated it: the latest consequence they give against the first, or, under a
+// plain-round basis, the latest sentence against the first. A first
+// statement that words the consequence otherwise than the person was shown
+// is no change: comparing versions of the stage's own words keeps a
+// paraphrase from reading as one. A consequence is optional beside a basis,
+// so a version that gives none, or gives one at last, revises nothing.
+func changedSince(a assumption, versions []store.Artifact) bool {
+	if a.SupersededBy != "" {
+		return true
+	}
+
+	// A plain round's tag is the basis of one decision per version, so it
+	// names the decision across versions. Several can rest on one answer's
+	// Q<n>, so there the decision is also its sentence, which a version states
+	// once.
+	tagged := plainTagForm.MatchString(a.Basis)
+	same := func(s stated) bool {
+		return s.Basis == a.Basis && (tagged || normalText(s.Text) == normalText(a.Text))
+	}
+
+	var (
+		first                   stated
+		found                   bool
+		firstGiven, latestGiven string
+	)
+
+	for _, art := range versions {
+		if art.Stage != a.Stage {
+			continue
+		}
+
+		for _, s := range statedAssumptions(art) {
+			if !same(s) {
+				continue
+			}
+
+			if !found {
+				first, found = s, true
+			}
+
+			if s.Consequence != "" {
+				if firstGiven == "" {
+					firstGiven = s.Consequence
+				}
+
+				latestGiven = s.Consequence
+			}
+
+			break
+		}
+	}
+
+	return found && (normalText(first.Text) != normalText(a.Text) || normalText(firstGiven) != normalText(latestGiven))
 }
