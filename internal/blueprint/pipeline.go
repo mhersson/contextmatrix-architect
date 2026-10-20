@@ -237,7 +237,8 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 	var collapse *folding
 
 	for from < len(steps) && steps[from].Collapsed {
-		if collapse == nil {
+		// Only a shared step records its collapse as a fold.
+		if collapse == nil && steps[from].Shared {
 			collapse = &folding{stage: steps[from].ID, into: foldTarget(steps, steps[from].ID)}
 		}
 
@@ -1034,8 +1035,13 @@ func (c *Controller) writeInputs(ctx context.Context, b *strings.Builder, bp sto
 
 // writeInput gives st the latest artifact of in, a step it consumes: whole,
 // or as a digest (digested) when its shape has one; a collapsed shared
-// stage is named, since it has none.
+// stage is named, since it has none. A collapsed mockup is not: a need
+// without a screen says nothing of one.
 func (c *Controller) writeInput(ctx context.Context, b *strings.Builder, id string, st, in pipelineStep, sliced bool, what string) error {
+	if in.Collapsed && in.Stage.ID == c.opts.Pack.MockupStage() {
+		return nil
+	}
+
 	if in.Collapsed {
 		fmt.Fprintf(b, "## %s\n\nNot run for this blueprint: the design settles what every slice shares.\n\n", in.ID)
 

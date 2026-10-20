@@ -441,6 +441,11 @@ func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.B
 	stages := make([]any, 0, len(c.opts.Pack.Stages))
 
 	for _, st := range c.opts.Pack.Stages {
+		// A need without a screen never shows the mockup step.
+		if i := stepIndex(steps, st.ID); i >= 0 && steps[i].Collapsed && st.ID == c.opts.Pack.MockupStage() {
+			continue
+		}
+
 		policy, err := c.resolvePolicy(cur.Mode, cur.PlainLanguage, events, st.ID, false)
 		if err != nil {
 			c.opts.Logger.Warn("blueprint: gate plan not posted", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))

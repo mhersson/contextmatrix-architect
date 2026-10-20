@@ -31,7 +31,7 @@ func TestBlueprintSteps_ASharedStageCollapsesBelowTwoSlices(t *testing.T) {
 			art = &store.Artifact{Stage: "slicing", Version: 1, Data: raw}
 		}
 
-		steps, _ := blueprintSteps(pk, runs, art)
+		steps, _ := blueprintSteps(pk, runs, art, false)
 
 		return steps
 	}

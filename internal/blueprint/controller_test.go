@@ -66,10 +66,10 @@ func (f *fakeRunner) input(i int) stage.Input {
 }
 
 type recorder struct {
-	mu      sync.Mutex
-	events  []Event
-	lines   [][]byte
-	changed chan struct{}
+	mu       sync.Mutex
+	recorded []Event
+	lines    [][]byte
+	changed  chan struct{}
 }
 
 func newRecorder() *recorder {
@@ -80,7 +80,7 @@ func (r *recorder) sink(e Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.events = append(r.events, e)
+	r.recorded = append(r.recorded, e)
 	close(r.changed)
 	r.changed = make(chan struct{})
 }
@@ -109,8 +109,8 @@ func (r *recorder) kinds() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	out := make([]string, 0, len(r.events))
-	for _, e := range r.events {
+	out := make([]string, 0, len(r.recorded))
+	for _, e := range r.recorded {
 		out = append(out, e.Kind)
 	}
 
@@ -137,13 +137,21 @@ func (r *recorder) first(kind string) (Event, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	for _, e := range r.events {
+	for _, e := range r.recorded {
 		if e.Kind == kind {
 			return e, true
 		}
 	}
 
 	return Event{}, false
+}
+
+// events returns a copy of every recorded event, oldest first.
+func (r *recorder) events() []Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return slices.Clone(r.recorded)
 }
 
 // all returns every recorded event of kind, oldest first.
@@ -153,7 +161,7 @@ func (r *recorder) all(kind string) []Event {
 
 	var out []Event
 
-	for _, e := range r.events {
+	for _, e := range r.recorded {
 		if e.Kind == kind {
 			out = append(out, e)
 		}
@@ -180,7 +188,7 @@ func (r *recorder) waitForCount(t *testing.T, kind string, n int) {
 		changed := r.changed
 		count := 0
 
-		for _, e := range r.events {
+		for _, e := range r.recorded {
 			if e.Kind == kind {
 				count++
 			}
@@ -1746,7 +1754,7 @@ func TestSecrets_AreMaskedInTheRecordAndTheSink(t *testing.T) {
 			var sinkText []string
 
 			rec.mu.Lock()
-			for _, e := range rec.events {
+			for _, e := range rec.recorded {
 				b, err := json.Marshal(e.Payload)
 				require.NoError(t, err)
 

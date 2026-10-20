@@ -621,6 +621,10 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		bounded(c.outcomesValidator(bp, st.ID))
 	}
 
+	if slices.Contains(st.Checks, pack.CheckScreen) {
+		bounded(screenValidator())
+	}
+
 	if slices.Contains(st.Checks, pack.CheckReadiness) {
 		bounded(c.readinessValidator(bp, st.ID))
 	}

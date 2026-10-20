@@ -358,7 +358,7 @@ developer (DEV), tester (TST), reviewer (REV).
 | -  | Outcomes         | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   | -        |
 
 The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign-off is the controller's step after readiness (see Emission).
-Every stage is a model run, except a shared stage that collapses with one slice, which is recorded and not run; a design the user already has goes in the need or an answer, and solution design adopts it.
+Every stage is a model run, except a shared stage that collapses with one slice, which is recorded and not run, and the mockup step of a need without a screen, which never runs or shows; a design the user already has goes in the need or an answer, and solution design adopts it.
 
 - Intake states the shape it expects (slices, projects involved). When its
   run completes, the controller posts the gate plan: who answers each
@@ -367,6 +367,8 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   with one slice, and the `gate <stage> human|auto` reply that
   changes it, so the operator can change a policy before solution design
   spends anything. A mode switch posts it again.
+- In a pack with a mockup step, intake also states whether the need has a
+  screen (`screen`, and `redesign` with one); see Mockups.
 - Every stage that interviews (intake, slicing, shared decisions and solution
   design) reads the code, so it states what the code answers as a finding and
   asks only what neither the code nor the need settles.
@@ -629,6 +631,14 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
   applied at load time, so a lesson never needs a code change.
 - Pack prose is never tested. Tests check only that a pack parses and that
   every stage, persona and list reference resolves.
+
+### Mockups
+
+A pack can state whether the need has a screen and carry a mockup step. The stage that checks `screen` (intake, in a pack that has the step) states `screen: true|false` in its data, and `redesign: true|false` beside `screen: true`: whether the person asks to re-design a screen that exists. The `screen` check refuses a `screen` that is not a boolean (`screen_shape`) and, with `screen: true`, a `redesign` that is not a boolean (`redesign_shape`); bounded like the other checks, never fatal.
+
+The mockup step collapses once the screen stage has stored an artifact that does not hold `screen: true`; until then it is pending. The collapse is decided from that stored artifact, so it holds across restarts, and a record from before mockups has no `screen` key and collapses. A collapsed mockup step is never run, writes no fold row (only a shared step's collapse is recorded as a fold) and shows `skipped`.
+
+The operator's existing-UI rule: where a UI exists, the mockup keeps to its look unless intake says `redesign: true`; a stored intake without the flag reads as no re-design.
 
 ## Card contract
 

@@ -223,7 +223,7 @@ func TestBlueprintSteps(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			steps, pieces := blueprintSteps(pk, tt.runs, tt.slicing)
+			steps, pieces := blueprintSteps(pk, tt.runs, tt.slicing, false)
 
 			assert.Equal(t, tt.want, keysIn(steps, "intake", "slicing", "solution_design", "grounding"))
 			assert.Equal(t, tt.pieces, pieces)
@@ -246,7 +246,7 @@ func keysIn(steps []pipelineStep, stages ...string) []string {
 }
 
 func TestConsumedSteps(t *testing.T) {
-	steps := stepsOf(slicedPack(t), []piece{{id: "SL1"}, {id: "SL2"}, {id: "SL3"}}, false)
+	steps := stepsOf(slicedPack(t), []piece{{id: "SL1"}, {id: "SL2"}, {id: "SL3"}}, false, false)
 
 	keys := func(st pipelineStep) []string {
 		return keysIn(consumedSteps(steps, st), "intake", "slicing", "solution_design", "grounding")
@@ -264,7 +264,7 @@ func TestConsumedSteps(t *testing.T) {
 }
 
 func TestEarlierSteps(t *testing.T) {
-	steps := stepsOf(slicedPack(t), []piece{{id: "SL1"}, {id: "SL2"}, {id: "SL3"}}, false)
+	steps := stepsOf(slicedPack(t), []piece{{id: "SL1"}, {id: "SL2"}, {id: "SL3"}}, false, false)
 	at := func(key string) pipelineStep { return steps[stepIndex(steps, key)] }
 
 	tests := []struct {
@@ -580,7 +580,7 @@ func TestSlices_TheSetupIsReportedOnceAfterTheFirstSliceOfTheCheckoutStage(t *te
 	require.Equal(t, 1, rec.count(EventSetupGaps), "the first slice's step reports, and no later one")
 
 	rec.mu.Lock()
-	events := slices.Clone(rec.events)
+	events := slices.Clone(rec.recorded)
 	rec.mu.Unlock()
 
 	at := func(kind, stage string) int {

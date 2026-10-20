@@ -334,7 +334,7 @@ func eventsOf(t *testing.T, st *store.Store, rec *recorder, id, kind string) []s
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
 
-	for _, e := range rec.events {
+	for _, e := range rec.recorded {
 		if e.Kind == kind {
 			b, err := json.Marshal(e.Payload)
 			require.NoError(t, err)
@@ -1305,7 +1305,7 @@ func TestPipeline_RepoURLCredentialsNeverReachTheRecord(t *testing.T) {
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
 
-	for _, e := range rec.events {
+	for _, e := range rec.recorded {
 		b, err := json.Marshal(e.Payload)
 		require.NoError(t, err)
 		assert.NotContains(t, string(b), secret, "published %s event", e.Kind)
@@ -1864,7 +1864,7 @@ func TestPipeline_GroundingReportsTheSetupGaps(t *testing.T) {
 			assert.Equal(t, tt.want, ev.Payload["projects"])
 
 			rec.mu.Lock()
-			events := slices.Clone(rec.events)
+			events := slices.Clone(rec.recorded)
 			rec.mu.Unlock()
 
 			at := func(kind, stage string) int {
@@ -2016,7 +2016,7 @@ func TestPipeline_TheGatePlanFollowsTheFirstStage(t *testing.T) {
 	assert.Equal(t, "human", plan.Payload["signoff"])
 
 	rec.mu.Lock()
-	events := slices.Clone(rec.events)
+	events := slices.Clone(rec.recorded)
 	rec.mu.Unlock()
 
 	at := func(kind, stage string) int {

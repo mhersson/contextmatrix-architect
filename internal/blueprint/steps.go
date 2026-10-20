@@ -21,8 +21,9 @@ type pipelineStep struct {
 	pack.Stage
 	ID    string
 	Slice string
-	// Collapsed marks a shared stage that does not run: fewer than two
-	// slices, or a record from before slices. It is recorded, never run.
+	// Collapsed marks a stage that does not run: a shared stage with fewer
+	// than two slices or on a record from before slices, or the mockup stage
+	// of a need with no screen. It is never run.
 	Collapsed bool
 }
 
@@ -70,8 +71,8 @@ func unsliced(pk *pack.Pack, runs []store.Run) bool {
 // stepsOf is the pipeline the pack gives pieces: its stages in order, the
 // per-slice ones repeated for every piece, all of one slice's steps before
 // the next slice's. Without pieces the per-slice stages are one step each.
-// collapse marks the shared stages collapsed.
-func stepsOf(pk *pack.Pack, pieces []piece, collapse bool) []pipelineStep {
+// collapse marks the shared stages collapsed, noMockup the mockup stage.
+func stepsOf(pk *pack.Pack, pieces []piece, collapse, noMockup bool) []pipelineStep {
 	var (
 		out   []pipelineStep
 		group []pack.Stage
@@ -98,7 +99,7 @@ func stepsOf(pk *pack.Pack, pieces []piece, collapse bool) []pipelineStep {
 
 		flush()
 
-		out = append(out, pipelineStep{Stage: st, ID: st.ID, Collapsed: collapse && st.Shared})
+		out = append(out, pipelineStep{Stage: st, ID: st.ID, Collapsed: collapse && st.Shared || noMockup && st.ID == pk.MockupStage()})
 	}
 
 	flush()
@@ -111,18 +112,18 @@ func stepsOf(pk *pack.Pack, pieces []piece, collapse bool) []pipelineStep {
 // before slicing stores one and on a record from before stages ran per
 // slice. slicing is the newest artifact of the pack's slicing stage, nil
 // when there is none. A shared stage collapses with fewer than two pieces,
-// and on a record from before slices.
-func blueprintSteps(pk *pack.Pack, runs []store.Run, slicing *store.Artifact) ([]pipelineStep, []piece) {
+// and on a record from before slices; noMockup collapses the mockup stage.
+func blueprintSteps(pk *pack.Pack, runs []store.Run, slicing *store.Artifact, noMockup bool) ([]pipelineStep, []piece) {
 	switch {
 	case slicing == nil:
-		return stepsOf(pk, nil, false), nil
+		return stepsOf(pk, nil, false, noMockup), nil
 	case unsliced(pk, runs):
-		return stepsOf(pk, nil, true), nil
+		return stepsOf(pk, nil, true, noMockup), nil
 	}
 
 	pieces := piecesOf(*slicing)
 
-	return stepsOf(pk, pieces, len(pieces) < 2), pieces
+	return stepsOf(pk, pieces, len(pieces) < 2, noMockup), pieces
 }
 
 // steps reads blueprint id's pipeline from the store.
@@ -145,7 +146,20 @@ func (c *Controller) steps(ctx context.Context, id string) ([]pipelineStep, []pi
 		}
 	}
 
-	steps, pieces := blueprintSteps(c.opts.Pack, runs, slicing)
+	var screen *store.Artifact
+
+	if sid := c.opts.Pack.ScreenStage(); sid != "" {
+		art, err := c.opts.Store.LatestArtifact(ctx, id, sid)
+
+		switch {
+		case err == nil:
+			screen = &art
+		case !errors.Is(err, store.ErrNotFound):
+			return nil, nil, fmt.Errorf("blueprint: read %s: %w", pack.StageName(sid, false), err)
+		}
+	}
+
+	steps, pieces := blueprintSteps(c.opts.Pack, runs, slicing, mockupCollapsed(c.opts.Pack, screen))
 
 	return steps, pieces, nil
 }

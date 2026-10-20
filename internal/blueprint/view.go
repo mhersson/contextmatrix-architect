@@ -178,7 +178,13 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 		slicing = &arts[len(arts)-1]
 	}
 
-	rec.steps, rec.pieces = blueprintSteps(c.opts.Pack, rec.runs, slicing)
+	var screen *store.Artifact
+
+	if arts := rec.arts[c.opts.Pack.ScreenStage()]; len(arts) > 0 {
+		screen = &arts[len(arts)-1]
+	}
+
+	rec.steps, rec.pieces = blueprintSteps(c.opts.Pack, rec.runs, slicing, mockupCollapsed(c.opts.Pack, screen))
 
 	gates, err := c.opts.Store.AllGates(ctx, bp.ID)
 	if err != nil {
@@ -630,7 +636,7 @@ func (rec record) stageStatus(st pipelineStep, i, current int) string {
 	case rec.ended() && current >= 0 && i > current:
 		return rec.unreached(st)
 	case st.Collapsed:
-		// Its collapse is a fold row at version 0, which is no fold.
+		// A collapsed shared step has a fold row at version 0, which is no fold; the mockup has none.
 		return stepSkipped
 	case rec.ended() && i == current:
 		return stepStopped

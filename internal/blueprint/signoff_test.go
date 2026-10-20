@@ -1297,7 +1297,7 @@ func TestSignoff_AnAutomaticApprovalRecordsWhatItApproved(t *testing.T) {
 
 	approved, recorded := -1, -1
 
-	for i, e := range rec.events {
+	for i, e := range rec.recorded {
 		switch {
 		case e.Kind == EventDecided && e.Payload["stage"] == signoffStage && approved < 0:
 			approved = i
