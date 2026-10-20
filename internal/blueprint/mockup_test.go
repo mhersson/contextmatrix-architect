@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -710,6 +712,38 @@ func TestMockup_UseRecordsTheChosenSettingsAndGoesOn(t *testing.T) {
 	assert.Equal(t, mockupUsed, settle.Reason)
 	assert.Empty(t, settle.Model)
 	assert.Zero(t, settle.Usage.CostUSD)
+}
+
+func TestExport_TheUsedMockupVersionCarriesTheChosenSettings(t *testing.T) {
+	script := withScreen(dialogScript(), true)
+	script["mockup"] = showing(listRevision())
+
+	c, _, _, rec, _ := newMockup(t, script)
+	c.opts.ExportDir = t.TempDir()
+
+	drive(t, c, "BP1")
+	takeOffer(t, c)
+	useMockup(t, c, map[string]string{"layout": "cards", "group": "on"})
+
+	require.NoError(t, c.Export(context.Background(), "BP1", "m-export"))
+
+	ev, ok := rec.first(EventExported)
+	require.True(t, ok)
+
+	dir, _ := ev.Payload["path"].(string)
+
+	md, err := os.ReadFile(filepath.Join(dir, "artifacts", "mockup-v1.md")) //nolint:gosec // the test's own temp dir
+	require.NoError(t, err)
+
+	_, block, ok := strings.Cut(string(md), "```json\n")
+	require.True(t, ok, "the version's data is in the bundle")
+
+	block, _, _ = strings.Cut(block, "\n```")
+
+	var data mockupData
+	require.NoError(t, json.Unmarshal([]byte(block), &data))
+	assert.Equal(t, map[string]string{"layout": "cards", "group": "on"}, data.Chosen, "the bundle shows what the sheet shows")
+	assert.Equal(t, listRevision().Source, data.Source)
 }
 
 func TestMockup_AChangeRequestMakesANewRevisionThatKeepsWhatStillApplies(t *testing.T) {
