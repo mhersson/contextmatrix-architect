@@ -114,8 +114,13 @@ func (c *Controller) View(ctx context.Context, id string) (protocol.BlueprintVie
 		return protocol.BlueprintView{}, fmt.Errorf("blueprint: view %s: %w", id, err)
 	}
 
+	endReason, endDetail := c.endReason(rec), ""
+	if bp.PlainLanguage && endReason != "" {
+		endReason, endDetail = plainEndReason, endReason
+	}
+
 	return protocol.BlueprintView{
-		ID: bp.ID, Mode: bp.Mode, PlainLanguage: bp.PlainLanguage, State: rec.state(), EndReason: c.endReason(rec),
+		ID: bp.ID, Mode: bp.Mode, PlainLanguage: bp.PlainLanguage, State: rec.state(), EndReason: endReason, EndDetail: endDetail,
 		Seq:      uint64(rec.seq), //nolint:gosec // event ids are positive
 		Pipeline: c.pipeline(rec), Current: rec.current(), Open: rec.open(),
 		Cost: rec.cost(), Artifacts: c.artifactRefs(rec), Slices: rec.sliceList(),
@@ -452,6 +457,10 @@ func (rec record) state() string {
 
 	return rec.bp.State
 }
+
+// plainEndReason is what a person reads of an ended pipeline; the technical
+// reason is folded into the view's end detail.
+const plainEndReason = "The architect could not finish the plan on its own. A technical helper can read why below; start a new blueprint to try again."
 
 // endReason says in one line why an ended pipeline stopped, by the step
 // whose artifact its end carries; "" when it has not ended.

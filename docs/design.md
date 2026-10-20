@@ -1006,6 +1006,17 @@ compared with the first. A first statement that words the consequence
 otherwise than the person was shown is no change. Approve, reject and the
 rest of the sign-off work as without it.
 
+When the architect cannot settle something on its own, the person reads it
+plainly with the technical text folded underneath for a technical helper
+(`detail` on the prompt): every stage gate, the sign-off (which adds a
+sentence when setup needs someone technical) and a stopped emission or run
+start. The same choices are worded plainly
+("Continue anyway", "Try again") and send the same replies. The setup note
+the code checkout posts opens with a plain sentence that someone technical
+needs to set these things up, its technical list unchanged below. An ended
+pipeline's `end_reason` is plain and its technical reason is `end_detail`.
+The wording is fixed per situation, in the server.
+
 ## Tools
 
 | Group    | Tools                                                                                                   | Notes                                                                                                                                             |
@@ -1317,9 +1328,10 @@ frames on the session's chat stream.
   run read done.
   A pipeline that ended before the sign-off (slicing that holds no slices,
   cards the contract stopped, readiness's rounds spent) reads `ended`, with
-  a one-line `end_reason`, whatever state the blueprint's row holds (idle):
-  it is read from the record, so a blueprint that ended before the view
-  said so reads ended too. The step whose artifact the end carries is
+  a one-line `end_reason` (plain on a plain-language blueprint, with the
+  technical reason in `end_detail`), whatever state the blueprint's row
+  holds (idle): it is read from the record, so a blueprint that ended before
+  the view said so reads ended too. The step whose artifact the end carries is
   stopped, its newest version current on the sheet. A step after it reads
   skipped when it collapsed and its collapse is recorded, not_reached when
   it collapsed otherwise, holds no version or holds one a reject
@@ -1516,6 +1528,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Pin protocol v0.31.0; panel: a review card reads "sent back" from ArtifactReview.SentBack, "passed" otherwise when it passed, else "failed", and its explanation states the settle rule; a blueprint session's pane header shows the view's cost.spent_usd; a design sheet with one slice entry drops the slice heading | review settle |
 | Pin protocol v0.32.0; panel: step statuses `stopped` (the failed ink, "Stopped the pipeline") and `not_reached` (its own quiet tone, "Not reached", never clickable); on an `ended` view the current step is the stopped one and the where line reads "Stopped: <end_reason>"; a feedback box labelled by its action's `ask`; Outcomes tables on the need, shared decisions and design sheets; an Outcomes column and an Edge cases table per slice on the acceptance sheet; an "Across the blueprint" table on the readiness and sign-off sheets, and the sign-off's override reason; `A<n>` and `O<n>` basis chips | quality checks |
 | `poc` on the project config, switched only by a human in Project Settings and returned in `list_projects`' project config, omitted when false | POC projects |
+| Pin protocol v0.34.0; the new-session dialog has a plain-language toggle, and CM stores the flag on the session row and sends it as `ArchitectStart.PlainLanguage` on every start; panel: the pane header shows that a blueprint runs in plain language, from `view.plain_language` once a view has loaded; a round entry's `detail`, a prompt's `detail` and the view's `end_detail` fold under their plain text; on a plain-language blueprint a responder round renders folded into its summary card; the sign-off sheet shows `plain_summary` first (what will be built, what you can do with it, the consequences you accepted, a changed one marked "changed since you accepted it"), an entry's `consequence` under its technical text with a "consequence accepted by you, round <n>" marker from `consequence_accepted`, and a superseded answer's row muted with a "superseded by Q<m>" chip from `superseded_by` | plain language |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

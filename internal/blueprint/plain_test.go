@@ -2677,3 +2677,31 @@ func mustRounds(t *testing.T, c *Controller, id string) []roundState {
 
 	return rounds
 }
+
+func TestPlain_AnEndedPipelineFoldsItsTechnicalReason(t *testing.T) {
+	ended := func(t *testing.T, plain bool) protocol.BlueprintView {
+		t.Helper()
+
+		script := happyScript()
+		script["readiness"] = returns("# Not ready", readiness(false))
+
+		c, _, _, _, _ := newPipeline(t, script)
+		in := startInput("BP1")
+		in.PlainLanguage = plain
+		driveIn(t, c, in)
+
+		view, err := c.View(context.Background(), "BP1")
+		require.NoError(t, err)
+		require.Equal(t, viewEnded, view.State)
+
+		return view
+	}
+
+	technical, plain := ended(t, false), ended(t, true)
+
+	require.NotEmpty(t, technical.EndReason)
+	assert.Empty(t, technical.EndDetail, "off plain nothing is folded")
+	assert.Equal(t, technical.EndReason, plain.EndDetail, "the technical reason is folded")
+	assert.NotEmpty(t, plain.EndReason)
+	assert.NotEqual(t, plain.EndDetail, plain.EndReason)
+}
