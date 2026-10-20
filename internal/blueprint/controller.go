@@ -649,6 +649,18 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 		return fmt.Errorf("blueprint: export: %w", err)
 	}
 
+	// The settings a use chose live on the closed round, not the stored
+	// version, so the bundle adds them as the sheet does.
+	for i, a := range bundle.Artifacts {
+		if a.Stage != c.opts.Pack.MockupStage() {
+			continue
+		}
+
+		if bundle.Artifacts[i].Data, err = c.withChosen(ctx, id, a); err != nil {
+			return fmt.Errorf("blueprint: export: %w", err)
+		}
+	}
+
 	if bundle.Events, err = c.opts.Store.ListEvents(ctx, id); err != nil {
 		return fmt.Errorf("blueprint: export: %w", err)
 	}
