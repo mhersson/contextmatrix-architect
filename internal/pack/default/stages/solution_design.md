@@ -1,6 +1,6 @@
 # Solution design
 
-Input: the need, slicing's slices in their order, the shared decisions every
+Input: the need, the mockup when the person approved one, slicing's slices in their order, the shared decisions every
 slice holds to, every earlier slice's design, acceptance and cards as digests (ids,
 contracts and one line each; `read_artifact` returns the whole), and a
 read-only checkout of each target project. Design the slice the task names,
@@ -49,6 +49,14 @@ when the code, the need and the earlier designs leave them open. A quality
 only this design can state measurably becomes an outcome: add it to the
 data's top-level `outcomes`, never inside a slice entry, numbering on after
 the highest outcome id the need and earlier designs hold.
+An approved mockup (the `mockup` input: the revision the person approved,
+its screens and the settings they chose; read_artifact returns its source)
+is a design the user gave and is adopted: its screens, their look and the
+chosen settings are settled and never asked again. Design the slice to
+build it, and state how each of its screens the slice builds or changes is
+built: in which project, on which existing components or patterns, and with
+what behind it. A decision that drops or changes part of the mockup says
+which part, so the cards can say what not to build.
 
 Produce markdown with a `## <slice id>` section for each slice you design: the projects
 involved, each decision with the options it rejected, and the contracts

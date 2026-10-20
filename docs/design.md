@@ -12,8 +12,8 @@ small. Every stage before the cards exists only to make the cards better.
 
 A user opens a blueprint session in CM's chat panel and states a need ("get
 this project running containerised on Kubernetes"). The architect researches it,
-plays the roles a team would (product owner, system designer, senior developer,
-tester, reviewer), asks what it cannot decide, records every decision and
+plays the roles a team would (product owner, designer, system designer, senior
+developer, tester, reviewer), asks what it cannot decide, records every decision and
 assumption, drafts the cards, checks them against the card contract, and
 emits the playbook. CM does what CM does from there. In yolo mode the whole
 path from need to merged pull requests on a playbook branch runs without a
@@ -31,7 +31,7 @@ waits for a first commit and an `approve`.
 | question      | Something a stage cannot decide alone, asked in a round.                                            |
 | round         | The questions a stage asks together, and its assumptions as the last tab: one tab each in the session, answered in one sitting or in batches, stored until every question has an answer and every assumption a decision. |
 | responder     | Who answers a question or decides a gate: a human in the CM session, or the AI (`auto`).            |
-| persona       | The role a run plays: product owner, system designer, senior developer, tester, reviewer.            |
+| persona       | The role a run plays: product owner, designer, system designer, senior developer, tester, reviewer. |
 | pack          | A team's stages, personas, gate policies, checks and card template. Data, not code.                 |
 | source        | One external input a blueprint used, with its identity and version.                                 |
 | card contract | The rules a card must satisfy to be emitted. The core of this design.                               |
@@ -349,20 +349,21 @@ cited.
 
 ## Stages
 
-The default pack. Personas: product owner (PO), system designer (SD), senior
-developer (DEV), tester (TST), reviewer (REV).
+The default pack. Personas: product owner (PO), designer (DES), system
+designer (SD), senior developer (DEV), tester (TST), reviewer (REV).
 
 | #  | Stage            | Persona | Consumes          | Produces                                                                                              | Gate      | Reviewer |
 | -- | ---------------- | ------- | ----------------- | ----------------------------------------------------------------------------------------------------- | --------- | -------- |
-| 1  | Intake           | PO      | the need          | need: problem, value, scope in and out, measurable outcomes numbered O1, O2, ..., the expected shape, reading the code   | `auto` by default; its questions go to a human | SD       |
-| 2  | Slicing          | PO      | need              | slices in order, the thinnest working one first and riskier ones before polish, each delivering standalone value; one slice is fine; reads the code | yes; folds into 4's gate when there is one slice | SD       |
-| 3  | Shared decisions | SD      | need, slices      | the decisions every slice shares: tooling, conventions, platform, cross-slice contracts, cross-cutting qualities; asks a question for each decision with real alternatives; reads the code; collapses, unrun, with one slice | yes       | DEV      |
-| 4  | Solution design  | SD      | need, slices, shared decisions, earlier slices | once per slice: projects involved, decisions with rejected options and their basis, cross-project contracts; asks a question for each decision with real alternatives; reads the code | yes       | DEV      |
-| 5  | Grounding        | DEV     | the slice's design | once per slice, per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        | -        |
-| 6  | Acceptance       | DEV     | the slice's design, grounding | once per slice: criteria checkable inside one repo; human and live checks split into manual steps | `auto` by default | TST      |
-| 7  | Decomposition    | DEV     | all above, earlier slices' cards | once per slice: draft cards with type and priority, `depends_on` per project, manual entries for human and live checks, the order, and the setup for a project without a verify command or instruction file; the last slice's draft gives the playbook title | no        | -        |
-| 8  | Readiness        | REV     | every slice's cards | contract check per card; failures loop back to 7 for the slice that holds the card and every later slice, three rounds max | no        | -        |
-| 9  | Sign-off         | human   | everything        | approval; then emission of one playbook                                                                | yes       | -        |
+| 1  | Intake           | PO      | the need          | need: problem, value, scope in and out, measurable outcomes numbered O1, O2, ..., the expected shape, whether it has a screen and is a re-design, reading the code   | `auto` by default; its questions go to a human | SD       |
+| 2  | Mockup           | DES     | the need          | a live mockup with suggestions and the chosen settings, reading the UI code; skipped without a screen; offered first in default mode | no        | -        |
+| 3  | Slicing          | PO      | need, mockup      | slices in order, the thinnest working one first and riskier ones before polish, each delivering standalone value; one slice is fine; reads the code | yes; folds into 5's gate when there is one slice | SD       |
+| 4  | Shared decisions | SD      | need, mockup, slices | the decisions every slice shares: tooling, conventions, platform, cross-slice contracts, cross-cutting qualities; asks a question for each decision with real alternatives; reads the code; collapses, unrun, with one slice | yes       | DEV      |
+| 5  | Solution design  | SD      | need, mockup, slices, shared decisions, earlier slices | once per slice: projects involved, decisions with rejected options and their basis, cross-project contracts, how the slice builds the mockup's screens; asks a question for each decision with real alternatives; reads the code | yes       | DEV      |
+| 6  | Grounding        | DEV     | the slice's design | once per slice, per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        | -        |
+| 7  | Acceptance       | DEV     | the slice's design, grounding | once per slice: criteria checkable inside one repo; human and live checks split into manual steps | `auto` by default | TST      |
+| 8  | Decomposition    | DEV     | all above, earlier slices' cards | once per slice: draft cards with type and priority, `depends_on` per project, the mockup's screens each card builds, manual entries for human and live checks, the order, and the setup for a project without a verify command or instruction file; the last slice's draft gives the playbook title | no        | -        |
+| 9  | Readiness        | REV     | every slice's cards | contract check per card; failures loop back to 8 for the slice that holds the card and every later slice, three rounds max | no        | -        |
+| 10 | Sign-off         | human   | everything        | approval; then emission of one playbook                                                                | yes       | -        |
 | -  | Outcomes         | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   | -        |
 
 The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign-off is the controller's step after readiness (see Emission).
@@ -564,10 +565,16 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   and one chat run per chat reply. A need cut into n slices, n of two or
   more, costs 7 + 6n runs on the same terms: slicing's own review, shared
   decisions and its review, and design and its review, grounding, acceptance
-  and its review and decomposition once per slice.
+  and its review and decomposition once per slice. A need with a screen adds
+  one designer run per revision of its mockup (its first run, then the chat
+  run that answers each change request with the next revision), and in the
+  auto modes one mockup responder run per revision; the settle that records
+  the choice is a run row with no model and no cost.
 - In default mode a one-slice need touches the human at the rounds of intake,
   slicing and solution design (no limit when a human answers), the solution
-  design gate with slicing folded into it, and the sign-off. A need that
+  design gate with slicing folded into it, and the sign-off; a need with a
+  screen also at the mockup's offer and, once they take it, at the mockup
+  until they use or skip it. A need that
   slices into several gets slicing's own gate, the shared decisions' rounds
   and gate, and the rounds and gate of each slice's design, without anyone
   classifying it. Intake's gate is `auto`: its reviewer's verdict decides it,
@@ -666,7 +673,7 @@ The operator's existing-UI rule: where a UI exists, the mockup keeps to its look
 
 **What later stages read.** A step that consumes the mockup step gets, when a mockup was used, a section holding the revision used, its notes, its screens (`id: title`) and each suggestion as `title: chosen label (why)`, the chosen label read from the closed round and the revision's opening value for an id the round lacks. The section never holds the source; the step is offered `read_artifact`, whose `mockup` stage returns the whole version, source included. After a skip, a declined offer or a need without a screen the task holds nothing of a mockup and `read_artifact` does not offer it.
 
-**The frame contract.** CM shows a source sealed in its mockup frame (no access to CM or the session; network blocked by policy; see CM's trust model). Before the source's first script runs, `window.mockupSettings` holds the settings, each suggestion id to its string value; on every flip CM sets it again and dispatches a window `mockup:settings` `CustomEvent` whose `detail` is the settings. The source renders from `window.mockupSettings` at load and re-renders on the event without resetting the screen or tab the person is on, so a flip re-renders the mockup with no model run. `show_mockup` checks the source as a quality guard, so a revision does not show broken in that frame; the frame, not the check, is the boundary. It refuses, as a tool error naming the rule and storing nothing, in this order: a source that is empty or over 64 KiB; a line whose text, trimmed, starts with `## `, which the agent's section parser (it trims each card line and does not track fences) can take for a section it strips, cutting the rest of the mockup from its prompts, so the designer writes the first `#` as `&#35;` or keeps the text on its tag's line; a `link`, `iframe`, `frame`, `object`, `embed`, `form` or `base` element, a `meta` with `http-equiv`, or a `src`, `href`, `xlink:href`, `srcset`, `poster`, `action`, `formaction` or `data` attribute whose value is no `data:` URI (or, for a link, a `#` fragment); in a style element or attribute, an `@import` or a `url(` that is no `data:` URI or fragment; in a script element or an `on*` attribute, case ignored, `localStorage`, `sessionStorage`, `document.cookie`, `fetch(`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `alert(`, `confirm(`, `prompt(` or `window.open(` (a screen may show these names as text, as a developer tool or a terminal does); and, when the revision has suggestions, a source that never names `mockupSettings` or `mockup:settings`. The designer corrects it and shows again in the same run.
+**The frame contract.** CM shows a source sealed in its mockup frame (no access to CM or the session; network blocked by policy; see CM's trust model). Before the source's first script runs, `window.mockupSettings` holds the settings, each suggestion id to its string value; on every flip CM sets it again and dispatches a window `mockup:settings` `CustomEvent` whose `detail` is the settings. The source renders from `window.mockupSettings` at load and re-renders on the event without resetting the screen or tab the person is on, so a flip re-renders the mockup with no model run. `show_mockup` checks the source as a quality guard, so a revision does not show broken in that frame; the frame, not the check, is the boundary. It refuses, as a tool error naming the rule and storing nothing, in this order: a source that is empty or over 64 KiB; a line whose text, trimmed, starts with `## `, which the agent's section parser (it trims each card line and does not track fences) can take for a section it strips, cutting the rest of the mockup from its prompts, so the designer writes the first `#` as `&#35;` or keeps the text on its tag's line; a `link`, `iframe`, `frame`, `object`, `embed`, `form` or `base` element, a `meta` with `http-equiv`, or a `src`, `href`, `xlink:href`, `srcset`, `poster`, `action`, `formaction` or `data` attribute whose value is no `data:` URI (or, for a link, a `#` fragment); in a style element or attribute, an `@import` or a `url(` that is no `data:` URI or fragment; in a script element or an `on*` attribute, case ignored, `localStorage`, `sessionStorage`, `document.cookie`, `fetch(`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `alert(`, `confirm(`, `prompt(` or `window.open(` where no identifier character (`[A-Za-z0-9_$]`) precedes the name, so the source's own `showAlert(` or `myLocalStorage` passes, the script read as plain text with its comments and strings (a screen may show these names as text in its markup, as a developer tool or a terminal does), or an assignment to `mockupSettings`, plain or compound (`=`, `||=` and the like, never `==`, `===` or `=>`), which would overwrite the settings CM sets and a card bakes in, while a read with a fallback (`window.mockupSettings || {...}`) passes; and, when the revision has suggestions, a source that never names `mockupSettings` or `mockup:settings`. The designer corrects it and shows again in the same run.
 
 **Cards.** A draft card names the screens of the used mockup it builds or changes as `mockup: [<screen id>]`; a card that builds no screen names none. The contract refuses an id the used revision does not show (`mockup_screen`) and any screen named when no mockup was used (`mockup_none`), bounded like every cards check. Emission puts the mockup on every card of a slice that names a screen, that slice's other cards included (see Emission), as a mockup block: a fenced code block whose info string is exactly `mockup`, backticks at column 0 and one backtick more than the longest run in its content, at least three. The content is the used revision's HTML document, whole, baked with the chosen settings: a leading HTML comment lists the revision, each suggestion as `title: chosen label` and the screens the card builds, or says it builds none, with every `--` in it broken up so it cannot close early; and `<script>window.mockupSettings = {...};</script>` sits before the first script start tag the HTML tokenizer finds (a source without one gets none). Nothing else of the source changes. Every carrying card holds the full source, at most 64 KiB; no repository file and no `depends_on` carries it.
 
@@ -967,8 +974,8 @@ blueprint; a `mode <m>` reply switches it until emission starts (see
 Sessions), and every question, gate and sign-off reads it as it stands then.
 
 - **Default**: policies as the pack sets them. The embedded pack makes
-  intake, slicing, shared decisions and solution design `human` and every
-  other stage `auto`;
+  intake, the mockup, slicing, shared decisions and solution design `human`
+  and every other stage `auto`;
   intake's gate alone differs from its stage's policy: it is `auto`,
   decided by its reviewer's verdict. The sign-off waits for a human. A
   `gate <stage> human|auto` reply, listed in the gate plan posted after

@@ -68,7 +68,20 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 		ids = append(ids, s.ID)
 	}
 
-	assert.Equal(t, []string{"intake", "slicing", "shared_decisions", "solution_design", "grounding", "acceptance", "decomposition", "readiness"}, ids)
+	assert.Equal(t, []string{"intake", "mockup", "slicing", "shared_decisions", "solution_design", "grounding", "acceptance", "decomposition", "readiness"}, ids)
+
+	assert.Equal(t, "mockup", p.MockupStage())
+	assert.Equal(t, "intake", p.ScreenStage())
+	look, ok := p.Stage("mockup")
+	require.True(t, ok)
+	assert.False(t, look.Gate)
+	assert.Nil(t, look.Reviewer)
+	assert.Equal(t, "designer", look.Persona)
+
+	for _, id := range []string{"slicing", "shared_decisions", "solution_design", "decomposition", "readiness"} {
+		s, _ := p.Stage(id)
+		assert.Contains(t, s.Consumes, "mockup", "%s builds on the approved mockup", id)
+	}
 
 	acceptance, _ := p.Stage("acceptance")
 	assert.Equal(t, PolicyAuto, acceptance.Policy, "acceptance's gate is auto by default")
@@ -93,7 +106,7 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	assert.True(t, intake.Gate)
 	assert.Equal(t, PolicyAuto, intake.GatePolicy, "intake's reviewer's verdict decides its gate")
 	assert.Equal(t, 3, intake.MaxQuestions)
-	assert.Equal(t, []string{CheckAssumptions, CheckOutcomes}, intake.Checks, "intake states the need's outcomes")
+	assert.Equal(t, []string{CheckAssumptions, CheckOutcomes, CheckScreen}, intake.Checks, "intake states the need's outcomes and whether it has a screen")
 
 	next := map[string]string{"intake": "system_designer", "slicing": "system_designer", "shared_decisions": "senior_developer", "solution_design": "senior_developer", "acceptance": "tester"}
 
@@ -115,7 +128,7 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	assert.True(t, shared.Gate)
 	assert.Equal(t, PolicyHuman, shared.Policy)
 	assert.Equal(t, "system_designer", shared.Persona)
-	assert.Equal(t, []string{"intake", "slicing"}, shared.Consumes)
+	assert.Equal(t, []string{"intake", "mockup", "slicing"}, shared.Consumes)
 	assert.Equal(t, []string{CheckAssumptions, CheckDecisions, CheckOutcomes}, shared.Checks)
 
 	for _, id := range []string{"solution_design", "grounding", "acceptance", "decomposition"} {

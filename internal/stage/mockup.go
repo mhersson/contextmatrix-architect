@@ -418,6 +418,36 @@ func blockedCalls() []string {
 	}
 }
 
+// names reports whether script, lower case, holds call as a name of its
+// own: no identifier character precedes it, so the source's own showAlert(
+// or myLocalStorage is no use of alert( or localStorage. Script is read as
+// plain text, comments and strings included.
+func names(script, call string) bool {
+	for from := 0; ; {
+		i := strings.Index(script[from:], call)
+		if i < 0 {
+			return false
+		}
+
+		at := from + i
+		if at == 0 || !identifierChar(script[at-1]) {
+			return true
+		}
+
+		from = at + 1
+	}
+}
+
+// identifierChar reports a byte that can continue a script identifier.
+func identifierChar(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '$'
+}
+
+// settingsAssigned matches an assignment to mockupSettings, plain or
+// compound, and neither a comparison nor an arrow: the settings the frame
+// sets on every flip, and those a card bakes in, are what the source renders.
+var settingsAssigned = regexp.MustCompile(`(?:^|[^A-Za-z0-9_$])mockupSettings\s*(?:\*\*|<<|>>>|>>|&&|\|\||\?\?|[-+*/%&|^])?=(?:[^=>]|$)`)
+
 // checkSource refuses a source the frame contract does not let run as
 // drawn, naming the rule: ContextMatrix's frame is the boundary, and this
 // check keeps a revision from showing broken in it. settings is set when the
@@ -456,9 +486,13 @@ func checkSource(src string, settings bool) error {
 		lower := strings.ToLower(sc.text)
 
 		for _, call := range blockedCalls() {
-			if strings.Contains(lower, call) {
-				return fmt.Errorf("the source's %s uses %s, which the mockup's frame blocks: keep the state in script variables and show messages on the screen", sc.where, strings.TrimSuffix(call, "("))
+			if names(lower, call) {
+				return fmt.Errorf("the source's %s uses %s, which the mockup's frame blocks: keep the state in script variables and show messages on the screen (script is read as plain text, so the name is refused in comments and strings too)", sc.where, strings.TrimSuffix(call, "("))
 			}
+		}
+
+		if settingsAssigned.MatchString(sc.text) {
+			return fmt.Errorf("the source's %s assigns mockupSettings, which holds the settings the frame sets on every flip: read window.mockupSettings, fall back to the defaults only when it is missing, and never assign it", sc.where)
 		}
 	}
 

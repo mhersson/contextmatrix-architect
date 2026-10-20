@@ -1,20 +1,27 @@
 name: default
-version: "0.19"
+version: "0.20"
 stages:
   - id: intake
     persona: product_owner
     produces: need
     tools: [code, research]
-    checks: [assumptions, outcomes]
+    checks: [assumptions, outcomes, screen]
     policy: human
     gate: true
     gate_policy: auto
     max_questions: 3
     reviewer: {persona: system_designer, threshold: 4, tools: [code, research]}
+  - id: mockup
+    persona: designer
+    produces: mockup
+    consumes: [intake]
+    tools: [code]
+    checks: [mockup]
+    policy: human
   - id: slicing
     persona: product_owner
     produces: slices
-    consumes: [intake]
+    consumes: [intake, mockup]
     tools: [code, research]
     checks: [slices]
     policy: human
@@ -24,7 +31,7 @@ stages:
   - id: shared_decisions
     persona: system_designer
     produces: shared_decisions
-    consumes: [intake, slicing]
+    consumes: [intake, mockup, slicing]
     tools: [code, research]
     checks: [assumptions, decisions, outcomes]
     policy: human
@@ -35,7 +42,7 @@ stages:
   - id: solution_design
     persona: system_designer
     produces: design
-    consumes: [intake, slicing, shared_decisions]
+    consumes: [intake, mockup, slicing, shared_decisions]
     tools: [code, research]
     checks: [assumptions, decisions, outcomes]
     policy: human
@@ -64,7 +71,7 @@ stages:
   - id: decomposition
     persona: senior_developer
     produces: cards
-    consumes: [intake, slicing, shared_decisions, solution_design, grounding, acceptance]
+    consumes: [intake, mockup, slicing, shared_decisions, solution_design, grounding, acceptance]
     tools: [code]
     checks: [cards]
     per_slice: true
@@ -72,7 +79,7 @@ stages:
   - id: readiness
     persona: reviewer
     produces: readiness
-    consumes: [intake, slicing, shared_decisions, solution_design, grounding, acceptance, decomposition]
+    consumes: [intake, mockup, slicing, shared_decisions, solution_design, grounding, acceptance, decomposition]
     tools: [code, cm]
     checks: [readiness]
     loops_to: decomposition

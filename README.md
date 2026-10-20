@@ -6,9 +6,13 @@ chat panel is its client. See `docs/design.md`.
 
 ## What it does today
 
-A blueprint session runs intake on the first message, the need. Slicing then
-cuts the need into ordered slices, the thinnest working version first, and waits
-at its gate. With two or more slices, shared decisions settles what every slice
+A blueprint session runs intake on the first message, the need. When the need
+has a screen people will use, a designer then shows a live mockup to try and
+change before the rest is designed (default mode offers it first), and the
+approved design reaches the later stages and every card of each slice that
+builds one of its screens.
+Slicing then cuts the need into ordered slices, the thinnest working version
+first, and waits at its gate. With two or more slices, shared decisions settles what every slice
 shares and waits at its gate; then solution design, grounding, acceptance and
 decomposition run once per slice in slicing's order, each slice reading the
 shared decisions and every earlier slice's design, acceptance and cards, with a

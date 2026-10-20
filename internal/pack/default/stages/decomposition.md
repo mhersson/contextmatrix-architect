@@ -1,6 +1,6 @@
 # Decomposition
 
-Input: the need, the slices, the shared decisions, and for the slice the
+Input: the need, the mockup when the person approved one, the slices, the shared decisions, and for the slice the
 task names its design, grounding and acceptance; the earlier slices'
 design, acceptance and cards as digests, with every card's id, title, project,
 Where paths and dependencies and each project's setup (`read_artifact` returns
@@ -44,6 +44,22 @@ Rules:
 - Never name another project's repository, by URL or owner/name, in a card;
   write the contract itself into the cards on both sides.
 
+With an approved mockup (the `mockup` input; read_artifact returns its
+source):
+
+- A card that builds or changes one of its screens names them by id in
+  `mockup`, such as `"mockup": ["<screen id>"]`; a card that builds no
+  screen names none. Name only screens the approved mockup shows, and none
+  when no mockup was approved.
+- Every card of a slice in which any card names a screen carries the whole
+  mockup, which the architect adds when it emits the cards, so the work
+  behind a screen (the data it shows, the service it calls) sees the target
+  it serves.
+- When a later decision drops or changes part of the mockup, the card's
+  Solution says which part not to build, or how it differs.
+- Never paste the mockup's source into a card and never write a fenced
+  block whose info string is `mockup`: describe the screen in words.
+
 Setup is work the cards carry, never a reason to stop. Read repo_info:
 
 - A project with no verify command: propose one from the design and the
@@ -67,7 +83,7 @@ Setup is work the cards carry, never a reason to stop. Read repo_info:
   every card of the project depends on that instruction card.
 
 Submit with the body as a short summary and a data object
-`{"title": "<playbook title, needed for two or more cards>", "cards": [{"id": "D1", "project": "<name>", "title": "...", "type": "feature", "priority": "medium", "labels": [], "skills": [], "depends_on": [], "body": "<markdown from the template>", "where": [{"path": "...", "symbol": "..."}], "criteria": ["AC1"]}], "manual": [{"id": "M1", "text": "<the check a human does>", "criteria": ["MC1"]}], "order": ["D1", "M1", "D2"], "setup": {"<project>": {"verify_command": "<only when the project declares none>", "instruction_card": "<only when the repository has no instruction file>"}}}`.
+`{"title": "<playbook title, needed for two or more cards>", "cards": [{"id": "D1", "project": "<name>", "title": "...", "type": "feature", "priority": "medium", "labels": [], "skills": [], "depends_on": [], "body": "<markdown from the template>", "where": [{"path": "...", "symbol": "..."}], "criteria": ["AC1"], "mockup": ["<a screen id of the approved mockup, only on a card that builds or changes it>"]}], "manual": [{"id": "M1", "text": "<the check a human does>", "criteria": ["MC1"]}], "order": ["D1", "M1", "D2"], "setup": {"<project>": {"verify_command": "<only when the project declares none>", "instruction_card": "<only when the repository has no instruction file>"}}}`.
 The last slice's draft gives the playbook title for every slice's cards; an earlier slice may leave `title` empty. `order` lists this slice's cards and manual entries; the playbook takes the slices in their order.
 Leave `skills` empty to inherit the project's default task skills.
 A rejected submit lists what failed the contract; fix the cards and submit

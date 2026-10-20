@@ -1,7 +1,7 @@
 # Shared decisions
 
-Input: the need, slicing's slices in their order, and a read-only checkout
-of each target project.
+Input: the need, the mockup when the person approved one, slicing's slices
+in their order, and a read-only checkout of each target project.
 
 Settle only what every slice must share, so each slice's design can build on
 it: the tooling and the conventions all slices follow, the choices about the
@@ -51,6 +51,10 @@ user accepted: a decision that rests on one gives its A<n> or its tag as the
 basis.
 A decision the user already gave, in the need or in an answer, is adopted:
 ask only what it leaves open.
+An approved mockup (the `mockup` input; read_artifact returns its source) is
+a design the user gave: its screens, their look and the settings the person
+chose are settled. Build the shared decisions on it and never ask again what
+it shows; a decision that cannot keep part of it says which part and why.
 
 Produce markdown with a section per decision, each with the options it
 rejected, and a section for the contracts every slice holds to. Submit with

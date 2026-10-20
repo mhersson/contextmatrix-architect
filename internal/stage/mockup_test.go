@@ -89,7 +89,22 @@ func TestShowMockup_RefusesWhatTheFrameBlocks(t *testing.T) {
 		{"a socket in an event attribute", func() map[string]any {
 			return mockupArgs(src(`<pre id="out">`, `<pre id="out" onload="new WebSocket('ws://x')">`))
 		}},
+		{"storage through window", func() map[string]any {
+			return mockupArgs(src("draw(window", `window.sessionStorage.clear();draw(window`))
+		}},
 		{"settings never read", func() map[string]any { return mockupArgs(src("window.mockupSettings || {}", "{}")) }},
+		{"settings assigned", func() map[string]any {
+			return mockupArgs(src("draw(window", `window.mockupSettings = {preview: "on"};draw(window`))
+		}},
+		{"settings assigned with an operator", func() map[string]any {
+			return mockupArgs(src("draw(window", `window.mockupSettings ||= {};draw(window`))
+		}},
+		{"settings declared", func() map[string]any {
+			return mockupArgs(src("draw(window", `var mockupSettings={};draw(window`))
+		}},
+		{"settings assigned in an event attribute", func() map[string]any {
+			return mockupArgs(src(`<div id="bar">`, `<div id="bar" onclick="mockupSettings = {}">`))
+		}},
 		{"a line that reads as a card heading", func() map[string]any {
 			return mockupArgs(src(`<pre id="out"></pre>`, "<pre id=\"notes\">\n  ## Plan\n</pre><pre id=\"out\"></pre>"))
 		}},
@@ -162,6 +177,35 @@ func TestShowMockup_ShowsCallsAsText(t *testing.T) {
 	require.Len(t, d.got, 1)
 	assert.Equal(t, source, d.got[0].Source)
 	assert.True(t, mark.asked)
+}
+
+// A blocked call is a name of its own: the source's own functions and
+// variables may hold one, and it may read the settings, with a fallback,
+// as often as it likes.
+func TestShowMockup_TakesNamesThatOnlyHoldABlockedCall(t *testing.T) {
+	tests := []struct{ name, script string }{
+		{"an alert drawn on the screen", `function showAlert(m){document.getElementById("bar").textContent = m} showAlert("Renamed 3 photos");`},
+		{"a prompt drawn on the screen", `function drawPrompt(){return "rename> "} drawPrompt();`},
+		{"a list fetched again", `function refetch(){return []} refetch();`},
+		{"a confirm handler", `function onConfirm(){return true} onConfirm();`},
+		{"a variable named like storage", `var myLocalStorage = {}; myLocalStorage.k = "v";`},
+		{"settings read with a fallback", `var s = window.mockupSettings || {"preview":"off"}; if (window.mockupSettings === undefined || window.mockupSettings != s) { s = {} }`},
+		{"settings named as an arrow's parameter", `var redraw = mockupSettings => draw(mockupSettings || {});`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := &fakeDesigner{}
+			mark := &terminalMark{}
+
+			source := strings.Replace(terminalSource, "function draw(s){", tt.script+"\nfunction draw(s){", 1)
+
+			_, err := showMockupTool{d: d, mark: mark}.Execute(context.Background(), mockupArgs(source))
+			require.NoError(t, err)
+			require.Len(t, d.got, 1)
+			assert.Equal(t, source, d.got[0].Source)
+		})
+	}
 }
 
 // A line that reads as a card heading cuts the rest of the mockup from the

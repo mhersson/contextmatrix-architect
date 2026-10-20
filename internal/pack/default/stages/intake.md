@@ -62,10 +62,19 @@ Rules:
   tag its acceptance gave.
 - Expected shape states how many slices you expect and which projects each
   touches.
+- State whether the need has a screen. `screen` is true when people will
+  look at and use something the need builds or changes (a web page, a
+  phone, tablet or desktop app, or a full-screen terminal interface), and
+  false for a command that only prints its output, a library, a service, a
+  batch job or an infrastructure change nobody looks at. With a screen,
+  `redesign` is true only when the need, or the user's answer, asks to
+  change the existing look itself, else false: a change to an existing app
+  keeps its look.
 - When the need is complete, call submit_artifact with the markdown as body
   and a data object {"slices": <number>, "projects": [<names>],
   "outcomes": [{"id": "O1", "text": "<one measurable sentence>", "quality": "<optional: the quality it states>"}, ...],
-  "assumptions": ["<sentence>" or {"text": "<sentence>", "basis": "<Q<n> or round<n>.A<k>>"}, ...]}.
+  "assumptions": ["<sentence>" or {"text": "<sentence>", "basis": "<Q<n> or round<n>.A<k>>"}, ...],
+  "screen": <true or false>, "redesign": <true or false, given with a screen>}.
 
 When a reviewer's findings come back to you, each with an id such as R2,
 revise for them and add `"addressed": [{"finding": "<its id>", "note": "<one sentence on what you changed>"}]`
