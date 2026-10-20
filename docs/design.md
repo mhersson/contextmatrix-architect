@@ -384,9 +384,10 @@ Every stage is a model run, except a shared stage that collapses with one slice,
 - The first stage with the code tools, intake in the default pack, ends -
   for a per-slice stage, its SL1 step ends - by telling the session what
   each target project lacks for an agent run: a verify command in CM (read
-  again then), an instruction file at the root, or any commit. None of it
-  blocks. Decomposition plans it as setup, and the user may set the verify
-  command in CM meanwhile; the next decomposition submit reads it.
+  again then), an instruction file at the root, or any commit; the note
+  carries the blueprint's mode. None of it blocks. Decomposition plans it as
+  setup, and the user may set the verify command in CM meanwhile; the next
+  decomposition submit reads it.
 - Slicing's submit is checked: at least one slice, each named SL1, SL2, ...
   in its order, with a title and only the blueprint's target projects. A
   version with no slices fails its run (`fatal_check`). One stored before
@@ -1105,8 +1106,10 @@ sentence when setup needs someone technical, and another when the work settles
 some setup on its own) and a stopped emission or run start. The same choices
 are worded plainly ("Continue anyway", "Try again") and send the same replies.
 The setup note the code checkout posts opens with a plain sentence that
-someone technical needs to set these things up, its technical list unchanged
-below. An ended pipeline's `end_reason` is plain and its technical reason is
+names someone technical only when a gap needs a person before the cards run
+(a repository with no commits, or a missing verify command outside yolo),
+and otherwise says the work settles them on its own; its technical list is
+unchanged below. An ended pipeline's `end_reason` is plain and its technical reason is
 `end_detail`.
 The wording is fixed per situation, in the server.
 

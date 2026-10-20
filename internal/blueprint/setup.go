@@ -47,7 +47,18 @@ func (c *Controller) reportSetup(ctx context.Context, sess *session, bp store.Bl
 		return
 	}
 
-	payload := map[string]any{"projects": gaps}
+	// The stored mode, not bp's: a chain of runs holds bp from its start. The
+	// plain note names a person only for a gap a yolo run does not leave
+	// to one.
+	mode := bp.Mode
+
+	if cur, err := c.opts.Store.GetBlueprint(ctx, bp.ID); err != nil {
+		c.opts.Logger.Warn("blueprint: read the mode for the setup report", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
+	} else {
+		mode = cur.Mode
+	}
+
+	payload := map[string]any{"projects": gaps, "mode": mode}
 
 	// A gate reject runs the stage again; the same gaps are not told twice.
 	if c.sameAsLastReport(ctx, sess, bp.ID, payload) {

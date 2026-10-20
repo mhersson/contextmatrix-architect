@@ -64,7 +64,7 @@ const (
 	// EventSetupGaps lists, when the first stage with the code tools ends,
 	// what each target project lacks for an agent run: a verify command, an
 	// instruction file, any commit. None of it blocks; decomposition plans
-	// it as setup.
+	// it as setup. The payload also carries the blueprint's mode.
 	EventSetupGaps = "setup_gaps"
 	// EventPolicy records a gate <stage> human|auto reply: the stage's new
 	// policy, or why the reply changed nothing.

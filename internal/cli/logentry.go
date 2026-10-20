@@ -244,7 +244,12 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = setupGapsText(p)
 
 		if e.Plain {
-			entry.Content = plainSetupLead + "\n\n" + entry.Content
+			lead := plainSetupSettledLead
+			if setupNeedsAPerson(p) {
+				lead = plainSetupLead
+			}
+
+			entry.Content = lead + "\n\n" + entry.Content
 		}
 	case blueprint.EventPolicy:
 		entry.Type = "system"
@@ -1499,8 +1504,34 @@ func plainSignoffText(p map[string]any) string {
 }
 
 // plainSetupLead is what a person reads above the setup gaps the code
-// checkout found, which stay technical for the helper who sets them up.
+// checkout found when one needs a person, which stay technical for the
+// helper who sets them up.
 const plainSetupLead = "Someone technical needs to set up a few things in the projects before the work can run; the details for them follow."
+
+// plainSetupSettledLead is the same note when no gap needs a person before
+// the cards run.
+const plainSetupSettledLead = "The work will settle a few things in the projects on its own; the details for a technical helper follow."
+
+// setupNeedsAPerson is whether a gap in the setup note needs a person before
+// the cards run: a repository with no commits always does, a missing verify
+// command does unless the blueprint runs in yolo, where it is a notice, and
+// a missing instruction file never does, a card writes it. An event without
+// a mode reads as not yolo.
+func setupNeedsAPerson(p map[string]any) bool {
+	yolo := str(p["mode"]) == protocol.ArchitectModeYolo
+
+	for _, g := range anyMaps(p["projects"]) {
+		if empty, _ := g["empty"].(bool); empty {
+			return true
+		}
+
+		if verify, _ := g["has_verify"].(bool); !verify && !yolo {
+			return true
+		}
+	}
+
+	return false
+}
 
 // plainAwaitText is what a person reads of a stopped emission or run start.
 func plainAwaitText() string {

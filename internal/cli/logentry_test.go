@@ -1380,6 +1380,45 @@ func TestLogEntryFor_APlainSetupNoteLeadsPlainlyAndKeepsTheSteps(t *testing.T) {
 	assert.Equal(t, technical.Type, plain.Type)
 }
 
+func TestLogEntryFor_APlainSetupNoteLeadsWithAPersonOnlyForAStep(t *testing.T) {
+	gap := func(verify, file, empty bool) map[string]any {
+		return map[string]any{"project": "alpha", "has_verify": verify, "has_instruction_file": file, "empty": empty}
+	}
+
+	tests := []struct {
+		name   string
+		mode   any
+		gap    map[string]any
+		person bool
+	}{
+		{name: "instruction file only", mode: protocol.ArchitectModeDefault, gap: gap(true, false, false)},
+		{name: "empty repository", mode: protocol.ArchitectModeDefault, gap: gap(true, true, true), person: true},
+		{name: "verify gap, default", mode: protocol.ArchitectModeDefault, gap: gap(false, true, false), person: true},
+		{name: "verify gap, yolo", mode: protocol.ArchitectModeYolo, gap: gap(false, true, false)},
+		{name: "verify gap, no mode", gap: gap(false, true, false), person: true},
+		{name: "verify gap and empty repository, yolo", mode: protocol.ArchitectModeYolo, gap: gap(false, true, true), person: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := map[string]any{"projects": []any{tt.gap}}
+			if tt.mode != nil {
+				p["mode"] = tt.mode
+			}
+
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSetupGaps, BlueprintID: "S1", Payload: p, Plain: true})
+			require.True(t, ok)
+
+			want := plainSetupSettledLead
+			if tt.person {
+				want = plainSetupLead
+			}
+
+			assert.True(t, strings.HasPrefix(entry.Content, want))
+		})
+	}
+}
+
 func TestLogEntry_TheOfferIsAGatePrompt(t *testing.T) {
 	shown, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventMockupOffer, BlueprintID: "S1", Payload: map[string]any{
 		"stage": "mockup", "state": "shown", "actions": []any{

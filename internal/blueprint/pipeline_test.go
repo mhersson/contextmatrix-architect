@@ -19,6 +19,7 @@ import (
 	"github.com/mhersson/contextmatrix-harness/harness"
 	"github.com/mhersson/contextmatrix-harness/llm"
 	"github.com/mhersson/contextmatrix-harness/tools"
+	protocol "github.com/mhersson/contextmatrix-protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -1862,6 +1863,7 @@ func TestPipeline_GroundingReportsTheSetupGaps(t *testing.T) {
 
 			require.True(t, ok)
 			assert.Equal(t, tt.want, ev.Payload["projects"])
+			assert.Equal(t, protocol.ArchitectModeDefault, ev.Payload["mode"])
 
 			rec.mu.Lock()
 			events := slices.Clone(rec.recorded)
@@ -1901,6 +1903,18 @@ func TestPipeline_AVerifyCommandSetDuringGroundingIsNotReported(t *testing.T) {
 	drive(t, c, "BP1")
 
 	assert.False(t, rec.has(EventSetupGaps), "the report reads ContextMatrix when grounding ends")
+}
+
+func TestPipeline_TheSetupReportCarriesTheStoredMode(t *testing.T) {
+	c, _, _, rec, _ := newPipeline(t, happyScript())
+	c.opts.Projects = listAlphaUnset
+	c.opts.ConnectCM = newFakeCM().connect
+
+	driveIn(t, c, yoloInput("BP1"))
+
+	ev, ok := rec.first(EventSetupGaps)
+	require.True(t, ok)
+	assert.Equal(t, protocol.ArchitectModeYolo, ev.Payload["mode"])
 }
 
 func TestPipeline_AnUnreadableSetupIsNotReportedAndThePipelineGoesOn(t *testing.T) {
