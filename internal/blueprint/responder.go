@@ -16,12 +16,14 @@ import (
 )
 
 // answer is a responder's reply: the answer, why, whether a tool result
-// settles it, and the source tags and findings that say so.
+// settles it, the source tags and findings that say so, and what the answer
+// means for the person using the result when they would notice it.
 type answer struct {
-	Answer    string `json:"answer"`
-	Reasoning string `json:"reasoning"`
-	Grounded  bool   `json:"grounded"`
-	Evidence  string `json:"evidence"`
+	Answer      string `json:"answer"`
+	Reasoning   string `json:"reasoning"`
+	Grounded    bool   `json:"grounded"`
+	Evidence    string `json:"evidence"`
+	Consequence string `json:"consequence"`
 }
 
 var (
@@ -102,6 +104,8 @@ func parseAnswer(data map[string]any) (answer, error) {
 		return answer{}, errors.New("answer is required")
 	}
 
+	a.Consequence = strings.TrimSpace(a.Consequence)
+
 	return a, nil
 }
 
@@ -110,8 +114,10 @@ func parseAnswer(data map[string]any) (answer, error) {
 // responderTask, never the asker's transcript. The answer is recorded as an
 // assumption, grounded only when its evidence cites a tool result of its
 // own run. A responder that fails leaves the stage to decide; a cancel ends
-// the asking run too. The responder spends from the asking run's cap.
-func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion) (protocol.RoundAnswer, error) {
+// the asking run too. The responder spends from the asking run's cap. When q
+// asks the turned-down answer to question reasks again, 0 for none, the
+// responder is told the person's concern and the answer supersedes that one.
+func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion, reasks int) (protocol.RoundAnswer, error) {
 	c, au, stageID := iv.c, iv.sess.audit, iv.st.ID
 	bg := context.WithoutCancel(ctx)
 
@@ -119,7 +125,7 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion) (p
 		return fmt.Errorf("no answer (%w); decide yourself and, where this stage records assumptions, record the decision as one", err)
 	}
 
-	task, err := c.responderTask(bg, iv.bp, iv.st, iv.attempt, iv.poc, q)
+	task, err := c.responderTask(bg, iv.bp, iv.st, iv.attempt, iv.poc, q, iv.concerns[q.Number])
 	if err != nil {
 		return protocol.RoundAnswer{}, undecided(err)
 	}
@@ -129,7 +135,7 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion) (p
 		parent: iv.sink,
 		in: stage.Input{
 			Stage: stageID + ".responder", Persona: c.opts.Pack.Persona(iv.st.Persona),
-			Instructions: c.opts.Pack.ResponderInstructions(), Task: task, Tools: iv.tools,
+			Instructions: withPlain(iv.bp, c.opts.Pack.ResponderInstructions(), c.opts.Pack.PlainInstructions()), Task: task, Tools: iv.tools,
 			Validate: func(_ context.Context, art stage.Artifact) error {
 				_, err := parseAnswer(art.Data)
 
@@ -166,10 +172,28 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion) (p
 		evidence = ans.Evidence
 	}
 
-	au.event(bg, Event{Kind: EventAnswer, BlueprintID: iv.bp.ID, RunID: iv.runID, Payload: map[string]any{
+	payload := map[string]any{
 		"number": q.Number, "text": ans.Answer, "responder": store.ResponderAuto,
 		"reasoning": ans.Reasoning, "grounded": grounded, "evidence": evidence,
-	}})
+	}
+
+	if reasks > 0 {
+		payload["supersedes"] = reasks
+	}
+
+	// Only a plain-language blueprint records a consequence; its asking run
+	// may put it on the person's tab.
+	if iv.bp.PlainLanguage && ans.Consequence != "" {
+		payload["consequence"] = ans.Consequence
+
+		if iv.consequences == nil {
+			iv.consequences = map[int]string{}
+		}
+
+		iv.consequences[q.Number] = ans.Consequence
+	}
+
+	au.event(bg, Event{Kind: EventAnswer, BlueprintID: iv.bp.ID, RunID: iv.runID, Payload: payload})
 
 	options := make([]string, 0, len(q.Options))
 	for _, o := range q.Options {
@@ -204,8 +228,9 @@ func optionAnswer(q protocol.RoundQuestion, text string) protocol.RoundAnswer {
 // need, the asking stage's inputs, the target projects that are proofs of
 // concept when the asking stage shapes cards, the gate feedback the asking
 // attempt addresses, the user's notes, every answer so far and the question
-// with its options and context.
-func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st pipelineStep, attempt int, poc []string, q protocol.RoundQuestion) (string, error) {
+// with its options and context, followed by concern, the consequence of an
+// earlier answer to it the person turned down, when there is one.
+func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st pipelineStep, attempt int, poc []string, q protocol.RoundQuestion, concern string) (string, error) {
 	var b strings.Builder
 
 	if err := c.writeInputs(ctx, &b, bp, st, true, "responder task"); err != nil {
@@ -230,9 +255,14 @@ func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st p
 	}
 
 	if len(questions) > 0 {
+		superseded, err := c.supersededAnswers(ctx, bp)
+		if err != nil {
+			return "", fmt.Errorf("blueprint: responder task: %w", err)
+		}
+
 		b.WriteString("## Answers so far\n\n")
 
-		writeQuestions(&b, questions)
+		writeQuestions(&b, questions, superseded)
 	}
 
 	fmt.Fprintf(&b, "## The question, asked by %s\n\n%s\n", st.ID, q.Text)
@@ -261,6 +291,10 @@ func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st p
 		for _, cn := range o.Cons {
 			fmt.Fprintf(&b, "   - %s\n", cn)
 		}
+	}
+
+	if concern != "" {
+		fmt.Fprintf(&b, "\n## The person's concern\n\nThe person did not accept what an earlier answer to this question meant for them: %s\n", concern)
 	}
 
 	return b.String(), nil

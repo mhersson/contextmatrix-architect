@@ -919,19 +919,30 @@ func (c *Controller) writeAnsweredAfter(ctx context.Context, b *strings.Builder,
 		}
 	}
 
-	var ownAccepted []acceptedAssumption
+	// ownPlain holds the plain rounds' acceptances: the person accepted what
+	// each means for them, which confirms no decision.
+	var ownAccepted, ownPlain []acceptedAssumption
 
 	for _, a := range accepted {
 		// A row an older close wrote is listed with the questions.
-		if a.Stage == st.ID && a.RunID > after && !rows[a.Tag] {
+		switch {
+		case a.Stage != st.ID || a.RunID <= after || rows[a.Tag]:
+		case a.Plain:
+			ownPlain = append(ownPlain, a)
+		default:
 			ownAccepted = append(ownAccepted, a)
 		}
 	}
 
 	if len(own) > 0 {
+		superseded, err := c.supersededAnswers(ctx, bp)
+		if err != nil {
+			return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
+		}
+
 		b.WriteString("## Questions this stage already asked\n\nThey are answered; use the answers and do not ask them again:\n\n")
 
-		writeQuestions(b, own)
+		writeQuestions(b, own, superseded)
 	}
 
 	if len(ownAccepted) > 0 {
@@ -939,6 +950,16 @@ func (c *Controller) writeAnsweredAfter(ctx context.Context, b *strings.Builder,
 
 		for _, a := range ownAccepted {
 			fmt.Fprintf(b, "- [%s] %s\n", a.Tag, a.Text)
+		}
+
+		b.WriteString("\n")
+	}
+
+	if len(ownPlain) > 0 {
+		b.WriteString("## Assumptions at this stage whose consequences the person accepted\n\nThe person accepted what each means for them, which confirms no decision. State each with its tag as the basis:\n\n")
+
+		for _, a := range ownPlain {
+			fmt.Fprintf(b, "- [%s] %s\n  What it means for the person: %s\n", a.Tag, a.Text, a.Consequence)
 		}
 
 		b.WriteString("\n")
@@ -963,10 +984,15 @@ func answeredBy(q store.Question) string {
 }
 
 // writeQuestions lists answered questions, one tagged line and its answer
-// each, saying who gave the answer.
-func writeQuestions(b *strings.Builder, questions []store.Question) {
+// each, saying who gave the answer and, from superseded (supersededAnswers),
+// which later answer supersedes it.
+func writeQuestions(b *strings.Builder, questions []store.Question, superseded map[int]int) {
 	for _, q := range questions {
 		fmt.Fprintf(b, "- [%s] %s\n  Answer (%s): %s\n", q.Tag(), q.Text, answeredBy(q), q.Answer)
+
+		if m := superseded[q.Number]; m > 0 {
+			fmt.Fprintf(b, "  Superseded by Q%d: the question was asked again, and that answer stands.\n", m)
+		}
 	}
 
 	b.WriteString("\n")

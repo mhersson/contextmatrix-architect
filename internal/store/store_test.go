@@ -535,6 +535,7 @@ func TestOpen_MigratesV2(t *testing.T) {
 		`DROP TRIGGER questions_no_update`, `DROP TRIGGER questions_no_delete`, `DROP TABLE questions`,
 		`ALTER TABLE stage_runs DROP COLUMN kind`,
 		`ALTER TABLE blueprints DROP COLUMN context_window`,
+		`ALTER TABLE blueprints DROP COLUMN plain_language`,
 		`PRAGMA user_version = 2`,
 	} {
 		_, err := s.db.Exec(stmt)
@@ -633,6 +634,7 @@ func TestOpen_MigratesV3(t *testing.T) {
 		`DROP TRIGGER questions_no_update`, `DROP TRIGGER questions_no_delete`, `DROP TABLE questions`,
 		`ALTER TABLE stage_runs DROP COLUMN kind`,
 		`ALTER TABLE blueprints DROP COLUMN context_window`,
+		`ALTER TABLE blueprints DROP COLUMN plain_language`,
 		`PRAGMA user_version = 3`,
 	} {
 		_, err := s.db.Exec(stmt)
@@ -760,4 +762,60 @@ func TestGetArtifact(t *testing.T) {
 
 	_, err = s.GetArtifact(ctx, "BP2", "intake", 1)
 	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestCreateBlueprint_KeepsPlainLanguage(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: "BP1", Mode: "default", PlainLanguage: true, State: "new", CreatedAt: now, UpdatedAt: now}))
+	require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: "BP2", Mode: "default", State: "new", CreatedAt: now, UpdatedAt: now}))
+
+	got, err := s.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+	assert.True(t, got.PlainLanguage)
+
+	got, err = s.GetBlueprint(ctx, "BP2")
+	require.NoError(t, err)
+	assert.False(t, got.PlainLanguage)
+}
+
+func TestOpen_MigratesV5(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "architect.db")
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	s, err := Open(ctx, path)
+	require.NoError(t, err)
+	require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: "BP1", Mode: "default", State: "new", CreatedAt: now, UpdatedAt: now}))
+
+	// A v5 file: blueprints without plain_language.
+	for _, stmt := range []string{
+		`ALTER TABLE blueprints DROP COLUMN plain_language`,
+		`PRAGMA user_version = 5`,
+	} {
+		_, err := s.db.Exec(stmt)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, s.Close())
+
+	s, err = Open(ctx, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	var version int
+	require.NoError(t, s.db.QueryRow("PRAGMA user_version").Scan(&version))
+	assert.Equal(t, schemaVersion, version)
+
+	got, err := s.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+	assert.False(t, got.PlainLanguage, "a blueprint stored before the flag is not plain")
+
+	require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: "BP2", Mode: "default", PlainLanguage: true, State: "new", CreatedAt: now, UpdatedAt: now}))
+
+	got, err = s.GetBlueprint(ctx, "BP2")
+	require.NoError(t, err)
+	assert.True(t, got.PlainLanguage)
 }

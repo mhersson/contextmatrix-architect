@@ -1210,3 +1210,145 @@ func TestLogEntryFor_TheModesApprovalOfAShownGateNamesItsSlice(t *testing.T) {
 	require.NotNil(t, entry.Marker)
 	assert.Equal(t, protocol.LogMarker{Kind: "decision", Stage: "solution_design", Slice: "SL2", Version: 2}, *entry.Marker)
 }
+
+func TestLogEntryFor_APlainPromptFoldsTheTechnicalText(t *testing.T) {
+	gate := map[string]any{
+		"stage": "solution_design", "version": 2,
+		"actions": []any{
+			map[string]any{"label": "Approve", "reply": "approve", "feedback": false},
+			map[string]any{"label": "Reject", "reply": "reject", "feedback": true},
+		},
+		"review": map[string]any{"score": 2, "threshold": 4, "round": 3, "passed": false, "findings": []any{}, "open_critical": []any{}},
+	}
+	signoff := map[string]any{
+		"version": 1, "order": []any{}, "cards": []any{}, "cross": []any{map[string]any{"id": "X1", "severity": "critical", "text": "two slices write the same table"}},
+		"actions": []any{map[string]any{"label": "Approve over critical findings", "reply": "approve", "feedback": true, "ask": "Why approve over the critical findings?"}},
+	}
+	held := map[string]any{"stage": "signoff", "resume": "held", "version": 1, "prompt": "Push a first commit, then reply approve.", "text": "The run has not started."}
+
+	for _, tc := range []struct {
+		name    string
+		kind    string
+		payload map[string]any
+	}{
+		{"a gate a verdict did not settle", blueprint.EventGate, gate},
+		{"a sign-off over a critical finding", blueprint.EventSignOff, signoff},
+		{"a run start held for setup", blueprint.EventAwaitInput, held},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			technical, ok := logEntryFor(blueprint.Event{Kind: tc.kind, BlueprintID: "S1", Payload: tc.payload})
+			require.True(t, ok)
+			require.NotNil(t, technical.Prompt)
+
+			plain, ok := logEntryFor(blueprint.Event{Kind: tc.kind, BlueprintID: "S1", Payload: tc.payload, Plain: true})
+			require.True(t, ok)
+			require.NotNil(t, plain.Prompt)
+
+			assert.Equal(t, technical.Prompt.Text, plain.Prompt.Detail, "the technical text is folded")
+			assert.NotEmpty(t, plain.Prompt.Text)
+			assert.NotEqual(t, plain.Prompt.Detail, plain.Prompt.Text)
+			assert.Empty(t, technical.Prompt.Detail, "off plain nothing is folded")
+			assert.Equal(t, technical.Content, plain.Content, "the fallback stays the record")
+			assert.Equal(t, technical.Prompt.ID, plain.Prompt.ID)
+
+			require.Len(t, plain.Prompt.Actions, len(technical.Prompt.Actions))
+
+			for i := range plain.Prompt.Actions {
+				assert.Equal(t, technical.Prompt.Actions[i].Reply, plain.Prompt.Actions[i].Reply, "the replies decide as before")
+				assert.Equal(t, technical.Prompt.Actions[i].Feedback, plain.Prompt.Actions[i].Feedback)
+			}
+		})
+	}
+}
+
+func TestLogEntryFor_APlainPromptWordsEachMomentByItsSituation(t *testing.T) {
+	actions := []any{
+		map[string]any{"label": "Approve", "reply": "approve", "feedback": false},
+		map[string]any{"label": "Reject", "reply": "reject", "feedback": true},
+	}
+	gate := func(passed bool) map[string]any {
+		return map[string]any{
+			"stage": "solution_design", "version": 1, "actions": actions,
+			"review": map[string]any{"score": 4, "threshold": 4, "round": 1, "passed": passed, "findings": []any{}, "open_critical": []any{}},
+		}
+	}
+	signoff := func(extra map[string]any) map[string]any {
+		p := map[string]any{"version": 1, "order": []any{}, "cards": []any{}, "cross": []any{}, "actions": actions}
+		maps.Copy(p, extra)
+
+		return p
+	}
+	render := func(t *testing.T, kind string, p map[string]any, plain bool) protocol.LogEntry {
+		t.Helper()
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: kind, BlueprintID: "S1", Payload: p, Plain: plain})
+		require.True(t, ok)
+		require.NotNil(t, entry.Prompt)
+
+		return entry
+	}
+
+	t.Run("a passed gate reads differently from an unsettled one", func(t *testing.T) {
+		passed, unsettled := render(t, blueprint.EventGate, gate(true), true), render(t, blueprint.EventGate, gate(false), true)
+
+		assert.NotEqual(t, passed.Prompt.Text, unsettled.Prompt.Text)
+		assert.NotEqual(t, passed.Prompt.Actions[0].Label, unsettled.Prompt.Actions[0].Label)
+		assert.Equal(t, "approve", passed.Prompt.Actions[0].Reply)
+	})
+
+	t.Run("setup steps change a plain sign-off's text", func(t *testing.T) {
+		without := render(t, blueprint.EventSignOff, signoff(nil), true)
+		with := render(t, blueprint.EventSignOff, signoff(map[string]any{"steps": []any{"Set up the thing"}}), true)
+
+		assert.NotEqual(t, without.Prompt.Text, with.Prompt.Text)
+
+		critical := signoff(map[string]any{"cross": []any{map[string]any{"id": "X1", "severity": "critical", "text": "a clash"}}})
+		criticalSteps := signoff(map[string]any{"cross": critical["cross"], "steps": []any{"Set up the thing"}})
+
+		assert.NotEqual(t, render(t, blueprint.EventSignOff, critical, true).Prompt.Text, render(t, blueprint.EventSignOff, criticalSteps, true).Prompt.Text)
+	})
+
+	t.Run("every stop kind folds its text and keeps its reply", func(t *testing.T) {
+		for _, resume := range []string{"emission", "run", "held"} {
+			p := map[string]any{"stage": "signoff", "resume": resume, "version": 1, "prompt": "p", "text": "technical stop"}
+
+			for _, kind := range []string{blueprint.EventAwaitInput, blueprint.EventError} {
+				technical, plain := render(t, kind, p, false), render(t, kind, p, true)
+
+				assert.Equal(t, technical.Prompt.Text, plain.Prompt.Detail)
+				assert.NotEqual(t, technical.Prompt.Actions[0].Label, plain.Prompt.Actions[0].Label)
+				assert.Equal(t, technical.Prompt.Actions[0].Reply, plain.Prompt.Actions[0].Reply)
+			}
+		}
+	})
+
+	t.Run("a relabelled action differs from its technical label and keeps its reply", func(t *testing.T) {
+		for kind, p := range map[string]map[string]any{blueprint.EventGate: gate(false), blueprint.EventSignOff: signoff(map[string]any{
+			"cross":   []any{map[string]any{"id": "X1", "severity": "critical", "text": "a clash"}},
+			"actions": []any{map[string]any{"label": "Approve over critical", "reply": "approve", "feedback": true}, map[string]any{"label": "Reject", "reply": "reject", "feedback": true}},
+		})} {
+			technical, plain := render(t, kind, p, false), render(t, kind, p, true)
+
+			for i := range plain.Prompt.Actions {
+				assert.NotEqual(t, technical.Prompt.Actions[i].Label, plain.Prompt.Actions[i].Label)
+				assert.Equal(t, technical.Prompt.Actions[i].Reply, plain.Prompt.Actions[i].Reply)
+			}
+		}
+	})
+}
+
+func TestLogEntryFor_APlainSetupNoteLeadsPlainlyAndKeepsTheSteps(t *testing.T) {
+	gaps := map[string]any{"projects": []any{
+		map[string]any{"project": "alpha", "has_verify": false, "has_instruction_file": false, "empty": true},
+	}}
+
+	technical, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSetupGaps, BlueprintID: "S1", Payload: gaps})
+	require.True(t, ok)
+
+	plain, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSetupGaps, BlueprintID: "S1", Payload: gaps, Plain: true})
+	require.True(t, ok)
+
+	assert.NotEqual(t, technical.Content, plain.Content)
+	assert.Contains(t, plain.Content, technical.Content, "the technical steps follow unchanged")
+	assert.Equal(t, technical.Type, plain.Type)
+}

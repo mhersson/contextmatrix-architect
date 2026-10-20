@@ -352,6 +352,20 @@ func TestStart_HappyPath(t *testing.T) {
 	assert.Equal(t, 200000, in.ContextWindow)
 }
 
+func TestStart_CarriesPlainLanguage(t *testing.T) {
+	ctl := &stubController{}
+	srv, _ := newTestServer(t, ctl)
+
+	payload := validStart()
+	payload.Architect.PlainLanguage = true
+
+	w := do(srv, signed(t, http.MethodPost, "/chat/start", payload, nextTS()))
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+
+	require.Len(t, ctl.starts, 1)
+	assert.True(t, ctl.starts[0].PlainLanguage)
+}
+
 func TestStart_CarriesTheResearchSettings(t *testing.T) {
 	ctl := &stubController{}
 	srv, _ := newTestServer(t, ctl)

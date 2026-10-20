@@ -100,3 +100,21 @@ func TestWrite_NamesAStepsSliceOnlyWithTwoOrMoreSlices(t *testing.T) {
 		})
 	}
 }
+
+func TestWrite_NamesPlainLanguage(t *testing.T) {
+	for _, plain := range []bool{true, false} {
+		dir := t.TempDir()
+
+		_, err := Write(dir, Bundle{Blueprint: store.Blueprint{ID: "BP1", PlainLanguage: plain}})
+		require.NoError(t, err)
+
+		raw, err := os.ReadFile(filepath.Join(dir, "blueprint.md"))
+		require.NoError(t, err)
+
+		if plain {
+			assert.Contains(t, string(raw), "- Plain language: on\n")
+		} else {
+			assert.NotContains(t, string(raw), "Plain language")
+		}
+	}
+}

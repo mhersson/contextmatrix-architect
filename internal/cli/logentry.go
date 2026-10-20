@@ -135,12 +135,22 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Type = "text"
 		body, reply := signoffText(p, e.Sliced)
 		entry.Content = body + reply
-		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:signoff:v%.0f", num(p["version"])), body, p["actions"])
+		entry.Prompt = actionsPrompt(fmt.Sprintf("gate:signoff:v%.0f", num(p["version"])), body, p["actions"], e.Plain, plainSignoffText(p), true)
 	case blueprint.EventGate:
 		entry.Type = "text"
 		body, reply := gateText(p, e.Sliced)
 		entry.Content = body + reply
-		entry.Prompt = actionsPrompt(blueprint.GatePromptID(str(p["stage"]), int(num(p["version"]))), body, p["actions"])
+		entry.Prompt = actionsPrompt(blueprint.GatePromptID(str(p["stage"]), int(num(p["version"]))), body, p["actions"], e.Plain, plainGateText(p, e.Sliced), false)
+
+		// A gate the review settled asks for a look, so approving it is no
+		// "anyway".
+		if e.Plain && entry.Prompt != nil && gateSettled(p) {
+			for i, a := range entry.Prompt.Actions {
+				if a.Reply == "approve" {
+					entry.Prompt.Actions[i].Label = "Continue"
+				}
+			}
+		}
 	case blueprint.EventReview:
 		// A review card: the view's review of this version renders it; the
 		// verdict's text is the fallback.
@@ -176,7 +186,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		}
 
 		// A prompt rides a text frame, so a stop that offers approve is one.
-		if prompt := resumePrompt(p); prompt != nil {
+		if prompt := resumePrompt(p, e.Plain); prompt != nil {
 			entry.Type = "text"
 			entry.Prompt = prompt
 		}
@@ -188,10 +198,14 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			entry.Content = fmt.Sprintf("Stage %s takes your next message.", pack.StageName(str(p["stage"]), e.Sliced))
 		}
 
-		entry.Prompt = resumePrompt(p)
+		entry.Prompt = resumePrompt(p, e.Plain)
 	case blueprint.EventSetupGaps:
 		entry.Type = "text"
 		entry.Content = setupGapsText(p)
+
+		if e.Plain {
+			entry.Content = plainSetupLead + "\n\n" + entry.Content
+		}
 	case blueprint.EventPolicy:
 		entry.Type = "system"
 		entry.Content = policyText(p)
@@ -1222,26 +1236,115 @@ func joinIDs(ids []string) string {
 // actionsPrompt makes a gate decidable by a click from the replies its
 // event carries; nil when it carries none, as an event stored before the
 // replies travelled with it. The text is the gate's body without its reply
-// line.
-func actionsPrompt(id, text string, v any) *protocol.LogPrompt {
+// line. On a plain blueprint the prompt shows plainText and the choices in
+// plain words, and the technical text is folded into Detail; the replies are
+// those of the event.
+func actionsPrompt(id, text string, v any, plain bool, plainText string, signoff bool) *protocol.LogPrompt {
 	var actions []protocol.LogAction
 
 	for _, a := range anyMaps(v) {
 		feedback, _ := a["feedback"].(bool)
-		actions = append(actions, protocol.LogAction{Label: str(a["label"]), Reply: str(a["reply"]), Feedback: feedback, Ask: str(a["ask"])})
+		action := protocol.LogAction{Label: str(a["label"]), Reply: str(a["reply"]), Feedback: feedback, Ask: str(a["ask"])}
+
+		if plain {
+			action = plainLabel(action, signoff)
+		}
+
+		actions = append(actions, action)
 	}
 
 	if len(actions) == 0 {
 		return nil
 	}
 
-	return &protocol.LogPrompt{ID: id, Text: text, Kind: "gate", Actions: actions}
+	prompt := &protocol.LogPrompt{ID: id, Text: text, Kind: "gate", Actions: actions}
+	if plain {
+		prompt.Text, prompt.Detail = plainText, text
+	}
+
+	return prompt
+}
+
+// plainLabel words a gate's choice plainly. It changes the label and the
+// question asked for feedback only, never the reply or whether feedback is
+// taken. A sign-off's approve is worded so only when it takes a reason, the
+// override over a critical finding; a reject that is not the plain one
+// (a folded gate's, a typed step) keeps its label.
+func plainLabel(a protocol.LogAction, signoff bool) protocol.LogAction {
+	switch {
+	case a.Reply == "approve" && (!signoff || a.Feedback):
+		a.Label = "Continue anyway"
+		if a.Feedback {
+			a.Ask = "Why continue anyway?"
+		}
+	case a.Reply == "reject":
+		a.Label = "Try again"
+		if a.Feedback {
+			a.Ask = "What should change?"
+		}
+	}
+
+	return a
+}
+
+// gateSettled reports whether a gate's review passed: the gate then asks for
+// a look, not for a decision over a failure.
+func gateSettled(p map[string]any) bool {
+	v, ok := p["review"].(map[string]any)
+	if !ok {
+		return false
+	}
+
+	passed, _ := v["passed"].(bool)
+
+	return passed
+}
+
+// plainGateText is what a person reads of a stage gate: whether the review
+// settled it decides the wording.
+func plainGateText(p map[string]any, sliced bool) string {
+	name := pack.StageName(str(p["stage"]), sliced)
+
+	if gateSettled(p) {
+		return name + " is ready for your look. Continue, or ask the architect to try again with a note."
+	}
+
+	return "The architect could not settle " + name + " on its own. A technical helper can read why below. Continue anyway, or ask it to try again with a note."
+}
+
+// plainSignoffText is what a person reads of the sign-off: a critical finding
+// across the blueprint is the one moment the architect is stuck, and setup
+// steps are named whenever the sign-off carries any.
+func plainSignoffText(p map[string]any) string {
+	var text string
+
+	if slices.ContainsFunc(anyMaps(p["cross"]), func(f map[string]any) bool { return str(f["severity"]) == "critical" }) {
+		text = "The architect found a problem across the plan that it could not settle on its own. A technical helper can read it below. Continue anyway and say why, or ask it to try again."
+	} else {
+		text = "Your plan is ready: the summary on the sheet says what will be built and what you will be able to do with it. Approve to create the work, or choose Try again to change it."
+	}
+
+	if len(stringsOf(p["blocking"])) > 0 || len(stringsOf(p["warnings"])) > 0 || len(stringsOf(p["steps"])) > 0 {
+		text += " Some setup needs someone technical before the work can run; the steps are below."
+	}
+
+	return text
+}
+
+// plainSetupLead is what a person reads above the setup gaps the code
+// checkout found, which stay technical for the helper who sets them up.
+const plainSetupLead = "Someone technical needs to set up a few things in the projects before the work can run; the details for them follow."
+
+// plainAwaitText is what a person reads of a stopped emission or run start.
+func plainAwaitText() string {
+	return "Someone technical needs to finish the setup before the work can start; the steps are below. When it is done, reply approve."
 }
 
 // resumePrompt offers approve on a stopped emission or run start; nil on
 // any other error or wait. The text is the stop without its reply
 // instruction, empty on an event stored before resume events carried one.
-func resumePrompt(p map[string]any) *protocol.LogPrompt {
+// On a plain blueprint it is worded plainly, with the stop folded.
+func resumePrompt(p map[string]any, plain bool) *protocol.LogPrompt {
 	var label string
 
 	switch str(p["resume"]) {
@@ -1255,12 +1358,24 @@ func resumePrompt(p map[string]any) *protocol.LogPrompt {
 		return nil
 	}
 
-	return &protocol.LogPrompt{
-		ID:      fmt.Sprintf("emission:v%.0f", num(p["version"])),
-		Text:    str(p["text"]),
-		Kind:    "gate",
-		Actions: []protocol.LogAction{{Label: label, Reply: "approve"}},
+	prompt := &protocol.LogPrompt{
+		ID:   fmt.Sprintf("emission:v%.0f", num(p["version"])),
+		Text: str(p["text"]),
+		Kind: "gate",
 	}
+
+	if plain {
+		label = "Try again"
+		if str(p["resume"]) == "held" {
+			label = "Done, continue"
+		}
+
+		prompt.Text, prompt.Detail = plainAwaitText(), str(p["text"])
+	}
+
+	prompt.Actions = []protocol.LogAction{{Label: label, Reply: "approve"}}
+
+	return prompt
 }
 
 // setupGapsText renders what the checkout found the target projects lack for

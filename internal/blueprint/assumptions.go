@@ -44,11 +44,21 @@ type assumption struct {
 	// AcceptedAt is the stage whose round tab the user accepted this on,
 	// when the basis is an acceptance; Answer is then empty.
 	AcceptedAt string
+	// Consequence is what the decision means for the person using the
+	// result, and ConsequenceAccepted the round a person accepted it on, 0
+	// for none; SupersededBy is the Q<m> of the answer that asked again the
+	// answer it is or rests on. All are read only on a plain-language
+	// blueprint. Accepting a consequence never confirms the decision: Status
+	// stays its basis's.
+	Consequence         string
+	ConsequenceAccepted int
+	SupersededBy        string
 }
 
-// stated is one assumption as a stage submitted it.
+// stated is one assumption as a stage submitted it. ID is the id the stored
+// entry carries, which numberAssumptions wrote; "" for none.
 type stated struct {
-	Text, Basis string
+	ID, Text, Basis, Consequence string
 }
 
 // verdict is a later stage's finding on one assumption.
@@ -69,8 +79,16 @@ type verdict struct {
 // ignored. A verdict applies only when its artifact was stored after the
 // latest artifact of every stating stage up to the assumption's own: ids are
 // positional, so an older verdict would judge whatever sentence holds the id
-// now.
+// now. On a plain-language blueprint each also carries its consequence, the
+// round a person accepted that on and the answer that supersedes the one it
+// is or rests on (consequenceRecord).
 func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, error) {
+	// A record without its blueprint row reads as without the toggle.
+	bp, err := c.opts.Store.GetBlueprint(ctx, id)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return nil, fmt.Errorf("blueprint: assumptions: %w", err)
+	}
+
 	all, err := c.opts.Store.ListArtifacts(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("blueprint: assumptions: %w", err)
@@ -101,6 +119,14 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 	acceptedAt := map[string]string{}
 	for _, a := range acceptances {
 		acceptedAt[a.Tag] = a.Stage
+	}
+
+	var record consequenceRecord
+
+	if bp.PlainLanguage {
+		if record, err = c.consequenceRecord(ctx, id, acceptances); err != nil {
+			return nil, err
+		}
 	}
 
 	answered := map[string]store.Question{}
@@ -135,11 +161,12 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 
 		for _, s := range statedAssumptions(all[i]) {
 			// The submit check keeps a basis naming no answered question or
-			// accepted assumption on its last round; it reads as none.
+			// accepted assumption on its last round; it reads as none. A plain
+			// acceptance's tag stays, and its status is that of no basis.
 			switch _, ok := answered[s.Basis]; {
 			case ok:
 				named[s.Basis] = true
-			case !accepted[s.Basis]:
+			case !accepted[s.Basis] && record.tags[s.Basis] == 0:
 				s.Basis = ""
 			}
 
@@ -154,6 +181,10 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 				a.Answer, a.AcceptedAt = "", acceptedAt[s.Basis]
 			}
 
+			if bp.PlainLanguage {
+				record.mark(&a, s.Consequence, answered)
+			}
+
 			out = append(out, a)
 			source = append(source, newest)
 		}
@@ -165,10 +196,16 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 		}
 
 		status, proof := basisStatus(answered, accepted, evidence, q.Tag())
-		out = append(out, assumption{
+		a := assumption{
 			ID: q.Tag(), Stage: q.Stage, Basis: q.Tag(), Status: status, Evidence: proof,
 			Text: fmt.Sprintf("%s The responder answered: %s", q.Text, q.Answer),
-		})
+		}
+
+		if bp.PlainLanguage {
+			record.mark(&a, "", answered)
+		}
+
+		out = append(out, a)
 		// A Q<n> id is stable, so any verdict applies to it.
 		source = append(source, -1)
 	}
@@ -224,11 +261,15 @@ func basisStatus(answered map[string]store.Question, accepted map[string]bool, e
 	}
 }
 
-// acceptedTags is the set of accepted's tags.
+// acceptedTags is the set of the tags of accepted's confirming acceptances:
+// a plain round's (plainTags) accepted a consequence, not the decision.
 func acceptedTags(accepted []acceptedAssumption) map[string]bool {
 	out := map[string]bool{}
+
 	for _, a := range accepted {
-		out[a.Tag] = true
+		if !a.Plain {
+			out[a.Tag] = true
+		}
 	}
 
 	return out
@@ -250,10 +291,10 @@ func normalTag(s string) string {
 }
 
 // statedAssumptions reads an artifact's assumptions, its data's list of
-// sentences or {text, basis} entries, blanks dropped and bases normalised.
-// The data is a model's submission, which the submit check lets through
-// after its last round, so a malformed list reads as none and a malformed
-// entry as nothing, rather than failing the pipeline.
+// sentences or {text, basis, consequence} entries, blanks dropped and bases
+// normalised. The data is a model's submission, which the submit check lets
+// through after its last round, so a malformed list reads as none and a
+// malformed entry as nothing, rather than failing the pipeline.
 func statedAssumptions(art store.Artifact) []stated {
 	var data struct {
 		Assumptions []any `json:"assumptions"`
@@ -272,9 +313,12 @@ func statedAssumptions(art store.Artifact) []stated {
 		case string:
 			s.Text = a
 		case map[string]any:
+			s.ID, _ = a["id"].(string)
 			s.Text, _ = a["text"].(string)
 			basis, _ := a["basis"].(string)
 			s.Basis = normalTag(basis)
+			consequence, _ := a["consequence"].(string)
+			s.Consequence = strings.TrimSpace(consequence)
 		}
 
 		if s.Text = strings.TrimSpace(s.Text); s.Text != "" {
@@ -345,10 +389,10 @@ func signoffOrder(list []assumption) []assumption {
 }
 
 // assumptionLines renders assumptions one per line for models and cards: the
-// id, the status with who answered the question it rests on or any
-// evidence, and the answer it rests on, then the sentence. sliced names the
-// slice of the step an assumption was accepted at. The sign-off's text entry
-// formats its line from the event payload.
+// id, the status with who answered the question it rests on or any evidence,
+// the answer it rests on and the answer that supersedes that one, then the
+// sentence. sliced names the slice of the step an assumption was accepted
+// at. The sign-off's text entry formats its line from the event payload.
 func assumptionLines(list []assumption, sliced bool) string {
 	lines := make([]string, 0, len(list))
 
@@ -379,6 +423,10 @@ func assumptionLines(list []assumption, sliced bool) string {
 			}
 		}
 
+		if a.SupersededBy != "" {
+			status += "; superseded by " + a.SupersededBy + ", whose answer stands"
+		}
+
 		lines = append(lines, fmt.Sprintf("- %s (%s) %s", a.ID, status, a.Text))
 	}
 
@@ -396,6 +444,20 @@ func assumptionsPayload(list []assumption) []any {
 
 		if a.AcceptedAt != "" {
 			entry["accepted"] = a.AcceptedAt
+		}
+
+		if a.Consequence != "" {
+			entry["consequence"] = a.Consequence
+		}
+
+		// by is the record's responder constant: the architect knows no
+		// person's name.
+		if a.ConsequenceAccepted > 0 {
+			entry["consequence_accepted"] = map[string]any{"by": store.ResponderHuman, "round": a.ConsequenceAccepted}
+		}
+
+		if a.SupersededBy != "" {
+			entry["superseded_by"] = a.SupersededBy
 		}
 
 		out = append(out, entry)
@@ -599,14 +661,19 @@ func (c *Controller) numberAssumptions(ctx context.Context, id, key string, data
 }
 
 // briefAssumptionLines lists assumptions for a model's task: the id, the
-// status and the sentence. It carries no answer or basis: the status says
-// whether the user confirmed it, and the sign-off and the cards carry
-// assumptionLines.
+// status, the answer that supersedes the one it is or rests on, if any, and
+// the sentence. It carries no answer or basis: the status says whether the
+// user confirmed it, and the sign-off and the cards carry assumptionLines.
 func briefAssumptionLines(list []assumption) string {
 	lines := make([]string, 0, len(list))
 
 	for _, a := range list {
-		lines = append(lines, fmt.Sprintf("- %s (%s) %s", a.ID, a.Status, a.Text))
+		status := a.Status
+		if a.SupersededBy != "" {
+			status += ", superseded by " + a.SupersededBy
+		}
+
+		lines = append(lines, fmt.Sprintf("- %s (%s) %s", a.ID, status, a.Text))
 	}
 
 	return strings.Join(lines, "\n")
@@ -631,6 +698,10 @@ func (c *Controller) assumptionsValidator(bp store.Blueprint, key string) (func(
 		}
 
 		bases := acceptedTags(accepted)
+		for tag := range plainTags(accepted) {
+			bases[tag] = true
+		}
+
 		for _, q := range questions {
 			bases[q.Tag()] = true
 		}
@@ -640,7 +711,7 @@ func (c *Controller) assumptionsValidator(bp store.Blueprint, key string) (func(
 			return nil, err
 		}
 
-		return append(assumptionProblems(a.Data, lists, bases), restatements(a.Data, existing)...), nil
+		return append(assumptionProblems(a.Data, lists, bases, bp.PlainLanguage), restatements(a.Data, existing)...), nil
 	})
 }
 
@@ -648,6 +719,11 @@ func (c *Controller) assumptionsValidator(bp store.Blueprint, key string) (func(
 // states an assumption without a basis while st's policy, read at submit,
 // is human, or that comes before an assumption the user turned into a
 // question on a round of the attempt has no later round of the attempt posted.
+// On a plain-language blueprint only an assumption that carries a
+// consequence needs a basis: one no person would notice was accepted
+// automatically on the responder's round, which gives it none. One the
+// person turned down on a plain round of the attempt needs one too, so it
+// never comes back without its consequence unseen.
 func (c *Controller) tabValidator(bp store.Blueprint, st pipelineStep, attempt int) (func(context.Context, stage.Artifact) error, *validatorState) {
 	return boundedValidator("assumptions tab", func(ctx context.Context, a stage.Artifact) ([]string, error) {
 		policy, err := c.policy(ctx, bp, st.ID)
@@ -658,7 +734,15 @@ func (c *Controller) tabValidator(bp store.Blueprint, st pipelineStep, attempt i
 		var out []string
 
 		if policy == pack.PolicyHuman {
-			out = unbasedAssumptions(a.Data)
+			var turnedDown map[string]string
+
+			if bp.PlainLanguage {
+				if turnedDown, err = c.turnedDownEntries(ctx, bp.ID, st.ID, attempt); err != nil {
+					return nil, err
+				}
+			}
+
+			out = unbasedAssumptions(a.Data, bp.PlainLanguage, turnedDown)
 		}
 
 		unasked, err := c.unaskedConversions(ctx, bp.ID, st.ID, attempt)
@@ -670,15 +754,17 @@ func (c *Controller) tabValidator(bp store.Blueprint, st pipelineStep, attempt i
 	})
 }
 
-// unbasedAssumptions reports every stated assumption that names no basis.
+// unbasedAssumptions reports every stated assumption that names no basis; on
+// a plain-language blueprint, only those that carry a consequence or whose
+// sentence, as normalText makes it, is in turnedDown (turnedDownEntries').
 // The assumptions check reports a malformed list or entry.
-func unbasedAssumptions(data map[string]any) []string {
+func unbasedAssumptions(data map[string]any, plain bool, turnedDown map[string]string) []string {
 	items, _ := data["assumptions"].([]any)
 
 	var out []string
 
 	for i, item := range items {
-		text, basis := "", ""
+		text, basis, consequence := "", "", ""
 
 		switch e := item.(type) {
 		case string:
@@ -686,11 +772,20 @@ func unbasedAssumptions(data map[string]any) []string {
 		case map[string]any:
 			text, _ = e["text"].(string)
 			basis, _ = e["basis"].(string)
+			consequence, _ = e["consequence"].(string)
 		default:
 			continue
 		}
 
-		if strings.TrimSpace(text) != "" && normalTag(basis) == "" {
+		if strings.TrimSpace(text) == "" || normalTag(basis) != "" {
+			continue
+		}
+
+		switch entry, turned := turnedDown[normalText(text)]; {
+		case turned:
+			out = append(out, fmt.Sprintf("assumption %d is %s, whose consequence the person turned down: rethink the decision, or show its consequence on a round again and state it with the acceptance's tag", i+1, entry))
+		case plain && strings.TrimSpace(consequence) == "":
+		default:
 			out = append(out, fmt.Sprintf("assumption %d has no basis: show it on a round's assumptions tab first; state an accepted one with its tag (round<n>.A<k>) and one resting on an answered question with its Q<n>", i+1))
 		}
 	}
@@ -698,21 +793,45 @@ func unbasedAssumptions(data map[string]any) []string {
 	return out
 }
 
-// unaskedConversions reports each assumption the user turned into a question
-// on a round a run of stageID's attempt posted, when no run of the attempt
-// posted a round after it.
-func (c *Controller) unaskedConversions(ctx context.Context, id, stageID string, attempt int) ([]string, error) {
-	runs, err := c.opts.Store.ListRuns(ctx, id)
+// turnedDownEntries maps the technical sentence, as normalText makes it, of
+// each stage's entry the person turned down on a plain round a run of
+// stageID's attempt posted to that entry's tag.
+func (c *Controller) turnedDownEntries(ctx context.Context, id, stageID string, attempt int) (map[string]string, error) {
+	ofAttempt, err := c.attemptRuns(ctx, id, stageID, attempt)
 	if err != nil {
-		return nil, fmt.Errorf("list runs: %w", err)
+		return nil, err
 	}
 
-	ofAttempt := map[int64]bool{}
+	rounds, err := c.rounds(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 
-	for _, r := range runs {
-		if r.Kind == store.RunKindStage && r.Stage == stageID && r.Attempt == attempt {
-			ofAttempt[r.ID] = true
+	out := map[string]string{}
+
+	for _, s := range rounds {
+		if !s.Plain || !ofAttempt[s.PostedBy] {
+			continue
 		}
+
+		for _, a := range s.Frame.Assumptions {
+			if _, isAnswer := s.Consequences[a.ID]; !isAnswer && slices.Contains(s.Converted, a.ID) {
+				out[normalText(tabText(a))] = acceptanceTag(s.Number, a.ID)
+			}
+		}
+	}
+
+	return out, nil
+}
+
+// unaskedConversions reports each assumption the user turned into a question
+// on a round a run of stageID's attempt posted, when no run of the attempt
+// posted a round after it. A plain round's entry that describes an answer is
+// unaskedReasks'.
+func (c *Controller) unaskedConversions(ctx context.Context, id, stageID string, attempt int) ([]string, error) {
+	ofAttempt, err := c.attemptRuns(ctx, id, stageID, attempt)
+	if err != nil {
+		return nil, err
 	}
 
 	rounds, err := c.rounds(ctx, id)
@@ -736,15 +855,93 @@ func (c *Controller) unaskedConversions(ctx context.Context, id, stageID string,
 		}
 
 		for _, id := range s.Converted {
+			if _, isAnswer := s.Consequences[id]; isAnswer {
+				continue
+			}
+
 			text := ""
 
 			for _, a := range s.Frame.Assumptions {
 				if a.ID == id {
-					text = a.Text
+					text = tabText(a)
 				}
 			}
 
 			out = append(out, fmt.Sprintf("round %d's %s (%s) was turned into a question; ask it in a round before you submit", s.Number, id, text))
+		}
+	}
+
+	return out, nil
+}
+
+// reaskValidator refuses a submit of st, as boundedValidator bounds it, while
+// an answer whose consequence the person turned down on a round of the
+// attempt is not asked again (unaskedReasks). Any stage's person's round may
+// show an answer's consequence, so it runs whatever the stage checks.
+func (c *Controller) reaskValidator(bp store.Blueprint, st pipelineStep, attempt int) (func(context.Context, stage.Artifact) error, *validatorState) {
+	return boundedValidator("re-asks", func(ctx context.Context, _ stage.Artifact) ([]string, error) {
+		return c.unaskedReasks(ctx, bp.ID, st.ID, attempt)
+	})
+}
+
+// unaskedReasks reports each answer whose consequence the person turned down
+// on a round a run of stageID's attempt posted, when no later round of the
+// attempt asked it again (Reasks). A re-ask counts once asked, whether or not
+// its responder answered.
+func (c *Controller) unaskedReasks(ctx context.Context, id, stageID string, attempt int) ([]string, error) {
+	ofAttempt, err := c.attemptRuns(ctx, id, stageID, attempt)
+	if err != nil {
+		return nil, err
+	}
+
+	rounds, err := c.rounds(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	// asked maps an answer to the newest round of the attempt that asked it
+	// again.
+	asked := map[int]int{}
+
+	for _, s := range rounds {
+		if !ofAttempt[s.PostedBy] {
+			continue
+		}
+
+		for _, old := range s.Reasks {
+			asked[old] = max(asked[old], s.Number)
+		}
+	}
+
+	var out []string
+
+	for _, s := range rounds {
+		if !ofAttempt[s.PostedBy] {
+			continue
+		}
+
+		for _, entry := range s.Converted {
+			if n, isAnswer := s.Consequences[entry]; isAnswer && asked[n] <= s.Number {
+				out = append(out, fmt.Sprintf("Q%d's answer was turned down; ask Q%d again with reasks %d before you submit", n, n, n))
+			}
+		}
+	}
+
+	return out, nil
+}
+
+// attemptRuns is the set of the stage runs of stageID's attempt.
+func (c *Controller) attemptRuns(ctx context.Context, id, stageID string, attempt int) (map[int64]bool, error) {
+	runs, err := c.opts.Store.ListRuns(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("list runs: %w", err)
+	}
+
+	out := map[int64]bool{}
+
+	for _, r := range runs {
+		if r.Kind == store.RunKindStage && r.Stage == stageID && r.Attempt == attempt {
+			out[r.ID] = true
 		}
 	}
 
@@ -757,8 +954,10 @@ var basisTags = regexp.MustCompile(`\b(?:Q\d+|(?i:round\d+\.a\d+))\b`)
 // a sentence or {text, basis}; every sentence non-empty, pointing at no text
 // a card will not carry and naming none of bases, the tags of the answered
 // questions and accepted assumptions, which belong in the basis so that no
-// prose says who answered; every basis one of bases.
-func assumptionProblems(data map[string]any, lists contract.Lists, bases map[string]bool) []string {
+// prose says who answered; every basis one of bases. On a plain-language
+// blueprint (plain) an entry's consequence is a sentence too; off it, no
+// consequence is read.
+func assumptionProblems(data map[string]any, lists contract.Lists, bases map[string]bool, plain bool) []string {
 	raw, ok := data["assumptions"]
 	if !ok || raw == nil {
 		return nil
@@ -785,6 +984,12 @@ func assumptionProblems(data map[string]any, lists contract.Lists, bases map[str
 					out = append(out, fmt.Sprintf("assumption %d's basis must be an answered question's tag (Q<n>) or an accepted assumption's (round<n>.A<k>)", i+1))
 				case normalTag(tag) != "" && !bases[normalTag(tag)]:
 					out = append(out, fmt.Sprintf("assumption %d's basis %q is no answered question (Q<n>) or accepted assumption (round<n>.A<k>); give one or no basis", i+1, tag))
+				}
+			}
+
+			if consequence, ok := entry["consequence"]; plain && ok && consequence != nil {
+				if _, ok := consequence.(string); !ok {
+					out = append(out, fmt.Sprintf("assumption %d's consequence must be a sentence on what it means for the person using the result", i+1))
 				}
 			}
 		}

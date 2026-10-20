@@ -708,7 +708,7 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 		kind: store.RunKindReviewer, stage: st.ID, persona: st.Reviewer.Persona, attempt: attempt, round: number,
 		in: stage.Input{
 			Stage: reviewStage(st.ID), Persona: c.opts.Pack.Persona(st.Reviewer.Persona),
-			Instructions: c.opts.Pack.ReviewInstructions(), Task: lead + task, Tools: ts,
+			Instructions: withPlain(bp, c.opts.Pack.ReviewInstructions(), c.opts.Pack.PlainInstructions()), Task: lead + task, Tools: ts,
 			Validate: func(_ context.Context, a stage.Artifact) error {
 				_, err := parseReview(a.Data, prior, threshold, art.Version)
 
@@ -781,6 +781,12 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipe
 
 	if err := c.writeAssumptions(ctx, &b, bp, st); err != nil {
 		return "", err
+	}
+
+	if bp.PlainLanguage {
+		if err := c.writePlainWording(ctx, &b, bp, st, art, attempt); err != nil {
+			return "", err
+		}
 	}
 
 	c.writeEdgeCases(&b, st)

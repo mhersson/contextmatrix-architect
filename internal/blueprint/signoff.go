@@ -203,7 +203,10 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 // says why; an intake from before assumptions were data gives its section's
 // text, which the panel shows as it shows an older sign-off.
 func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blueprint, out outcome, draft contract.Draft, pf preflightResult, pfErr error) map[string]any {
-	var assumptions any = []any{}
+	var (
+		assumptions any = []any{}
+		ordered     []assumption
+	)
 
 	sum, err := c.summary(ctx, bp.ID)
 
@@ -213,7 +216,8 @@ func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blue
 	case sum.prose != "":
 		assumptions = sum.prose
 	default:
-		assumptions = assumptionsPayload(signoffOrder(sum.assumptions))
+		ordered = signoffOrder(sum.assumptions)
+		assumptions = assumptionsPayload(ordered)
 	}
 
 	cards := make([]any, 0, len(draft.Cards))
@@ -244,6 +248,10 @@ func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blue
 
 	if pfErr != nil {
 		payload["preflight_error"] = pfErr.Error()
+	}
+
+	if bp.PlainLanguage {
+		payload["plain_summary"] = c.plainSummary(ctx, bp, ordered, draft.Title)
 	}
 
 	return payload

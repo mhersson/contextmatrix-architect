@@ -38,8 +38,11 @@ type interviewer struct {
 	// poc is the run's read of which targets are proofs of concept, which
 	// its responder is told.
 	poc []string
-	// max caps the questions the run's attempt may ask under auto, 0 none;
-	// asked counts them, the attempt's earlier runs included.
+	// max caps the questions the run's attempt may put to the responder,
+	// under auto or as a plain round's technical questions, 0 none; asked
+	// counts them, the attempt's earlier runs included. A re-ask of a
+	// turned-down answer counts against neither: the person's turn-down makes
+	// the stage ask it.
 	max, asked int
 	// attempt, builderRound and findings are the run's place, which a
 	// continuation of its round takes over.
@@ -51,6 +54,12 @@ type interviewer struct {
 	// responded is set when the run's round was answered by the responder
 	// under auto, so nothing waits on the person.
 	responded bool
+	// consequences are the plain consequences the responder wrote with its
+	// answers on a plain-language blueprint, by question number; concerns
+	// the consequence the person turned down that each question asking an
+	// answer again carries to its responder.
+	consequences map[int]string
+	concerns     map[int]string
 	// seen is how many chat entries a chat run was given; its reply follows
 	// them.
 	seen int
@@ -79,13 +88,33 @@ func (iv *interviewer) Ask(ctx context.Context, rd stage.Round) (string, error) 
 	}
 
 	auto := policy == pack.PolicyAuto
+	split := iv.bp.PlainLanguage && !auto
+
+	if split {
+		if err := needAudiences(rd.Questions); err != nil {
+			return "", err
+		}
+	}
+
+	reasks := 0
+	if iv.bp.PlainLanguage {
+		reasks = reaskCount(rd.Questions)
+	}
 
 	switch {
 	case auto && c.opts.Pack.ResponderInstructions() == "":
 		return "", errNoResponder
-	case auto && iv.max > 0 && iv.asked+len(rd.Questions) > iv.max:
+	case auto && iv.max > 0 && iv.asked+len(rd.Questions)-reasks > iv.max:
 		return "", fmt.Errorf("under the auto policy this stage may ask %d question(s) per attempt and %d are left; ask at most that many and decide the rest yourself, recording each decision as an assumption where this stage records them",
 			iv.max, max(iv.max-iv.asked, 0))
+	case split && iv.max > 0 && iv.asked+technicalCount(rd.Questions) > iv.max:
+		return "", fmt.Errorf("the auto responder answers this blueprint's technical questions, %d per attempt of this stage, and %d are left; ask at most that many technical questions and decide the rest yourself, recording each decision as an assumption where this stage records them",
+			iv.max, max(iv.max-iv.asked, 0))
+	}
+
+	turnedDown, err := c.reasked(bg, iv.bp, rd.Questions)
+	if err != nil {
+		return "", err
 	}
 
 	if err := c.repeated(bg, iv.bp.ID, rd.Questions); err != nil {
@@ -95,6 +124,10 @@ func (iv *interviewer) Ask(ctx context.Context, rd stage.Round) (string, error) 
 	sources, err := c.roundSources(bg, iv.bp.ID, rd.Questions)
 	if err != nil {
 		return "", err
+	}
+
+	if split {
+		return iv.askPlain(ctx, rd, sources, turnedDown)
 	}
 
 	lock := c.roundLock(iv.bp.ID)
@@ -113,10 +146,138 @@ func (iv *interviewer) Ask(ctx context.Context, rd stage.Round) (string, error) 
 	}
 
 	if auto {
+		iv.noteConcerns(s, turnedDown)
+
 		return iv.respondAll(ctx, s)
 	}
 
 	return postedText(s), nil
+}
+
+// technicalCount counts the technical questions of qs that do not ask an
+// answer again: on a plain round they go to the responder, which the
+// question cap bounds as it does under auto.
+func technicalCount(qs []stage.RoundQuestion) int {
+	n := 0
+
+	for _, q := range qs {
+		if q.Audience == stage.AudienceTechnical && q.Reasks == 0 {
+			n++
+		}
+	}
+
+	return n
+}
+
+// reaskCount counts the questions of qs that ask an answer again.
+func reaskCount(qs []stage.RoundQuestion) int {
+	n := 0
+
+	for _, q := range qs {
+		if q.Reasks > 0 {
+			n++
+		}
+	}
+
+	return n
+}
+
+// needAudiences refuses a question without its audience.
+func needAudiences(qs []stage.RoundQuestion) error {
+	if slices.ContainsFunc(qs, func(q stage.RoundQuestion) bool { return q.Audience == "" }) {
+		return errors.New("on this blueprint every question needs its audience: experience or technical")
+	}
+
+	return nil
+}
+
+// reasked checks each question of qs that asks an answer again (Reasks): on a
+// plain-language blueprint, a technical question naming an answer whose
+// consequence a person turned down, which no round asked again yet. It
+// returns the consequences turned down by question number, nil when no
+// question asks again.
+func (c *Controller) reasked(ctx context.Context, bp store.Blueprint, qs []stage.RoundQuestion) (map[int]string, error) {
+	i := slices.IndexFunc(qs, func(q stage.RoundQuestion) bool { return q.Reasks > 0 })
+
+	switch {
+	case i < 0:
+		return nil, nil
+	case !bp.PlainLanguage:
+		return nil, fmt.Errorf("reasks is for plain-language blueprints; ask without reasks %d", qs[i].Reasks)
+	}
+
+	_, turnedDown, err := c.answerConsequenceDecisions(ctx, bp.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	rounds, err := c.rounds(ctx, bp.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	// again maps an answer to the question that asked it again.
+	again := map[int]int{}
+
+	for _, s := range rounds {
+		for n, old := range s.Reasks {
+			again[old] = n
+		}
+	}
+
+	given := map[int]bool{}
+
+	for _, q := range qs {
+		n := q.Reasks
+		if n == 0 {
+			continue
+		}
+
+		_, turned := turnedDown[n]
+
+		switch {
+		case q.Audience != stage.AudienceTechnical:
+			return nil, fmt.Errorf("reasks %d asks a technical answer again: give its question the technical audience", n)
+		case !turned:
+			return nil, fmt.Errorf("the person turned down no answer's consequence for Q%d; reasks names a question whose answer they turned down", n)
+		case again[n] > 0:
+			return nil, askedAgain(n, again, turnedDown)
+		case given[n]:
+			return nil, fmt.Errorf("two questions give reasks %d; ask Q%d again once", n, n)
+		}
+
+		given[n] = true
+	}
+
+	return turnedDown, nil
+}
+
+// askedAgain refuses asking answer n again a second time: it points at the
+// newest answer of the chain that asked it again, whose own consequence the
+// person may have turned down too. again and turnedDown are reasked's.
+func askedAgain(n int, again map[int]int, turnedDown map[int]string) error {
+	m := again[n]
+	for again[m] > 0 {
+		m = again[m]
+	}
+
+	if _, turned := turnedDown[m]; turned {
+		return fmt.Errorf("the answer to Q%d was asked again as Q%d already, and the person turned down that answer's consequence too; ask with reasks %d instead", n, m, m)
+	}
+
+	return fmt.Errorf("the answer to Q%d was asked again as Q%d already; go on from Q%d's answer, or decide it yourself where it has none", n, m, m)
+}
+
+// noteConcerns gives each question of round s that asks an answer again the
+// consequence the person turned down, for its responder.
+func (iv *interviewer) noteConcerns(s roundState, turnedDown map[int]string) {
+	for n, old := range s.Reasks {
+		if iv.concerns == nil {
+			iv.concerns = map[int]string{}
+		}
+
+		iv.concerns[n] = turnedDown[old]
+	}
 }
 
 // numbered frames rd as the run's next round. The caller holds the
@@ -142,6 +303,15 @@ func (iv *interviewer) numbered(ctx context.Context, rd stage.Round, sources map
 
 	for i, q := range rd.Questions {
 		s.Frame.Questions = append(s.Frame.Questions, frameQuestion(q, first+i, sources))
+		s.setAudience(first+i, q.Audience)
+
+		if q.Reasks > 0 {
+			if s.Reasks == nil {
+				s.Reasks = map[int]int{}
+			}
+
+			s.Reasks[first+i] = q.Reasks
+		}
 	}
 
 	for i, text := range rd.Assumptions {
@@ -157,27 +327,37 @@ func (iv *interviewer) numbered(ctx context.Context, rd stage.Round, sources map
 	return s, nil
 }
 
-// respondAll has the responder answer each question of auto round s inside
-// the asking run, accepts every assumption on its tab, stores the round
-// closed and read-only, and ends the run on it like a human's round; the
-// stage continues at once. A cancel leaves no round; the answers already
-// given stay recorded, and a re-run asks only what is still unanswered. A
-// question the responder cannot answer is left to the stage, which decides
-// it.
+// respondAll answers auto round s with respondRound and ends the run on it
+// like a human's round; the stage continues at once.
 func (iv *interviewer) respondAll(ctx context.Context, s roundState) (string, error) {
+	s, err := iv.respondRound(ctx, s)
+	if err != nil {
+		return "", err
+	}
+
+	iv.responded, iv.posted = true, s.Number
+
+	return postedText(s), nil
+}
+
+// respondRound has the responder answer each question of round s inside the
+// asking run, accepts every assumption on its tab, and stores the round
+// closed and read-only. A cancel leaves no round; the answers already given
+// stay recorded, and a re-run asks only what is still unanswered. A question
+// the responder cannot answer is left to the stage, which decides it.
+func (iv *interviewer) respondRound(ctx context.Context, s roundState) (roundState, error) {
 	s.Frame.Responder = true
-	iv.responded = true
 
 	for _, a := range s.Frame.Assumptions {
 		s.Frame.Decisions = append(s.Frame.Decisions, protocol.AssumptionDecision{ID: a.ID, Accept: true})
 	}
 
 	for _, q := range s.Frame.Questions {
-		ans, err := iv.respond(ctx, q)
+		ans, err := iv.respond(ctx, q, s.Reasks[q.Number])
 
 		switch {
 		case ctx.Err() != nil:
-			return "", ctx.Err()
+			return roundState{}, ctx.Err()
 		case err != nil:
 			ans = protocol.RoundAnswer{Number: q.Number, Text: err.Error()}
 		}
@@ -185,7 +365,7 @@ func (iv *interviewer) respondAll(ctx context.Context, s roundState) (string, er
 		s.Frame.Answers = append(s.Frame.Answers, ans)
 	}
 
-	iv.asked += len(s.Frame.Questions)
+	iv.asked += len(s.Frame.Questions) - len(s.Reasks)
 	s.Change, s.Frame.Closed = changeClosed, true
 
 	bg := context.WithoutCancel(ctx)
@@ -195,9 +375,7 @@ func (iv *interviewer) respondAll(ctx context.Context, s roundState) (string, er
 	iv.c.putRound(bg, iv.sess.audit, iv.bp.ID, iv.runID, s)
 	lock.Unlock()
 
-	iv.posted = s.Number
-
-	return postedText(s), nil
+	return s, nil
 }
 
 // Answer is a chat run's reply in its round's chat, with the questions it
@@ -217,6 +395,13 @@ func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, 
 
 	if err := c.reposted(bg, iv.bp.ID, a.Assumptions); err != nil {
 		return "", err
+	}
+
+	// A chat run answers a round already posted to a person.
+	if iv.bp.PlainLanguage {
+		if err := needAudiences(a.Questions); err != nil {
+			return "", err
+		}
 	}
 
 	var added []stage.RoundQuestion
@@ -249,6 +434,13 @@ func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, 
 		return "", fmt.Errorf("round %d takes no changes now", iv.qround)
 	}
 
+	// A plain round is the person's half of its ask: its technical questions
+	// went to the responder's half.
+	plain := place.state.Plain
+	if plain && slices.ContainsFunc(a.Questions, func(q stage.RoundQuestion) bool { return q.Audience == stage.AudienceTechnical }) {
+		return "", errors.New("technical questions go in ask_questions once this round closes")
+	}
+
 	first, err := c.nextQuestionNumber(bg, iv.bp.ID)
 	if err != nil {
 		return "", err
@@ -259,7 +451,12 @@ func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, 
 		return "", err
 	}
 
-	if a.Assumptions != nil {
+	switch {
+	case a.Assumptions != nil && plain:
+		if next, err = plainRetab(next, a.Assumptions, a.Consequences); err != nil {
+			return "", err
+		}
+	case a.Assumptions != nil:
 		next = retabbed(next, a.Assumptions)
 	}
 
@@ -288,7 +485,8 @@ func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, 
 // reposted refuses an assumptions tab that posts again what the user
 // already accepted on a closed round's tab, case, spacing and punctuation
 // aside: the stage cites the acceptance's tag instead. An auto round
-// accepts nothing a person did.
+// accepts nothing a person did. A plain round's acceptance is compared by
+// its technical text (tabText), so a reworded consequence never makes it new.
 func (c *Controller) reposted(ctx context.Context, id string, tab []string) error {
 	if len(tab) == 0 {
 		return nil
@@ -357,12 +555,17 @@ func postedText(s roundState) string {
 		return fmt.Sprintf("Round %d is posted with its assumptions tab. Your run ends here; the decisions arrive as your next message.", s.Number)
 	}
 
+	return fmt.Sprintf("Round %d is posted as %s. Your run ends here; the answers arrive as your next message.", s.Number, questionTags(qs))
+}
+
+// questionTags names a round's questions: Q<n>, or the range Q<n>-Q<m>.
+func questionTags(qs []protocol.RoundQuestion) string {
 	tags := fmt.Sprintf("Q%d", qs[0].Number)
 	if len(qs) > 1 {
 		tags += fmt.Sprintf("-Q%d", qs[len(qs)-1].Number)
 	}
 
-	return fmt.Sprintf("Round %d is posted as %s. Your run ends here; the answers arrive as your next message.", s.Number, tags)
+	return tags
 }
 
 func personaName(id string) string { return strings.ReplaceAll(id, "_", " ") }
@@ -370,7 +573,9 @@ func personaName(id string) string { return strings.ReplaceAll(id, "_", " ") }
 // repeated refuses a question the blueprint already got answered with the
 // same options, case, spacing and a trailing question mark aside: a round
 // never asks an answered question again, while a changed option set makes a
-// new question.
+// new question. A question that asks a turned-down answer again (Reasks)
+// passes; reasked checks it. The newest match is cited: after a re-ask it is
+// the answer that stands.
 func (c *Controller) repeated(ctx context.Context, id string, qs []stage.RoundQuestion) error {
 	answered, err := c.opts.Store.ListQuestions(ctx, id)
 	if err != nil {
@@ -384,15 +589,25 @@ func (c *Controller) repeated(ctx context.Context, id string, qs []stage.RoundQu
 	same := func(x, y string) bool { return norm(x) == norm(y) }
 
 	for _, q := range qs {
+		if q.Reasks > 0 {
+			continue
+		}
+
 		titles := make([]string, 0, len(q.Options))
 		for _, o := range q.Options {
 			titles = append(titles, o.Title)
 		}
 
-		for _, a := range answered {
-			if same(q.Text, a.Text) && slices.EqualFunc(titles, a.Options, same) {
-				return fmt.Errorf("this was asked as Q%d and answered: %s; use that answer instead of asking again", a.Number, a.Answer)
+		var newest *store.Question
+
+		for i, a := range answered {
+			if same(q.Text, a.Text) && slices.EqualFunc(titles, a.Options, same) && (newest == nil || a.Number > newest.Number) {
+				newest = &answered[i]
 			}
+		}
+
+		if newest != nil {
+			return fmt.Errorf("this was asked as Q%d and answered: %s; use that answer instead of asking again", newest.Number, newest.Answer)
 		}
 	}
 

@@ -259,7 +259,7 @@ func (c *Controller) respondHandedOver(ctx context.Context, r *run, sess *sessio
 				}
 			}
 
-			ans, err = iv.respond(ctx, q)
+			ans, err = iv.respond(ctx, q, s.Reasks[q.Number])
 
 			switch {
 			case ctx.Err() != nil:

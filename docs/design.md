@@ -294,7 +294,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 
 | Table         | Holds                                                                                                                        |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price and context window as CM sent them                                      |
+| blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price and context window as CM sent them, and whether it runs in plain language |
 | stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, whether it passed, its summary when it gave one, its findings ledger with ids, severities, statuses and the reviewer's notes, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes, or at the responder's answer under auto, or at the answer for one asked alone before rounds; an assumption a human accepted on a tab is recorded on its round, not here |
@@ -452,7 +452,9 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   assumption, `S<n>` or `assumption`); and every question it got answered
   and every assumption the user accepted on its tabs since the slicing it
   consumes was built is the basis of a decision or of a stated assumption;
-  one from before a re-slice stays a basis it may cite. A shared stage's
+  one from before a re-slice stays a basis it may cite. On a plain-language
+  blueprint an answer a re-ask superseded is owed by none, and a decision
+  resting on it is refused (`superseded`). A shared stage's
   submit is one top-level `decisions` list of the same decision objects,
   with at least one decision and no `slices`, and an optional `contracts`
   list, held to the same rules for each decision.
@@ -582,7 +584,7 @@ pack.yaml          stage order; per stage: persona, consumes,
                    slices' stages it reads (`earlier_slices`), and whether it
                    settles what every slice shares (`shared`)
 personas/*.md      role text, one file per persona
-stages/*.md        instructions, one file per stage, review.md for every reviewer run and responder.md for every responder run
+stages/*.md        instructions, one file per stage, review.md for every reviewer run, responder.md for every responder run and plain.md (optional) for every run of a plain-language blueprint
 card.md            the card body template
 lists.yaml         data for mechanical checks: required sections, stripped headings,
                    defect phrases, maintenance labels and verbs, forbidden content,
@@ -770,8 +772,9 @@ Every stage has a responder policy for its questions and one for its gate.
 Both resolve, first match winning, from the blueprint's latest
 `gate <stage> human|auto` reply, which sets both, then the mode as stored
 when the question or gate comes (every mode but default makes both `auto`),
-then the pack: the stage's `policy` for its questions, and its `gate_policy`
-for its gate, which defaults to `policy`.
+then plain language, which makes every gate `auto`, then the pack: the
+stage's `policy` for its questions, and its `gate_policy` for its gate, which
+defaults to `policy`.
 In the default pack intake's questions go to a human and its gate is `auto`.
 A stage that declares the `assumptions` check records what it decides
 itself as data, and every responder answer is recorded as an assumption;
@@ -787,26 +790,28 @@ stage that asks (the product owner for intake questions, the system designer
 for design questions) and `stages/responder.md`. It gets the need, the
 asking stage's inputs, the target projects that are proofs of concept when
 the asking stage shapes cards, the gate feedback the asking attempt
-addresses, the user's notes, every answer so far and that stage's read
-tools, never the asker's transcript, so the asker cannot answer itself
-conveniently. It returns the answer, its reasoning, whether it is grounded
-and its evidence. The answer reads verified only when it is grounded and its
-evidence cites a source tag that a tool call of that same run returned (tags
-in the task, the inputs or its own prose do not count); the checked result
-is what is recorded. When it cannot ground the answer it still decides, and
-the answer is recorded as an `assumed` assumption keyed by its question
-number (`Q<n>`; a verified answer reads `verified`, with the evidence kept
-in the `answer` event, so a row stored without it reads `assumed`). That
-entry is listed only while no stated assumption rests on the answer (see
-below). The sign-off lists every assumption, riskiest first; the export and
-the playbook description list every assumption, so whoever reviews the
-result sees which decisions the AI made. A responder that fails leaves its
-question to the stage, which decides it and records an assumption where it
-can; under a pack without `stages/responder.md` an auto round is refused and
-the stage decides every question. On a priced model a responder spends from
-the asking run's cost cap; one a cap refuses (the asking run's spent, or
-less than its floor left of the blueprint's) leaves its question to the
-stage too.
+addresses, the user's notes, every answer so far, the person's concern when
+the question asks again an answer whose consequence they turned down (see
+Plain language), and that stage's read tools, never the asker's transcript,
+so the asker cannot answer itself conveniently. It returns the answer, its
+reasoning, whether it is grounded and its evidence and, on a plain-language
+blueprint, the plain consequence of an answer a person would notice. The
+answer reads verified only when it is grounded and its evidence cites a
+source tag that a tool call of that same run returned (tags in the task, the
+inputs or its own prose do not count); the checked result is what is
+recorded. When it cannot ground the answer it still decides, and the answer
+is recorded as an `assumed` assumption keyed by its question number (`Q<n>`;
+a verified answer reads `verified`, with the evidence kept in the `answer`
+event, so a row stored without it reads `assumed`). That entry is listed
+only while no stated assumption rests on the answer (see below). The
+sign-off lists every assumption, riskiest first; the export and the playbook
+description list every assumption, so whoever reviews the result sees which
+decisions the AI made. A responder that fails leaves its question to the
+stage, which decides it and records an assumption where it can; under a pack
+without `stages/responder.md` an auto round is refused and the stage decides
+every question. On a priced model a responder spends from the asking run's
+cost cap; one a cap refuses (the asking run's spent, or less than its floor
+left of the blueprint's) leaves its question to the stage too.
 
 **Assumptions are data.** Before it submits, a stage that declares the
 `assumptions` check (intake, shared decisions and solution design) posts its
@@ -817,20 +822,25 @@ on a dropped assumption never lands on another. A human accepts each or turns
 it into a question: an accepted one is recorded on its round, whose closed
 snapshot is the record, and cited as `round<n>.A<k>`, the round's number and
 the label (`round2.A1` for A1 on round 2's tab); the stage states it with
-that tag as its basis, so it reads `confirmed`. It takes no question number:
-`Q<n>` counts only asked questions. One a blueprint holds as a `questions`
-row stays cited by that row's `Q<n>`, whose number stays taken. After one is
-turned into a question, a later round of the attempt must be posted before
-the stage may submit. Under the human policy every stated assumption must
-have a basis. Under `auto` each assumption is accepted automatically, logged
-on the round, and keeps the status its basis gives it, never `confirmed`; no
+that tag as its basis, so it reads `confirmed` (on a plain-language blueprint
+a person accepts only what it means for them, which confirms nothing; see
+Plain language). It takes no question number: `Q<n>` counts only asked
+questions. One a blueprint holds as a `questions` row stays cited by that
+row's `Q<n>`, whose number stays taken. After one is turned into a question,
+a later round of the attempt must be posted before the stage may submit.
+Under the human policy every stated assumption must have a basis (on a
+plain-language blueprint, every one that carries a consequence; see Plain
+language). Under `auto` each assumption is accepted automatically, logged on
+the round, and keeps the status its basis gives it, never `confirmed`; no
 auto round records an acceptance. On a round a mode switch handed to the
 responder, the acceptances and conversions the human made before it stand
 and the rest are the responder's. The stage submits each assumption as a
 standalone sentence, or as `{"text": "<sentence>", "basis": "<tag>"}` when it
 rests on an answered question (`Q<n>`) or an accepted assumption
-(`round<n>.A<k>`). The check refuses a sentence that points at other text
-(the `dangling_references` list) or names an answered question or an accepted
+(`round<n>.A<k>`); on a plain-language blueprint an entry may also carry
+`consequence`, a sentence on what it means for the person using the result.
+The check refuses a sentence that points at other text (the
+`dangling_references` list) or names an answered question or an accepted
 assumption (the basis carries it and the sentence states the fact, so no
 model prose says who answered), and a basis that is neither; the third
 failing submit is accepted with its problems kept in its data, and such a
@@ -907,6 +917,106 @@ Sessions), and every question, gate and sign-off reads it as it stands then.
 The architect's cost cap bounds the architect. The CM runs a yolo blueprint
 starts are bounded by CM's per-card guardrails, not by the architect.
 
+### Plain language
+
+A blueprint started with the plain-language toggle (`plain_language` on the
+start, stored at creation and never changed by a later start) asks the person
+driving it only what they can answer and shows technical decisions only
+through what they mean for that person. The technical record is unchanged:
+every question, answer, decision and assumption is stored, sent to later
+stages, put on the cards and exported exactly as without it. Every stage,
+responder and reviewer run of such a blueprint gets the pack's
+`stages/plain.md` after its own instructions. The view carries
+`plain_language`, and the export's summary says so.
+
+Its stage gates are decided by the auto policy, as in `auto` mode, unless a
+`gate <stage> human` reply says otherwise: approving a design is a technical
+decision. Reviewers, findings and builder rounds run as always, and a gate a
+verdict does not settle is shown to the person. Questions keep the pack's
+policy. The sign-off follows the mode.
+
+Every question is tagged with its audience by the stage that asks it.
+
+Under the human policy a round that holds technical questions, or an
+assumption a person would not notice, is split. The auto responder first
+answers the technical questions on a read-only round of their own, recorded
+as any auto round, with every assumption on the tab that a person would not
+notice accepted automatically. Then the person gets the experience questions
+and an assumptions tab of plain consequences: each assumption that has one
+shows it as the entry's text with its technical sentence as `detail`, and
+each technical answer whose effect a person would notice shows the
+consequence the responder wrote with it, its question and answer as
+`detail`. When nothing is left for the person, the stage continues at once.
+The stage's `max_questions` caps the technical questions per attempt, as it
+caps an auto stage's questions; the person's experience questions are not
+counted. Under the `auto` policy, as in every auto mode, the responder's
+consequences are recorded only. The continuation is given both rounds. A chat
+on the person's round may revise or add experience questions only.
+Re-tabbing keeps the answers' entries, never twice, and refuses an assumption
+without a consequence. Under a pack without `stages/responder.md` a round
+with a technical question is refused, and the stage decides it itself.
+
+Accepting a consequence never confirms the decision. A stage's assumption
+accepted on the person's tab is still stated with its `round<n>.A<k>` tag,
+which links it to the acceptance, but it keeps the status an assumption
+without a basis has, and the record adds a separate marker that a person
+accepted its consequence on round n. An accepted answer's consequence marks
+that answer's `Q<n>` entry the same way, and decisions a mode switch's
+handover made mark nothing. An assumption no person would notice is accepted
+automatically on the responder's round and stated without a basis; under the
+human policy only an assumption that carries a consequence needs one, or one
+the person turned down on a plain round of the attempt, so it never comes
+back unseen. The sign-off's assumption entries carry `consequence`, on an
+accepted one the sentence the person was shown whatever the stage states with
+it later, and `consequence_accepted` (`by`, `round`). The status set and its
+order are unchanged.
+
+Turning down an answer's consequence sends the person's concern back to the
+stage, which asks the question again, as a technical question naming
+`reasks: <n>`. The responder answers it with the concern, the new answer
+supersedes the old, and the record keeps both: the answer event records
+`supersedes`, and the sign-off lists the old entry with `superseded_by`. The
+answers a later run is given, the assumptions it is shown, the cards and the
+playbook description mark the old answer as superseded by the new one. The
+decisions check owes the new answer, not the old, and refuses a decision
+resting on the old one; a stated assumption may still rest on it, listed
+superseded. No stage, whatever checks it declares, may submit until its
+attempt has asked a turned-down answer again, and no question cap counts a
+re-ask. A re-ask whose responder fails supersedes nothing.
+
+The stage reviewers that already run also judge, in the same run, each
+experience question the attempt asked (is it a technical question in
+disguise?) and each consequence the artifact states or the attempt's rounds
+showed against its technical text (does it state the effect truly?); their
+findings count as any others. No extra model run guards the wording.
+
+The sign-off's data adds a plain summary, `plain_summary`, built from the
+record without a model run: `build`, a line per slice (its title and value);
+`can_do`, the need's outcomes; `accepted`, every consequence a person
+accepted, once, in the words they were shown, by the id of the first
+assumption that carries it, with `changed` when its answer was superseded or
+when its stage's versions state a decision resting on it differently since
+the first version that stated it. The decision is the stated assumption with
+that basis, and, on an answer's `Q<n>`, which several can share in one
+version, with that sentence too; the answer's own `Q<n>` entry is changed
+only when superseded. The latest consequence the versions give is compared
+with the first they gave, so a version that gives none changes nothing, and
+for an assumption accepted on a plain round's tab the latest sentence is
+compared with the first. A first statement that words the consequence
+otherwise than the person was shown is no change. Approve, reject and the
+rest of the sign-off work as without it.
+
+When the architect cannot settle something on its own, the person reads it
+plainly with the technical text folded underneath for a technical helper
+(`detail` on the prompt): every stage gate, the sign-off (which adds a
+sentence when setup needs someone technical) and a stopped emission or run
+start. The same choices are worded plainly
+("Continue anyway", "Try again") and send the same replies. The setup note
+the code checkout posts opens with a plain sentence that someone technical
+needs to set these things up, its technical list unchanged below. An ended
+pipeline's `end_reason` is plain and its technical reason is `end_detail`.
+The wording is fixed per situation, in the server.
+
 ## Tools
 
 | Group    | Tools                                                                                                   | Notes                                                                                                                                             |
@@ -915,7 +1025,7 @@ starts are bounded by CM's per-card guardrails, not by the architect.
 | research | `web_search`, `web_fetch` | Offered to the stages whose pack names the group (intake, slicing, shared decisions and solution design in the default pack) when the session's research settings name a provider the architect can build; otherwise the group is absent and the session says once, at the first such stage, that research is off. `web_search` asks the provider (Brave Search) for ten results: titles, URLs and snippets the model reads in that run only, since a run's stored messages keep only the query and the result count. `web_fetch` reads an http or https page from a public address: every connection's address is checked after the name resolves, redirects included (five at most), and no proxy is used; it reads at most 5 MiB in 20 seconds, keeps 48 KiB of text, turns HTML into readable text (the main or article element, without scripts, navigation or footers), takes text types as they are and refuses the rest. A page read is recorded as a `url` source and its result starts with the tag; a page with no readable text is a tool error, not a source. A leak guard checks every query and every URL's host labels, path and query and refuses, as a tool error naming the rule: a token with a path separator (acronym pairs like CI/CD and HTTP/1.1 pass) or a file extension (a `<name>.js` library passes), code punctuation (a URL path segment may carry a name's `(` or `=`, as in `Raft_(algorithm)`), a compound identifier the blueprint's checkouts declare (not a name of a package they depend on, and nothing in a lockfile), the root module path's owner or name (a nested module's compound name is a declared identifier), a target project's name or its repositories' owner or name, a ContextMatrix card id, and a query, or a URL path segment, query key or query value, over 160 characters; plain words and technology names pass. A URL's host labels get the name, module, identifier and card-id rules but not the shape rules, since a page can ask for a host that carries data; its path segments skip the path and file-name rules, which a URL's own syntax breaks; its query keys and values get every query rule. It reads the checkouts once per run, at the first check that needs them, checking them out first in a stage without the code tools, and refuses everything while it cannot read them. The responder shares its stage's tools. Every query and page read is a `research` event. A reviewer whose entry names `research` gets `web_fetch` alone behind the same guard, and never posts the research-off notice. |
 | cm       | `list_projects`, `list_cards`, `get_card`, `get_playbook` as `cm_`-prefixed reads | Offered to grounding and readiness over the session's MCP key, one MCP session per run, chat's bridge adapter on the architect's client with a `cm_` prefix and an allowlist that skips tools CM does not serve. No `agent_id` is sent, so CM keeps redacting unvetted imported text; `get_card` never attaches images; a credential embedded in a URL is removed from every result and error before the model or the record sees it, since CM returns project config as stored; every result carries the blueprint's ContextMatrix source tag. Creating cards and playbooks and starting runs are controller calls with the configured caller identity, never model tools. |
 | artifacts | `read_artifact` | Offered to a run whose task can hold a digest of another slice's artifact: the whole body and data of any stored version of a step the run reads. The stored transcript keeps each result's first line, since the record holds the artifact. |
-| control  | `ask_questions`, `answer_chat`, `submit_artifact`                                          | `ask_questions` posts a round and ends the run: per question a tab title, the question, why it matters, options with a summary, pros, cons and source tags (only tags a tool result of this blueprint returned; the panel shows a page `web_fetch` read by its title (its address when it has none), linked to its address, and any other source by its identity), and the recommended position; a trailing "(recommended)" a model writes into an option title is cut and marks it. A stage that declares the `assumptions` check may add its assumptions as the round's last tab, or post the tab alone; any other stage's tab is refused. A tab entry the user already accepted on a closed round is refused. A round asks at most 10 questions of at most 6 options, 96 KiB in all, its assumptions included. A question already answered with the same options is refused; a changed option set makes a new question. Under `auto` its responder answers before the run ends. Questions are numbered `Q<n>` per blueprint. `answer_chat` replies in an open round's chat, at most 4000 characters, revising or adding questions under the same limits or replacing the assumptions tab, and ends the run. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
+| control  | `ask_questions`, `answer_chat`, `submit_artifact`                                          | `ask_questions` posts a round and ends the run: per question a tab title, the question, why it matters, options with a summary, pros, cons and source tags (only tags a tool result of this blueprint returned; the panel shows a page `web_fetch` read by its title (its address when it has none), linked to its address, and any other source by its identity), and the recommended position; an audience, `experience` (what the person wants, who uses it, how it should look, feel and behave) or `technical` (how it is built), recorded on the round in every mode and required on a plain-language blueprint's questions under the human policy; a trailing "(recommended)" a model writes into an option title is cut and marks it. A stage that declares the `assumptions` check may add its assumptions as the round's last tab, each a sentence (or, on a plain-language blueprint, `{text, consequence}`), or post the tab alone; any other stage's tab is refused. A tab entry the user already accepted on a closed round is refused. A round asks at most 10 questions of at most 6 options, 96 KiB in all, its assumptions included. A question already answered with the same options is refused unless it re-asks a turned-down answer (`reasks`, offered and taken on plain-language blueprints only); a changed option set makes a new question. Under `auto` its responder answers before the run ends. Questions are numbered `Q<n>` per blueprint. `answer_chat` replies in an open round's chat, at most 4000 characters, revising or adding questions under the same limits or replacing the assumptions tab, and ends the run. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
 
 Every tool result passes the harness redactor for every secret the process
 holds.
@@ -930,8 +1040,9 @@ blueprint ends in one playbook across every project. Default and `auto`
 modes show the sign-off (the entries in playbook order with the card that
 also writes `AGENTS.md` marked, the playbook title, the assumptions, the
 preflight result and, at the top, readiness's findings across the blueprint,
-critical first) and wait: `approve` emits (over a critical finding it takes
-a reason, `approve <reason>`, which the button asks for: recorded as the
+critical first and, on a plain-language blueprint, the plain summary) and
+wait: `approve` emits (over a critical finding it takes a reason, `approve
+<reason>`, which the button asks for: recorded as the
 approval's feedback and the decided event's `override_reason`, served in the
 sign-off's data and kept by the export; a bare `approve` is then a note
 asking for it), and `reject <feedback>` stores the feedback and re-runs
@@ -1040,11 +1151,12 @@ The Outcomes stage closes the loop from emitted cards back to the contract.
 ## Sessions
 
 The only surface is a blueprint session in CM's chat panel. The new-session
-dialog picks the target projects, the mode and a cost cap. The need is stated
-there, questions and gates are answered there, and the stage's progress, tool
-calls and cost stream into it as log entries. The binary,
-`contextmatrix-architect`, has one server command, `serve`, plus the
-`config defaults` and `config validate` helpers.
+dialog picks the target projects, the mode, a cost cap and whether the
+blueprint runs in plain language. The need is stated there, questions and
+gates are answered there, and the stage's progress, tool calls and cost
+stream into it as log entries. The binary, `contextmatrix-architect`, has one
+server command, `serve`, plus the `config defaults` and `config validate`
+helpers.
 
 Replies the server understands, besides a round's structured answers:
 
@@ -1216,9 +1328,10 @@ frames on the session's chat stream.
   run read done.
   A pipeline that ended before the sign-off (slicing that holds no slices,
   cards the contract stopped, readiness's rounds spent) reads `ended`, with
-  a one-line `end_reason`, whatever state the blueprint's row holds (idle):
-  it is read from the record, so a blueprint that ended before the view
-  said so reads ended too. The step whose artifact the end carries is
+  a one-line `end_reason` (plain on a plain-language blueprint, with the
+  technical reason in `end_detail`), whatever state the blueprint's row
+  holds (idle): it is read from the record, so a blueprint that ended before
+  the view said so reads ended too. The step whose artifact the end carries is
   stopped, its newest version current on the sheet. A step after it reads
   skipped when it collapsed and its collapse is recorded, not_reached when
   it collapsed otherwise, holds no version or holds one a reject
@@ -1321,7 +1434,7 @@ frames on the session's chat stream.
 
 - Go 1.27, `contextmatrix-harness` v0.26.0 (loop, llm client, jailed read
   tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.9.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.32.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.34.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
@@ -1415,6 +1528,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Pin protocol v0.31.0; panel: a review card reads "sent back" from ArtifactReview.SentBack, "passed" otherwise when it passed, else "failed", and its explanation states the settle rule; a blueprint session's pane header shows the view's cost.spent_usd; a design sheet with one slice entry drops the slice heading | review settle |
 | Pin protocol v0.32.0; panel: step statuses `stopped` (the failed ink, "Stopped the pipeline") and `not_reached` (its own quiet tone, "Not reached", never clickable); on an `ended` view the current step is the stopped one and the where line reads "Stopped: <end_reason>"; a feedback box labelled by its action's `ask`; Outcomes tables on the need, shared decisions and design sheets; an Outcomes column and an Edge cases table per slice on the acceptance sheet; an "Across the blueprint" table on the readiness and sign-off sheets, and the sign-off's override reason; `A<n>` and `O<n>` basis chips | quality checks |
 | `poc` on the project config, switched only by a human in Project Settings and returned in `list_projects`' project config, omitted when false | POC projects |
+| Pin protocol v0.34.0; the new-session dialog has a plain-language toggle, and CM stores the flag on the session row and sends it as `ArchitectStart.PlainLanguage` on every start; panel: the pane header shows that a blueprint runs in plain language, from `view.plain_language` once a view has loaded; a round entry's `detail`, a prompt's `detail` and the view's `end_detail` fold under their plain text; on a plain-language blueprint a responder round renders folded into its summary card; the sign-off sheet shows `plain_summary` first (what will be built, what you can do with it, the consequences you accepted, a changed one marked "changed since you accepted it"), an entry's `consequence` under its technical text with a "consequence accepted by you, round <n>" marker from `consequence_accepted`, and a superseded answer's row muted with a "superseded by Q<m>" chip from `superseded_by` | plain language |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

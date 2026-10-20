@@ -58,6 +58,10 @@ type Input struct {
 	// Chat makes the run answer the chat about the open round: answer_chat,
 	// which needs the Interviewer, is its only built-in tool and ends it.
 	Chat bool
+	// PlainLanguage offers the round tools' plain-language forms: a tab
+	// entry's {text, consequence}, and ask_questions' reasks; off it, an
+	// entry is a sentence.
+	PlainLanguage bool
 	// Events receives the harness JSONL event stream; nil discards it.
 	Events io.Writer
 	// Secrets are masked in every tool result.
@@ -222,10 +226,10 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 	var builtins []tools.Tool
 
 	if in.Chat {
-		builtins = append(builtins, answerChatTool{iv: in.Interviewer, mark: mark})
+		builtins = append(builtins, answerChatTool{iv: in.Interviewer, mark: mark, plain: in.PlainLanguage})
 	} else {
 		if in.Interviewer != nil {
-			builtins = append(builtins, askQuestionsTool{iv: in.Interviewer, mark: mark})
+			builtins = append(builtins, askQuestionsTool{iv: in.Interviewer, mark: mark, plain: in.PlainLanguage})
 		}
 
 		builtins = append(builtins, submitArtifactTool{validate: in.Validate, drafts: drafts, mark: mark})

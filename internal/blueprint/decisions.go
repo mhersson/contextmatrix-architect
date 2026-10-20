@@ -55,7 +55,9 @@ func (c *Controller) decisionsValidator(bp store.Blueprint, stageID string) (fun
 // "assumption"). Every question the stage got answered and every assumption
 // the user accepted on its tabs since the slicing was built, in any attempt,
 // is the basis of some decision or stated assumption, so none is dropped.
-// One from before a re-slice stays citable.
+// One from before a re-slice stays citable. On a plain-language blueprint an
+// answer a re-ask superseded is owed by none and no decision rests on it:
+// the answer that superseded it stands.
 func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, stageID string, data map[string]any) ([]string, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
@@ -91,6 +93,11 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 		return nil, err
 	}
 
+	superseded, err := c.supersededAnswers(ctx, bp)
+	if err != nil {
+		return nil, err
+	}
+
 	known := map[string]bool{}
 
 	// owed is a basis the stage must use, with what made it one.
@@ -98,8 +105,21 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 
 	var own []owed
 
+	// stands maps a superseded answer's tag to the newest answer of its re-asks.
+	stands := map[string]string{}
+
 	for _, q := range questions {
 		known[q.Tag()] = true
+
+		if m := superseded[q.Number]; m > 0 {
+			for superseded[m] > 0 {
+				m = superseded[m]
+			}
+
+			stands[q.Tag()] = fmt.Sprintf("Q%d", m)
+
+			continue
+		}
 
 		if q.Stage == stageID && q.RunID > since {
 			own = append(own, owed{q.Tag(), "the question was answered"})
@@ -115,7 +135,12 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 		known[a.Tag] = true
 
 		if a.Stage == stageID && a.RunID > since {
-			own = append(own, owed{a.Tag, "the user accepted the assumption"})
+			what := "the user accepted the assumption"
+			if a.Plain {
+				what = "the person accepted what the assumption means for them"
+			}
+
+			own = append(own, owed{a.Tag, what})
 		}
 	}
 
@@ -187,6 +212,8 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 
 			switch basis := normalTag(dec.Basis); {
 			case basis == "ASSUMPTION":
+			case stands[basis] != "":
+				out = append(out, problem(where, "superseded", fmt.Sprintf("%s's answer was turned down and asked again; rest the decision on %s, whose answer stands", basis, stands[basis])))
 			case known[basis]:
 				used[basis] = true
 			default:
