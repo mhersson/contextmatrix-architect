@@ -276,6 +276,7 @@ func TestRun_APlainLanguageRunsRoundToolsTakeAConsequence(t *testing.T) {
 						OneOf []struct {
 							Type string `json:"type"`
 						} `json:"oneOf"`
+						Properties map[string]any `json:"properties"`
 					} `json:"items"`
 				} `json:"properties"`
 			}
@@ -292,6 +293,9 @@ func TestRun_APlainLanguageRunsRoundToolsTakeAConsequence(t *testing.T) {
 			}
 
 			assert.Equal(t, []string{"string", "object"}, entries, "an entry is a sentence or {text, consequence}")
+
+			_, reasks := schema.Properties["questions"].Items.Properties["reasks"]
+			assert.Equal(t, !tt.chat, reasks, "ask_questions offers reasks")
 		})
 	}
 }
@@ -537,6 +541,60 @@ func TestParseQuestion_Audience(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, q.Audience)
 		})
+	}
+}
+
+func TestParseQuestion_Reasks(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   any
+		want    int
+		wantErr bool
+	}{
+		{name: "a question number", value: float64(3), want: 3},
+		{name: "zero", value: float64(0), want: 0},
+		{name: "absent", value: nil, want: 0},
+		{name: "negative", value: float64(-1), wantErr: true},
+		{name: "fractional", value: 2.5, wantErr: true},
+		{name: "a tag", value: "Q3", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obj := map[string]any{"title": "Dates", "question": "How should each photo's date be found?"}
+			if tt.value != nil {
+				obj["reasks"] = tt.value
+			}
+
+			q, err := parseQuestion(obj, false)
+			if tt.wantErr {
+				require.Error(t, err)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, q.Reasks)
+		})
+	}
+
+	t.Run("the chat form reads none", func(t *testing.T) {
+		q, err := parseQuestion(map[string]any{"title": "Dates", "question": "How should each photo's date be found?", "reasks": float64(3)}, true)
+		require.NoError(t, err)
+		assert.Zero(t, q.Reasks)
+	})
+
+	for _, revise := range []bool{false, true} {
+		for _, plain := range []bool{false, true} {
+			var schema struct {
+				Properties map[string]any `json:"properties"`
+			}
+
+			require.NoError(t, json.Unmarshal([]byte(questionSchema(revise, plain)), &schema))
+
+			_, offered := schema.Properties["reasks"]
+			assert.Equal(t, !revise && plain, offered, "only a plain-language run's ask_questions offers reasks")
+		}
 	}
 }
 

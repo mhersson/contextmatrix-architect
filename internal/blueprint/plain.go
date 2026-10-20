@@ -32,8 +32,9 @@ func withPlain(bp store.Blueprint, instructions, plain string) string {
 // technical text as detail: the stage's entries that carry one, then the
 // answers the responder wrote one with. A half that would be empty is not
 // posted; with no person's half the run ends on the responder's round, as
-// on an auto round.
-func (iv *interviewer) askPlain(ctx context.Context, rd stage.Round, sources map[string]protocol.RoundSource) (string, error) {
+// on an auto round. turnedDown is reasked's, for the questions that ask an
+// answer again.
+func (iv *interviewer) askPlain(ctx context.Context, rd stage.Round, sources map[string]protocol.RoundSource, turnedDown map[int]string) (string, error) {
 	c, bg := iv.c, context.WithoutCancel(ctx)
 
 	var technical, experience stage.Round
@@ -81,6 +82,8 @@ func (iv *interviewer) askPlain(ctx context.Context, rd stage.Round, sources map
 		if err != nil {
 			return "", err
 		}
+
+		iv.noteConcerns(s, turnedDown)
 
 		// Stored before the person's half is numbered, which reads the
 		// next numbers from the store.
@@ -298,8 +301,8 @@ func plainTags(accepted []acceptedAssumption) map[string]int {
 }
 
 // answerNote is what an auto answer's event records beside the answer: the
-// consequence the responder wrote with it, and the question it asks again, 0
-// for none.
+// consequence the responder wrote with it, and the question whose turned-down
+// answer it supersedes, 0 for none.
 type answerNote struct {
 	Consequence string
 	Supersedes  int
@@ -320,16 +323,45 @@ func answerNotes(ctx context.Context, s *store.Store, blueprintID string) (map[i
 			Number      int    `json:"number"`
 			Responder   string `json:"responder"`
 			Consequence string `json:"consequence"`
+			Supersedes  int    `json:"supersedes"`
 		}
 
 		if json.Unmarshal(e.Payload, &p) != nil || p.Responder != store.ResponderAuto {
 			continue
 		}
 
-		out[p.Number] = answerNote{Consequence: p.Consequence}
+		out[p.Number] = answerNote{Consequence: p.Consequence, Supersedes: p.Supersedes}
 	}
 
 	return out, nil
+}
+
+// supersededBy maps each answer a re-ask superseded to the newest answer that
+// did, from the auto answers' notes.
+func supersededBy(notes map[int]answerNote) map[int]int {
+	out := map[int]int{}
+
+	for n, note := range notes {
+		if note.Supersedes > 0 {
+			out[note.Supersedes] = max(out[note.Supersedes], n)
+		}
+	}
+
+	return out
+}
+
+// supersededAnswers is supersededBy for blueprint bp, nil unless it is plain.
+func (c *Controller) supersededAnswers(ctx context.Context, bp store.Blueprint) (map[int]int, error) {
+	if !bp.PlainLanguage {
+		return nil, nil
+	}
+
+	notes, err := answerNotes(ctx, c.opts.Store, bp.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return supersededBy(notes), nil
 }
 
 // answerConsequenceDecisions reads, from the closed plain rounds, what a
@@ -375,12 +407,14 @@ func (c *Controller) answerConsequenceDecisions(ctx context.Context, id string) 
 // consequenceRecord is what a plain-language blueprint's record says of the
 // consequences its person was shown: the round each plain acceptance's tag
 // was accepted on and the consequence it showed, every auto answer's note,
-// and the round each answer's consequence was accepted on.
+// the round each answer's consequence was accepted on, and the answer that
+// supersedes each answer asked again.
 type consequenceRecord struct {
-	tags    map[string]int
-	shown   map[string]string
-	notes   map[int]answerNote
-	answers map[int]int
+	tags       map[string]int
+	shown      map[string]string
+	notes      map[int]answerNote
+	answers    map[int]int
+	superseded map[int]int
 }
 
 // consequenceRecord reads blueprint id's record of consequences; accepted is
@@ -400,6 +434,8 @@ func (c *Controller) consequenceRecord(ctx context.Context, id string, accepted 
 		return consequenceRecord{}, err
 	}
 
+	r.superseded = supersededBy(r.notes)
+
 	if r.answers, _, err = c.answerConsequenceDecisions(ctx, id); err != nil {
 		return consequenceRecord{}, err
 	}
@@ -408,10 +444,11 @@ func (c *Controller) consequenceRecord(ctx context.Context, id string, accepted 
 }
 
 // mark gives a the round a person accepted its consequence on, by the plain
-// acceptance its basis names or by the auto answer it rests on or is, and
-// its consequence: the sentence that person was shown, whatever the stage
-// states with it now; otherwise the one stated with it, or else the
-// answer's. Its status stays its basis's.
+// acceptance its basis names or by the auto answer it rests on or is, which
+// also says the answer that supersedes it, and its consequence: the sentence
+// that person was shown, whatever the stage states with it now; otherwise
+// the one stated with it, or else the answer's. Its status stays its
+// basis's.
 func (r consequenceRecord) mark(a *assumption, stated string, answered map[string]store.Question) {
 	shown := ""
 
@@ -419,6 +456,10 @@ func (r consequenceRecord) mark(a *assumption, stated string, answered map[strin
 		a.ConsequenceAccepted, shown = n, r.shown[a.Basis]
 	} else if q, ok := answered[a.Basis]; ok {
 		a.ConsequenceAccepted, shown = r.answers[q.Number], r.notes[q.Number].Consequence
+
+		if m := r.superseded[q.Number]; m > 0 {
+			a.SupersededBy = fmt.Sprintf("Q%d", m)
+		}
 	}
 
 	a.Consequence = stated

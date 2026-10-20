@@ -935,9 +935,14 @@ func (c *Controller) writeAnsweredAfter(ctx context.Context, b *strings.Builder,
 	}
 
 	if len(own) > 0 {
+		superseded, err := c.supersededAnswers(ctx, bp)
+		if err != nil {
+			return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
+		}
+
 		b.WriteString("## Questions this stage already asked\n\nThey are answered; use the answers and do not ask them again:\n\n")
 
-		writeQuestions(b, own)
+		writeQuestions(b, own, superseded)
 	}
 
 	if len(ownAccepted) > 0 {
@@ -979,10 +984,15 @@ func answeredBy(q store.Question) string {
 }
 
 // writeQuestions lists answered questions, one tagged line and its answer
-// each, saying who gave the answer.
-func writeQuestions(b *strings.Builder, questions []store.Question) {
+// each, saying who gave the answer and, from superseded (supersededAnswers),
+// which later answer supersedes it.
+func writeQuestions(b *strings.Builder, questions []store.Question, superseded map[int]int) {
 	for _, q := range questions {
 		fmt.Fprintf(b, "- [%s] %s\n  Answer (%s): %s\n", q.Tag(), q.Text, answeredBy(q), q.Answer)
+
+		if m := superseded[q.Number]; m > 0 {
+			fmt.Fprintf(b, "  Superseded by Q%d: the question was asked again, and that answer stands.\n", m)
+		}
 	}
 
 	b.WriteString("\n")

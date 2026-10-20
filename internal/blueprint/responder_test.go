@@ -599,7 +599,7 @@ func TestQuestions_TheResponderIsToldWhoAnsweredEarlierOnes(t *testing.T) {
 	intake, ok := c.stepAt("intake")
 	require.True(t, ok)
 
-	task, err := c.responderTask(ctx, bp, intake, 1, nil, protocol.RoundQuestion{Number: 3, Text: "Next?"})
+	task, err := c.responderTask(ctx, bp, intake, 1, nil, protocol.RoundQuestion{Number: 3, Text: "Next?"}, "")
 	require.NoError(t, err)
 
 	assertAttributed(t, task)

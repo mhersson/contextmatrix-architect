@@ -58,8 +58,9 @@ type Input struct {
 	// Chat makes the run answer the chat about the open round: answer_chat,
 	// which needs the Interviewer, is its only built-in tool and ends it.
 	Chat bool
-	// PlainLanguage offers the round tools' plain-language form of a tab
-	// entry, {text, consequence}; off it, an entry is a sentence.
+	// PlainLanguage offers the round tools' plain-language forms: a tab
+	// entry's {text, consequence}, and ask_questions' reasks; off it, an
+	// entry is a sentence.
 	PlainLanguage bool
 	// Events receives the harness JSONL event stream; nil discards it.
 	Events io.Writer

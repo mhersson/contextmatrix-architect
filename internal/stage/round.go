@@ -48,7 +48,9 @@ const (
 )
 
 // RoundQuestion is one question of a round. Number names the open round's
-// question an answer_chat revision replaces; 0 is a new question.
+// question an answer_chat revision replaces; 0 is a new question. Reasks,
+// which only a plain-language run's ask_questions offers, names the question
+// whose answer it asks again, 0 for none.
 type RoundQuestion struct {
 	Number      int
 	Title       string
@@ -57,6 +59,7 @@ type RoundQuestion struct {
 	Options     []RoundOption
 	Recommended int
 	Audience    string
+	Reasks      int
 }
 
 // Round is what ask_questions posts.
@@ -120,13 +123,20 @@ const optionSchema = `{"type":"object","properties":{
 	"sources":{"type":"array","items":{"type":"string"},"description":"the source tags (S<n>) of tool results this option rests on"}},
 	"required":["title"]}`
 
-func questionSchema(revise bool) string {
-	number := ""
-	if revise {
-		number = `"number":{"type":"integer","description":"the number of the open round's question this replaces; leave it out to add a question"},`
+// questionSchema is a question of ask_questions or, with revise, of
+// answer_chat; reasks is offered on a plain-language blueprint's
+// ask_questions alone.
+func questionSchema(revise, plain bool) string {
+	field := ""
+
+	switch {
+	case revise:
+		field = `"number":{"type":"integer","description":"the number of the open round's question this replaces; leave it out to add a question"},`
+	case plain:
+		field = `"reasks":{"type":"integer","description":"the Q<n> of a technical answer whose consequence the person turned down; ask its question again with their concern"},`
 	}
 
-	return `{"type":"object","properties":{` + number + `
+	return `{"type":"object","properties":{` + field + `
 		"title":{"type":"string","description":"the tab label, two to four words"},
 		"question":{"type":"string","description":"the question, one sentence"},
 		"why":{"type":"string","description":"why the answer matters for this need"},
@@ -152,7 +162,7 @@ func (t askQuestionsTool) Schema() llm.Tool {
 		Description: "Ask the person driving this blueprint a round of questions you cannot settle from the code or your sources; " +
 			"where your stage records assumptions, post them as the round's last tab before you submit. " +
 			"Your run ends when the round is posted; the answers arrive as your next message, numbered Q<n>, which is how to cite them.",
-		Parameters: json.RawMessage(`{"type":"object","properties":{"questions":{"type":"array","items":` + questionSchema(false) + `},"assumptions":` + assumptionsSchema(t.plain) + `}}`),
+		Parameters: json.RawMessage(`{"type":"object","properties":{"questions":{"type":"array","items":` + questionSchema(false, t.plain) + `},"assumptions":` + assumptionsSchema(t.plain) + `}}`),
 	}}
 }
 
@@ -197,7 +207,7 @@ func (t answerChatTool) Schema() llm.Tool {
 			"one whose text is unchanged keeps its decision. Your run ends with the reply.",
 		Parameters: json.RawMessage(`{"type":"object","properties":{
 			"reply":{"type":"string","description":"your reply in the round's chat"},
-			"questions":{"type":"array","items":` + questionSchema(true) + `},
+			"questions":{"type":"array","items":` + questionSchema(true, t.plain) + `},
 			"assumptions":{"type":"array","items":` + tabEntrySchema(t.plain) + `,"description":"replaces the round's assumptions tab: every assumption you still hold, one standalone sentence each; leave it out to keep the tab; never an empty list"}},"required":["reply"]}`),
 	}}
 }
@@ -294,6 +304,15 @@ func parseQuestion(obj map[string]any, revise bool) (RoundQuestion, error) {
 		}
 
 		q.Number = int(n)
+	}
+
+	if v, ok := obj["reasks"]; !revise && ok && v != nil {
+		n, isNumber := v.(float64)
+		if !isNumber || n != float64(int(n)) || n < 0 {
+			return RoundQuestion{}, errors.New("reasks is the number of a question whose answer the person turned down")
+		}
+
+		q.Reasks = int(n)
 	}
 
 	switch audience := strings.ToLower(strings.TrimSpace(stringArg(obj, "audience"))); audience {

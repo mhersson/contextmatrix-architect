@@ -1385,3 +1385,859 @@ func TestPlain_AnAcceptedConsequenceStaysTheSentenceShown(t *testing.T) {
 		})
 	}
 }
+
+const (
+	copyDate  = "Photos copied from a friend may get the copy date, not the day they were taken."
+	takenDate = "Photos keep the day they were taken."
+)
+
+func TestPlain_ATurnedDownAnswerIsAskedAgainAndSupersedesTheOld(t *testing.T) {
+	var runs, answered atomic.Int32
+
+	responder := func(_ context.Context, in stage.Input) (stage.Output, error) {
+		if answered.Add(1) == 1 {
+			return answeringWith("Use the file's change date", copyDate, in), nil
+		}
+
+		return answeringWith("Read the camera's date", takenDate, in), nil
+	}
+
+	dates := technicalQ("Dates", "How should each photo's date be found?", "Read the camera's date", "Use the file's change date")
+	tasks := make(chan string, 4)
+
+	script := dialogScript()
+	script["intake.responder"] = responder
+	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		switch runs.Add(1) {
+		case 1:
+			_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{dates}})
+
+			return askedOutput(in), err
+		case 2:
+			tasks <- in.Task
+
+			again := dates
+			again.Reasks = 1
+			again.Why = copyDate
+			_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{again}})
+
+			return askedOutput(in), err
+		default:
+			return done("# Need", nil), nil
+		}
+	}
+
+	c, _, runner, rec, _ := newDialog(t, script)
+	ctx := context.Background()
+
+	driveIn(t, c, plainStart("BP1"))
+
+	person := latestRound(t, c, "BP1", 2)
+	decide(t, c, "BP1", 2, nil, convert(person.Frame.Assumptions[0].ID))
+	c.Wait("BP1")
+
+	assert.Contains(t, receiveText(t, tasks), copyDate, "the stage is told the person's concern")
+
+	reasked := inputsOf(runner, "intake.responder")
+	require.Len(t, reasked, 2)
+	assert.Contains(t, reasked[1].Task, copyDate, "the responder answers with the concern")
+
+	answers := rec.all(EventAnswer)
+	require.Len(t, answers, 2)
+	assert.Equal(t, 1, answers[1].Payload["supersedes"])
+
+	list, err := c.assumptions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("Q%d", answers[1].Payload["number"]), byID(list)["Q1"].SupersededBy)
+}
+
+// photoDates is the technical question the photo-renaming tool asks, and asks
+// again.
+func photoDates() stage.RoundQuestion {
+	return technicalQ("Dates", "How should each photo's date be found?", "Read the camera's date", "Use the file's change date")
+}
+
+// reaskingIntake asks photoDates on its first run and, on its second, asks it
+// again with reasks 1 and no why, so only the controller tells its responder
+// the concern; any later run is then's.
+func reaskingIntake(then func(context.Context, stage.Input) (stage.Output, error)) func(context.Context, stage.Input) (stage.Output, error) {
+	var runs atomic.Int32
+
+	return func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		switch runs.Add(1) {
+		case 1:
+			_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{photoDates()}})
+
+			return askedOutput(in), err
+		case 2:
+			again := photoDates()
+			again.Reasks = 1
+			_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{again}})
+
+			return askedOutput(in), err
+		default:
+			return then(ctx, in)
+		}
+	}
+}
+
+// turnDownTheFirstAnswer turns the first entry on the person's round 2, the
+// consequence of the responder's answer to Q1, into a question.
+func turnDownTheFirstAnswer(t *testing.T, c *Controller) {
+	t.Helper()
+
+	person := latestRound(t, c, "BP1", 2)
+	require.Equal(t, map[string]int{person.Frame.Assumptions[0].ID: 1}, person.Consequences)
+
+	decide(t, c, "BP1", 2, nil, convert(person.Frame.Assumptions[0].ID))
+	c.Wait("BP1")
+}
+
+func stopAfterIntake(context.Context, stage.Input) (stage.Output, error) {
+	return stage.Output{}, errors.New("stop after intake")
+}
+
+func TestPlain_ASubmitWaitsForTheReAsk(t *testing.T) {
+	const detail = "How should each photo's date be found? Use the file's change date"
+
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, plainStart("BP1")))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	intake, ok := c.stepAt("intake")
+	require.True(t, ok)
+
+	poster := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", nil)
+	au := c.newAudit()
+
+	responderRound := func(n, question int) roundState {
+		return roundState{
+			Number: n, Attempt: 1, BuilderRound: 1, PostedBy: poster, RunID: poster, Change: changeClosed,
+			Frame: protocol.LogRound{
+				Stage: "intake", Responder: true, Closed: true,
+				Questions: []protocol.RoundQuestion{{Number: question, Text: "How should each photo's date be found?"}},
+				Answers:   []protocol.RoundAnswer{own(question, "Use the file's change date")},
+			},
+		}
+	}
+
+	c.putRound(ctx, au, "BP1", poster, responderRound(1, 1))
+
+	person := tabRound(2, "intake", poster, []string{copyDate}, convert("A1"))
+	person.Plain, person.Technical, person.Consequences = true, 1, map[string]int{"A1": 1}
+	person.Frame.Assumptions[0].Detail = detail
+	c.putRound(ctx, au, "BP1", poster, person)
+
+	// Intake runs both checks; the turned-down answer is refused once, by
+	// the re-ask check.
+	tab, tabState := c.tabValidator(bp, intake, 1)
+	require.NoError(t, submitAssumptions(tab))
+	assert.Empty(t, tabState.last())
+
+	v, state := c.reaskValidator(bp, intake, 1)
+	require.Error(t, submitAssumptions(v), "Q1 is not asked again yet")
+	assert.Len(t, state.last(), 1, "the turned-down answer is refused once")
+
+	// A later round that does not ask Q1 again is not enough.
+	c.putRound(ctx, au, "BP1", poster, responderRound(3, 2))
+
+	v, _ = c.reaskValidator(bp, intake, 1)
+	require.Error(t, submitAssumptions(v), "round 3 did not ask Q1 again")
+
+	reask := responderRound(4, 3)
+	reask.Reasks = map[int]int{3: 1}
+	c.putRound(ctx, au, "BP1", poster, reask)
+
+	v, _ = c.reaskValidator(bp, intake, 1)
+	assert.NoError(t, submitAssumptions(v))
+}
+
+func TestPlain_AnUnaskedConversionIsNamedByItsTechnicalText(t *testing.T) {
+	const slots = "Bookings start on the quarter hour."
+
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, plainStart("BP1")))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	intake, ok := c.stepAt("intake")
+	require.True(t, ok)
+
+	poster := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", nil)
+	s := tabRound(1, "intake", poster, []string{slotConsequence}, convert("A1"))
+	s.Plain, s.Frame.Assumptions[0].Detail = true, slots
+	c.putRound(ctx, c.newAudit(), "BP1", poster, s)
+
+	v, _ := c.tabValidator(bp, intake, 1)
+	err = submitAssumptions(v)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), slots, "the stage is shown the technical text")
+	assert.NotContains(t, err.Error(), slotConsequence)
+}
+
+func TestPlain_ATurnedDownAssumptionComesBackOnlyOnAnAcceptance(t *testing.T) {
+	const (
+		slots  = "Bookings start on the quarter hour."
+		hidden = "Booking ids are random strings."
+	)
+
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, plainStart("BP1")))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	intake, ok := c.stepAt("intake")
+	require.True(t, ok)
+
+	poster := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", nil)
+	au := c.newAudit()
+
+	plainTab := func(n int, d protocol.AssumptionDecision) roundState {
+		s := tabRound(n, "intake", poster, []string{slotConsequence}, d)
+		s.Plain, s.Frame.Assumptions[0].Detail = true, slots
+
+		return s
+	}
+
+	c.putRound(ctx, au, "BP1", poster, plainTab(1, convert("A1")))
+
+	// A later round, so the turn-down asks for no more rounds; the
+	// responder's round accepts what no person would notice.
+	later := tabRound(2, "intake", poster, []string{hidden}, accept("A1"))
+	later.Frame.Responder = true
+	c.putRound(ctx, au, "BP1", poster, later)
+
+	v, _ := c.tabValidator(bp, intake, 1)
+	require.Error(t, submitAssumptions(v, map[string]any{"text": slots}), "the decision the person turned down, without its consequence or a basis")
+
+	v, _ = c.tabValidator(bp, intake, 1)
+	require.NoError(t, submitAssumptions(v, map[string]any{"text": hidden}), "one no person would notice needs no basis")
+
+	c.putRound(ctx, au, "BP1", poster, plainTab(3, accept("A1")))
+
+	v, _ = c.tabValidator(bp, intake, 1)
+	assert.NoError(t, submitAssumptions(v, map[string]any{"text": slots, "basis": "round3.A1", "consequence": slotConsequence}), "a later acceptance is its basis")
+}
+
+func TestPlain_ReasksMustNameATurnedDownAnswer(t *testing.T) {
+	const (
+		folders     = "Should renamed photos stay in their folders?"
+		namesShown  = "Renamed photos sort by the day they were taken."
+		namesAnswer = "By date"
+	)
+
+	t.Run("plain", func(t *testing.T) {
+		var answered atomic.Int32
+
+		names := technicalQ("Names", "How should renamed files be named?", namesAnswer, "By date and place")
+
+		// Q1 and Q2 go to the responder, Q3 to the person, who turns Q1's
+		// consequence down and accepts Q2's.
+		responder := func(_ context.Context, in stage.Input) (stage.Output, error) {
+			switch answered.Add(1) {
+			case 1:
+				return answeringWith("Use the file's change date", copyDate, in), nil
+			case 2:
+				return answeringWith(namesAnswer, namesShown, in), nil
+			default:
+				return answeringWith("Read the camera's date", "", in), nil
+			}
+		}
+
+		again := photoDates()
+		again.Reasks, again.Why = 1, copyDate
+
+		accepted := names
+		accepted.Reasks = 2
+
+		experience := photoDates()
+		experience.Reasks = 3
+
+		onExperience := experienceQ("Folders", folders, "Yes", "No")
+		onExperience.Reasks = 1
+
+		nothing := photoDates()
+		nothing.Reasks = 9
+
+		refusals := make(chan error, 8)
+
+		var runs atomic.Int32
+
+		script := dialogScript()
+		script["intake.responder"] = responder
+		script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+			switch runs.Add(1) {
+			case 1:
+				_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{
+					photoDates(), names, experienceQ("Folders", folders, "Yes", "No"),
+				}})
+
+				return askedOutput(in), err
+			case 2:
+				for _, q := range []stage.RoundQuestion{accepted, experience, onExperience, nothing} {
+					_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{q}})
+					refusals <- err
+				}
+
+				_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{again}})
+
+				return askedOutput(in), err
+			default:
+				// Asked again already.
+				_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{again}})
+				refusals <- err
+
+				return stopAfterIntake(ctx, in)
+			}
+		}
+
+		c, _, runner, _, _ := newDialog(t, script)
+		driveIn(t, c, plainStart("BP1"))
+
+		person := latestRound(t, c, "BP1", 2)
+		require.Len(t, person.Frame.Questions, 1)
+		require.Len(t, person.Frame.Assumptions, 2)
+		require.Equal(t, map[string]int{person.Frame.Assumptions[0].ID: 1, person.Frame.Assumptions[1].ID: 2}, person.Consequences)
+
+		decide(t, c, "BP1", 2, []protocol.RoundAnswer{pick(person.Frame.Questions[0].Number, 1)},
+			convert(person.Frame.Assumptions[0].ID), accept(person.Frame.Assumptions[1].ID))
+		c.Wait("BP1")
+
+		close(refusals)
+
+		var n int
+
+		for err := range refusals {
+			n++
+
+			require.Error(t, err, "refusal %d", n)
+		}
+
+		assert.Equal(t, 5, n)
+
+		rounds, err := c.rounds(context.Background(), "BP1")
+		require.NoError(t, err)
+		require.Len(t, rounds, 3, "only the re-ask of Q1 is posted")
+		assert.Equal(t, map[int]int{4: 1}, rounds[2].Reasks)
+		assert.Len(t, inputsOf(runner, "intake.responder"), 3)
+	})
+
+	t.Run("off plain", func(t *testing.T) {
+		var refused error
+
+		q := roundQ("Dates", "How should each photo's date be found?", "Read the camera's date", "Use the file's change date")
+		q.Reasks = 1
+
+		script := dialogScript()
+		script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+			_, refused = in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{q}})
+
+			return stopAfterIntake(ctx, in)
+		}
+
+		c, _, _, rec, _ := newDialog(t, script)
+		drive(t, c, "BP1")
+
+		require.Error(t, refused)
+		assert.False(t, rec.has(EventRound), "no round was posted")
+	})
+}
+
+// The dialog pack's intake is under the human policy; the cap is set on it.
+func TestPlain_AReAskGoesThroughAtTheQuestionCap(t *testing.T) {
+	var answered atomic.Int32
+
+	asked := make(chan error, 1)
+
+	script := dialogScript()
+	script["intake.responder"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		if answered.Add(1) == 1 {
+			return answeringWith("Use the file's change date", copyDate, in), nil
+		}
+
+		return answeringWith("Read the camera's date", "", in), nil
+	}
+	script["intake"] = reaskingIntake(func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{
+			technicalQ("Names", "How should renamed files be named?", "By date", "By date and place"),
+		}})
+		asked <- err
+
+		return stopAfterIntake(ctx, in)
+	})
+
+	c, _, _, _, _ := newDialog(t, script)
+	c.opts.Pack.Stages[0].MaxQuestions = 1
+	driveIn(t, c, plainStart("BP1"))
+	turnDownTheFirstAnswer(t, c)
+
+	rounds, err := c.rounds(context.Background(), "BP1")
+	require.NoError(t, err)
+	require.Len(t, rounds, 3, "the re-ask is posted at the cap")
+	assert.Equal(t, map[int]int{2: 1}, rounds[2].Reasks)
+
+	require.Len(t, asked, 1)
+	require.Error(t, <-asked, "the first answer spent the cap, and the re-ask spent none of it")
+}
+
+func TestPlain_AFailedReAskSupersedesNothing(t *testing.T) {
+	var answered atomic.Int32
+
+	script := dialogScript()
+	script["intake"] = reaskingIntake(stopAfterIntake)
+	script["intake.responder"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		if answered.Add(1) == 1 {
+			return answeringWith("Use the file's change date", copyDate, in), nil
+		}
+
+		return stage.Output{}, errors.New("the endpoint is unreachable")
+	}
+
+	c, st, runner, rec, _ := newDialog(t, script)
+	ctx := context.Background()
+
+	driveIn(t, c, plainStart("BP1"))
+	turnDownTheFirstAnswer(t, c)
+
+	responders := inputsOf(runner, "intake.responder")
+	require.Len(t, responders, 2, "the re-ask went to the responder")
+	assert.Contains(t, responders[1].Task, copyDate, "the responder is told the concern")
+	assert.NotContains(t, responders[0].Task, copyDate)
+	assert.Equal(t, map[int]int{2: 1}, latestRound(t, c, "BP1", 3).Reasks)
+	assert.Len(t, rec.all(EventAnswer), 1, "the failed re-ask recorded no answer")
+
+	list, err := c.assumptions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Empty(t, byID(list)["Q1"].SupersededBy)
+
+	for _, entry := range assumptionsPayload(list) {
+		assert.NotContains(t, entry, "superseded_by")
+	}
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	intake, ok := c.stepAt("intake")
+	require.True(t, ok)
+
+	v, _ := c.reaskValidator(bp, intake, 1)
+	assert.NoError(t, submitAssumptions(v), "the re-ask was asked")
+}
+
+func TestPlain_TheSupersededAnswerIsListedAsSuperseded(t *testing.T) {
+	tests := []struct {
+		name   string
+		stated bool
+		id     string
+	}{
+		{"the answer's own entry", false, "Q1"},
+		{"a stated assumption resting on it", true, "A1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var answered atomic.Int32
+
+			var data map[string]any
+			if tt.stated {
+				data = map[string]any{"assumptions": []any{
+					map[string]any{"text": "Each photo is dated by its file's change date.", "basis": "Q1"},
+				}}
+			}
+
+			script := dialogScript()
+			script["intake"] = reaskingIntake(func(context.Context, stage.Input) (stage.Output, error) {
+				return done("# Need", data), nil
+			})
+			script["intake.responder"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+				if answered.Add(1) == 1 {
+					return answeringWith("Use the file's change date", copyDate, in), nil
+				}
+
+				return answeringWith("Read the camera's date", takenDate, in), nil
+			}
+			script["slicing"] = stopAfterIntake
+
+			c, _, _, rec, _ := newDialog(t, script)
+			driveIn(t, c, plainStart("BP1"))
+			turnDownTheFirstAnswer(t, c)
+
+			answers := rec.all(EventAnswer)
+			require.Len(t, answers, 2)
+
+			reask := fmt.Sprintf("Q%d", answers[1].Payload["number"])
+
+			person := latestRound(t, c, "BP1", 4)
+			require.Len(t, person.Frame.Assumptions, 1)
+			assert.Equal(t, takenDate, person.Frame.Assumptions[0].Text)
+			decide(t, c, "BP1", 4, nil, accept(person.Frame.Assumptions[0].ID))
+			c.Wait("BP1")
+
+			list, err := c.assumptions(context.Background(), "BP1")
+			require.NoError(t, err)
+
+			entries := map[string]map[string]any{}
+
+			for _, e := range assumptionsPayload(list) {
+				entry := e.(map[string]any)
+				entries[entry["id"].(string)] = entry
+			}
+
+			require.Contains(t, entries, tt.id)
+			assert.Equal(t, reask, entries[tt.id]["superseded_by"])
+
+			require.Contains(t, entries, reask)
+			assert.NotContains(t, entries[reask], "superseded_by", "the new answer stands")
+
+			// The cards and the playbook description say which answer stands.
+			lines := assumptionLines(list, false)
+			assert.Contains(t, lineOf(lines, "- "+tt.id+" ("), reask)
+			assert.NotContains(t, lineOf(lines, "- "+reask+" ("), tt.id)
+		})
+	}
+}
+
+func TestPlain_AStageWithoutTheAssumptionsCheckWaitsForTheReAsk(t *testing.T) {
+	var runs, answered atomic.Int32
+
+	// Slicing checks slices, not assumptions; its person's round still shows
+	// the responder's consequence.
+	submits := make(chan error, 2)
+	sizes := technicalQ("Size", "How many photos does one run rename?", "One folder", "Every folder below it")
+
+	script := dialogScript()
+	script["slicing.responder"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		if answered.Add(1) == 1 {
+			return answeringWith("Every folder below it", "A run may rename photos you did not mean to touch.", in), nil
+		}
+
+		return answeringWith("One folder", "", in), nil
+	}
+	script["slicing"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		slices := stage.Artifact{Body: "# Slices", Data: oneSlice()}
+
+		switch runs.Add(1) {
+		case 1:
+			_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{sizes}})
+
+			return askedOutput(in), err
+		case 2:
+			submits <- in.Validate(ctx, slices)
+
+			again := sizes
+			again.Reasks = 1
+			_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{again}})
+
+			return askedOutput(in), err
+		default:
+			submits <- in.Validate(ctx, slices)
+
+			return returns("# Slices", oneSlice())(ctx, in)
+		}
+	}
+	script["solution_design"] = stopAfterIntake
+
+	c, _, _, _, _ := newDialog(t, script)
+	driveIn(t, c, plainStart("BP1"))
+	turnDownTheFirstAnswer(t, c)
+
+	require.Error(t, receiveErr(t, submits), "Q1 is not asked again yet")
+	require.NoError(t, receiveErr(t, submits), "the re-ask was asked")
+	assert.Equal(t, map[int]int{2: 1}, latestRound(t, c, "BP1", 3).Reasks)
+}
+
+// receiveErr waits for one result on ch, failing the test at a deadline.
+func receiveErr(t *testing.T, ch <-chan error) error {
+	t.Helper()
+
+	select {
+	case err := <-ch:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for a result")
+	}
+
+	return nil
+}
+
+// datesDesign is one slice whose decisions, each on how a photo is dated,
+// rest on bases in turn.
+func datesDesign(bases ...string) map[string]any {
+	decisions := make([]any, 0, len(bases))
+
+	for i, basis := range bases {
+		decisions = append(decisions, map[string]any{
+			"id": fmt.Sprintf("DEC%d", i+1), "text": "how each photo is dated", "chosen": "the camera's date",
+			"rejected": []any{map[string]any{"option": "the file's change date", "why": "copying a photo changes it"}}, "basis": basis,
+		})
+	}
+
+	return map[string]any{"slices": []any{map[string]any{
+		"id": "SL1", "projects": []any{"alpha"}, "decisions": decisions, "contracts": []any{},
+	}}}
+}
+
+func TestPlain_ADesignRestsOnTheAnswerThatStands(t *testing.T) {
+	var answered atomic.Int32
+
+	script := dialogScript()
+	script["solution_design.responder"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		if answered.Add(1) == 1 {
+			return answeringWith("Use the file's change date", copyDate, in), nil
+		}
+
+		return answeringWith("Read the camera's date", "", in), nil
+	}
+	script["solution_design"] = reaskingIntake(func(context.Context, stage.Input) (stage.Output, error) {
+		return done("# Design", datesDesign("Q2")), nil
+	})
+	script["grounding"] = stopAfterIntake
+
+	c, st, _, _, _ := newDialog(t, script)
+	ctx := context.Background()
+
+	driveIn(t, c, plainStart("BP1"))
+	turnDownTheFirstAnswer(t, c)
+	require.Equal(t, map[int]int{2: 1}, latestRound(t, c, "BP1", 3).Reasks, "Q2 asked Q1 again")
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	submit := func(data map[string]any) error {
+		v, _ := c.decisionsValidator(bp, "solution_design")
+
+		return v(ctx, stage.Artifact{Body: "# Design", Data: data})
+	}
+
+	statedOnTheOld := datesDesign("Q2")
+	statedOnTheOld["assumptions"] = []any{map[string]any{"text": "Photos without a camera date keep their old names.", "basis": "Q1"}}
+
+	require.NoError(t, submit(datesDesign("Q2")), "the decisions rest on the answer that stands, which is the one owed")
+	require.Error(t, submit(datesDesign("Q1", "Q2")), "no decision rests on the answer the person turned down")
+	assert.NoError(t, submit(statedOnTheOld), "a stated assumption may rest on it, and the sign-off lists it superseded")
+}
+
+// supersededIntake asks photoDates, asks it again once the person turned the
+// first answer's consequence down, then asks it a third time without reasks,
+// sending what that ask returned on refused, and asks names; it then submits.
+func supersededIntake(refused chan<- error, names stage.RoundQuestion) func(context.Context, stage.Input) (stage.Output, error) {
+	var later atomic.Int32
+
+	return reaskingIntake(func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if later.Add(1) > 1 {
+			return done("# Need", nil), nil
+		}
+
+		_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{photoDates()}})
+		refused <- err
+
+		_, err = in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{names}})
+
+		return askedOutput(in), err
+	})
+}
+
+func TestPlain_LaterRunsAreToldWhichAnswerStands(t *testing.T) {
+	var answered atomic.Int32
+
+	refused := make(chan error, 1)
+	names := technicalQ("Names", "How should renamed files be named?", "By date", "By date and place")
+
+	script := dialogScript()
+	script["intake"] = supersededIntake(refused, names)
+	script["intake.responder"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		switch answered.Add(1) {
+		case 1:
+			return answeringWith("Use the file's change date", copyDate, in), nil
+		case 2:
+			return answeringWith("Read the camera's date", "", in), nil
+		default:
+			return answeringWith("By date", "", in), nil
+		}
+	}
+	script["slicing"] = stopAfterIntake
+
+	c, st, runner, _, _ := newDialog(t, script)
+	ctx := context.Background()
+
+	driveIn(t, c, plainStart("BP1"))
+	turnDownTheFirstAnswer(t, c)
+
+	var asked error
+
+	select {
+	case asked = <-refused:
+	default:
+		t.Fatal("the third run never asked")
+	}
+
+	require.Error(t, asked, "the answered question is not asked a third time")
+	assert.Contains(t, asked.Error(), "Q2", "the newest answer is cited")
+	assert.Contains(t, asked.Error(), "Read the camera's date")
+	assert.NotContains(t, asked.Error(), "Use the file's change date", "not the superseded one")
+
+	responders := inputsOf(runner, "intake.responder")
+	require.Len(t, responders, 3)
+	assert.Contains(t, blockOf(responders[2].Task, "Q1"), "Q2", "the responder is told Q2 supersedes Q1")
+	assert.NotContains(t, blockOf(responders[2].Task, "Q2"), "Q1")
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	intake, ok := c.stepAt("intake")
+	require.True(t, ok)
+
+	var b strings.Builder
+	require.NoError(t, c.writeAnswered(ctx, &b, bp, intake))
+	assert.Contains(t, blockOf(b.String(), "Q1"), "Q2", "a re-run of the stage is told Q2 supersedes Q1")
+
+	later := inputsOf(runner, "slicing")
+	require.NotEmpty(t, later)
+	assert.Contains(t, lineOf(later[0].Task, "- Q1 ("), "Q2", "a later stage is told Q2 supersedes Q1")
+	assert.NotContains(t, lineOf(later[0].Task, "- Q2 ("), "Q1")
+}
+
+// lineOf is the line of text that starts with prefix, "" for none.
+func lineOf(text, prefix string) string {
+	for line := range strings.SplitSeq(text, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return line
+		}
+	}
+
+	return ""
+}
+
+func TestPlain_AReAskTurnedDownAgainIsAskedAgainItself(t *testing.T) {
+	var runs, answered atomic.Int32
+
+	refused := make(chan error, 1)
+
+	script := dialogScript()
+	script["intake.responder"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		switch answered.Add(1) {
+		case 1:
+			return answeringWith("Use the file's change date", copyDate, in), nil
+		case 2:
+			return answeringWith("Read the camera's date", "Photos without a camera date are left unnamed.", in), nil
+		default:
+			return answeringWith("Read the camera's date, else the change date", "", in), nil
+		}
+	}
+	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		ask := func(reasks int) error {
+			q := photoDates()
+			q.Reasks = reasks
+			_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{q}})
+
+			return err
+		}
+
+		switch runs.Add(1) {
+		case 1:
+			return askedOutput(in), ask(0)
+		case 2:
+			return askedOutput(in), ask(1)
+		case 3:
+			refused <- ask(1)
+
+			return askedOutput(in), ask(2)
+		default:
+			return stopAfterIntake(ctx, in)
+		}
+	}
+
+	c, _, runner, rec, _ := newDialog(t, script)
+
+	driveIn(t, c, plainStart("BP1"))
+	turnDownTheFirstAnswer(t, c)
+
+	person := latestRound(t, c, "BP1", 4)
+	require.Equal(t, map[string]int{person.Frame.Assumptions[0].ID: 2}, person.Consequences)
+	decide(t, c, "BP1", 4, nil, convert(person.Frame.Assumptions[0].ID))
+	c.Wait("BP1")
+
+	select {
+	case err := <-refused:
+		require.ErrorContains(t, err, "reasks 2", "the refusal points at the newest answer")
+	default:
+		t.Fatal("the third run never asked")
+	}
+
+	assert.Equal(t, map[int]int{3: 2}, latestRound(t, c, "BP1", 5).Reasks)
+	assert.Len(t, inputsOf(runner, "intake.responder"), 3)
+
+	answers := rec.all(EventAnswer)
+	require.Len(t, answers, 3)
+	assert.Equal(t, 2, answers[2].Payload["supersedes"])
+}
+
+func TestPlain_AReAskUnderTheAutoPolicyCarriesTheConcern(t *testing.T) {
+	var runs, answered atomic.Int32
+
+	script := dialogScript()
+	script["intake.responder"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		switch answered.Add(1) {
+		case 1:
+			return answeringWith("Use the file's change date", copyDate, in), nil
+		case 2:
+			return answeringWith("Yes", "", in), nil
+		default:
+			return answeringWith("Read the camera's date", "", in), nil
+		}
+	}
+	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		switch runs.Add(1) {
+		case 1:
+			_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{
+				photoDates(), experienceQ("Folders", "Should renamed photos stay in their folders?", "Yes", "No"),
+			}})
+
+			return askedOutput(in), err
+		case 2:
+			// No why: only the controller can carry the concern.
+			again := photoDates()
+			again.Reasks = 1
+			_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{again}})
+
+			return askedOutput(in), err
+		default:
+			return stopAfterIntake(ctx, in)
+		}
+	}
+
+	c, _, runner, rec, _ := newDialog(t, script)
+	ctx := context.Background()
+
+	driveIn(t, c, plainStart("BP1"))
+
+	// The person turns the answer's consequence down and leaves the
+	// experience question open; the switch hands that to the responder.
+	person := latestRound(t, c, "BP1", 2)
+	require.Equal(t, map[string]int{person.Frame.Assumptions[0].ID: 1}, person.Consequences)
+	require.NoError(t, c.Reply(ctx, "BP1", protocol.RoundReply{PromptID: roundPromptID(2), Decisions: []protocol.AssumptionDecision{convert(person.Frame.Assumptions[0].ID)}}, "m-tab"))
+	c.Wait("BP1")
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	c.Wait("BP1")
+
+	reask := latestRound(t, c, "BP1", 3)
+	assert.False(t, reask.Plain, "asked under the auto policy")
+	assert.True(t, reask.Frame.Responder)
+	assert.Equal(t, map[int]int{3: 1}, reask.Reasks)
+
+	responders := inputsOf(runner, "intake.responder")
+	require.Len(t, responders, 3)
+	assert.Contains(t, responders[2].Task, copyDate, "the responder is told the concern")
+
+	answers := rec.all(EventAnswer)
+	require.Len(t, answers, 3)
+	assert.Equal(t, 1, answers[2].Payload["supersedes"])
+}

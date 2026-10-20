@@ -279,6 +279,12 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		checks.bounded = append(checks.bounded, state)
 	}
 
+	if bp.PlainLanguage {
+		check, state := c.reaskValidator(bp, st, attempt)
+		in.Validate = allOf(append(validatorsOf(in.Validate), check))
+		checks.bounded = append(checks.bounded, state)
+	}
+
 	defer closeTools()
 
 	// runCtx is cancelled with errCostCap by the sink when the priced usage
@@ -684,8 +690,9 @@ func (c *Controller) nextAttempt(ctx context.Context, id, stageID string) (int, 
 
 // askedIn counts the questions the runs of stageID's attempt asked: in the
 // rounds they posted, and alone in a record from before rounds. On a
-// plain-language blueprint only the responder's rounds count: the question
-// cap leaves the person's experience questions alone.
+// plain-language blueprint only the responder's rounds count, and no re-ask
+// of a turned-down answer: the question cap leaves the person's experience
+// questions and their turn-downs alone.
 func (c *Controller) askedIn(ctx context.Context, bp store.Blueprint, stageID string, attempt int) (int, error) {
 	id := bp.ID
 
@@ -711,7 +718,7 @@ func (c *Controller) askedIn(ctx context.Context, bp store.Blueprint, stageID st
 
 	for _, s := range rounds {
 		if in[s.PostedBy] && (!bp.PlainLanguage || s.Frame.Responder) {
-			n += len(s.Frame.Questions)
+			n += len(s.Frame.Questions) - len(s.Reasks)
 		}
 	}
 

@@ -85,10 +85,13 @@ type roundState struct {
 	// technical text. Technical is the responder's round of the same ask, 0
 	// for none, and Consequences maps each entry that describes one of its
 	// answers to that answer's question number.
-	Plain        bool              `json:"plain,omitempty"`
-	Technical    int               `json:"technical,omitempty"`
-	Consequences map[string]int    `json:"consequences,omitempty"`
-	Frame        protocol.LogRound `json:"frame"`
+	Plain        bool           `json:"plain,omitempty"`
+	Technical    int            `json:"technical,omitempty"`
+	Consequences map[string]int `json:"consequences,omitempty"`
+	// Reasks maps each question that asks a turned-down answer again to the
+	// question whose answer it asks again.
+	Reasks map[int]int       `json:"reasks,omitempty"`
+	Frame  protocol.LogRound `json:"frame"`
 }
 
 // tabText is the technical text of a tab entry: its Detail on a plain
@@ -964,7 +967,8 @@ func writeRoundAssumptions(b *strings.Builder, s roundState, accepted []accepted
 		case isAnswer && accepts[a.ID]:
 			fmt.Fprintf(b, "  The person accepted what the answer to Q%d means for them.\n", question)
 		case isAnswer && converted[a.ID]:
-			fmt.Fprintf(b, "  The person did not accept what the answer to Q%d means for them.\n", question)
+			fmt.Fprintf(b, "  The person did not accept what the answer to Q%d means for them (%s): ask Q%d again as a technical question with reasks %d, its why carrying their concern.\n",
+				question, a.Text, question, question)
 		case s.Plain && tag != "":
 			fmt.Fprintf(b, "  The person accepted what it means for them as [%s]: state it with the basis %s.\n", tag, tag)
 		case s.Plain && converted[a.ID]:
