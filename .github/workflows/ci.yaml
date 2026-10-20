@@ -2,7 +2,10 @@
 #
 # Gates every pull_request on the full quality bar. Pushes to main skip the
 # checks (already validated on the PR) - branch protection requires the check
-# jobs to pass before merge.
+# jobs to pass before merge - and run only the image job, which builds on the
+# self-hosted runner and pushes <short sha> and latest to the registry in the
+# REGISTRY repository variable. A workflow_dispatch run builds after the
+# checks and pushes <branch>-<short sha> only.
 #
 # GitHub Actions are pinned to exact release tags; Dependabot
 # (.github/dependabot.yml) keeps them current.
@@ -12,6 +15,14 @@ name: ci
 on:
   push:
     branches: [main]
+    # Every image is deployed and a restart re-runs an open blueprint stage,
+    # so a docs-only merge builds nothing. Pull requests stay unfiltered.
+    paths-ignore:
+      - "README.md"
+      - "AGENTS.md"
+      - "config.yaml.example"
+      - "docs/**"
+      - "LICENSE"
   pull_request:
   workflow_dispatch:
 
@@ -157,3 +168,57 @@ jobs:
           # Only run the vulnerability scanner, as every contextmatrix image
           # scan does.
           scanners: vuln
+
+  # Never runs for a pull request, so a fork cannot reach the self-hosted
+  # runner. On push the checks are skipped, which this guard lets through.
+  image:
+    name: image
+    runs-on: self-hosted
+    needs: [test, lint, build, govulncheck, hadolint, image-scan]
+    if: |
+      always() &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    env:
+      # The Dockerfile reads TARGETARCH, which only BuildKit sets.
+      DOCKER_BUILDKIT: "1"
+      REGISTRY: ${{ vars.REGISTRY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set image tag
+        run: |
+          if [ -z "${REGISTRY}" ]; then
+            echo "::error::repository variable REGISTRY is not set"
+            exit 1
+          fi
+          SHORT_SHA="${GITHUB_SHA::7}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            BRANCH_SLUG=$(echo "${GITHUB_REF_NAME}" | tr '[:upper:]' '[:lower:]' | sed 's|[^a-z0-9._-]|-|g' | cut -c1-50)
+            echo "IMAGE_TAG=${BRANCH_SLUG}-${SHORT_SHA}" >> "$GITHUB_ENV"
+            echo "PUSH_LATEST=false" >> "$GITHUB_ENV"
+          else
+            echo "IMAGE_TAG=${SHORT_SHA}" >> "$GITHUB_ENV"
+            echo "PUSH_LATEST=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build image
+        run: |
+          tags=(-t "${REGISTRY}/contextmatrix-architect:${IMAGE_TAG}")
+          if [ "${PUSH_LATEST}" = "true" ]; then
+            tags+=(-t "${REGISTRY}/contextmatrix-architect:latest")
+          fi
+          docker build "${tags[@]}" .
+
+      - name: Push image
+        run: |
+          docker push "${REGISTRY}/contextmatrix-architect:${IMAGE_TAG}"
+          if [ "${PUSH_LATEST}" = "true" ]; then
+            docker push "${REGISTRY}/contextmatrix-architect:latest"
+          fi
+
+      - name: Clean up
+        if: always()
+        run: docker image prune -f
