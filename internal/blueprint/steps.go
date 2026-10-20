@@ -146,20 +146,12 @@ func (c *Controller) steps(ctx context.Context, id string) ([]pipelineStep, []pi
 		}
 	}
 
-	var screen *store.Artifact
-
-	if sid := c.opts.Pack.ScreenStage(); sid != "" {
-		art, err := c.opts.Store.LatestArtifact(ctx, id, sid)
-
-		switch {
-		case err == nil:
-			screen = &art
-		case !errors.Is(err, store.ErrNotFound):
-			return nil, nil, fmt.Errorf("blueprint: read %s: %w", pack.StageName(sid, false), err)
-		}
+	noMockup, err := c.mockupCollapsed(ctx, id)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	steps, pieces := blueprintSteps(c.opts.Pack, runs, slicing, mockupCollapsed(c.opts.Pack, screen))
+	steps, pieces := blueprintSteps(c.opts.Pack, runs, slicing, noMockup)
 
 	return steps, pieces, nil
 }

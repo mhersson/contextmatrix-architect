@@ -1352,3 +1352,58 @@ func TestLogEntryFor_APlainSetupNoteLeadsPlainlyAndKeepsTheSteps(t *testing.T) {
 	assert.Contains(t, plain.Content, technical.Content, "the technical steps follow unchanged")
 	assert.Equal(t, technical.Type, plain.Type)
 }
+
+func TestLogEntry_TheOfferIsAGatePrompt(t *testing.T) {
+	shown, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventMockupOffer, BlueprintID: "S1", Payload: map[string]any{
+		"stage": "mockup", "state": "shown", "actions": []any{
+			map[string]any{"label": "Show mockup", "reply": "show mockup", "feedback": false, "recommended": true},
+			map[string]any{"label": "Skip mockup", "reply": "skip mockup", "feedback": false},
+		},
+	}})
+	require.True(t, ok)
+	assert.Equal(t, "text", shown.Type)
+	require.NotNil(t, shown.Prompt)
+	assert.Equal(t, "mockup:offer", shown.Prompt.ID)
+	assert.Equal(t, "gate", shown.Prompt.Kind)
+
+	var replies []string
+
+	for _, a := range shown.Prompt.Actions {
+		replies = append(replies, a.Reply)
+	}
+
+	assert.Equal(t, []string{"show mockup", "skip mockup"}, replies)
+	assert.True(t, shown.Prompt.Actions[0].Recommended, "showing the mockup is the recommended reply")
+	assert.False(t, shown.Prompt.Actions[1].Recommended)
+
+	for name, by := range map[string]string{"a reply": "", "a mode switch": "mode"} {
+		t.Run(name, func(t *testing.T) {
+			p := map[string]any{"stage": "mockup", "state": "accepted"}
+			if by != "" {
+				p["by"] = by
+			}
+
+			accepted, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventMockupOffer, BlueprintID: "S1", Payload: p})
+			require.True(t, ok)
+			assert.Equal(t, "system", accepted.Type)
+			assert.Nil(t, accepted.Prompt)
+
+			if by == "" {
+				assert.Nil(t, accepted.Marker, "the reply itself answered the prompt")
+
+				return
+			}
+
+			require.NotNil(t, accepted.Marker)
+			assert.Equal(t, "decision", accepted.Marker.Kind)
+			assert.Equal(t, "mockup", accepted.Marker.Stage)
+		})
+	}
+
+	declined, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventMockupOffer, BlueprintID: "S1", Payload: map[string]any{
+		"stage": "mockup", "state": "declined", "message_id": "m2",
+	}})
+	require.True(t, ok)
+	assert.Equal(t, "system", declined.Type)
+	assert.Nil(t, declined.Marker)
+}

@@ -69,8 +69,8 @@ func ParseCommand(text string) (string, []string) {
 }
 
 // SetPolicy records a stage's responder policy for this blueprint, for its
-// questions and its gate, from the next one on: a round or gate already
-// open keeps the responder it was put to. The sign-off follows the
+// questions and its gate, from the next one on: a round, gate or mockup
+// offer already open keeps the responder it was put to. The sign-off follows the
 // mode and an unknown stage is refused; each is reported and never stored as
 // a policy. Like export, it works while a stage runs.
 func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID string) error {
@@ -102,6 +102,8 @@ func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID s
 			payload["open"] = "round"
 		case !running && c.gateOpenAt(ctx, id, st.ID):
 			payload["open"] = "gate"
+		case !running && c.offerOpenFor(ctx, id, st.ID):
+			payload["open"] = "offer"
 		}
 	}
 

@@ -14,6 +14,10 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
+// offerPromptID is the mockup offer's prompt id; the view's open prompt for
+// the offer carries the same id, and consumers match the two by equality.
+const offerPromptID = "mockup:offer"
+
 // logEntryFor renders a controller event as a panel entry. A gate a human
 // decides carries a prompt, whose actions the panel shows as buttons and
 // whose replies come back as ordinary messages; a round's prompt carries the
@@ -169,6 +173,29 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		if shown, _ := p["shown"].(bool); shown {
 			stage, slice := pack.SplitStep(str(p["stage"]))
 			entry.Marker = &protocol.LogMarker{Kind: "decision", Stage: stage, Slice: slice, Version: int(num(p["version"]))}
+		}
+	case blueprint.EventMockupOffer:
+		switch str(p["state"]) {
+		case "shown":
+			// The same words with plain language on or off.
+			text := "Your need has a screen people will use. Want a first look at it, a mockup you can adjust, before the architect designs the rest?"
+			entry.Type = "text"
+			entry.Content = text + " Reply `show mockup` or `skip mockup`."
+			entry.Prompt = actionsPrompt(offerPromptID, text, p["actions"], false, "", false)
+		case "accepted":
+			entry.Type = "system"
+			entry.Content = "The designer draws a first look."
+
+			// The mode took the offer, which closes its prompt as a reply would.
+			if str(p["by"]) == "mode" {
+				entry.Content = "The new mode takes the offer: the designer draws a first look."
+				entry.Marker = &protocol.LogMarker{Kind: "decision", Stage: str(p["stage"])}
+			}
+		case "declined":
+			entry.Type = "system"
+			entry.Content = "No mockup: the architect goes on without one."
+		default:
+			return protocol.LogEntry{}, false
 		}
 	case blueprint.EventAborted:
 		entry.Type = "system"
@@ -859,6 +886,10 @@ func policyText(p map[string]any) string {
 		text += " Its open gate stays as it is; decide it with approve or reject."
 	}
 
+	if str(p["open"]) == "offer" {
+		text += " Its open offer of a first look stays as it is; reply show mockup or skip mockup."
+	}
+
 	return text
 }
 
@@ -1244,7 +1275,8 @@ func actionsPrompt(id, text string, v any, plain bool, plainText string, signoff
 
 	for _, a := range anyMaps(v) {
 		feedback, _ := a["feedback"].(bool)
-		action := protocol.LogAction{Label: str(a["label"]), Reply: str(a["reply"]), Feedback: feedback, Ask: str(a["ask"])}
+		recommended, _ := a["recommended"].(bool)
+		action := protocol.LogAction{Label: str(a["label"]), Reply: str(a["reply"]), Feedback: feedback, Ask: str(a["ask"]), Recommended: recommended}
 
 		if plain {
 			action = plainLabel(action, signoff)

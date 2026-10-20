@@ -3,6 +3,8 @@ package blueprint
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
@@ -32,22 +34,40 @@ func screenValidator() (func(context.Context, stage.Artifact) error, *validatorS
 	})
 }
 
-// mockupCollapsed reports whether the mockup step does not run: the screen
-// stage's newest artifact exists and does not state a screen. An artifact
-// from before mockups has no screen key and so collapses it. screen is nil
-// before the stage has an artifact.
-func mockupCollapsed(pk *pack.Pack, screen *store.Artifact) bool {
-	if pk.MockupStage() == "" || screen == nil {
-		return false
+// mockupCollapsed reports whether the mockup step of blueprint id does not
+// run: the screen stage's newest artifact exists and does not state a
+// screen, or the newest offer was declined. It is read from the store alone,
+// so it holds across restarts; an artifact from before mockups has no screen
+// key and so collapses the step.
+func (c *Controller) mockupCollapsed(ctx context.Context, id string) (bool, error) {
+	pk := c.opts.Pack
+	if pk.MockupStage() == "" {
+		return false, nil
 	}
 
+	screen, err := c.opts.Store.LatestArtifact(ctx, id, pk.ScreenStage())
+
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("blueprint: read %s: %w", pack.StageName(pk.ScreenStage(), false), err)
+	}
+
+	if !statesScreen(screen) {
+		return true, nil
+	}
+
+	state, err := c.offerState(ctx, id)
+
+	return state == offerDeclined, err
+}
+
+// statesScreen reports whether the screen stage's artifact holds screen: true.
+func statesScreen(art store.Artifact) bool {
 	var d struct {
 		Screen bool `json:"screen"`
 	}
 
-	if len(screen.Data) == 0 || json.Unmarshal(screen.Data, &d) != nil {
-		return true
-	}
-
-	return !d.Screen
+	return len(art.Data) > 0 && json.Unmarshal(art.Data, &d) == nil && d.Screen
 }

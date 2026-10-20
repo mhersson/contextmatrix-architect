@@ -434,8 +434,8 @@ func (c *Controller) unreadable(ctx context.Context, au audit, id string, err er
 
 // input handles a message that arrives while no run is in flight and no
 // human's round takes it as chat: a note at a round, the need while the
-// first stage has no artifact, a decision at an open gate or the sign-off,
-// else a note. The caller holds the run slot.
+// first stage has no artifact, a reply to the mockup offer, a decision at an
+// open gate or the sign-off, else a note. The caller holds the run slot.
 func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, id, text, msgID string) error {
 	bp, err := c.opts.Store.GetBlueprint(ctx, id)
 	if err != nil {
@@ -482,6 +482,17 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 		c.release(id, r)
 
 		return nil
+	}
+
+	offer, err := c.offerAt(ctx, id, out)
+	if err != nil {
+		c.release(id, r)
+
+		return fmt.Errorf("blueprint: message: %w", err)
+	}
+
+	if offer {
+		return c.atOffer(ctx, runCtx, r, sess, bp, text, msgID)
 	}
 
 	if out.gate && out.critique {
@@ -574,9 +585,9 @@ type stopPoint struct {
 }
 
 // stoppedAt reads where bp stands stopped, as input reads it for a message;
-// false when it stands at no stop: a round waits for answers, a gate or the
-// sign-off is open, the pipeline has ended, or there is no need yet. The
-// caller holds the run slot.
+// false when it stands at no stop: a round waits for answers, the mockup
+// offer, a gate or the sign-off is open, the pipeline has ended, or there is
+// no need yet. The caller holds the run slot.
 func (c *Controller) stoppedAt(ctx context.Context, bp store.Blueprint) (stopPoint, bool, error) {
 	place, atRound, err := c.roundAt(ctx, bp.ID)
 	if err != nil {
@@ -616,7 +627,12 @@ func (c *Controller) stoppedAt(ctx context.Context, bp store.Blueprint) (stopPoi
 				return stopPoint{}, false, err
 			}
 
-			if out.stage == "" || (out.gate && !out.critique) {
+			offer, err := c.offerAt(ctx, bp.ID, out)
+			if err != nil {
+				return stopPoint{}, false, err
+			}
+
+			if out.stage == "" || (out.gate && !out.critique) || offer {
 				return stopPoint{}, false, nil
 			}
 

@@ -123,9 +123,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   keep the raw id. A gate a human answers is a text entry carrying a prompt
   (`LogEntry.Prompt`): actions, each a label and the exact reply text, which
   the panel shows as buttons, the markdown staying the readable fallback. A
-  gate's, the sign-off's, a stopped emission's or a run start's prompt
-  carries the entry without its reply instruction as its text, and the kind
-  `gate`. A click sends the reply as an ordinary message, so the
+  gate's, the sign-off's, the mockup offer's, a stopped emission's or a run
+  start's prompt carries the entry without its reply instruction as its
+  text, and the kind `gate`. A click sends the reply as an ordinary message, so the
   architect's reply parsing is the same for a click and a typed answer.
   A stage asks in rounds: a round is a text
   entry whose prompt has the kind `round`, the id `round:<n>` and the round
@@ -157,11 +157,12 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   reference, review or answer is the row. Other model text is shown.
   Rounds are `round:<n>` and their questions `Q<n>`, gates
   `gate:<stage>:v<n>` (`gate:<stage>:<slice>:v<n>` for a per-slice step's),
-  the sign-off `gate:signoff:v<n>`, and a stopped
-  emission or run start `emission:v<n>`.
+  the sign-off `gate:signoff:v<n>`, the mockup offer `mockup:offer`, and a
+  stopped emission or run start `emission:v<n>`.
   A gate the auto policy approves never leaves a prompt open, and the gate
-  plan is plain text. A gate or the sign-off stays open across a reply that
-  matches none of its actions, so it is never published again.
+  plan is plain text. A gate, the mockup offer or the sign-off stays open
+  across a reply that matches none of its actions, so it is never published
+  again.
 - **Every blueprint is a CM session, started by CM.** The start payload is the
   `ChatStartPayload` with its `architect` block: the architect takes its LLM
   endpoint (fail-closed, no local fallback), MCP key, model and
@@ -358,7 +359,7 @@ developer (DEV), tester (TST), reviewer (REV).
 | -  | Outcomes         | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   | -        |
 
 The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign-off is the controller's step after readiness (see Emission).
-Every stage is a model run, except a shared stage that collapses with one slice, which is recorded and not run, and the mockup step of a need without a screen, which never runs or shows; a design the user already has goes in the need or an answer, and solution design adopts it.
+Every stage is a model run, except a shared stage that collapses with one slice, which is recorded and not run, and the mockup step of a need without a screen, which never runs or shows, or whose first look the person declined; a design the user already has goes in the need or an answer, and solution design adopts it.
 
 - Intake states the shape it expects (slices, projects involved). When its
   run completes, the controller posts the gate plan: who answers each
@@ -636,7 +637,9 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
 
 A pack can state whether the need has a screen and carry a mockup step. The stage that checks `screen` (intake, in a pack that has the step) states `screen: true|false` in its data, and `redesign: true|false` beside `screen: true`: whether the person asks to re-design a screen that exists. The `screen` check refuses a `screen` that is not a boolean (`screen_shape`) and, with `screen: true`, a `redesign` that is not a boolean (`redesign_shape`); bounded like the other checks, never fatal.
 
-The mockup step collapses once the screen stage has stored an artifact that does not hold `screen: true`; until then it is pending. The collapse is decided from that stored artifact, so it holds across restarts, and a record from before mockups has no `screen` key and collapses. A collapsed mockup step is never run, writes no fold row (only a shared step's collapse is recorded as a fold) and shows `skipped`.
+The mockup step collapses once the screen stage has stored an artifact that does not hold `screen: true`, or once the newest offer was declined; until then it is pending. The collapse is decided from that stored artifact and the offer's events, so it holds across restarts, and a record from before mockups has no `screen` key and collapses. A collapsed mockup step is never run, writes no fold row (only a shared step's collapse is recorded as a fold) and shows `skipped`.
+
+**The offer.** Under the mockup stage's `human` policy (default mode), the step's first run asks first: the architect posts a `mockup_offer` event with state `shown` and the blueprint waits with the run slot free. Its transcript entry is a gate prompt, id `mockup:offer` and kind `gate`, with the replies `show mockup` (recommended) and `skip mockup`, worded the same with plain language on or off; while it waits the view's open prompt is `{mockup:offer, gate}` and the step is `waiting`. `show mockup` records `accepted` with the reply's message id and runs the step; `skip mockup` records `declined`, the step collapses and what follows it runs. Any other text is a note that runs nothing, and the offer stays open. A reopen while it waits posts it again with the same id; once accepted, a re-run of the step (after a failure, a restart or the session's end) asks nothing. When the step's first run comes under the `auto` policy (every mode but default, or after a `gate` reply) there is no offer and the step runs at once. A shown offer stays with its person until a reply decides it: a `gate` reply after it is shown does not withdraw it (the reply's event says the offer is open), and a reopen posts it again whatever the policy says now. Only a mode switch that makes the policy `auto` while the offer waits takes it unasked: `accepted` with `by: "mode"`, a system entry carrying `LogMarker{Kind: "decision", Stage: "mockup"}`, which closes the prompt as a reply would, and the step runs.
 
 The operator's existing-UI rule: where a UI exists, the mockup keeps to its look unless intake says `redesign: true`; a stored intake without the flag reads as no re-design.
 
@@ -793,6 +796,9 @@ then plain language, which makes every gate `auto`, then the pack: the
 stage's `policy` for its questions, and its `gate_policy` for its gate, which
 defaults to `policy`.
 In the default pack intake's questions go to a human and its gate is `auto`.
+The mockup stage's question policy, as the step first runs, also decides who
+sees its offer: under `human` the person is asked for a first look before the
+designer runs, under `auto` nobody is asked (see Mockups).
 A stage that declares the `assumptions` check records what it decides
 itself as data, and every responder answer is recorded as an assumption;
 only these reach the sign-off and the cards.
@@ -913,9 +919,13 @@ Sessions), and every question, gate and sign-off reads it as it stands then.
   intake's gate alone differs from its stage's policy: it is `auto`,
   decided by its reviewer's verdict. The sign-off waits for a human. A
   `gate <stage> human|auto` reply, listed in the gate plan posted after
-  intake, changes a stage's policy for this blueprint.
+  intake, changes a stage's policy for this blueprint. In a pack with a
+  mockup step, the person is offered a first look before it runs (see
+  Mockups).
 - **`auto`**: every policy `auto`. Stops before emission. Cards auto-vet in
-  CM on the non-Jira path, so this stop is the only human backstop.
+  CM on the non-Jira path, so this stop is the only human backstop. A
+  mockup step runs without an offer, and a switch into this mode, or
+  `auto+emit` or `yolo`, while an offer waits takes it.
 - **`auto+emit`**: as above, then emits the playbook and stops. It never
   approves over a critical finding across the blueprint: the sign-off stops
   for a human. When it approves a clean sign-off itself, it records what it
@@ -1180,10 +1190,11 @@ Replies the server understands, besides a round's structured answers:
 | Reply                         | Effect                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
 | `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At a slice's design gate, `reject slicing <feedback>` runs slicing and everything after it again, and `reject shared_decisions <feedback>` the shared decisions and every slice. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition, every slice's in slice order, with the feedback. `reject slicing <feedback>` runs slicing and everything after it again, `reject SL<n> <feedback>` that slice's design and every later slice, and `reject shared_decisions <feedback>` the shared decisions and every slice; the sign-off records its rejection first, then a rejection of the step that runs again, and the replaced versions superseded. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
-| `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round or gate keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
+| `show mockup`, `skip mockup`  | Answers the mockup offer (see Mockups): show runs the mockup step, skip goes on without it. Matched as a gate's replies are; any other text while the offer waits is a note and the offer stays open. |
+| `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round, gate or mockup offer keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
 | `cap <usd>`, `cap off`        | Sets the blueprint's cost cap (see below); CM sends it when the person clicks the cost in the sheet header. Exactly two words, the amount one plain decimal number, so an answer that starts with "cap" stays an answer. Works while a stage runs. |
-| `mode default\|auto\|auto+emit\|yolo` | Switches the blueprint's mode; every later question, gate and the sign-off follow the new one, and the gate plan, once posted, is posted again. Into `auto+emit` or `yolo`, a sign-off waiting for a human runs again, preflight included, and approves itself unless a critical finding across the blueprint or preflight stops it. Into any mode but default, the round waiting for a human goes to the auto responder at once when its stage's policy is now `auto` (a `gate` reply still wins): it turns read-only, the answers and decisions already sent stay the human's, the responder answers each open question and every undecided assumption is accepted, and the stage then continues; a switch back to default after that leaves it with the responder, and `continue`, the next message or a reopen finishes one an abort or a restart cut short. Into `auto`, `auto+emit` or `yolo`, a stage gate shown only because its policy asked a human is approved when the policies are now `auto` (a `gate` reply still wins) and its reviewer's verdict passes, and the pipeline goes on; one shown because its verdict did not pass stays with its human, as it would in auto, and a switch back to default decides no gate. A round whose asking run read the policy before the switch and had not yet ended on it stays with its human too. Exactly two words, the mode one of the four, case ignored, so an answer that starts with "mode" stays an answer. Works while a stage runs. Refused, changing nothing, for the mode in effect, once emission has started (the sign-off approved) and after the pipeline ended. The stored mode survives a reopen: a later start's mode is ignored, as its cap is. Each reply is a `mode` event with the switch, or the refusal's reason (`unchanged`, `emission_started`, `ended`). |
-| `resume`, `continue`          | Runs the stopped stage again once, as a retry message would but storing no note (see below); a stage the cap stopped runs too and meets the cap again. The whole message, case ignored, so an answer that starts with either word stays an answer. While a run is in flight, or where nothing is stopped (an open gate, a round waiting for answers, the sign-off, an ended pipeline, no need yet), nothing starts and the panel says so. Each reply is a `resume` event with the stage it runs again, or with `nothing` and the stage `running`, if any. |
+| `mode default\|auto\|auto+emit\|yolo` | Switches the blueprint's mode; every later question, gate and the sign-off follow the new one, and the gate plan, once posted, is posted again. Into `auto+emit` or `yolo`, a sign-off waiting for a human runs again, preflight included, and approves itself unless a critical finding across the blueprint or preflight stops it. Into any mode but default, the round waiting for a human goes to the auto responder at once when its stage's policy is now `auto` (a `gate` reply still wins): it turns read-only, the answers and decisions already sent stay the human's, the responder answers each open question and every undecided assumption is accepted, and the stage then continues; a switch back to default after that leaves it with the responder, and `continue`, the next message or a reopen finishes one an abort or a restart cut short. Into any mode but default, a mockup offer waiting for a human is taken when the mockup stage's policy is now `auto`, and the step runs. Into `auto`, `auto+emit` or `yolo`, a stage gate shown only because its policy asked a human is approved when the policies are now `auto` (a `gate` reply still wins) and its reviewer's verdict passes, and the pipeline goes on; one shown because its verdict did not pass stays with its human, as it would in auto, and a switch back to default decides no gate. A round whose asking run read the policy before the switch and had not yet ended on it stays with its human too. Exactly two words, the mode one of the four, case ignored, so an answer that starts with "mode" stays an answer. Works while a stage runs. Refused, changing nothing, for the mode in effect, once emission has started (the sign-off approved) and after the pipeline ended. The stored mode survives a reopen: a later start's mode is ignored, as its cap is. Each reply is a `mode` event with the switch, or the refusal's reason (`unchanged`, `emission_started`, `ended`). |
+| `resume`, `continue`          | Runs the stopped stage again once, as a retry message would but storing no note (see below); a stage the cap stopped runs too and meets the cap again. The whole message, case ignored, so an answer that starts with either word stays an answer. While a run is in flight, or where nothing is stopped (an open gate, the mockup offer, a round waiting for answers, the sign-off, an ended pipeline, no need yet), nothing starts and the panel says so. Each reply is a `resume` event with the stage it runs again, or with `nothing` and the stage `running`, if any. |
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
 | `lessons`                     | Lists lessons and their state.                                          |
@@ -1275,7 +1286,7 @@ Replies the server understands, besides a round's structured answers:
   (then it is chat about the round), and that decides no open gate is a
   note: it is logged and given to every model run that starts later, in
   arrival order. A note never reaches a run already in
-  flight, and a note at an open gate leaves the gate open. A note that is only
+  flight, and a note at an open gate or the mockup offer leaves it open. A note that is only
   `approve` or `reject` is a misplaced decision, not guidance: it is logged
   and reaches no run.
 
@@ -1295,13 +1306,15 @@ frames on the session's chat stream.
   Each step carries its persona, gate, policy (the gate policy for a gated
   stage), fold target, status (pending, running, reviewing, revising,
   waiting, done, failed, folded, skipped, stopped or not_reached; a
-  collapsed shared stage is skipped), attempt, a loop stage's round of its
+  collapsed shared stage is skipped, and the mockup step waits while its
+  offer is open), attempt, a loop stage's round of its
   maximum, latest version and cost. The view also carries the run in flight
   (stage, kind, persona, model, start, and the turns, tool calls and tokens
   its harness lines have counted), the open prompt (`round:<n>` of kind
   `round`, `gate:<stage>:v<n>`, `gate:<stage>:<slice>:v<n>` for a per-slice
-  gate, `gate:signoff:v<n>`, or `emission:v<n>` for a stopped emission or
-  run start), and the cost: the ledger plus the runs in flight, the
+  gate, `gate:signoff:v<n>`, `mockup:offer` of kind `gate` while the mockup
+  offer waits, or `emission:v<n>` for a stopped emission or run start), and
+  the cost: the ledger plus the runs in flight, the
   blueprint and per-run caps, and whether every run was priced.
   While a round waits, its stage's step is waiting and no run is in
   flight; while a chat run answers its chat, the step is running and the

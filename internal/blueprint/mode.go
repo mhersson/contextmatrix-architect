@@ -30,9 +30,10 @@ const (
 // switch into auto, auto+emit or yolo, a stage gate shown only because its
 // policy asked a human is approved when the policies now in effect are auto
 // and its verdict passes, as if the blueprint had been in the new mode all
-// along; one whose verdict did not pass stays with its human. Like a gate
-// reply it works while a stage runs. An applied switch posts the gate
-// plan again.
+// along; one whose verdict did not pass stays with its human. A mockup offer
+// that waits for a human is taken when the mockup stage's policy is now
+// auto, and the step runs. Like a gate reply it works while a stage runs. An
+// applied switch posts the gate plan again.
 func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error {
 	c.mu.Lock()
 	sess, ok := c.sessions[id]
@@ -56,6 +57,7 @@ func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error 
 		gate    outcome
 		folded  []store.Artifact
 		decides bool
+		offered bool
 	)
 
 	if applied && mode != protocol.ArchitectModeDefault {
@@ -71,6 +73,10 @@ func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error 
 
 	if applied && mode != protocol.ArchitectModeDefault && handed == 0 && !signs {
 		r, runCtx, gate, folded, decides = c.claimWaitingGate(ctx, sess, bp)
+	}
+
+	if applied && mode != protocol.ArchitectModeDefault && handed == 0 && !signs && !decides {
+		r, runCtx, offered = c.claimWaitingOffer(ctx, sess, bp)
 	}
 
 	if decides {
@@ -104,6 +110,8 @@ func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error 
 		}
 
 		c.proceed(bg, runCtx, r, sess, bp, gate.stage)
+	case offered:
+		c.launch(runCtx, r, sess, bp, c.opts.Pack.MockupStage())
 	case r != nil:
 		c.follow(context.WithoutCancel(ctx), runCtx, r, sess, bp, true)
 	}

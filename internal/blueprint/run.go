@@ -100,6 +100,10 @@ func (c *Controller) launchStep(ctx context.Context, r *run, sess *session, bp s
 			case step.critique:
 				end = c.critique(ctx, r, sess, bp, stageID)
 			default:
+				if c.awaitsOffer(ctx, sess, bp, step) {
+					return
+				}
+
 				end = c.runStage(ctx, r, sess, bp, stageID, step.seg)
 			}
 

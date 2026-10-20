@@ -87,6 +87,9 @@ type record struct {
 	// handedRound is the builder round an open round handed to the
 	// responder was asked in; 0 when there is none.
 	handedRound int
+	// offer is set while the mockup offer waits at the step the pipeline
+	// stands at.
+	offer bool
 	// policies is each stage's gate policy, its question policy when it has no gate.
 	policies map[string]string
 	// steps is the blueprint's pipeline and pieces the slices it repeats
@@ -178,13 +181,12 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 		slicing = &arts[len(arts)-1]
 	}
 
-	var screen *store.Artifact
-
-	if arts := rec.arts[c.opts.Pack.ScreenStage()]; len(arts) > 0 {
-		screen = &arts[len(arts)-1]
+	noMockup, err := c.mockupCollapsed(ctx, bp.ID)
+	if err != nil {
+		return record{}, err
 	}
 
-	rec.steps, rec.pieces = blueprintSteps(c.opts.Pack, rec.runs, slicing, mockupCollapsed(c.opts.Pack, screen))
+	rec.steps, rec.pieces = blueprintSteps(c.opts.Pack, rec.runs, slicing, noMockup)
 
 	gates, err := c.opts.Store.AllGates(ctx, bp.ID)
 	if err != nil {
@@ -250,6 +252,10 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 		c.opts.Logger.Warn("blueprint: the view cannot place the pipeline", "blueprint", bp.ID, "error", err)
 
 		rec.pos, rec.last = outcome{}, store.Run{}
+	}
+
+	if rec.offer, err = c.offerAt(ctx, bp.ID, rec.pos); err != nil {
+		return record{}, err
 	}
 
 	place, found, err := c.roundAt(ctx, bp.ID)
@@ -666,7 +672,7 @@ func (rec record) stageStatus(st pipelineStep, i, current int) string {
 		}
 	}
 
-	if rec.round > 0 && rec.roundStage == st.ID {
+	if (rec.round > 0 && rec.roundStage == st.ID) || rec.offer {
 		return stepWaiting
 	}
 
@@ -791,9 +797,9 @@ func (rec record) current() *protocol.CurrentRun {
 	}
 }
 
-// open is the prompt that waits for the operator: the open round, a shown
-// gate or the shown sign-off, undecided, or a stopped emission or run start,
-// which approve resumes.
+// open is the prompt that waits for the operator: the open round, the
+// mockup offer, a shown gate or the shown sign-off, undecided, or a stopped
+// emission or run start, which approve resumes.
 func (rec record) open() *protocol.OpenPrompt {
 	if rec.waitsToResume() {
 		return &protocol.OpenPrompt{PromptID: fmt.Sprintf("emission:v%d", signoffVersion(*rec.resume)), Kind: promptGate}
@@ -802,6 +808,8 @@ func (rec record) open() *protocol.OpenPrompt {
 	switch {
 	case rec.round > 0:
 		return &protocol.OpenPrompt{PromptID: roundPromptID(rec.round), Kind: promptRound}
+	case rec.offer:
+		return &protocol.OpenPrompt{PromptID: offerPromptID, Kind: promptGate}
 	case rec.pos.gate && !rec.pos.critique && rec.shown[rec.pos.stage][rec.pos.art.Version]:
 		return &protocol.OpenPrompt{PromptID: GatePromptID(rec.pos.stage, rec.pos.art.Version), Kind: promptGate}
 	case rec.pos.end && rec.pos.ready && rec.signoffRecorded(rec.pos.art.Version):

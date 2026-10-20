@@ -20,13 +20,15 @@ import (
 // the reply records; a stage gate's reject runs Target again, and the
 // sign-off's reject leaves the stage to re-run to the pack's loop. Ask labels
 // the text box a Feedback action opens; empty leaves the panel's own label.
+// Recommended marks the reply the panel suggests.
 type gateAction struct {
-	Label    string
-	Reply    string
-	Feedback bool
-	Ask      string
-	Decision string
-	Target   string
+	Label       string
+	Reply       string
+	Feedback    bool
+	Ask         string
+	Decision    string
+	Target      string
+	Recommended bool
 }
 
 // stageGateActions are the replies a stage's gate takes: approve, and
@@ -112,6 +114,10 @@ func actionsPayload(actions []gateAction) []any {
 		m := map[string]any{"label": a.Label, "reply": a.Reply, "feedback": a.Feedback}
 		if a.Ask != "" {
 			m["ask"] = a.Ask
+		}
+
+		if a.Recommended {
+			m["recommended"] = true
 		}
 
 		out = append(out, m)
