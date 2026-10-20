@@ -1105,13 +1105,14 @@ plainly with the technical text folded underneath for a technical helper
 sentence when setup needs someone technical, and another when the work settles
 some setup on its own) and a stopped emission or run start. The same choices
 are worded plainly ("Continue anyway", "Try again") and send the same replies.
-The setup note the code checkout posts opens with a plain sentence that
-names someone technical only when a gap needs a person before the cards run
-(a repository with no commits, or a missing verify command outside yolo),
-and otherwise says the work settles them on its own; its technical list is
-unchanged below. An ended pipeline's `end_reason` is plain and its technical reason is
-`end_detail`.
-The wording is fixed per situation, in the server.
+The setup note the code checkout posts opens with a plain sentence that names
+someone technical only when a gap needs a person before the cards run (a
+repository with no commits, or a missing verify command outside yolo), and
+otherwise says the work settles them on its own; its technical list is
+unchanged below. The announcement of the emitted cards opens with a plain
+sentence, its technical text unchanged below. An ended pipeline's `end_reason`
+is plain and its technical reason is `end_detail`. The wording is fixed per
+situation, in the server.
 
 ## Tools
 

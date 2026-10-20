@@ -468,6 +468,10 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		}
 
 		entry.Content = b.String()
+
+		if e.Plain {
+			entry.Content = plainEmittedText(p) + "\n\n" + entry.Content
+		}
 	case blueprint.EventAnswer:
 		// CM shows a human's answer as the message it was.
 		if str(p["responder"]) != store.ResponderAuto {
@@ -1493,11 +1497,36 @@ func plainSignoffText(p map[string]any) string {
 	}
 
 	if len(stringsOf(p["blocking"])) > 0 || len(stringsOf(p["warnings"])) > 0 || len(stringsOf(p["steps"])) > 0 {
-		text += " Some setup needs someone technical before the work can run; the steps are below."
+		text += plainStepsSentence
 	}
 
 	if len(stringsOf(p["notices"])) > 0 {
-		text += " The work will settle some technical setup on its own; a technical helper can read how below."
+		text += plainNoticesSentence
+	}
+
+	return text
+}
+
+const (
+	plainStepsSentence   = " Some setup needs someone technical before the work can run; the steps are below."
+	plainNoticesSentence = " The work will settle some technical setup on its own; a technical helper can read how below."
+)
+
+// plainEmittedText is what a person reads above the announcement of the
+// emitted cards, which stays technical below it.
+func plainEmittedText(p map[string]any) string {
+	text := "The work is created in ContextMatrix."
+
+	if len(stringsOf(p["manual"])) > 0 {
+		text += " A few checks for a person to run once the work is built are listed below."
+	}
+
+	if len(stringsOf(p["steps"])) > 0 {
+		text += plainStepsSentence
+	}
+
+	if len(stringsOf(p["notices"])) > 0 {
+		text += plainNoticesSentence
 	}
 
 	return text

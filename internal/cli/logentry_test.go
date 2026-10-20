@@ -1419,6 +1419,34 @@ func TestLogEntryFor_APlainSetupNoteLeadsWithAPersonOnlyForAStep(t *testing.T) {
 	}
 }
 
+func TestLogEntryFor_APlainEmittedEntryLeadsPlainlyAndKeepsTheDetails(t *testing.T) {
+	payload := func(extra map[string]any) map[string]any {
+		p := map[string]any{"cards": []any{map[string]any{"card": "ALPHA-001"}}, "playbook": "", "manual": []any{}}
+		maps.Copy(p, extra)
+
+		return p
+	}
+	render := func(p map[string]any, plain bool) protocol.LogEntry {
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventEmitted, BlueprintID: "S1", Payload: p, Plain: plain})
+		require.True(t, ok)
+
+		return entry
+	}
+
+	with := payload(map[string]any{"steps": []any{"push a commit"}, "notices": []any{"a notice"}})
+	technical, plain := render(with, false), render(with, true)
+
+	assert.NotEqual(t, technical.Content, plain.Content)
+	assert.Contains(t, plain.Content, technical.Content, "the technical text follows unchanged")
+	assert.Contains(t, plain.Content, plainStepsSentence)
+	assert.Contains(t, plain.Content, plainNoticesSentence)
+	assert.Equal(t, technical.Type, plain.Type)
+
+	bare := render(payload(nil), true)
+	assert.NotContains(t, bare.Content, plainStepsSentence)
+	assert.NotContains(t, bare.Content, plainNoticesSentence)
+}
+
 func TestLogEntry_TheOfferIsAGatePrompt(t *testing.T) {
 	shown, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventMockupOffer, BlueprintID: "S1", Payload: map[string]any{
 		"stage": "mockup", "state": "shown", "actions": []any{
