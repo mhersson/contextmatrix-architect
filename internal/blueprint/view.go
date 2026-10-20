@@ -55,10 +55,12 @@ const (
 	byAutomatic = "automatic"
 )
 
-// Open prompt kinds, as the prompts themselves name them.
+// Open prompt kinds, as the prompts themselves name them; a mockup has no
+// transcript prompt, only the open one.
 const (
-	promptGate  = "gate"
-	promptRound = "round"
+	promptGate   = "gate"
+	promptRound  = "round"
+	promptMockup = "mockup"
 )
 
 // record is what one view is built from: the blueprint's stored record,
@@ -81,9 +83,13 @@ type record struct {
 	last     store.Run
 	flights  []flightView
 	// round is the open round's number and roundStage its stage; 0 and ""
-	// when none waits.
+	// when none waits. mockup marks a mockup round, and unprompted one no
+	// prompt waits on: the auto responder steers it, or a designer run is
+	// writing its next revision or reply.
 	round      int
 	roundStage string
+	mockup     bool
+	unprompted bool
 	// handedRound is the builder round an open round handed to the
 	// responder was asked in; 0 when there is none.
 	handedRound int
@@ -270,6 +276,9 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 		rec.handedRound = place.state.BuilderRound
 	default:
 		rec.round, rec.roundStage = place.state.Number, place.state.Frame.Stage
+		_, writing := rec.flightOf(place.state.Frame.Stage)
+		rec.mockup = place.state.Mockup != nil
+		rec.unprompted = rec.mockup && (place.state.Frame.Responder || writing)
 	}
 
 	return rec, nil
@@ -798,14 +807,19 @@ func (rec record) current() *protocol.CurrentRun {
 }
 
 // open is the prompt that waits for the operator: the open round, the
-// mockup offer, a shown gate or the shown sign-off, undecided, or a stopped
-// emission or run start, which approve resumes.
+// mockup waiting for the person, the mockup offer, a shown gate or the
+// shown sign-off, undecided, or a stopped emission or run start, which
+// approve resumes.
 func (rec record) open() *protocol.OpenPrompt {
 	if rec.waitsToResume() {
 		return &protocol.OpenPrompt{PromptID: fmt.Sprintf("emission:v%d", signoffVersion(*rec.resume)), Kind: promptGate}
 	}
 
 	switch {
+	case rec.unprompted:
+		return nil
+	case rec.mockup:
+		return &protocol.OpenPrompt{PromptID: mockupPromptID(rec.round), Kind: promptMockup}
 	case rec.round > 0:
 		return &protocol.OpenPrompt{PromptID: roundPromptID(rec.round), Kind: promptRound}
 	case rec.offer:

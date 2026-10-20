@@ -54,6 +54,9 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			entry.Content = fmt.Sprintf("%s resumes with the answers to round %.0f.", runLabel(p, e.Sliced), num(p["question_round"]))
 		case blueprint.SegmentChat:
 			entry.Content = fmt.Sprintf("%s answers the chat about round %.0f.", runLabel(p, e.Sliced), num(p["question_round"]))
+			if p["mockup"] == true {
+				entry.Content = runLabel(p, e.Sliced) + " answers the chat about the mockup."
+			}
 		default:
 			entry.Content = fmt.Sprintf("%s started as %s.", runLabel(p, e.Sliced), strings.ReplaceAll(str(p["persona"]), "_", " "))
 
@@ -65,6 +68,10 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			}
 		}
 	case blueprint.EventRound:
+		if _, isMockup := p["mockup"]; isMockup {
+			return mockupRoundEntry(entry, p)
+		}
+
 		n, frame, ok := roundFrame(p)
 		if !ok {
 			return protocol.LogEntry{}, false
@@ -97,7 +104,12 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		if str(p["status"]) == store.RunAsked {
 			what := fmt.Sprintf("%s waits for the answers to round %.0f", runLabel(p, e.Sliced), num(p["question_round"]))
 
+			// A mockup's round never reaches the panel, so its end names none.
 			switch chat, _ := p["chat"].(bool); {
+			case p["mockup"] == true && num(p["revision"]) > 0:
+				what = fmt.Sprintf("%s shows revision %.0f", runLabel(p, e.Sliced), num(p["revision"]))
+			case p["mockup"] == true:
+				what = runLabel(p, e.Sliced) + " replied about the mockup"
 			case chat:
 				what = fmt.Sprintf("%s replied in round %.0f's chat", runLabel(p, e.Sliced), num(p["question_round"]))
 			case p["responder"] == true:
@@ -485,6 +497,33 @@ func roundFrame(p map[string]any) (int, protocol.LogRound, bool) {
 	return n, f, n > 0
 }
 
+// mockupRoundEntry is a mockup round's snapshot as the transcript shows it:
+// a mockup is a round inside the architect, never a round prompt. A revision
+// or a reply adds the designer's chat entry, the one the run behind it saw
+// last, which is a text row; any other change adds no row.
+func mockupRoundEntry(entry protocol.LogEntry, p map[string]any) (protocol.LogEntry, bool) {
+	switch str(p["change"]) {
+	case "posted", "revision", "reply":
+	default:
+		return protocol.LogEntry{}, false
+	}
+
+	_, frame, ok := roundFrame(p)
+	if !ok || len(frame.Chat) == 0 {
+		return protocol.LogEntry{}, false
+	}
+
+	seen := int(num(p["seen"]))
+	if seen < 1 || seen > len(frame.Chat) {
+		seen = len(frame.Chat)
+	}
+
+	entry.Type = "text"
+	entry.Content = frame.Chat[seen-1].Text
+
+	return entry, true
+}
+
 // roundHeading names round n; left marks a round the pipeline went past
 // before it was answered, which is closed but holds no full answer.
 func roundHeading(n int, f protocol.LogRound, left bool) string {
@@ -586,13 +625,15 @@ func roundText(n int, f protocol.LogRound, left bool) string {
 }
 
 // artifactNote is a stored artifact's sheet reference note, finished prose
-// of what is known at store time: cards accepted with contract findings, a
-// loop stage's round, a revision for its reviewer's findings, or the
-// persona that drew it.
+// of what is known at store time: a mockup's revision, cards accepted with
+// contract findings, a loop stage's round, a revision for its reviewer's
+// findings, or the persona that drew it.
 func artifactNote(p map[string]any) string {
 	revisedFor := int(num(p["revised_for"]))
 
 	switch {
+	case num(p["revision"]) > 0:
+		return fmt.Sprintf("Revision %.0f", num(p["revision"]))
 	case num(p["accepted_round"]) > 0:
 		return fmt.Sprintf("Refused by checks, accepted on round %.0f", num(p["accepted_round"]))
 	case num(p["max_rounds"]) > 0:

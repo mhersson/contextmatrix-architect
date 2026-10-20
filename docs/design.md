@@ -106,6 +106,7 @@ stage runner (internal/stage)       one harness.Run per round: persona + stage p
      |                   where the task gives it as a digest)
      |-- control tools   ask_questions (posts a round, ends the run),
      |                   answer_chat (replies in a round's chat, ends the run),
+     |                   show_mockup (shows a mockup revision, ends the run),
      |                   submit_artifact (terminal)
      |
 store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions, gates,
@@ -144,9 +145,10 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   artifact is a sheet reference (kind `artifact`, a text entry) to that
   stage and version in place of its body. Its one-line note says what is
   known when it is stored: the persona that drew it, the findings a
-  revision was given, a loop stage's round, or that its checks refused it
-  until round 3. A marker and a round's frame carry a per-slice step's
-  stage and its slice apart. A reviewer's verdict is a review marker (kind
+  revision was given, a loop stage's round, that its checks refused it
+  until round 3, or a mockup's revision ("Revision <v>"). A marker and a
+  round's frame carry a per-slice step's stage and its slice apart. A
+  reviewer's verdict is a review marker (kind
   `review`, a text entry) naming the reviewed stage, its slice, the version
   and the reviewer, rendered from the view's review of that version. Gate
   decisions stay prose entries.
@@ -157,8 +159,10 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   reference, review or answer is the row. Other model text is shown.
   Rounds are `round:<n>` and their questions `Q<n>`, gates
   `gate:<stage>:v<n>` (`gate:<stage>:<slice>:v<n>` for a per-slice step's),
-  the sign-off `gate:signoff:v<n>`, the mockup offer `mockup:offer`, and a
-  stopped emission or run start `emission:v<n>`.
+  the sign-off `gate:signoff:v<n>`, the mockup offer `mockup:offer`, the
+  mockup waiting for the person `mockup:<n>` (an open prompt only, never a
+  transcript prompt; see Mockups), and a stopped emission or run start
+  `emission:v<n>`.
   A gate the auto policy approves never leaves a prompt open, and the gate
   plan is plain text. A gate, the mockup offer or the sign-off stays open
   across a reply that matches none of its actions, so it is never published
@@ -643,6 +647,12 @@ The mockup step collapses once the screen stage has stored an artifact that does
 
 The operator's existing-UI rule: where a UI exists, the mockup keeps to its look unless intake says `redesign: true`; a stored intake without the flag reads as no re-design.
 
+**Revisions.** With the code tools its stage names, the designer reads the UI code and design material in every target project's checkout. Its run shows revisions instead of submitting: `show_mockup` is offered in place of `ask_questions` and `submit_artifact` (beside `answer_chat` in a chat run), and a revision it accepts ends the run asked. A revision is the screen people will use imitated in one self-contained HTML document (a phone or tablet app, a desktop window, a full-screen terminal interface, a web page; HTML is the medium only), the designer's notes, the 1 to 8 screens the document shows and at most 12 suggestions. Each revision is stored as the next artifact version of stage `mockup`, version v being revision v: the body is the notes, the data `revision`, `screens`, `suggestions`, `settings` (what the revision opens with) and `source`. Its `artifact` event names the stage, version, persona and revision, never the body or the source; the live stream sends an `artifact_stored` frame for it, the transcript a sheet reference noted "Revision <v>", and the stage drafts nothing. Inside the architect a mockup is a round with no questions, carrying the revision's state: the first revision posts it under the next round number with the notes as the designer's chat entry, and each revision a chat run shows updates that same round, its notes following the chat entries the run was given. Its snapshots never reach the transcript as a round prompt: one that adds the designer's notes or reply is a text row, and any other adds no row; a designer run's start and end rows name the mockup and the revision shown, never the round. The round is the auto responder's when the stage's policy is `auto` as the revision is shown (read under the round lock, so a mode switch's handover is never undone), and the person's otherwise. While it waits for the person, the view's open prompt is `mockup:<n>` of kind `mockup`, the same across the revisions. There is none while the auto responder steers, when the step waits, or while a designer run writes the next revision or a reply, when the step is running. `show_mockup` is refused as a tool error when a first run finds a mockup already waiting, and when a chat run's round is closed, gone or already decided.
+
+**Suggestions and settings.** A suggestion has an id, a title of at most 48 characters, a kind, a why and a default. Suggestion and screen ids match `^[a-z][a-z0-9_]{0,31}$`, each unique in its list, and keep their meaning across revisions. A `switch` has no options and is `on` or `off`, off unless its default says otherwise; a `choice` has 2 to 4 options, each a value (`^[a-z0-9_-]{1,32}$`, unique) and a label, and its default is one of them, the first unless given. A revision's `settings` carry over by id from the round's last known settings: each suggestion keeps the value it had while the revision still takes it, and takes its default otherwise, so the first revision opens at the defaults.
+
+**The frame contract.** CM shows a source sealed in its mockup frame (no access to CM or the session; network blocked by policy; see CM's trust model). Before the source's first script runs, `window.mockupSettings` holds the settings, each suggestion id to its string value; on every flip CM sets it again and dispatches a window `mockup:settings` `CustomEvent` whose `detail` is the settings. The source renders from `window.mockupSettings` at load and re-renders on the event without resetting the screen or tab the person is on, so a flip re-renders the mockup with no model run. `show_mockup` checks the source as a quality guard, so a revision does not show broken in that frame; the frame, not the check, is the boundary. It refuses, as a tool error naming the rule and storing nothing, in this order: a source that is empty or over 64 KiB; a `link`, `iframe`, `frame`, `object`, `embed`, `form` or `base` element, a `meta` with `http-equiv`, or a `src`, `href`, `xlink:href`, `srcset`, `poster`, `action`, `formaction` or `data` attribute whose value is no `data:` URI (or, for a link, a `#` fragment); in a style element or attribute, an `@import` or a `url(` that is no `data:` URI or fragment; in a script element or an `on*` attribute, case ignored, `localStorage`, `sessionStorage`, `document.cookie`, `fetch(`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `alert(`, `confirm(`, `prompt(` or `window.open(` (a screen may show these names as text, as a developer tool or a terminal does); and, when the revision has suggestions, a source that never names `mockupSettings` or `mockup:settings`. The designer corrects it and shows again in the same run.
+
 ## Card contract
 
 Evidence: 341 agent-run cards on the operator's main boards repo plus 161 on a
@@ -1052,7 +1062,7 @@ The wording is fixed per situation, in the server.
 | research | `web_search`, `web_fetch` | Offered to the stages whose pack names the group (intake, slicing, shared decisions and solution design in the default pack) when the session's research settings name a provider the architect can build; otherwise the group is absent and the session says once, at the first such stage, that research is off. `web_search` asks the provider (Brave Search) for ten results: titles, URLs and snippets the model reads in that run only, since a run's stored messages keep only the query and the result count. `web_fetch` reads an http or https page from a public address: every connection's address is checked after the name resolves, redirects included (five at most), and no proxy is used; it reads at most 5 MiB in 20 seconds, keeps 48 KiB of text, turns HTML into readable text (the main or article element, without scripts, navigation or footers), takes text types as they are and refuses the rest. A page read is recorded as a `url` source and its result starts with the tag; a page with no readable text is a tool error, not a source. A leak guard checks every query and every URL's host labels, path and query and refuses, as a tool error naming the rule: a token with a path separator (acronym pairs like CI/CD and HTTP/1.1 pass) or a file extension (a `<name>.js` library passes), code punctuation (a URL path segment may carry a name's `(` or `=`, as in `Raft_(algorithm)`), a compound identifier the blueprint's checkouts declare (not a name of a package they depend on, and nothing in a lockfile), the root module path's owner or name (a nested module's compound name is a declared identifier), a target project's name or its repositories' owner or name, a ContextMatrix card id, and a query, or a URL path segment, query key or query value, over 160 characters; plain words and technology names pass. A URL's host labels get the name, module, identifier and card-id rules but not the shape rules, since a page can ask for a host that carries data; its path segments skip the path and file-name rules, which a URL's own syntax breaks; its query keys and values get every query rule. It reads the checkouts once per run, at the first check that needs them, checking them out first in a stage without the code tools, and refuses everything while it cannot read them. The responder shares its stage's tools. Every query and page read is a `research` event. A reviewer whose entry names `research` gets `web_fetch` alone behind the same guard, and never posts the research-off notice. |
 | cm       | `list_projects`, `list_cards`, `get_card`, `get_playbook` as `cm_`-prefixed reads | Offered to grounding and readiness over the session's MCP key, one MCP session per run, chat's bridge adapter on the architect's client with a `cm_` prefix and an allowlist that skips tools CM does not serve. No `agent_id` is sent, so CM keeps redacting unvetted imported text; `get_card` never attaches images; a credential embedded in a URL is removed from every result and error before the model or the record sees it, since CM returns project config as stored; every result carries the blueprint's ContextMatrix source tag. Creating cards and playbooks and starting runs are controller calls with the configured caller identity, never model tools. |
 | artifacts | `read_artifact` | Offered to a run whose task can hold a digest of another slice's artifact: the whole body and data of any stored version of a step the run reads. The stored transcript keeps each result's first line, since the record holds the artifact. |
-| control  | `ask_questions`, `answer_chat`, `submit_artifact`                                          | `ask_questions` posts a round and ends the run: per question a tab title, the question, why it matters, options with a summary, pros, cons and source tags (only tags a tool result of this blueprint returned; the panel shows a page `web_fetch` read by its title (its address when it has none), linked to its address, and any other source by its identity), and the recommended position; an audience, `experience` (what the person wants, who uses it, how it should look, feel and behave) or `technical` (how it is built), recorded on the round in every mode and required on a plain-language blueprint's questions under the human policy; a trailing "(recommended)" a model writes into an option title is cut and marks it. A stage that declares the `assumptions` check may add its assumptions as the round's last tab, each a sentence (or, on a plain-language blueprint, `{text, consequence}`), or post the tab alone; any other stage's tab is refused. A tab entry the user already accepted on a closed round is refused. A round asks at most 10 questions of at most 6 options, 96 KiB in all, its assumptions included. A question already answered with the same options is refused unless it re-asks a turned-down answer (`reasks`, offered and taken on plain-language blueprints only); a changed option set makes a new question. Under `auto` its responder answers before the run ends. Questions are numbered `Q<n>` per blueprint. `answer_chat` replies in an open round's chat, at most 4000 characters, revising or adding questions under the same limits or replacing the assumptions tab, and ends the run. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
+| control  | `ask_questions`, `answer_chat`, `show_mockup`, `submit_artifact`                           | `ask_questions` posts a round and ends the run: per question a tab title, the question, why it matters, options with a summary, pros, cons and source tags (only tags a tool result of this blueprint returned; the panel shows a page `web_fetch` read by its title (its address when it has none), linked to its address, and any other source by its identity), and the recommended position; an audience, `experience` (what the person wants, who uses it, how it should look, feel and behave) or `technical` (how it is built), recorded on the round in every mode and required on a plain-language blueprint's questions under the human policy; a trailing "(recommended)" a model writes into an option title is cut and marks it. A stage that declares the `assumptions` check may add its assumptions as the round's last tab, each a sentence (or, on a plain-language blueprint, `{text, consequence}`), or post the tab alone; any other stage's tab is refused. A tab entry the user already accepted on a closed round is refused. A round asks at most 10 questions of at most 6 options, 96 KiB in all, its assumptions included. A question already answered with the same options is refused unless it re-asks a turned-down answer (`reasks`, offered and taken on plain-language blueprints only); a changed option set makes a new question. Under `auto` its responder answers before the run ends. Questions are numbered `Q<n>` per blueprint. `answer_chat` replies in an open round's chat, at most 4000 characters, revising or adding questions under the same limits or replacing the assumptions tab, and ends the run. `show_mockup` is the mockup stage's, in place of `ask_questions` and `submit_artifact` and beside `answer_chat` in its chat runs: it shows a revision (the notes, the HTML source, its screens and suggestions) under the limits and the source check of Mockups, and ends the run. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
 
 Every tool result passes the harness redactor for every secret the process
 holds.
@@ -1307,19 +1317,23 @@ frames on the session's chat stream.
   stage), fold target, status (pending, running, reviewing, revising,
   waiting, done, failed, folded, skipped, stopped or not_reached; a
   collapsed shared stage is skipped, and the mockup step waits while its
-  offer is open), attempt, a loop stage's round of its
+  offer is open and while a revision waits for the person or the
+  responder), attempt, a loop stage's round of its
   maximum, latest version and cost. The view also carries the run in flight
   (stage, kind, persona, model, start, and the turns, tool calls and tokens
   its harness lines have counted), the open prompt (`round:<n>` of kind
   `round`, `gate:<stage>:v<n>`, `gate:<stage>:<slice>:v<n>` for a per-slice
   gate, `gate:signoff:v<n>`, `mockup:offer` of kind `gate` while the mockup
-  offer waits, or `emission:v<n>` for a stopped emission or run start), and
+  offer waits, `mockup:<n>` of kind `mockup` while a revision waits for the
+  person, not while the auto responder steers it or a designer run writes
+  the next one, or `emission:v<n>` for a stopped emission or run start), and
   the cost: the ledger plus the runs in flight, the
   blueprint and per-run caps, and whether every run was priced.
   While a round waits, its stage's step is waiting and no run is in
   flight; while a chat run answers its chat, the step is running and the
-  round stays the open prompt. A round a mode switch handed to the
-  responder is no open prompt: nobody waits for the operator on it, and its
+  round stays the open prompt (a mockup's does not; see Mockups). A round
+  a mode switch handed to the responder is no open prompt: nobody waits
+  for the operator on it, and its
   stage's step reads as an auto round's would at the same point: running, or
   revising in a builder round, while the responder answers, and as after an
   aborted run of its stage once an abort stops the responder.
@@ -1426,9 +1440,10 @@ frames on the session's chat stream.
   sends no reset for it. A submit whose arguments the harness repairs never
   executes, so its draft is marked refused with the repair error. Each model
   call starts a fresh draft, whatever tool-call ids the provider reuses.
-  Reviewer and responder runs draft nothing. A model whose stream carries
-  no tool-call fragments shows its body at submit. A restart loses the
-  draft, and the run re-runs from the ledger.
+  Reviewer and responder runs draft nothing, and neither does the mockup
+  stage: each revision is stored whole as it is shown. A model whose
+  stream carries no tool-call fragments shows its body at submit. A
+  restart loses the draft, and the run re-runs from the ledger.
 
 ## Deployment
 

@@ -1407,3 +1407,106 @@ func TestLogEntry_TheOfferIsAGatePrompt(t *testing.T) {
 	assert.Equal(t, "system", declined.Type)
 	assert.Nil(t, declined.Marker)
 }
+
+func TestLogEntry_AMockupRevisionIsASheetReference(t *testing.T) {
+	entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventArtifact, BlueprintID: "S1", Payload: map[string]any{
+		"stage": "mockup", "version": 2, "persona": "designer", "revision": 2,
+	}})
+	require.True(t, ok)
+	require.NotNil(t, entry.Marker)
+	assert.Equal(t, "artifact", entry.Marker.Kind)
+	assert.Equal(t, "mockup", entry.Marker.Stage)
+	assert.Equal(t, 2, entry.Marker.Version)
+}
+
+// mockupRoundPayload is a mockup round snapshot with change and chat, of
+// which the run behind it has seen seen.
+func mockupRoundPayload(change string, seen int, chat ...map[string]any) map[string]any {
+	entries := make([]any, 0, len(chat))
+	for _, m := range chat {
+		entries = append(entries, m)
+	}
+
+	return map[string]any{
+		"round": 3, "change": change, "seen": seen,
+		"mockup": map[string]any{"revision": 2, "suggestions": []any{}, "opening": map[string]any{}, "settings": map[string]any{}},
+		"frame":  map[string]any{"persona": "designer", "stage": "mockup", "questions": []any{}, "chat": entries},
+	}
+}
+
+func TestLogEntry_AMockupRoundIsNeverARoundPrompt(t *testing.T) {
+	first := map[string]any{"from": "designer", "text": "A list the household shares."}
+	person := map[string]any{"from": "user", "text": "Can it group by aisle?"}
+	second := map[string]any{"from": "designer", "text": "Grouped by aisle now."}
+
+	tests := []struct {
+		name    string
+		payload map[string]any
+		want    string
+	}{
+		{"a revision", mockupRoundPayload("revision", 3, first, person, second), "Grouped by aisle now."},
+		{"the first revision", mockupRoundPayload("posted", 1, first), "A list the household shares."},
+		{"a reply", mockupRoundPayload("reply", 3, first, person, second), "Grouped by aisle now."},
+		{"a revision before a message it has not seen", mockupRoundPayload("revision", 3, first, person, second, person), "Grouped by aisle now."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRound, BlueprintID: "S1", Payload: tt.payload})
+			require.True(t, ok)
+			assert.Equal(t, "text", entry.Type)
+			assert.Nil(t, entry.Prompt)
+			assert.Equal(t, tt.want, entry.Content)
+		})
+	}
+
+	t.Run("answers", func(t *testing.T) {
+		_, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventRound, BlueprintID: "S1", Payload: mockupRoundPayload("answers", 1, first)})
+		assert.False(t, ok)
+	})
+}
+
+// A mockup run's start and end never name its round, which the person never
+// sees: two rounds read the same, and the revision shown tells two ends apart.
+func TestLogEntry_AMockupRunNamesNoRound(t *testing.T) {
+	content := func(kind string, p map[string]any) string {
+		t.Helper()
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: kind, BlueprintID: "S1", Payload: p})
+		require.True(t, ok)
+
+		return entry.Content
+	}
+
+	ended := func(round, revision int, chat, mockup bool) map[string]any {
+		p := map[string]any{
+			"stage": "mockup", "kind": "stage", "status": "asked", "cost_usd": 0.1, "priced": true,
+			"question_round": round, "chat": chat, "responder": false,
+		}
+		if mockup {
+			p["mockup"], p["revision"] = true, revision
+		}
+
+		return p
+	}
+
+	started := func(round int, mockup bool) map[string]any {
+		p := map[string]any{"stage": "mockup", "kind": "stage", "persona": "designer", "segment": blueprint.SegmentChat, "question_round": round}
+		if mockup {
+			p["mockup"] = true
+		}
+
+		return p
+	}
+
+	ev := blueprint.EventStageEnded
+	assert.NotEqual(t, content(ev, ended(3, 0, false, false)), content(ev, ended(7, 0, false, false)), "a question round's end names it")
+	assert.Equal(t, content(ev, ended(3, 2, false, true)), content(ev, ended(7, 2, false, true)))
+	assert.Equal(t, content(ev, ended(3, 2, true, true)), content(ev, ended(7, 2, true, true)))
+	assert.Equal(t, content(ev, ended(3, 0, true, true)), content(ev, ended(7, 0, true, true)), "a reply without a revision")
+	assert.NotEqual(t, content(ev, ended(3, 2, false, true)), content(ev, ended(3, 3, false, true)))
+
+	sv := blueprint.EventStageStarted
+	assert.NotEqual(t, content(sv, started(3, false)), content(sv, started(7, false)))
+	assert.Equal(t, content(sv, started(3, true)), content(sv, started(7, true)))
+}

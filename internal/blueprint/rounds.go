@@ -41,6 +41,9 @@ const (
 	// open questions.
 	changeHandedOver = "handed_over"
 	changeResponded  = "responded"
+	// changeRevision: a designer's chat run showed the next revision on a
+	// mockup round.
+	changeRevision = "revision"
 )
 
 // roundState is one snapshot of a question round: the frame the panel shows
@@ -90,7 +93,10 @@ type roundState struct {
 	Consequences map[string]int `json:"consequences,omitempty"`
 	// Reasks maps each question that asks a turned-down answer again to the
 	// question whose answer it asks again.
-	Reasks map[int]int       `json:"reasks,omitempty"`
+	Reasks map[int]int `json:"reasks,omitempty"`
+	// Mockup makes the round a mockup step's: no questions, the revision it
+	// shows in its place. It never reaches the wire as a round.
+	Mockup *mockupState      `json:"mockup,omitempty"`
 	Frame  protocol.LogRound `json:"frame"`
 }
 
@@ -155,8 +161,15 @@ func (s roundState) clone() roundState {
 }
 
 // complete reports whether every question has an answer and every
-// assumption a decision.
-func (s roundState) complete() bool { return RoundAnswered(s.Frame) }
+// assumption a decision; a mockup round is complete once a use or a skip
+// is stored on it.
+func (s roundState) complete() bool {
+	if s.Mockup != nil {
+		return s.Mockup.Action != ""
+	}
+
+	return RoundAnswered(s.Frame)
+}
 
 // RoundAnswered reports whether every question of round f has an answer and
 // every assumption a decision: an open round like that closes and its stage

@@ -233,6 +233,10 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		started["segment"], started["question_round"] = rd.segment, rd.qround
 	}
 
+	if slices.Contains(st.Checks, pack.CheckMockup) {
+		started["mockup"] = true
+	}
+
 	au.event(bg, Event{Kind: EventStageStarted, BlueprintID: id, RunID: runID, Payload: started})
 
 	// The input is built inside the run: a failed checkout is a failed run
@@ -320,27 +324,12 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	in.Events = sink
 	in.Secrets = sess.secrets()
 
-	// The draft carries the version the artifact will be stored as; a read
-	// that fails leaves version 1, and only the hint's match suffers.
-	version := 1
-	if latest, err := c.opts.Store.LatestArtifact(bg, id, stageID); err == nil {
-		version = latest.Version + 1
-	}
-
-	draftStage, draftSlice := pack.SplitStep(stageID)
-
-	in.Draft = func(f stage.DraftFrame) {
-		// A void draft is none: the next snapshot leaves it out.
-		if f.Void {
-			c.live.clearDraft(id)
-			c.live.touch(id)
-
-			return
-		}
-
-		c.live.draft(id, protocol.Draft{
-			Stage: draftStage, Slice: draftSlice, Version: version, Offset: f.Offset, Text: f.Text, Refused: f.Refused, Reason: f.Reason,
-		})
+	// A mockup stage shows revisions, each stored whole as it is shown, and
+	// drafts nothing.
+	if slices.Contains(st.Checks, pack.CheckMockup) {
+		in.Designer = iv
+	} else {
+		in.Draft = c.stageDraft(bg, id, stageID)
 	}
 
 	out, runErr := c.opts.Runner.Run(withRun(runCtx, runID), in)
@@ -364,10 +353,19 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	switch {
 	case runErr == nil && out.Asked:
 		c.endRun(bg, runID, store.RunAsked, "round", usage)
-		au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
+
+		ended := map[string]any{
 			"stage": stageID, "kind": store.RunKindStage, "status": store.RunAsked, "cost_usd": usage.CostUSD, "priced": isPriced,
 			"question_round": iv.posted, "chat": in.Chat, "responder": iv.responded,
-		}})
+		}
+
+		// A mockup's round is the architect's alone: its end names the
+		// revision shown, if any, and no round.
+		if in.Designer != nil {
+			ended["mockup"], ended["revision"] = true, iv.revision
+		}
+
+		au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: ended})
 
 		return stageAsked
 	case runErr == nil:
@@ -503,6 +501,32 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 	}
 
 	return stageStopped
+}
+
+// stageDraft publishes the draft of the artifact a run of stageID writes.
+// The draft carries the version the artifact will be stored as; a read
+// that fails leaves version 1, and only the hint's match suffers.
+func (c *Controller) stageDraft(ctx context.Context, id, stageID string) func(stage.DraftFrame) {
+	version := 1
+	if latest, err := c.opts.Store.LatestArtifact(ctx, id, stageID); err == nil {
+		version = latest.Version + 1
+	}
+
+	draftStage, draftSlice := pack.SplitStep(stageID)
+
+	return func(f stage.DraftFrame) {
+		// A void draft is none: the next snapshot leaves it out.
+		if f.Void {
+			c.live.clearDraft(id)
+			c.live.touch(id)
+
+			return
+		}
+
+		c.live.draft(id, protocol.Draft{
+			Stage: draftStage, Slice: draftSlice, Version: version, Offset: f.Offset, Text: f.Text, Refused: f.Refused, Reason: f.Reason,
+		})
+	}
 }
 
 // stageInput builds what a run of st is given besides its model and limits:

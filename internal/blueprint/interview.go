@@ -49,8 +49,9 @@ type interviewer struct {
 	attempt, builderRound int
 	findings              []string
 	// qround is the round a chat run answers; posted the round the run
-	// posted or answered, for its end event.
-	qround, posted int
+	// posted or answered, for its end event, and revision the mockup
+	// revision it showed, 0 for none.
+	qround, posted, revision int
 	// responded is set when the run's round was answered by the responder
 	// under auto, so nothing waits on the person.
 	responded bool
