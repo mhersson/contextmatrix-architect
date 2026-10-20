@@ -196,6 +196,15 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	au.event(bg, Event{Kind: EventSignOff, BlueprintID: bp.ID, Payload: payload})
 }
 
+// nonNil is list, or an empty list for none, so a payload never sends null.
+func nonNil(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+
+	return list
+}
+
 // signoffPayload is what a sign-off carries: the cards in playbook order,
 // the manual checks, the playbook title, what preflight found but its steps
 // and notices, which the caller adds under the mode lock, readiness's
@@ -243,7 +252,7 @@ func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blue
 
 	payload := map[string]any{
 		"version": out.art.Version, "cards": cards, "order": draft.Order, "manual": manual, "title": draft.Title,
-		"blocking": pf.Blocking, "warnings": pf.Warnings, "assumptions": assumptions,
+		"blocking": nonNil(pf.Blocking), "warnings": nonNil(pf.Warnings), "assumptions": assumptions,
 		"cross": crossPayload(crossOf(out.art)),
 	}
 

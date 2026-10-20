@@ -449,6 +449,8 @@ func TestSignoff_AnAbortBeforeThePreflightStillShowsTheSignOff(t *testing.T) {
 	so, ok := rec.first(EventSignOff)
 	require.True(t, ok)
 	assert.NotEmpty(t, so.Payload["preflight_error"])
+	assert.Equal(t, []string{}, so.Payload["blocking"], "never null")
+	assert.Equal(t, []string{}, so.Payload["warnings"], "never null")
 
 	gates, err := st.ListGates(ctx, "BP1", signoffStage)
 	require.NoError(t, err)
@@ -1264,6 +1266,18 @@ func TestSignoff_ListsTheVerifyStepAndMarksTheInstructionCard(t *testing.T) {
 	cards, _ := so.Payload["cards"].([]any)
 	require.Len(t, cards, 1)
 	assert.Equal(t, "AGENTS.md", cards[0].(map[string]any)["writes"])
+}
+
+func TestSignoff_ACleanSignoffSendsEmptyListsNotNull(t *testing.T) {
+	c, _, _, rec, _ := newPipeline(t, happyScript())
+	c.opts.ConnectCM = newFakeCM().connect
+
+	drive(t, c, "BP1")
+
+	so, ok := rec.first(EventSignOff)
+	require.True(t, ok)
+	assert.Equal(t, []string{}, so.Payload["blocking"])
+	assert.Equal(t, []string{}, so.Payload["warnings"])
 }
 
 func TestSignoff_AutoStopsAtTheSignoffWithTheVerifyStepAndNoNotice(t *testing.T) {
