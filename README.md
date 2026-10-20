@@ -145,3 +145,8 @@ bind mount must be chowned by hand. The mounted `config.yaml` must be readable b
 The image ships ripgrep for the read tools. A local run or the user service
 needs `rg` on its PATH for grep (glob also takes `fd`); `serve` logs a warning
 at startup when it is missing and runs anyway.
+
+On Kubernetes, a Service named `contextmatrix-architect` makes the kubelet set
+`CONTEXTMATRIX_ARCHITECT_PORT=tcp://<ip>:<port>` in pods of its namespace,
+which the architect reads as its `port` and fails to start on. Set
+`enableServiceLinks: false` on the architect's pod.
