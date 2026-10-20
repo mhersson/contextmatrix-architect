@@ -28,6 +28,9 @@ type Card struct {
 	Where     []Where  `json:"where"`
 	// Criteria names the acceptance criteria (AC ids) the card carries.
 	Criteria []string `json:"criteria,omitempty"`
+	// Mockup names the screens of the approved mockup the card builds or
+	// changes, by screen id; a card that builds no screen names none.
+	Mockup []string `json:"mockup,omitempty"`
 }
 
 // Manual is a playbook step for a human: a check no card can carry, such as

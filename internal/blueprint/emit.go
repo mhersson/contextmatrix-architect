@@ -65,25 +65,9 @@ func (c *Controller) cardsStage() string {
 // step of the stage that checks cards, merged into one playbook when that
 // stage ran per slice.
 func (c *Controller) draft(ctx context.Context, id string) (contract.Draft, error) {
-	stageID := c.cardsStage()
-	if stageID == "" {
-		return contract.Draft{}, errors.New("blueprint: the pack has no stage that checks cards")
-	}
-
-	steps, _, err := c.steps(ctx, id)
+	drafts, err := c.stepDrafts(ctx, id)
 	if err != nil {
 		return contract.Draft{}, err
-	}
-
-	var drafts []contract.Draft
-
-	for _, s := range loopTargets(steps, stageID) {
-		d, err := c.stepDraft(ctx, id, s.ID)
-		if err != nil {
-			return contract.Draft{}, err
-		}
-
-		drafts = append(drafts, d)
 	}
 
 	switch len(drafts) {
@@ -94,6 +78,34 @@ func (c *Controller) draft(ctx context.Context, id string) (contract.Draft, erro
 	}
 
 	return mergeDrafts(drafts), nil
+}
+
+// stepDrafts reads the latest draft of every step of the stage that checks
+// cards: one per slice in slice order when that stage runs per slice, else
+// the one draft.
+func (c *Controller) stepDrafts(ctx context.Context, id string) ([]contract.Draft, error) {
+	stageID := c.cardsStage()
+	if stageID == "" {
+		return nil, errors.New("blueprint: the pack has no stage that checks cards")
+	}
+
+	steps, _, err := c.steps(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var drafts []contract.Draft
+
+	for _, s := range loopTargets(steps, stageID) {
+		d, err := c.stepDraft(ctx, id, s.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		drafts = append(drafts, d)
+	}
+
+	return drafts, nil
 }
 
 // emitted reports what emission has recorded: cards when every draft card
@@ -429,7 +441,8 @@ func (c *Controller) emitError(ctx context.Context, au audit, id string, err err
 // stage learns from what slips through. The steps preflight found at this
 // attempt are announced with the cards, and the run start is said to follow
 // unless a repository has no commits. The trees go once everything exists.
-// Each body says what the source tags it cites stand for.
+// Each card of a slice that builds a screen of a used mockup carries it, and
+// each body says what the source tags it cites stand for.
 func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint, client CMClient, draft contract.Draft, pf preflightResult) error {
 	bg := context.WithoutCancel(ctx)
 
@@ -473,6 +486,19 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 		byID[card.ID] = card
 	}
 
+	mockup, design, used, err := c.approvedMockup(bg, bp.ID)
+	if err != nil {
+		return err
+	}
+
+	var carriers map[string]bool
+
+	if used {
+		if carriers, err = c.mockupCarriersOf(bg, bp.ID); err != nil {
+			return err
+		}
+	}
+
 	created := false
 
 	for _, id := range draft.Order {
@@ -503,6 +529,10 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 		body := card.Body
 		if len(draft.Cards) == 1 {
 			body = withContext(body, summary.contextText())
+		}
+
+		if carriers[card.ID] {
+			body = withMockup(body, mockup, design, card.Mockup)
 		}
 
 		body = withSources(body, sources, ownRepos(projects, card.Project))
@@ -805,7 +835,8 @@ var (
 // withSources appends a Sources section that says what every source tag
 // the body cites stands for, so the tags still mean something once the card
 // has left the blueprint. A tag the body does not cite, or one that names
-// no source, is left out, and a body citing none is returned as it is.
+// no source, is left out, and a body citing none is returned as it is. A
+// mockup block cites nothing: its brackets are the source's own.
 func withSources(body string, sources []store.Source, own []string) string {
 	byNumber := map[int]store.Source{}
 	for _, s := range sources {
@@ -814,7 +845,7 @@ func withSources(body string, sources []store.Source, own []string) string {
 
 	cited := map[int]bool{}
 
-	for _, c := range citation.FindAllString(body, -1) {
+	for _, c := range citation.FindAllString(contract.WithoutMockups(body), -1) {
 		for _, m := range sourceTag.FindAllStringSubmatch(c, -1) {
 			n, err := strconv.Atoi(m[1])
 			if _, known := byNumber[n]; err == nil && known {

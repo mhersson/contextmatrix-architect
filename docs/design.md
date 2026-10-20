@@ -666,7 +666,11 @@ The operator's existing-UI rule: where a UI exists, the mockup keeps to its look
 
 **What later stages read.** A step that consumes the mockup step gets, when a mockup was used, a section holding the revision used, its notes, its screens (`id: title`) and each suggestion as `title: chosen label (why)`, the chosen label read from the closed round and the revision's opening value for an id the round lacks. The section never holds the source; the step is offered `read_artifact`, whose `mockup` stage returns the whole version, source included. After a skip, a declined offer or a need without a screen the task holds nothing of a mockup and `read_artifact` does not offer it.
 
-**The frame contract.** CM shows a source sealed in its mockup frame (no access to CM or the session; network blocked by policy; see CM's trust model). Before the source's first script runs, `window.mockupSettings` holds the settings, each suggestion id to its string value; on every flip CM sets it again and dispatches a window `mockup:settings` `CustomEvent` whose `detail` is the settings. The source renders from `window.mockupSettings` at load and re-renders on the event without resetting the screen or tab the person is on, so a flip re-renders the mockup with no model run. `show_mockup` checks the source as a quality guard, so a revision does not show broken in that frame; the frame, not the check, is the boundary. It refuses, as a tool error naming the rule and storing nothing, in this order: a source that is empty or over 64 KiB; a `link`, `iframe`, `frame`, `object`, `embed`, `form` or `base` element, a `meta` with `http-equiv`, or a `src`, `href`, `xlink:href`, `srcset`, `poster`, `action`, `formaction` or `data` attribute whose value is no `data:` URI (or, for a link, a `#` fragment); in a style element or attribute, an `@import` or a `url(` that is no `data:` URI or fragment; in a script element or an `on*` attribute, case ignored, `localStorage`, `sessionStorage`, `document.cookie`, `fetch(`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `alert(`, `confirm(`, `prompt(` or `window.open(` (a screen may show these names as text, as a developer tool or a terminal does); and, when the revision has suggestions, a source that never names `mockupSettings` or `mockup:settings`. The designer corrects it and shows again in the same run.
+**The frame contract.** CM shows a source sealed in its mockup frame (no access to CM or the session; network blocked by policy; see CM's trust model). Before the source's first script runs, `window.mockupSettings` holds the settings, each suggestion id to its string value; on every flip CM sets it again and dispatches a window `mockup:settings` `CustomEvent` whose `detail` is the settings. The source renders from `window.mockupSettings` at load and re-renders on the event without resetting the screen or tab the person is on, so a flip re-renders the mockup with no model run. `show_mockup` checks the source as a quality guard, so a revision does not show broken in that frame; the frame, not the check, is the boundary. It refuses, as a tool error naming the rule and storing nothing, in this order: a source that is empty or over 64 KiB; a line whose text, trimmed, starts with `## `, which the agent's section parser (it trims each card line and does not track fences) can take for a section it strips, cutting the rest of the mockup from its prompts, so the designer writes the first `#` as `&#35;` or keeps the text on its tag's line; a `link`, `iframe`, `frame`, `object`, `embed`, `form` or `base` element, a `meta` with `http-equiv`, or a `src`, `href`, `xlink:href`, `srcset`, `poster`, `action`, `formaction` or `data` attribute whose value is no `data:` URI (or, for a link, a `#` fragment); in a style element or attribute, an `@import` or a `url(` that is no `data:` URI or fragment; in a script element or an `on*` attribute, case ignored, `localStorage`, `sessionStorage`, `document.cookie`, `fetch(`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `alert(`, `confirm(`, `prompt(` or `window.open(` (a screen may show these names as text, as a developer tool or a terminal does); and, when the revision has suggestions, a source that never names `mockupSettings` or `mockup:settings`. The designer corrects it and shows again in the same run.
+
+**Cards.** A draft card names the screens of the used mockup it builds or changes as `mockup: [<screen id>]`; a card that builds no screen names none. The contract refuses an id the used revision does not show (`mockup_screen`) and any screen named when no mockup was used (`mockup_none`), bounded like every cards check. Emission puts the mockup on every card of a slice that names a screen, that slice's other cards included (see Emission), as a mockup block: a fenced code block whose info string is exactly `mockup`, backticks at column 0 and one backtick more than the longest run in its content, at least three. The content is the used revision's HTML document, whole, baked with the chosen settings: a leading HTML comment lists the revision, each suggestion as `title: chosen label` and the screens the card builds, or says it builds none, with every `--` in it broken up so it cannot close early; and `<script>window.mockupSettings = {...};</script>` sits before the first script start tag the HTML tokenizer finds (a source without one gets none). Nothing else of the source changes. Every carrying card holds the full source, at most 64 KiB; no repository file and no `depends_on` carries it.
+
+**What the contract skips.** The block's grammar is shared with CM's card lint and the agent's card classifier: an opening line matching ``^(`{3,})mockup[ \t]*$`` at column 0, closed by a line of only backticks, at least as many as the opening, plus optional spaces or tabs, else running to the end of the body; tilde and indented fences are not mockup blocks. The contract's phrase scans read a body without its blocks (`contract.WithoutMockups`), so a source's own copy, such as an `error:` message or a path a screen shows, is no finding: defect phrases (the agent's classifier skips blocks too), dangling references, forbidden references (CM's lint skips blocks too) and other projects' repositories. The structural scans (headings, required and stripped sections, numbered criteria) read the whole body, because the agent's section parser does not track fences. Emission reads a body's source tags outside its blocks too. A draft card's body holds no mockup block of its own: decomposition's submit refuses one (`mockup_block`, bounded like every cards check), so every block the scans skip is one emission wrote.
 
 ## Card contract
 
@@ -731,6 +735,9 @@ release.
 - `criteria` names the acceptance criteria the card carries. Every
   criterion of a slice is carried by exactly one card of its project, and
   every manual check of acceptance by a manual entry.
+- `mockup` names, by screen id, the screens of the used mockup the card
+  builds or changes; a card that builds no screen names none, and with no
+  used mockup no card names one (see Mockups).
 
 **Body** (plain `##` sections)
 
@@ -743,11 +750,17 @@ release.
 | Tests expected      | The test cases to write; for a POC project's card, the main behaviour and what its criteria demand only.   |
 | Out of scope        | Explicit non-goals.                                                                                        |
 
+Emission adds a `## Mockup` section after these on every card of a slice
+that builds a screen of the used mockup, before the `## Sources` section it
+adds to a card that cites a source tag (see Emission).
+
 **Never**
 
 - A `## Diagnosis` or `## Design` section: the first is discarded, the second
   is invisible to the coder and reviewer.
 - Criteria under any heading the agent strips.
+- A fenced `mockup` block: emission adds the approved mockup, and the
+  phrase scans skip a block's text.
 - A defect phrase anywhere in a feature card, including negated ("does not
   panic").
 - A link as the only source of a fact.
@@ -791,6 +804,8 @@ release.
 | A project without a verify command: the proposed command in every card's criteria | mechanical (`list_projects`) |
 | A repository without an instruction file: one card writes `AGENTS.md`, every other card of the project depends on it | mechanical (code tool) |
 | Type and priority are ones the project declares                    | mechanical (`list_projects`) |
+| A card's mockup screens exist in the approved mockup               | mechanical                 |
+| No mockup block in a draft card's body                             | mechanical                 |
 | One deliverable, no open decisions, no optional scope              | model-judged               |
 | Estimated planner split of two subtasks or fewer                   | model-judged               |
 | "Could an agent with only this repo finish this card?"             | model-judged, adversarial  |
@@ -1156,13 +1171,25 @@ Then, in order:
 2. **Cards**, in playbook order, which the contract keeps dependency-first,
    so `depends_on` carries real ids within a project. Each created id is
    stored in `emissions` at once, so a retry after a failure skips what
-   exists. Each body ends with a `## Sources` section saying what every
-   source tag it cites stands for: its project's repository at the commit
-   the checkout recorded, or the ContextMatrix board. Another project's
-   repository is not named, and a body citing no tag gets no section. A
-   `create_card` warning is reported and emission continues: CM creates the
-   card before it lints it, the readiness checks mirror its lint, and the
-   outcomes stage learns from what slips through.
+   exists. When a mockup was used, every card of a slice whose draft names
+   a screen of it, that slice's other cards included, so the work behind a
+   screen sees its target, gets a `## Mockup` section after its own
+   sections and before Sources; on an unsliced blueprint the one draft is
+   the slice, and no card of a slice that names no screen gets one. The
+   section holds two fixed sentences and the used revision's source baked
+   with the chosen settings in one mockup block (see Mockups). A card that
+   names screens reads that the design is the one approved for the screens
+   it builds; one that names none reads that it builds none of them and
+   that the design is the target its work serves; both are told to build
+   for the chosen variant only, as the source also holds code for variants
+   nobody chose. Each body ends with a `## Sources` section saying what
+   every source tag it cites outside its mockup blocks stands for: its
+   project's repository at the commit the checkout recorded, or the
+   ContextMatrix board. Another project's repository is not named, and a
+   body citing no tag gets no section. A `create_card` warning is reported
+   and emission continues: CM creates the card before it lints it, the
+   readiness checks mirror its lint, and the outcomes stage learns from
+   what slips through.
 3. **Playbook**, for two or more cards: card and manual entries in draft
    order, the draft's title, and a description with intake's problem and
    value and every assumption with its latest status, with a Sources

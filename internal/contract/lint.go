@@ -10,10 +10,10 @@ import (
 // architect refuses the same text before emission.
 
 // checkForeignRepos flags a card that names another CM project's repository
-// by URL or owner/name: the agent's container holds only its own project's
-// repository.
+// by URL or owner/name outside its mockup blocks: the agent's container
+// holds only its own project's repository.
 func checkForeignRepos(c Card, foreign []string) []Finding {
-	text := strings.ToLower(c.Title + "\n" + c.Body)
+	text := strings.ToLower(c.Title + "\n" + WithoutMockups(c.Body))
 
 	var out []Finding
 

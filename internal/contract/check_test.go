@@ -23,6 +23,7 @@ func testLists() Lists {
 			{Name: "local path", Pattern: `(^|[\s"` + "`" + `(])(/(home|Users)/|C:\\Users\\)`},
 			{Name: "parent directory", Pattern: `(^|\s)\.\./`},
 		},
+		DanglingReferences: []string{"see above"},
 	}
 }
 

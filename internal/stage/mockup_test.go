@@ -90,6 +90,9 @@ func TestShowMockup_RefusesWhatTheFrameBlocks(t *testing.T) {
 			return mockupArgs(src(`<pre id="out">`, `<pre id="out" onload="new WebSocket('ws://x')">`))
 		}},
 		{"settings never read", func() map[string]any { return mockupArgs(src("window.mockupSettings || {}", "{}")) }},
+		{"a line that reads as a card heading", func() map[string]any {
+			return mockupArgs(src(`<pre id="out"></pre>`, "<pre id=\"notes\">\n  ## Plan\n</pre><pre id=\"out\"></pre>"))
+		}},
 		{"too big", func() map[string]any {
 			return mockupArgs(terminalSource + "<!--" + strings.Repeat("x", MaxMockupBytes) + "-->")
 		}},
@@ -159,4 +162,18 @@ func TestShowMockup_ShowsCallsAsText(t *testing.T) {
 	require.Len(t, d.got, 1)
 	assert.Equal(t, source, d.got[0].Source)
 	assert.True(t, mark.asked)
+}
+
+// A line that reads as a card heading cuts the rest of the mockup from the
+// agent's prompts; written with an entity, the screen shows the same text.
+func TestShowMockup_TakesAHeadingWrittenWithAnEntity(t *testing.T) {
+	d := &fakeDesigner{}
+	mark := &terminalMark{}
+
+	source := strings.Replace(terminalSource, `<pre id="out"></pre>`, "<pre id=\"notes\">\n  &#35;# Plan\n</pre><pre id=\"out\"></pre>", 1)
+
+	_, err := showMockupTool{d: d, mark: mark}.Execute(context.Background(), mockupArgs(source))
+	require.NoError(t, err)
+	require.Len(t, d.got, 1)
+	assert.Equal(t, source, d.got[0].Source)
 }

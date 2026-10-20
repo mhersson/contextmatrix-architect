@@ -264,8 +264,13 @@ func checkBody(c Card, lists Lists) []Finding {
 
 	out = append(out, checkCriteria(c, hs, lists)...)
 
+	// The phrase scans skip mockup blocks, as the agent's classifier and CM's
+	// lint do; the structural ones above read the whole body, as the agent's
+	// section parser does not track fences.
+	text := WithoutMockups(c.Body)
+
 	if !isBug(c) {
-		lower := strings.ToLower(c.Title + "\n" + c.Body)
+		lower := strings.ToLower(c.Title + "\n" + text)
 
 		for _, phrase := range lists.DefectPhrases {
 			if strings.Contains(lower, strings.ToLower(phrase)) {
@@ -274,7 +279,7 @@ func checkBody(c Card, lists Lists) []Finding {
 		}
 	}
 
-	if phrase := DanglingReference(c.Body, lists); phrase != "" {
+	if phrase := DanglingReference(text, lists); phrase != "" {
 		out = append(out, Finding{c.ID, "dangling_reference", fmt.Sprintf("%q points at text this card does not carry; write the fact into the card", phrase)})
 	}
 
@@ -284,7 +289,7 @@ func checkBody(c Card, lists Lists) []Finding {
 			continue // the pack loader rejects a bad pattern; nothing to do here
 		}
 
-		if m := re.FindString(c.Title + "\n" + c.Body); m != "" {
+		if m := re.FindString(c.Title + "\n" + text); m != "" {
 			out = append(out, Finding{c.ID, "forbidden_reference", fmt.Sprintf("%s: %q", pat.Name, strings.TrimSpace(m))})
 		}
 	}

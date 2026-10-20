@@ -1273,10 +1273,11 @@ func (s *validatorState) round() int {
 // until the run's turns are spent. When the pack has acceptance, every
 // criterion must be carried by exactly one card of its project and every
 // manual check by a manual entry; acceptance data that does not decode is a
-// finding of its own. A draft that does not decode is refused without
-// spending a round. A per-slice step's submit is checked inside the draft
-// of every earlier slice and itself, and must take no id an earlier slice
-// holds; the last slice's draft carries the playbook's title.
+// finding of its own. A card names only screens of a used mockup, and none
+// without one, and its body holds no mockup block. A draft that does not decode is refused without spending a
+// round. A per-slice step's submit is checked inside the draft of every
+// earlier slice and itself, and must take no id an earlier slice holds; the
+// last slice's draft carries the playbook's title.
 func (c *Controller) cardsValidator(sess *session, bp store.Blueprint, st pipelineStep) (func(context.Context, stage.Artifact) error, *validatorState) {
 	state := &validatorState{}
 	lists := c.opts.Pack.Lists()
@@ -1330,6 +1331,24 @@ func (c *Controller) cardsValidator(sess *session, bp store.Blueprint, st pipeli
 			}
 
 			problems = append(problems, f.String())
+		}
+
+		_, mockup, used, err := c.approvedMockup(ctx, bp.ID)
+		if err != nil {
+			return fmt.Errorf("the cards were not judged (%w); submit the same draft again", err)
+		}
+
+		for _, f := range contract.CheckMockups(draft, mockup.screenIDs(), used) {
+			problems = append(problems, f.String())
+		}
+
+		// Only emission writes a mockup block: the phrase scans skip a
+		// block's text, so one in a draft would hide it from them.
+		for _, card := range draft.Cards {
+			if contract.WithoutMockups(card.Body) != card.Body {
+				problems = append(problems, problem(card.ID, "mockup_block",
+					"the body holds a fenced mockup block; describe the screen in words, as emission adds the approved mockup itself"))
+			}
 		}
 
 		acc, acceptanceID, found, err := c.acceptanceOf(ctx, bp.ID, st.Slice)

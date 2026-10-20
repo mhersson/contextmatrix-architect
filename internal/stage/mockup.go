@@ -430,6 +430,15 @@ func checkSource(src string, settings bool) error {
 		return fmt.Errorf("the source is %d bytes and a mockup takes at most %d; inline less, or draw fewer screens", len(src), MaxMockupBytes)
 	}
 
+	// The agent's section parser trims each card line and does not track
+	// fences, so such a line can start a section it strips, cutting the rest
+	// of the mockup from its prompts.
+	for i, line := range strings.Split(src, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "## ") {
+			return fmt.Errorf("the source's line %d starts with \"## \", which a card's reader takes for a section heading: write the first # as &#35; (&#35;# Plan), or keep the text on its tag's line", i+1)
+		}
+	}
+
 	code, err := checkMarkup(src)
 	if err != nil {
 		return err

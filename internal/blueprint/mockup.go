@@ -705,12 +705,7 @@ func (c *Controller) writeMockupInput(ctx context.Context, b *strings.Builder, i
 		b.WriteString("Chosen:\n")
 
 		for _, s := range d.Suggestions {
-			v, ok := res.Chosen[s.ID]
-			if !ok {
-				v = d.Settings[s.ID]
-			}
-
-			fmt.Fprintf(b, "- %s: %s (%s)\n", s.Title, s.Label(v), s.Why)
+			fmt.Fprintf(b, "- %s: %s (%s)\n", s.Title, s.Label(chosenValue(res.Chosen, d.Settings, s.ID)), s.Why)
 		}
 
 		b.WriteString("\n")
