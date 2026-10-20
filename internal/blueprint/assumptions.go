@@ -44,11 +44,17 @@ type assumption struct {
 	// AcceptedAt is the stage whose round tab the user accepted this on,
 	// when the basis is an acceptance; Answer is then empty.
 	AcceptedAt string
+	// Consequence is what the decision means for the person using the
+	// result, and ConsequenceAccepted the round a person accepted it on, 0
+	// for none; both are read only on a plain-language blueprint. Accepting
+	// a consequence never confirms the decision: Status stays its basis's.
+	Consequence         string
+	ConsequenceAccepted int
 }
 
 // stated is one assumption as a stage submitted it.
 type stated struct {
-	Text, Basis string
+	Text, Basis, Consequence string
 }
 
 // verdict is a later stage's finding on one assumption.
@@ -69,8 +75,15 @@ type verdict struct {
 // ignored. A verdict applies only when its artifact was stored after the
 // latest artifact of every stating stage up to the assumption's own: ids are
 // positional, so an older verdict would judge whatever sentence holds the id
-// now.
+// now. On a plain-language blueprint each also carries its consequence and
+// the round a person accepted that on (consequenceRecord).
 func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, error) {
+	// A record without its blueprint row reads as without the toggle.
+	bp, err := c.opts.Store.GetBlueprint(ctx, id)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return nil, fmt.Errorf("blueprint: assumptions: %w", err)
+	}
+
 	all, err := c.opts.Store.ListArtifacts(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("blueprint: assumptions: %w", err)
@@ -101,6 +114,14 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 	acceptedAt := map[string]string{}
 	for _, a := range acceptances {
 		acceptedAt[a.Tag] = a.Stage
+	}
+
+	var record consequenceRecord
+
+	if bp.PlainLanguage {
+		if record, err = c.consequenceRecord(ctx, id, acceptances); err != nil {
+			return nil, err
+		}
 	}
 
 	answered := map[string]store.Question{}
@@ -135,11 +156,12 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 
 		for _, s := range statedAssumptions(all[i]) {
 			// The submit check keeps a basis naming no answered question or
-			// accepted assumption on its last round; it reads as none.
+			// accepted assumption on its last round; it reads as none. A plain
+			// acceptance's tag stays, and its status is that of no basis.
 			switch _, ok := answered[s.Basis]; {
 			case ok:
 				named[s.Basis] = true
-			case !accepted[s.Basis]:
+			case !accepted[s.Basis] && record.tags[s.Basis] == 0:
 				s.Basis = ""
 			}
 
@@ -154,6 +176,10 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 				a.Answer, a.AcceptedAt = "", acceptedAt[s.Basis]
 			}
 
+			if bp.PlainLanguage {
+				record.mark(&a, s.Consequence, answered)
+			}
+
 			out = append(out, a)
 			source = append(source, newest)
 		}
@@ -165,10 +191,16 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 		}
 
 		status, proof := basisStatus(answered, accepted, evidence, q.Tag())
-		out = append(out, assumption{
+		a := assumption{
 			ID: q.Tag(), Stage: q.Stage, Basis: q.Tag(), Status: status, Evidence: proof,
 			Text: fmt.Sprintf("%s The responder answered: %s", q.Text, q.Answer),
-		})
+		}
+
+		if bp.PlainLanguage {
+			record.mark(&a, "", answered)
+		}
+
+		out = append(out, a)
 		// A Q<n> id is stable, so any verdict applies to it.
 		source = append(source, -1)
 	}
@@ -224,11 +256,15 @@ func basisStatus(answered map[string]store.Question, accepted map[string]bool, e
 	}
 }
 
-// acceptedTags is the set of accepted's tags.
+// acceptedTags is the set of the tags of accepted's confirming acceptances:
+// a plain round's (plainTags) accepted a consequence, not the decision.
 func acceptedTags(accepted []acceptedAssumption) map[string]bool {
 	out := map[string]bool{}
+
 	for _, a := range accepted {
-		out[a.Tag] = true
+		if !a.Plain {
+			out[a.Tag] = true
+		}
 	}
 
 	return out
@@ -250,10 +286,10 @@ func normalTag(s string) string {
 }
 
 // statedAssumptions reads an artifact's assumptions, its data's list of
-// sentences or {text, basis} entries, blanks dropped and bases normalised.
-// The data is a model's submission, which the submit check lets through
-// after its last round, so a malformed list reads as none and a malformed
-// entry as nothing, rather than failing the pipeline.
+// sentences or {text, basis, consequence} entries, blanks dropped and bases
+// normalised. The data is a model's submission, which the submit check lets
+// through after its last round, so a malformed list reads as none and a
+// malformed entry as nothing, rather than failing the pipeline.
 func statedAssumptions(art store.Artifact) []stated {
 	var data struct {
 		Assumptions []any `json:"assumptions"`
@@ -275,6 +311,8 @@ func statedAssumptions(art store.Artifact) []stated {
 			s.Text, _ = a["text"].(string)
 			basis, _ := a["basis"].(string)
 			s.Basis = normalTag(basis)
+			consequence, _ := a["consequence"].(string)
+			s.Consequence = strings.TrimSpace(consequence)
 		}
 
 		if s.Text = strings.TrimSpace(s.Text); s.Text != "" {
@@ -396,6 +434,16 @@ func assumptionsPayload(list []assumption) []any {
 
 		if a.AcceptedAt != "" {
 			entry["accepted"] = a.AcceptedAt
+		}
+
+		if a.Consequence != "" {
+			entry["consequence"] = a.Consequence
+		}
+
+		// by is the record's responder constant: the architect knows no
+		// person's name.
+		if a.ConsequenceAccepted > 0 {
+			entry["consequence_accepted"] = map[string]any{"by": store.ResponderHuman, "round": a.ConsequenceAccepted}
 		}
 
 		out = append(out, entry)
@@ -631,6 +679,10 @@ func (c *Controller) assumptionsValidator(bp store.Blueprint, key string) (func(
 		}
 
 		bases := acceptedTags(accepted)
+		for tag := range plainTags(accepted) {
+			bases[tag] = true
+		}
+
 		for _, q := range questions {
 			bases[q.Tag()] = true
 		}
@@ -640,7 +692,7 @@ func (c *Controller) assumptionsValidator(bp store.Blueprint, key string) (func(
 			return nil, err
 		}
 
-		return append(assumptionProblems(a.Data, lists, bases), restatements(a.Data, existing)...), nil
+		return append(assumptionProblems(a.Data, lists, bases, bp.PlainLanguage), restatements(a.Data, existing)...), nil
 	})
 }
 
@@ -648,6 +700,9 @@ func (c *Controller) assumptionsValidator(bp store.Blueprint, key string) (func(
 // states an assumption without a basis while st's policy, read at submit,
 // is human, or that comes before an assumption the user turned into a
 // question on a round of the attempt has no later round of the attempt posted.
+// On a plain-language blueprint only an assumption that carries a
+// consequence needs a basis: one no person would notice was accepted
+// automatically on the responder's round, which gives it none.
 func (c *Controller) tabValidator(bp store.Blueprint, st pipelineStep, attempt int) (func(context.Context, stage.Artifact) error, *validatorState) {
 	return boundedValidator("assumptions tab", func(ctx context.Context, a stage.Artifact) ([]string, error) {
 		policy, err := c.policy(ctx, bp, st.ID)
@@ -658,7 +713,7 @@ func (c *Controller) tabValidator(bp store.Blueprint, st pipelineStep, attempt i
 		var out []string
 
 		if policy == pack.PolicyHuman {
-			out = unbasedAssumptions(a.Data)
+			out = unbasedAssumptions(a.Data, bp.PlainLanguage)
 		}
 
 		unasked, err := c.unaskedConversions(ctx, bp.ID, st.ID, attempt)
@@ -670,15 +725,16 @@ func (c *Controller) tabValidator(bp store.Blueprint, st pipelineStep, attempt i
 	})
 }
 
-// unbasedAssumptions reports every stated assumption that names no basis.
-// The assumptions check reports a malformed list or entry.
-func unbasedAssumptions(data map[string]any) []string {
+// unbasedAssumptions reports every stated assumption that names no basis; on
+// a plain-language blueprint, only those that carry a consequence. The
+// assumptions check reports a malformed list or entry.
+func unbasedAssumptions(data map[string]any, plain bool) []string {
 	items, _ := data["assumptions"].([]any)
 
 	var out []string
 
 	for i, item := range items {
-		text, basis := "", ""
+		text, basis, consequence := "", "", ""
 
 		switch e := item.(type) {
 		case string:
@@ -686,7 +742,12 @@ func unbasedAssumptions(data map[string]any) []string {
 		case map[string]any:
 			text, _ = e["text"].(string)
 			basis, _ = e["basis"].(string)
+			consequence, _ = e["consequence"].(string)
 		default:
+			continue
+		}
+
+		if plain && strings.TrimSpace(consequence) == "" {
 			continue
 		}
 
@@ -757,8 +818,10 @@ var basisTags = regexp.MustCompile(`\b(?:Q\d+|(?i:round\d+\.a\d+))\b`)
 // a sentence or {text, basis}; every sentence non-empty, pointing at no text
 // a card will not carry and naming none of bases, the tags of the answered
 // questions and accepted assumptions, which belong in the basis so that no
-// prose says who answered; every basis one of bases.
-func assumptionProblems(data map[string]any, lists contract.Lists, bases map[string]bool) []string {
+// prose says who answered; every basis one of bases. On a plain-language
+// blueprint (plain) an entry's consequence is a sentence too; off it, no
+// consequence is read.
+func assumptionProblems(data map[string]any, lists contract.Lists, bases map[string]bool, plain bool) []string {
 	raw, ok := data["assumptions"]
 	if !ok || raw == nil {
 		return nil
@@ -785,6 +848,12 @@ func assumptionProblems(data map[string]any, lists contract.Lists, bases map[str
 					out = append(out, fmt.Sprintf("assumption %d's basis must be an answered question's tag (Q<n>) or an accepted assumption's (round<n>.A<k>)", i+1))
 				case normalTag(tag) != "" && !bases[normalTag(tag)]:
 					out = append(out, fmt.Sprintf("assumption %d's basis %q is no answered question (Q<n>) or accepted assumption (round<n>.A<k>); give one or no basis", i+1, tag))
+				}
+			}
+
+			if consequence, ok := entry["consequence"]; plain && ok && consequence != nil {
+				if _, ok := consequence.(string); !ok {
+					out = append(out, fmt.Sprintf("assumption %d's consequence must be a sentence on what it means for the person using the result", i+1))
 				}
 			}
 		}

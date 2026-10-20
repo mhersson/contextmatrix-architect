@@ -639,14 +639,19 @@ func conversions(s roundState) []string {
 
 // acceptedAssumption is an assumption a human accepted on a round's tab,
 // recorded by the round's closed snapshot. Tag cites it: round<round>.<id>, or
-// the Q<n> of the row an older close wrote for it.
+// the Q<n> of the row an older close wrote for it. Text is its technical
+// sentence. Plain marks one accepted on a plain round, where the person
+// accepted Consequence, the consequence the tab showed, and confirmed no
+// decision.
 type acceptedAssumption struct {
-	Tag   string
-	Round int
-	ID    string
-	Stage string
-	RunID int64
-	Text  string
+	Tag         string
+	Round       int
+	ID          string
+	Stage       string
+	RunID       int64
+	Text        string
+	Plain       bool
+	Consequence string
 }
 
 // acceptanceTag is the tag of assumption id accepted on round n's tab.
@@ -655,7 +660,9 @@ func acceptanceTag(n int, id string) string { return fmt.Sprintf("round%d.%s", n
 // acceptedAssumptions lists every assumption a human accepted on the
 // blueprint's closed rounds, in round and tab order, with the run that
 // posted the round. Under auto nothing is confirmed, so the responder's
-// acceptances count for none.
+// acceptances count for none. A plain round's entry that describes a
+// responder's answer is no stage's assumption: answerConsequenceDecisions
+// reads its decision.
 func (c *Controller) acceptedAssumptions(ctx context.Context, id string) ([]acceptedAssumption, error) {
 	rounds, err := c.rounds(ctx, id)
 	if err != nil {
@@ -685,7 +692,7 @@ func (c *Controller) acceptedAssumptions(ctx context.Context, id string) ([]acce
 		}
 
 		for _, a := range s.Frame.Assumptions {
-			if !accepted[a.ID] || s.responderDecided(a.ID) {
+			if _, isAnswer := s.Consequences[a.ID]; isAnswer || !accepted[a.ID] || s.responderDecided(a.ID) {
 				continue
 			}
 
@@ -699,7 +706,12 @@ func (c *Controller) acceptedAssumptions(ctx context.Context, id string) ([]acce
 				}
 			}
 
-			out = append(out, acceptedAssumption{Tag: tag, Round: s.Number, ID: a.ID, Stage: s.Frame.Stage, RunID: s.PostedBy, Text: a.Text})
+			entry := acceptedAssumption{Tag: tag, Round: s.Number, ID: a.ID, Stage: s.Frame.Stage, RunID: s.PostedBy, Text: tabText(a), Plain: s.Plain}
+			if s.Plain {
+				entry.Consequence = a.Text
+			}
+
+			out = append(out, entry)
 		}
 	}
 
@@ -945,6 +957,8 @@ func writeRoundAssumptions(b *strings.Builder, s roundState, accepted []accepted
 		question, isAnswer := s.Consequences[a.ID]
 
 		switch tag := tags[a.ID]; {
+		case isAnswer && s.responderDecided(a.ID):
+			fmt.Fprintf(b, "  Accepted automatically when the round was handed to the auto responder; the answer to Q%d stands as recorded, so state nothing for it.\n", question)
 		case s.responderDecided(a.ID):
 			b.WriteString("  Accepted automatically under the auto policy; it stays unverified: state it without a basis.\n")
 		case isAnswer && accepts[a.ID]:

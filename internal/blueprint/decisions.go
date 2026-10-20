@@ -115,7 +115,12 @@ func (c *Controller) decisionProblems(ctx context.Context, bp store.Blueprint, s
 		known[a.Tag] = true
 
 		if a.Stage == stageID && a.RunID > since {
-			own = append(own, owed{a.Tag, "the user accepted the assumption"})
+			what := "the user accepted the assumption"
+			if a.Plain {
+				what = "the person accepted what the assumption means for them"
+			}
+
+			own = append(own, owed{a.Tag, what})
 		}
 	}
 

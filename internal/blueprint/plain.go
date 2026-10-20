@@ -2,6 +2,7 @@ package blueprint
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -279,4 +280,149 @@ func plainRetab(s roundState, texts, consequences []string) (roundState, error) 
 	})
 
 	return out, nil
+}
+
+// plainTags maps the tag of each assumption accepted on a plain round to that
+// round. The tag links a stated assumption to the person's acceptance of its
+// consequence, which confirms no decision.
+func plainTags(accepted []acceptedAssumption) map[string]int {
+	out := map[string]int{}
+
+	for _, a := range accepted {
+		if a.Plain {
+			out[a.Tag] = a.Round
+		}
+	}
+
+	return out
+}
+
+// answerNote is what an auto answer's event records beside the answer: the
+// consequence the responder wrote with it, and the question it asks again, 0
+// for none.
+type answerNote struct {
+	Consequence string
+	Supersedes  int
+}
+
+// answerNotes maps a question number to the note its auto answer event
+// carries, as answerEvidence reads the evidence.
+func answerNotes(ctx context.Context, s *store.Store, blueprintID string) (map[int]answerNote, error) {
+	events, err := s.ListEventsOfKind(ctx, blueprintID, EventAnswer)
+	if err != nil {
+		return nil, fmt.Errorf("blueprint: answer notes: %w", err)
+	}
+
+	out := map[int]answerNote{}
+
+	for _, e := range events {
+		var p struct {
+			Number      int    `json:"number"`
+			Responder   string `json:"responder"`
+			Consequence string `json:"consequence"`
+		}
+
+		if json.Unmarshal(e.Payload, &p) != nil || p.Responder != store.ResponderAuto {
+			continue
+		}
+
+		out[p.Number] = answerNote{Consequence: p.Consequence}
+	}
+
+	return out, nil
+}
+
+// answerConsequenceDecisions reads, from the closed plain rounds, what a
+// person decided on the consequences of the responder's answers: accepted
+// maps an answer's question to the round its consequence was accepted on,
+// turnedDown to the consequence turned down. What the responder decided on
+// a round a mode switch handed over is no person's decision.
+func (c *Controller) answerConsequenceDecisions(ctx context.Context, id string) (accepted map[int]int, turnedDown map[int]string, err error) {
+	rounds, err := c.rounds(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	accepted, turnedDown = map[int]int{}, map[int]string{}
+
+	for _, s := range rounds {
+		if s.Change != changeClosed || !s.Plain {
+			continue
+		}
+
+		decisions := map[string]bool{}
+		for _, d := range s.Frame.Decisions {
+			decisions[d.ID] = d.Accept
+		}
+
+		for _, a := range s.Frame.Assumptions {
+			n, isAnswer := s.Consequences[a.ID]
+			accept, decided := decisions[a.ID]
+
+			switch {
+			case !isAnswer || !decided || s.responderDecided(a.ID):
+			case accept:
+				accepted[n] = s.Number
+			default:
+				turnedDown[n] = a.Text
+			}
+		}
+	}
+
+	return accepted, turnedDown, nil
+}
+
+// consequenceRecord is what a plain-language blueprint's record says of the
+// consequences its person was shown: the round each plain acceptance's tag
+// was accepted on and the consequence it showed, every auto answer's note,
+// and the round each answer's consequence was accepted on.
+type consequenceRecord struct {
+	tags    map[string]int
+	shown   map[string]string
+	notes   map[int]answerNote
+	answers map[int]int
+}
+
+// consequenceRecord reads blueprint id's record of consequences; accepted is
+// its acceptedAssumptions.
+func (c *Controller) consequenceRecord(ctx context.Context, id string, accepted []acceptedAssumption) (consequenceRecord, error) {
+	r := consequenceRecord{tags: plainTags(accepted), shown: map[string]string{}}
+
+	for _, a := range accepted {
+		if a.Plain {
+			r.shown[a.Tag] = a.Consequence
+		}
+	}
+
+	var err error
+
+	if r.notes, err = answerNotes(ctx, c.opts.Store, id); err != nil {
+		return consequenceRecord{}, err
+	}
+
+	if r.answers, _, err = c.answerConsequenceDecisions(ctx, id); err != nil {
+		return consequenceRecord{}, err
+	}
+
+	return r, nil
+}
+
+// mark gives a the round a person accepted its consequence on, by the plain
+// acceptance its basis names or by the auto answer it rests on or is, and
+// its consequence: the sentence that person was shown, whatever the stage
+// states with it now; otherwise the one stated with it, or else the
+// answer's. Its status stays its basis's.
+func (r consequenceRecord) mark(a *assumption, stated string, answered map[string]store.Question) {
+	shown := ""
+
+	if n, ok := r.tags[a.Basis]; ok {
+		a.ConsequenceAccepted, shown = n, r.shown[a.Basis]
+	} else if q, ok := answered[a.Basis]; ok {
+		a.ConsequenceAccepted, shown = r.answers[q.Number], r.notes[q.Number].Consequence
+	}
+
+	a.Consequence = stated
+	if a.Consequence == "" || (a.ConsequenceAccepted > 0 && shown != "") {
+		a.Consequence = shown
+	}
 }

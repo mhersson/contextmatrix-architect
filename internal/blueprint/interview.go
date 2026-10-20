@@ -357,7 +357,8 @@ func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, 
 // reposted refuses an assumptions tab that posts again what the user
 // already accepted on a closed round's tab, case, spacing and punctuation
 // aside: the stage cites the acceptance's tag instead. An auto round
-// accepts nothing a person did.
+// accepts nothing a person did. A plain round's acceptance is compared by
+// its technical text (tabText), so a reworded consequence never makes it new.
 func (c *Controller) reposted(ctx context.Context, id string, tab []string) error {
 	if len(tab) == 0 {
 		return nil

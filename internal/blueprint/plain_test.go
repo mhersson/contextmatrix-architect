@@ -918,3 +918,470 @@ func TestPlain_TheQuestionCapCountsTheTechnicalQuestions(t *testing.T) {
 		require.Error(t, <-asked, "a third is past it")
 	})
 }
+
+const slotConsequence = "Customers can only book at :00, :15, :30 or :45."
+
+// salonIntake posts one experience question and one assumption with a
+// consequence; its continuation states it with the acceptance's tag.
+func salonIntake() func(context.Context, stage.Input) (stage.Output, error) {
+	return func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if in.History != nil {
+			return done("# Need", map[string]any{"assumptions": []any{
+				map[string]any{"text": "Bookings start on the quarter hour.", "basis": "round1.A1", "consequence": slotConsequence},
+			}}), nil
+		}
+
+		if _, err := in.Interviewer.Ask(ctx, stage.Round{
+			Questions:    []stage.RoundQuestion{experienceQ("Reminders", "Should customers get a reminder the day before?", "Yes", "No")},
+			Assumptions:  []string{"Bookings start on the quarter hour."},
+			Consequences: []string{slotConsequence},
+		}); err != nil {
+			return stage.Output{}, err
+		}
+
+		return askedOutput(in), nil
+	}
+}
+
+func TestPlain_AnAcceptedConsequenceIsMarkedNotConfirmed(t *testing.T) {
+	script := dialogScript()
+	script["intake"] = salonIntake()
+
+	c, _, _, _, _ := newDialog(t, script)
+	ctx := context.Background()
+
+	driveIn(t, c, plainStart("BP1"))
+
+	person := latestRound(t, c, "BP1", 1)
+	decide(t, c, "BP1", 1, []protocol.RoundAnswer{pick(person.Frame.Questions[0].Number, 1)}, accept(person.Frame.Assumptions[0].ID))
+	c.Wait("BP1")
+
+	list, err := c.assumptions(ctx, "BP1")
+	require.NoError(t, err)
+
+	a := byID(list)["A1"]
+	assert.Equal(t, assumptionUnverified, a.Status, "accepting a consequence confirms nothing")
+	assert.Equal(t, 1, a.ConsequenceAccepted)
+	assert.Equal(t, slotConsequence, a.Consequence)
+	assert.Equal(t, "Bookings start on the quarter hour.", a.Text, "the technical text stays the record")
+
+	entry := assumptionsPayload(list)[0].(map[string]any)
+	assert.Equal(t, slotConsequence, entry["consequence"])
+	assert.Equal(t, map[string]any{"by": store.ResponderHuman, "round": 1}, entry["consequence_accepted"])
+}
+
+func TestPlain_AnAcceptedAnswerConsequenceMarksItsQuestion(t *testing.T) {
+	script := dialogScript()
+	script["intake"] = splitIntake(make(chan string, 1))
+	script["intake.responder"] = respondsWithConsequence("On a shared server", listConsequence)
+
+	c, _, _, _, _ := newDialog(t, script)
+	ctx := context.Background()
+
+	driveIn(t, c, plainStart("BP1"))
+
+	tech := latestRound(t, c, "BP1", 1)
+	require.Len(t, tech.Frame.Questions, 1)
+
+	person := latestRound(t, c, "BP1", 2)
+	require.Len(t, person.Frame.Assumptions, 1)
+	decide(t, c, "BP1", 2, []protocol.RoundAnswer{pick(person.Frame.Questions[0].Number, 1)}, accept(person.Frame.Assumptions[0].ID))
+	c.Wait("BP1")
+
+	list, err := c.assumptions(ctx, "BP1")
+	require.NoError(t, err)
+
+	q, ok := byID(list)[fmt.Sprintf("Q%d", tech.Frame.Questions[0].Number)]
+	require.True(t, ok, "the responder's answer is listed")
+	assert.Equal(t, assumptionAssumed, q.Status, "the answer keeps the status the responder's answer gives it")
+	assert.Equal(t, 2, q.ConsequenceAccepted)
+	assert.Equal(t, listConsequence, q.Consequence)
+}
+
+func TestPlain_TheBasisRuleAsksOnlyForConsequences(t *testing.T) {
+	const slots = "Bookings start on the quarter hour."
+
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, plainStart("BP1")))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	intake, ok := c.stepAt("intake")
+	require.True(t, ok)
+
+	poster := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", nil)
+	s := tabRound(1, "intake", poster, []string{slotConsequence}, accept("A1"))
+	s.Plain, s.Frame.Assumptions[0].Detail = true, slots
+	c.putRound(ctx, c.newAudit(), "BP1", poster, s)
+
+	tagged := map[string]any{"text": slots, "consequence": slotConsequence, "basis": "round1.A1"}
+
+	tests := []struct {
+		name  string
+		entry any
+		ok    bool
+	}{
+		{"no consequence and no basis", map[string]any{"text": "Booking ids are random strings."}, true},
+		{"a consequence and no basis", map[string]any{"text": slots, "consequence": slotConsequence}, false},
+		{"a consequence with its acceptance's tag", tagged, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v, _ := c.tabValidator(bp, intake, 1)
+			err := submitAssumptions(v, tt.entry)
+
+			if tt.ok {
+				assert.NoError(t, err)
+			} else {
+				assert.Error(t, err)
+			}
+		})
+	}
+
+	v, _ := c.assumptionsValidator(bp, "intake")
+	require.NoError(t, submitAssumptions(v, tagged), "a plain acceptance's tag is a basis")
+	require.Error(t, submitAssumptions(v, map[string]any{"text": slots, "consequence": 15}), "a consequence is a sentence")
+}
+
+func TestPlain_AnAcceptanceCannotBeRepostedInOtherWords(t *testing.T) {
+	tests := []struct{ name, consequence string }{
+		{"the same consequence", slotConsequence},
+		{"another consequence", "Appointments begin only at set times."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			asked := make(chan error, 1)
+			first := salonIntake()
+
+			script := dialogScript()
+			script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+				if in.History == nil {
+					return first(ctx, in)
+				}
+
+				_, err := in.Interviewer.Ask(ctx, stage.Round{
+					Assumptions:  []string{"Bookings start on the quarter hour."},
+					Consequences: []string{tt.consequence},
+				})
+				asked <- err
+
+				return done("# Need", nil), nil
+			}
+
+			c, _, _, _, _ := newDialog(t, script)
+			driveIn(t, c, plainStart("BP1"))
+
+			person := latestRound(t, c, "BP1", 1)
+			decide(t, c, "BP1", 1, []protocol.RoundAnswer{pick(person.Frame.Questions[0].Number, 1)}, accept(person.Frame.Assumptions[0].ID))
+			c.Wait("BP1")
+
+			select {
+			case err := <-asked:
+				require.ErrorContains(t, err, acceptanceTag(1, person.Frame.Assumptions[0].ID), "the refusal names the tag to cite")
+			default:
+				t.Fatal("the continuation never asked")
+			}
+
+			rounds, err := c.rounds(context.Background(), "BP1")
+			require.NoError(t, err)
+			assert.Len(t, rounds, 1, "nothing is posted again")
+		})
+	}
+}
+
+func TestPlain_AHandedOverRoundMarksOnlyThePersonsAcceptances(t *testing.T) {
+	const (
+		slots       = "Bookings start on the quarter hour."
+		moves       = "A booking can be moved until the day before."
+		movesShown  = "Customers cannot move a booking on the day itself."
+		movesStated = "Customers cannot move a booking once its day has come."
+	)
+
+	script := dialogScript()
+	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if in.History != nil {
+			return done("# Need", map[string]any{"assumptions": []any{
+				map[string]any{"text": slots, "basis": "round1.A1"},
+				map[string]any{"text": moves, "consequence": movesStated},
+			}}), nil
+		}
+
+		if _, err := in.Interviewer.Ask(ctx, stage.Round{
+			Questions:    []stage.RoundQuestion{experienceQ("Reminders", "Should customers get a reminder the day before?", "Yes", "No")},
+			Assumptions:  []string{slots, moves},
+			Consequences: []string{slotConsequence, movesShown},
+		}); err != nil {
+			return stage.Output{}, err
+		}
+
+		return askedOutput(in), nil
+	}
+	script["intake.responder"] = respondsWith("Yes")
+
+	c, _, _, _, _ := newDialog(t, script)
+	ctx := context.Background()
+
+	driveIn(t, c, plainStart("BP1"))
+
+	person := latestRound(t, c, "BP1", 1)
+	require.True(t, person.Plain)
+	require.Len(t, person.Frame.Assumptions, 2)
+
+	first, second := person.Frame.Assumptions[0].ID, person.Frame.Assumptions[1].ID
+	require.NoError(t, c.Reply(ctx, "BP1", protocol.RoundReply{PromptID: roundPromptID(1), Decisions: []protocol.AssumptionDecision{accept(first)}}, "m-tab"))
+	c.Wait("BP1")
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	c.Wait("BP1")
+
+	round := latestRound(t, c, "BP1", 1)
+	require.True(t, round.Frame.Closed)
+	require.ElementsMatch(t, []protocol.AssumptionDecision{accept(first), accept(second)}, round.Frame.Decisions)
+
+	accepted, err := c.acceptedAssumptions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int{acceptanceTag(1, first): 1}, plainTags(accepted), "the responder's acceptance is no person's")
+
+	list, err := c.assumptions(ctx, "BP1")
+	require.NoError(t, err)
+
+	a1, a2 := byID(list)["A1"], byID(list)["A2"]
+	assert.Equal(t, slots, a1.Text)
+	assert.Equal(t, acceptanceTag(1, first), a1.Basis)
+	assert.Equal(t, 1, a1.ConsequenceAccepted, "the person accepted it before the switch")
+	assert.Equal(t, slotConsequence, a1.Consequence, "the consequence the person accepted")
+	assert.Equal(t, assumptionUnverified, a1.Status)
+
+	assert.Equal(t, moves, a2.Text)
+	assert.Zero(t, a2.ConsequenceAccepted, "the responder's acceptance marks nothing")
+	assert.Equal(t, movesStated, a2.Consequence)
+	assert.Equal(t, assumptionUnverified, a2.Status)
+}
+
+// tabDecisionLine is what text, a resumed conversation's task, says of the
+// decision on tab entry id of a plain round: the line after the entry and
+// its consequence.
+func tabDecisionLine(text, id string) string {
+	lines := strings.Split(text, "\n")
+
+	for i, line := range lines {
+		if strings.HasPrefix(line, "- "+id+": ") && i+2 < len(lines) {
+			return lines[i+2]
+		}
+	}
+
+	return ""
+}
+
+func TestPlain_AHandedOverRoundMarksOnlyTheAnswersThePersonAccepted(t *testing.T) {
+	tasks := make(chan string, 1)
+
+	script := dialogScript()
+	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if in.History != nil {
+			tasks <- in.Task
+
+			return done("# Need", nil), nil
+		}
+
+		if _, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{
+			experienceQ("Offline", "Should it work without internet?", "Yes", "No"),
+			technicalQ("Storage", "Where should the list be kept?", "On each phone", "On a shared server"),
+			technicalQ("Sync", "How do the phones exchange changes?", "Through the server", "Directly"),
+		}}); err != nil {
+			return stage.Output{}, err
+		}
+
+		return askedOutput(in), nil
+	}
+	script["intake.responder"] = respondsWithConsequence("On a shared server", listConsequence)
+
+	c, _, _, _, _ := newDialog(t, script)
+	ctx := context.Background()
+
+	driveIn(t, c, plainStart("BP1"))
+
+	person := latestRound(t, c, "BP1", 2)
+	require.True(t, person.Plain)
+	require.Len(t, person.Frame.Assumptions, 2, "one entry per answer with a consequence")
+
+	first, second := person.Frame.Assumptions[0].ID, person.Frame.Assumptions[1].ID
+	require.NoError(t, c.Reply(ctx, "BP1", protocol.RoundReply{PromptID: roundPromptID(2), Decisions: []protocol.AssumptionDecision{accept(first)}}, "m-tab"))
+	c.Wait("BP1")
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+	c.Wait("BP1")
+
+	round := latestRound(t, c, "BP1", 2)
+	require.True(t, round.Frame.Closed)
+	require.ElementsMatch(t, []protocol.AssumptionDecision{accept(first), accept(second)}, round.Frame.Decisions)
+
+	list, err := c.assumptions(ctx, "BP1")
+	require.NoError(t, err)
+
+	kept, handed := byID(list)[fmt.Sprintf("Q%d", person.Consequences[first])], byID(list)[fmt.Sprintf("Q%d", person.Consequences[second])]
+	assert.Equal(t, 2, kept.ConsequenceAccepted, "the person accepted it before the switch")
+	assert.Zero(t, handed.ConsequenceAccepted, "the responder's acceptance marks nothing")
+	assert.Equal(t, listConsequence, handed.Consequence, "its consequence is still recorded")
+
+	for _, q := range []assumption{kept, handed} {
+		assert.Equal(t, assumptionAssumed, q.Status, q.ID)
+	}
+
+	// The handed-over answer stands as recorded: the continuation does not
+	// tell the stage to state it, as it tells it of a stage's entry.
+	accepted, err := c.acceptedAssumptions(ctx, "BP1")
+	require.NoError(t, err)
+
+	asStage := round.clone()
+	delete(asStage.Consequences, second)
+
+	var b strings.Builder
+	writeRoundAssumptions(&b, asStage, accepted)
+
+	told := tabDecisionLine(receiveText(t, tasks), second)
+	require.NotEmpty(t, told)
+	assert.NotEqual(t, tabDecisionLine(b.String(), second), told)
+}
+
+func TestPlain_ARerunOfTheStageIsToldItsPlainAcceptances(t *testing.T) {
+	const slots = "Bookings start on the quarter hour."
+
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, plainStart("BP1")))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	intake, ok := c.stepAt("intake")
+	require.True(t, ok)
+
+	poster := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", nil)
+	s := tabRound(1, "intake", poster, []string{slotConsequence}, accept("A1"))
+	s.Plain, s.Frame.Assumptions[0].Detail = true, slots
+	c.putRound(ctx, c.newAudit(), "BP1", poster, s)
+
+	var b strings.Builder
+	require.NoError(t, c.writeAnswered(ctx, &b, bp, intake))
+	assert.Contains(t, b.String(), "round1.A1", "the stage run again is told the acceptance's tag")
+	assert.Contains(t, b.String(), slots)
+	assert.Contains(t, b.String(), slotConsequence)
+}
+
+func TestPlain_OffTheEntriesCarryNoConsequence(t *testing.T) {
+	const consequence = "Every member needs an email address to join."
+
+	for _, plain := range []bool{false, true} {
+		t.Run(fmt.Sprint(plain), func(t *testing.T) {
+			script := happyScript()
+			script["intake"] = returns("# Need", map[string]any{"slices": 1, "assumptions": []any{
+				map[string]any{"text": "Members sign in with their email address.", "consequence": consequence},
+			}})
+
+			c, _, _, _, _ := newPipeline(t, script)
+			in := startInput("BP1")
+			in.PlainLanguage = plain
+			driveIn(t, c, in)
+
+			list, err := c.assumptions(context.Background(), "BP1")
+			require.NoError(t, err)
+			require.Len(t, list, 1)
+
+			entry := assumptionsPayload(list)[0].(map[string]any)
+			assert.NotContains(t, entry, "consequence_accepted")
+
+			if plain {
+				assert.Equal(t, consequence, entry["consequence"])
+			} else {
+				assert.NotContains(t, entry, "consequence")
+				assert.Empty(t, list[0].Consequence)
+			}
+		})
+	}
+}
+
+const (
+	recipesShared  = "Everyone in a household sees the same recipes."
+	recipesPrivate = "Each person keeps a private recipe box."
+)
+
+// acceptedThenRestated drives a plain intake whose person accepts
+// recipesShared as the consequence of a stage's assumption or, with
+// viaAnswer, of the responder's answer, and whose continuation states the
+// decision resting on that acceptance with restated as its consequence.
+func acceptedThenRestated(t *testing.T, viaAnswer bool, restated string) *Controller {
+	t.Helper()
+
+	const technical = "Recipes are saved per household."
+
+	rd := stage.Round{
+		Questions:    []stage.RoundQuestion{experienceQ("Sharing", "Should two people in one household share their recipes?", "Yes", "No")},
+		Assumptions:  []string{technical},
+		Consequences: []string{recipesShared},
+	}
+	basis, person := "round1.A1", 1
+
+	if viaAnswer {
+		rd = stage.Round{Questions: []stage.RoundQuestion{technicalQ("Storage", "Where are the recipes kept?", "On each device", "In one shared place")}}
+		basis, person = "Q1", 2
+	}
+
+	script := dialogScript()
+	script["intake.responder"] = respondsWithConsequence("In one shared place", recipesShared)
+	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if in.History != nil {
+			return done("# Need", map[string]any{"assumptions": []any{
+				map[string]any{"text": technical, "basis": basis, "consequence": restated},
+			}}), nil
+		}
+
+		_, err := in.Interviewer.Ask(ctx, rd)
+
+		return askedOutput(in), err
+	}
+
+	c, _, _, _, _ := newDialog(t, script)
+	driveIn(t, c, plainStart("BP1"))
+
+	round := latestRound(t, c, "BP1", person)
+	require.True(t, round.Plain)
+	require.Len(t, round.Frame.Assumptions, 1)
+	require.Equal(t, recipesShared, round.Frame.Assumptions[0].Text)
+
+	var answers []protocol.RoundAnswer
+	for _, q := range round.Frame.Questions {
+		answers = append(answers, pick(q.Number, 1))
+	}
+
+	decide(t, c, "BP1", person, answers, accept(round.Frame.Assumptions[0].ID))
+	c.Wait("BP1")
+
+	return c
+}
+
+func TestPlain_AnAcceptedConsequenceStaysTheSentenceShown(t *testing.T) {
+	for name, viaAnswer := range map[string]bool{"a stage's assumption": false, "an answer": true} {
+		t.Run(name, func(t *testing.T) {
+			c := acceptedThenRestated(t, viaAnswer, recipesPrivate)
+
+			list, err := c.assumptions(context.Background(), "BP1")
+			require.NoError(t, err)
+
+			a, ok := byID(list)["A1"]
+			require.True(t, ok)
+			assert.Positive(t, a.ConsequenceAccepted)
+			assert.Equal(t, recipesShared, a.Consequence, "the sentence the person accepted, not the restated one")
+
+			for _, e := range assumptionsPayload(list) {
+				if entry := e.(map[string]any); entry["id"] == "A1" {
+					assert.Equal(t, recipesShared, entry["consequence"])
+				}
+			}
+		})
+	}
+}

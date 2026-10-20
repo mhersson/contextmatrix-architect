@@ -819,20 +819,25 @@ on a dropped assumption never lands on another. A human accepts each or turns
 it into a question: an accepted one is recorded on its round, whose closed
 snapshot is the record, and cited as `round<n>.A<k>`, the round's number and
 the label (`round2.A1` for A1 on round 2's tab); the stage states it with
-that tag as its basis, so it reads `confirmed`. It takes no question number:
-`Q<n>` counts only asked questions. One a blueprint holds as a `questions`
-row stays cited by that row's `Q<n>`, whose number stays taken. After one is
-turned into a question, a later round of the attempt must be posted before
-the stage may submit. Under the human policy every stated assumption must
-have a basis. Under `auto` each assumption is accepted automatically, logged
-on the round, and keeps the status its basis gives it, never `confirmed`; no
+that tag as its basis, so it reads `confirmed` (on a plain-language blueprint
+a person accepts only what it means for them, which confirms nothing; see
+Plain language). It takes no question number: `Q<n>` counts only asked
+questions. One a blueprint holds as a `questions` row stays cited by that
+row's `Q<n>`, whose number stays taken. After one is turned into a question,
+a later round of the attempt must be posted before the stage may submit.
+Under the human policy every stated assumption must have a basis (on a
+plain-language blueprint, every one that carries a consequence; see Plain
+language). Under `auto` each assumption is accepted automatically, logged on
+the round, and keeps the status its basis gives it, never `confirmed`; no
 auto round records an acceptance. On a round a mode switch handed to the
 responder, the acceptances and conversions the human made before it stand
 and the rest are the responder's. The stage submits each assumption as a
 standalone sentence, or as `{"text": "<sentence>", "basis": "<tag>"}` when it
 rests on an answered question (`Q<n>`) or an accepted assumption
-(`round<n>.A<k>`). The check refuses a sentence that points at other text
-(the `dangling_references` list) or names an answered question or an accepted
+(`round<n>.A<k>`); on a plain-language blueprint an entry may also carry
+`consequence`, a sentence on what it means for the person using the result.
+The check refuses a sentence that points at other text (the
+`dangling_references` list) or names an answered question or an accepted
 assumption (the basis carries it and the sentence states the fact, so no
 model prose says who answered), and a basis that is neither; the third
 failing submit is accepted with its problems kept in its data, and such a
@@ -947,6 +952,20 @@ on the person's round may revise or add experience questions only.
 Re-tabbing keeps the answers' entries, never twice, and refuses an assumption
 without a consequence. Under a pack without `stages/responder.md` a round
 with a technical question is refused, and the stage decides it itself.
+
+Accepting a consequence never confirms the decision. A stage's assumption
+accepted on the person's tab is still stated with its `round<n>.A<k>` tag,
+which links it to the acceptance, but it keeps the status an assumption
+without a basis has, and the record adds a separate marker that a person
+accepted its consequence on round n. An accepted answer's consequence marks
+that answer's `Q<n>` entry the same way, and decisions a mode switch's
+handover made mark nothing. An assumption no person would notice is accepted
+automatically on the responder's round and stated without a basis; under the
+human policy only an assumption that carries a consequence needs one. The
+sign-off's assumption entries carry `consequence`, on an accepted one the
+sentence the person was shown whatever the stage states with it later, and
+`consequence_accepted` (`by`, `round`). The status set and its order are
+unchanged.
 
 ## Tools
 

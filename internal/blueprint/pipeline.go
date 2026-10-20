@@ -919,11 +919,17 @@ func (c *Controller) writeAnsweredAfter(ctx context.Context, b *strings.Builder,
 		}
 	}
 
-	var ownAccepted []acceptedAssumption
+	// ownPlain holds the plain rounds' acceptances: the person accepted what
+	// each means for them, which confirms no decision.
+	var ownAccepted, ownPlain []acceptedAssumption
 
 	for _, a := range accepted {
 		// A row an older close wrote is listed with the questions.
-		if a.Stage == st.ID && a.RunID > after && !rows[a.Tag] {
+		switch {
+		case a.Stage != st.ID || a.RunID <= after || rows[a.Tag]:
+		case a.Plain:
+			ownPlain = append(ownPlain, a)
+		default:
 			ownAccepted = append(ownAccepted, a)
 		}
 	}
@@ -939,6 +945,16 @@ func (c *Controller) writeAnsweredAfter(ctx context.Context, b *strings.Builder,
 
 		for _, a := range ownAccepted {
 			fmt.Fprintf(b, "- [%s] %s\n", a.Tag, a.Text)
+		}
+
+		b.WriteString("\n")
+	}
+
+	if len(ownPlain) > 0 {
+		b.WriteString("## Assumptions at this stage whose consequences the person accepted\n\nThe person accepted what each means for them, which confirms no decision. State each with its tag as the basis:\n\n")
+
+		for _, a := range ownPlain {
+			fmt.Fprintf(b, "- [%s] %s\n  What it means for the person: %s\n", a.Tag, a.Text, a.Consequence)
 		}
 
 		b.WriteString("\n")
