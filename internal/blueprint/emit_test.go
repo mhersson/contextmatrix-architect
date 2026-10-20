@@ -343,6 +343,28 @@ func TestYolo_AnEmptyRepositoryEmitsTheCardsAndStartsNoRun(t *testing.T) {
 	assert.Equal(t, string(StateEmitted), bp.State)
 }
 
+func TestYolo_AnEmptyRepositoryKeepsTheVerifyGapAStep(t *testing.T) {
+	script := happyScript()
+	script["decomposition"] = returns("# Cards", setupCards())
+
+	c, _, _, rec, ws := newPipeline(t, script)
+	c.opts.Projects = listAlphaUnset
+	ws.noAgents = true
+	ws.empty = map[string]bool{"alpha": true}
+
+	fake := newFakeCM()
+	fake.projects = []cm.Project{{Name: "alpha", Repo: "https://example.com/alpha.git"}}
+	c.opts.ConnectCM = fake.connect
+
+	driveIn(t, c, yoloInput("BP1"))
+
+	ev, ok := rec.first(EventEmitted)
+	require.True(t, ok)
+	assert.Contains(t, ev.Payload["steps"], verifyStep, "a person can set it while the run start is held")
+	assert.Empty(t, ev.Payload["notices"])
+	assert.Equal(t, false, ev.Payload["run_follows"])
+}
+
 func TestYolo_AFirstCommitThenApproveStartsTheRun(t *testing.T) {
 	c, _, _, rec, ws := newPipeline(t, happyScript())
 	ws.empty = map[string]bool{"alpha": true}

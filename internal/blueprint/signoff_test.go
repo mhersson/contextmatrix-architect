@@ -1259,10 +1259,24 @@ func TestSignoff_ListsTheVerifyStepAndMarksTheInstructionCard(t *testing.T) {
 	assert.Empty(t, so.Payload["blocking"], "neither gap blocks")
 	assert.Empty(t, so.Payload["warnings"])
 	assert.Equal(t, []string{verifyStep}, so.Payload["steps"])
+	assert.Empty(t, so.Payload["notices"])
 
 	cards, _ := so.Payload["cards"].([]any)
 	require.Len(t, cards, 1)
 	assert.Equal(t, "AGENTS.md", cards[0].(map[string]any)["writes"])
+}
+
+func TestSignoff_AutoStopsAtTheSignoffWithTheVerifyStepAndNoNotice(t *testing.T) {
+	c, _, rec, _ := newSetupPipeline(t)
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeAuto
+	driveIn(t, c, in)
+
+	so, ok := rec.first(EventSignOff)
+	require.True(t, ok)
+	assert.Equal(t, []string{verifyStep}, so.Payload["steps"])
+	assert.Empty(t, so.Payload["notices"])
 }
 
 func TestSignoff_AutoEmitEmitsDespiteASetupStep(t *testing.T) {
@@ -1278,6 +1292,50 @@ func TestSignoff_AutoEmitEmitsDespiteASetupStep(t *testing.T) {
 	em, ok := rec.first(EventEmitted)
 	require.True(t, ok)
 	assert.Equal(t, []string{verifyStep}, em.Payload["steps"])
+	assert.Empty(t, em.Payload["notices"], "auto+emit leaves the run to a human, so the step is in time")
+}
+
+func TestSignoff_YoloEmitsWithTheVerifyGapAsANotice(t *testing.T) {
+	c, _, rec, fake := newSetupPipeline(t)
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeYolo
+	driveIn(t, c, in)
+
+	assert.Equal(t, []string{"Add the thing"}, fake.titles())
+
+	for _, kind := range []string{EventSignOffAuto, EventEmitted} {
+		e, ok := rec.first(kind)
+		require.True(t, ok, kind)
+		assert.Empty(t, e.Payload["steps"], kind)
+		assert.Equal(t, []string{verifyNotice("alpha", "go test ./...")}, e.Payload["notices"], kind)
+	}
+}
+
+func TestSignoff_YoloStoppedByAWarningKeepsTheNotice(t *testing.T) {
+	c, _, rec, fake := newSetupPipeline(t)
+	ctx := context.Background()
+
+	fake.list = []cm.PlaybookSummary{{ID: "other", Runnable: true}}
+	fake.bookSeq["other"] = []cm.Playbook{{ID: "other", Entries: []cm.PlaybookEntry{{Type: "card", Card: "ALPHA-090", CardTitle: "Add the thing"}}}}
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeYolo
+	driveIn(t, c, in)
+
+	so, ok := rec.first(EventSignOff)
+	require.True(t, ok)
+	assert.Equal(t, true, so.Payload["auto_stopped"])
+	assert.Empty(t, so.Payload["steps"])
+	assert.Equal(t, []string{verifyNotice("alpha", "go test ./...")}, so.Payload["notices"])
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	em, ok := rec.first(EventEmitted)
+	require.True(t, ok)
+	assert.Empty(t, em.Payload["steps"])
+	assert.Equal(t, []string{verifyNotice("alpha", "go test ./...")}, em.Payload["notices"])
 }
 
 func TestSignoff_AVerifyCommandSetBeforeApproveDropsTheStep(t *testing.T) {
@@ -1301,6 +1359,7 @@ func TestSignoff_AVerifyCommandSetBeforeApproveDropsTheStep(t *testing.T) {
 	em, ok := rec.first(EventEmitted)
 	require.True(t, ok)
 	assert.Empty(t, em.Payload["steps"], "emission reads ContextMatrix again")
+	assert.Empty(t, em.Payload["notices"])
 }
 
 func TestSignoff_AnAutomaticApprovalRecordsWhatItApproved(t *testing.T) {

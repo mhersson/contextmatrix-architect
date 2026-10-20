@@ -783,7 +783,9 @@ adds to a card that cites a source tag (see Emission).
   `setup.<project>.verify_command`, and every card of the project runs it
   in its acceptance criteria, written exactly as proposed. The architect
   cannot set it: `create_card` has no verify field, and `update_project`
-  keeps the operator's. The sign-off lists setting it as a manual step.
+  keeps the operator's. The sign-off lists setting it as a manual step, or
+  in `yolo`, where the run starts without a human unless a repository with
+  no commits holds it, a notice of what happens without it (see Emission).
 - A repository without `AGENTS.md` or `CLAUDE.md` at the root: the
   project's first card also writes `AGENTS.md` (stack, verify command,
   layout, conventions), `setup.<project>.instruction_card` names it, and
@@ -1099,12 +1101,13 @@ rest of the sign-off work as without it.
 When the architect cannot settle something on its own, the person reads it
 plainly with the technical text folded underneath for a technical helper
 (`detail` on the prompt): every stage gate, the sign-off (which adds a
-sentence when setup needs someone technical) and a stopped emission or run
-start. The same choices are worded plainly
-("Continue anyway", "Try again") and send the same replies. The setup note
-the code checkout posts opens with a plain sentence that someone technical
-needs to set these things up, its technical list unchanged below. An ended
-pipeline's `end_reason` is plain and its technical reason is `end_detail`.
+sentence when setup needs someone technical, and another when the work settles
+some setup on its own) and a stopped emission or run start. The same choices
+are worded plainly ("Continue anyway", "Try again") and send the same replies.
+The setup note the code checkout posts opens with a plain sentence that
+someone technical needs to set these things up, its technical list unchanged
+below. An ended pipeline's `end_reason` is plain and its technical reason is
+`end_detail`.
 The wording is fixed per situation, in the server.
 
 ## Tools
@@ -1168,13 +1171,21 @@ Then, in order:
    the logged override; an emitting mode stops for a human instead. Steps:
    "set verify command `<cmd>` on project `<p>` in ContextMatrix" for each
    project that still declares no verify command, with the command the
-   cards propose, and "push an initial commit to `<repo>`'s default branch
-   before running the cards; the agent needs a base branch" for each
-   repository of a card's project with no commits. Steps are shown at the
-   sign-off and again with the emitted cards; they neither block emission
-   nor stop an emitting mode, and they are not playbook entries, which would
-   hold a run at a check-off. A missing instruction file is never a
-   preflight finding: the contract makes a card write it.
+   cards propose, listed in `default`, `auto` and `auto+emit`, which leaves
+   the run to a human; and "push an initial commit to `<repo>`'s default
+   branch before running the cards; the agent needs a base branch" for each
+   repository of a card's project with no commits, in every mode. In `yolo`,
+   judged from the mode the sign-off reads and again at emission, the verify
+   gap is a notice instead (unless a repository with no commits holds the run
+   start for a person, who can still set it): each card's agent looks for a
+   command in the repository as the cards build it (a test target or the
+   project's test command), else uses one its model proposes, else runs
+   unverified, and setting the proposed command pins it. Steps and notices, in
+   separate lists, are shown at the sign-off and again with the emitted cards;
+   neither blocks emission nor stops an emitting mode, and neither is a
+   playbook entry, which would hold a run at a check-off. A missing
+   instruction file is never a preflight finding: the contract makes a card
+   write it.
 2. **Cards**, in playbook order, which the contract keeps dependency-first,
    so `depends_on` carries real ids within a project. Each created id is
    stored in `emissions` at once, so a retry after a failure skips what
@@ -1465,11 +1476,11 @@ frames on the session's chat stream.
   `signoff_auto` event after the approval, never shown in the transcript),
   so its artifact exists, stamped approved automatically. The board
   (`emission`, version 1) exists once the cards are emitted. Its data is
-  the created cards with their ids, draft type and priority and, once the
-  watch has seen them, their state and pull request, plus the playbook,
-  compare links, manual checks and steps, and the total cost. The need as
-  typed and reviewer verdicts are not artifacts here; verdicts travel in
-  the view.
+  the created cards with their ids, draft type and priority and, once
+  the watch has seen them, their state and pull request, plus the
+  playbook, compare links, manual checks, steps and notices, and the
+  total cost. The need as typed and reviewer verdicts are not artifacts
+  here; verdicts travel in the view.
 - **Live stream.** `Subscribe` sends a snapshot of the view first. After
   every controller event, state change and harness line it sends a fresh
   snapshot, at most four a second. It sends an `artifact_stored` hint when
@@ -1646,6 +1657,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Pin protocol v0.34.0; the new-session dialog has a plain-language toggle, and CM stores the flag on the session row and sends it as `ArchitectStart.PlainLanguage` on every start; panel: the pane header shows that a blueprint runs in plain language, from `view.plain_language` once a view has loaded; a round entry's `detail`, a prompt's `detail` and the view's `end_detail` fold under their plain text; on a plain-language blueprint a responder round renders folded into its summary card; the sign-off sheet shows `plain_summary` first (what will be built, what you can do with it, the consequences you accepted, a changed one marked "changed since you accepted it"), an entry's `consequence` under its technical text with a "consequence accepted by you, round <n>" marker from `consequence_accepted`, and a superseded answer's row muted with a "superseded by Q<m>" chip from `superseded_by` | plain language |
 | Pin protocol v0.35.0 (`MessagePayload.Mockup`, `MockupReply`); panel: the mockup sheet while `mockup:<n>` is open, the source sealed in CM's mockup frame (no access to CM or the session; network blocked by policy; see CM's trust model) with `window.mockupSettings` set before its first script and a `mockup:settings` event on every flip, the suggestions as switches and choices that flip it with no message, a chat box that sends `chat` with the settings shown, "Use this design" sending `use` with every setting of the revision shown, and "Skip mockups" sending `skip`; a card's fenced `mockup` block shown sealed the same way behind "Show mockup"; `create_card` and `update_card`'s lint skipping a mockup block's content by the shared grammar | mockups |
 | Panel: board cards take their colours from the board's `cards[].type` and `priority`, as the Cards sheet does; a board without them stays grey | board colours |
+| Panel: the sign-off and board sheets show `notices` in a box of their own, apart from the steps, with no check-off | emission notices |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

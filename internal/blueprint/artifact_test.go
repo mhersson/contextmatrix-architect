@@ -78,6 +78,7 @@ func TestArtifact_TheBoard(t *testing.T) {
 			map[string]any{"draft": "D2", "project": "alpha", "card": "ALPHA-2", "title": "Two", "type": "bug", "priority": ""},
 		},
 		"playbook": "PB-1", "manual": nil, "steps": []any{"set the verify command"},
+		"notices": []any{"a notice"},
 	})
 	appendEvent(t, st, EventWatchState, map[string]any{
 		"cards":    []any{map[string]any{"draft": "D1", "id": "ALPHA-1", "state": "done", "pr": "https://example.com/pr/1"}},
@@ -99,6 +100,7 @@ func TestArtifact_TheBoard(t *testing.T) {
 		} `json:"repos"`
 		Manual  []string `json:"manual"`
 		Steps   []string `json:"steps"`
+		Notices []string `json:"notices"`
 		CostUSD float64  `json:"cost_usd"`
 		Priced  bool     `json:"priced"`
 	}
@@ -123,6 +125,7 @@ func TestArtifact_TheBoard(t *testing.T) {
 	assert.Equal(t, "https://example.com/compare", b.Repos[0].CompareURL)
 	assert.NotNil(t, b.Manual, "lists are [] not null")
 	assert.Equal(t, []string{"set the verify command"}, b.Steps)
+	assert.Equal(t, []string{"a notice"}, b.Notices)
 	assert.InDelta(t, 0.7, b.CostUSD, 1e-9)
 	assert.True(t, b.Priced)
 	assert.NotContains(t, string(art.Data), "null")
@@ -141,13 +144,16 @@ func TestArtifact_ABoardFromBeforeCardColoursHasNoTypeOrPriority(t *testing.T) {
 	require.NoError(t, err)
 
 	var b struct {
-		Cards []map[string]any `json:"cards"`
+		Cards   []map[string]any `json:"cards"`
+		Notices []string         `json:"notices"`
 	}
 
 	require.NoError(t, json.Unmarshal(art.Data, &b))
 	require.Len(t, b.Cards, 1)
 	assert.NotContains(t, b.Cards[0], "type")
 	assert.NotContains(t, b.Cards[0], "priority")
+	assert.Equal(t, []string{}, b.Notices)
+	assert.NotContains(t, string(art.Data), "null")
 }
 
 func TestArtifact_ASignoffShownThenApprovedAutomatically(t *testing.T) {

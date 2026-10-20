@@ -16,13 +16,15 @@ import (
 // board is the emission pseudo-artifact's data: the created cards with
 // their ContextMatrix ids, draft type and priority and, once the watch
 // has seen them, their state and pull request; the playbook, the compare
-// links, the manual checks and steps, and the architect's total cost.
+// links, the manual checks, steps and notices, and the architect's total
+// cost.
 type board struct {
 	Cards    []boardCard       `json:"cards"`
 	Playbook string            `json:"playbook,omitempty"`
 	Repos    []cm.PlaybookRepo `json:"repos"`
 	Manual   []string          `json:"manual"`
 	Steps    []string          `json:"steps"`
+	Notices  []string          `json:"notices"`
 	CostUSD  float64           `json:"cost_usd"`
 	Priced   bool              `json:"priced"`
 }
@@ -175,13 +177,14 @@ func (c *Controller) boardArtifact(ctx context.Context, id string) (protocol.Blu
 		Playbook string      `json:"playbook"`
 		Manual   []string    `json:"manual"`
 		Steps    []string    `json:"steps"`
+		Notices  []string    `json:"notices"`
 	}
 
 	if err := json.Unmarshal(emitted.Payload, &p); err != nil {
 		return protocol.BlueprintArtifact{}, fmt.Errorf("blueprint: read the emitted cards: %w", err)
 	}
 
-	b := board{Cards: p.Cards, Playbook: p.Playbook, Repos: []cm.PlaybookRepo{}, Manual: p.Manual, Steps: p.Steps}
+	b := board{Cards: p.Cards, Playbook: p.Playbook, Repos: []cm.PlaybookRepo{}, Manual: p.Manual, Steps: p.Steps, Notices: p.Notices}
 
 	if b.Cards == nil {
 		b.Cards = []boardCard{}
@@ -193,6 +196,10 @@ func (c *Controller) boardArtifact(ctx context.Context, id string) (protocol.Blu
 
 	if b.Steps == nil {
 		b.Steps = []string{}
+	}
+
+	if b.Notices == nil {
+		b.Notices = []string{}
 	}
 
 	watched, err := c.latestEvent(ctx, id, EventWatchState)

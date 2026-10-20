@@ -454,6 +454,14 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			}
 		}
 
+		if notices := stringsOf(p["notices"]); len(notices) > 0 {
+			b.WriteString("\n\nNotices (no step needed before the cards run):")
+
+			for _, s := range notices {
+				b.WriteString("\n- " + s)
+			}
+		}
+
 		entry.Content = b.String()
 	case blueprint.EventAnswer:
 		// CM shows a human's answer as the message it was.
@@ -844,7 +852,7 @@ func signoffText(p map[string]any, sliced bool) (body, reply string) {
 		b.WriteString("\nAssumptions: none recorded.\n")
 	}
 
-	blocking, warnings, steps, pfErr := stringsOf(p["blocking"]), stringsOf(p["warnings"]), stringsOf(p["steps"]), str(p["preflight_error"])
+	blocking, warnings, steps, notices, pfErr := stringsOf(p["blocking"]), stringsOf(p["warnings"]), stringsOf(p["steps"]), stringsOf(p["notices"]), str(p["preflight_error"])
 
 	if len(blocking) > 0 {
 		b.WriteString("\nBlocking (fix these in ContextMatrix first):\n")
@@ -870,11 +878,19 @@ func signoffText(p map[string]any, sliced bool) (body, reply string) {
 		}
 	}
 
+	if len(notices) > 0 {
+		b.WriteString("\nNotices (no step needed before the cards run):\n")
+
+		for _, s := range notices {
+			b.WriteString("- " + s + "\n")
+		}
+	}
+
 	if pfErr != "" {
 		b.WriteString("\nPreflight could not run: " + pfErr + "\n")
 	}
 
-	if len(blocking) == 0 && len(warnings) == 0 && len(steps) == 0 && pfErr == "" {
+	if len(blocking) == 0 && len(warnings) == 0 && len(steps) == 0 && len(notices) == 0 && pfErr == "" {
 		b.WriteString("\nPreflight found nothing for a human.\n")
 	}
 
@@ -1459,8 +1475,9 @@ func plainGateText(p map[string]any, sliced bool) string {
 }
 
 // plainSignoffText is what a person reads of the sign-off: a critical finding
-// across the blueprint is the one moment the architect is stuck, and setup
-// steps are named whenever the sign-off carries any.
+// across the blueprint is the one moment the architect is stuck, setup steps
+// are named whenever the sign-off carries any, and notices say the work
+// settles some setup itself.
 func plainSignoffText(p map[string]any) string {
 	var text string
 
@@ -1472,6 +1489,10 @@ func plainSignoffText(p map[string]any) string {
 
 	if len(stringsOf(p["blocking"])) > 0 || len(stringsOf(p["warnings"])) > 0 || len(stringsOf(p["steps"])) > 0 {
 		text += " Some setup needs someone technical before the work can run; the steps are below."
+	}
+
+	if len(stringsOf(p["notices"])) > 0 {
+		text += " The work will settle some technical setup on its own; a technical helper can read how below."
 	}
 
 	return text
@@ -1535,7 +1556,7 @@ func setupGapsText(p map[string]any) string {
 		name := str(g["project"])
 
 		if verify, _ := g["has_verify"].(bool); !verify {
-			fmt.Fprintf(&b, "\n- %s declares no verify command in ContextMatrix. Decomposition proposes one, and the manual steps shown before the cards run include setting it; setting it now works too.", name)
+			fmt.Fprintf(&b, "\n- %s declares no verify command in ContextMatrix. Decomposition proposes one, and the sign-off names it while it is still unset; setting it before the cards run pins it.", name)
 		}
 
 		if file, _ := g["has_instruction_file"].(bool); !file {

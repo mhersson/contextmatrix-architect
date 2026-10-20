@@ -209,6 +209,10 @@ func TestLogEntryFor(t *testing.T) {
 			"cards": []any{map[string]any{"card": "ALPHA-001"}}, "playbook": "",
 			"steps": []any{"set verify command `go test ./...` on project alpha in ContextMatrix"},
 		}}, "text", []string{"ALPHA-001", "set verify command `go test ./...` on project alpha in ContextMatrix"}, false},
+		{"emitted with a notice", blueprint.Event{Kind: blueprint.EventEmitted, BlueprintID: "S1", Payload: map[string]any{
+			"cards": []any{map[string]any{"card": "ALPHA-001"}}, "playbook": "",
+			"notices": []any{"project alpha declares no verify command, so each card's agent looks for one"},
+		}}, "text", []string{"Notices (no step needed before the cards run):", "project alpha declares no verify command, so each card's agent looks for one"}, false},
 		{"decided by the mode", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{"decision": "approve", "responder": "auto"}}, "system", []string{"needs a human first"}, false},
 		{"decided reject", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{"decision": "reject", "responder": "human", "feedback": "split it"}}, "system", []string{"Rejected"}, false},
 		{"gate", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
@@ -386,6 +390,11 @@ func TestLogEntryFor_SignoffSaysWhatPreflightFound(t *testing.T) {
 			name: "steps", preflight: map[string]any{"blocking": []any{}, "warnings": []any{}, "steps": []any{"set verify command `go test ./...` on project alpha in ContextMatrix"}},
 			carries: []string{"Manual steps for you before the cards run", "set verify command `go test ./...` on project alpha in ContextMatrix"},
 			lacks:   []string{"found nothing", "overrides the warnings"},
+		},
+		{
+			name: "notices", preflight: map[string]any{"blocking": []any{}, "warnings": []any{}, "notices": []any{"project alpha declares no verify command, so each card's agent looks for one"}},
+			carries: []string{"Notices (no step needed before the cards run):", "project alpha declares no verify command, so each card's agent looks for one"},
+			lacks:   []string{"Manual steps for you", "found nothing", "overrides the warnings"},
 		},
 		{
 			name: "not run", preflight: map[string]any{"blocking": []any{}, "warnings": []any{}, "preflight_error": "connect: refused"},
@@ -1307,6 +1316,23 @@ func TestLogEntryFor_APlainPromptWordsEachMomentByItsSituation(t *testing.T) {
 		criticalSteps := signoff(map[string]any{"cross": critical["cross"], "steps": []any{"Set up the thing"}})
 
 		assert.NotEqual(t, render(t, blueprint.EventSignOff, critical, true).Prompt.Text, render(t, blueprint.EventSignOff, criticalSteps, true).Prompt.Text)
+	})
+
+	t.Run("notices say the work settles some setup", func(t *testing.T) {
+		const (
+			settles   = "settle some technical setup on its own"
+			technical = "needs someone technical"
+		)
+
+		notices := []any{"a notice"}
+
+		only := render(t, blueprint.EventSignOff, signoff(map[string]any{"notices": notices}), true)
+		assert.Contains(t, only.Prompt.Text, settles)
+		assert.NotContains(t, only.Prompt.Text, technical)
+
+		both := render(t, blueprint.EventSignOff, signoff(map[string]any{"notices": notices, "steps": []any{"Set up the thing"}}), true)
+		assert.Contains(t, both.Prompt.Text, settles)
+		assert.Contains(t, both.Prompt.Text, technical)
 	})
 
 	t.Run("every stop kind folds its text and keeps its reply", func(t *testing.T) {

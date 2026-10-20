@@ -181,8 +181,8 @@ func (c *Controller) emit(ctx context.Context, sess *session, bp store.Blueprint
 
 	// The blocking checks run again: ContextMatrix may have changed since
 	// the sign-off. Warnings were shown at the sign-off, and the approval
-	// overrode them. The re-run also reads the steps announced with the
-	// cards.
+	// overrode them. The re-run also reads the steps and notices announced
+	// with the cards.
 	pf, err := c.preflight(ctx, sess, bp, draft, client)
 	if err != nil {
 		c.emitError(ctx, au, bp.ID, fmt.Errorf("preflight: %w", err))
@@ -436,13 +436,13 @@ func (c *Controller) emitError(ctx context.Context, au audit, id string, err err
 
 // emitCards creates the draft's missing cards in playbook order, which the
 // contract keeps dependency-first, then the playbook for two or more cards,
-// recording each CM id as soon as it exists. A card CM warns about is kept
-// and its warnings reported: readiness mirrors CM's lint, and the outcomes
-// stage learns from what slips through. The steps preflight found at this
-// attempt are announced with the cards, and the run start is said to follow
-// unless a repository has no commits. The trees go once everything exists.
-// Each card of a slice that builds a screen of a used mockup carries it, and
-// each body says what the source tags it cites stand for.
+// recording each CM id as soon as it exists. A card CM warns about is kept and
+// its warnings reported: readiness mirrors CM's lint, and the outcomes stage
+// learns from what slips through. The steps and notices preflight found at this
+// attempt, by the stored mode, are announced with the cards, and the run start
+// is said to follow unless a repository has no commits. The trees go once
+// everything exists. Each card of a slice that builds a screen of a used mockup
+// carries it, and each body says what the source tags it cites stand for.
 func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint, client CMClient, draft contract.Draft, pf preflightResult) error {
 	bg := context.WithoutCancel(ctx)
 
@@ -656,10 +656,12 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 		}
 	}
 
+	steps, notices := pf.setup(pf.runsAtOnce(bp.Mode))
+
 	// run_follows tells the panel that the run start comes next.
 	au.event(bg, Event{Kind: EventEmitted, BlueprintID: bp.ID, Payload: map[string]any{
-		"cards": cards, "playbook": playbookID, "manual": manual, "steps": pf.Steps,
-		"run_follows": bp.Mode == protocol.ArchitectModeYolo && !started && len(pf.EmptyRepos) == 0,
+		"cards": cards, "playbook": playbookID, "manual": manual, "steps": steps, "notices": notices,
+		"run_follows": !started && pf.runsAtOnce(bp.Mode),
 	}})
 
 	return nil
