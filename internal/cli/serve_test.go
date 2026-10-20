@@ -107,12 +107,23 @@ func TestServe_EndToEnd(t *testing.T) {
 	model := &fakeLLM{}
 	runner := &stage.Runner{NewLLM: func(protocol.LLMEndpoint) llm.LLM { return model }}
 
-	srv, cleanup, err := buildServer(context.Background(), cfg, testLogger(t), runner)
+	build := protocol.BuildInfo{Commit: strings.Repeat("a", 40), BuildTime: "2026-10-21T08:00:00Z", Changes: []protocol.Change{}}
+	srv, cleanup, err := buildServer(context.Background(), cfg, testLogger(t), runner, build)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cleanup(context.Background()) })
 
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
+
+	// /health reports the build serve was given.
+	health, err := ts.Client().Get(ts.URL + "/health")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = health.Body.Close() })
+
+	var hr protocol.HealthResponse
+	require.NoError(t, json.NewDecoder(health.Body).Decode(&hr))
+	require.NotNil(t, hr.Build)
+	assert.Equal(t, build, *hr.Build)
 
 	// Start the blueprint session the way CM does.
 	resp := post(t, ts.Client(), ts.URL+"/chat/start", protocol.ChatStartPayload{

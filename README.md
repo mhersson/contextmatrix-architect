@@ -69,6 +69,29 @@ An empty `state_dir`, the default, resolves to
 directory, set `state_dir` (or `CONTEXTMATRIX_ARCHITECT_STATE_DIR`) to an
 absolute path the user can write; `~` is not expanded.
 
+## Health
+
+`GET /health` and `GET /readyz` need no signature. `/health` reports the
+build the server runs:
+
+```json
+{"ok":true,"running_containers":0,"max_concurrent":0,"build":{"commit":"<40-char sha>","build_time":"2026-10-21T08:00:00Z","changes":[{"number":33,"kind":"fix","title":"name the cards readiness did not pass on the sign-off","merged_at":"2026-10-20T16:00:00Z"}]}}
+```
+
+`running_containers` and `max_concurrent` are always 0, because the
+architect runs no containers. `build.version` is the tag the commit was built
+on, and is left out when there is none. `changes` holds up to 20 merged pull
+requests, newest first. Each carries its number, its kind (`feat`, `fix`, or
+`change` for any other title), its title and its merge time in UTC. A
+lowercase conventional `type(scope): ` prefix is dropped from the title; any
+other `word:` prefix, a capitalized one included, stays, because the agent
+titles its PRs with the card title. Dependabot PRs and PRs typed ci, docs,
+chore, build, test, refactor or style are left out.
+
+`make build` and `make install` stamp the commit and build time and record the
+history from git. A bare `go build` of a fresh clone reports no commit, no
+build time and `"changes":[]`. ContextMatrix shows this in its About popup.
+
 ## User service
 
 On Linux the architect runs as a systemd user service, like the agent and chat
@@ -135,6 +158,11 @@ docker run --rm -p 9095:9095 \
   -v "$PWD/config.yaml:/etc/contextmatrix-architect/config.yaml:ro" \
   contextmatrix-architect:dev
 ```
+
+`make docker` passes the commit, build time and tag as build args and records
+the merge history first, and CI's image job does the same from a full-history
+checkout. A plain `docker build .` reports no commit or build time on
+`/health`.
 
 The image sets `XDG_STATE_HOME=/var/lib`, so the default `state_dir` is the
 volume. The state volume must be writable by uid 65532 (the distroless

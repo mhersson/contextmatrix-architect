@@ -187,8 +187,13 @@ jobs:
       DOCKER_BUILDKIT: "1"
       REGISTRY: ${{ vars.REGISTRY }}
     steps:
+      # Full history and tags, so the image records its merge history and an
+      # exact tag as its version.
       - name: Checkout
         uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Set image tag
         run: |
@@ -206,13 +211,25 @@ jobs:
             echo "PUSH_LATEST=true" >> "$GITHUB_ENV"
           fi
 
+      # The git arguments equal changelog.GitLogArgs, and a test keeps the two
+      # in step. Written with git rather than make, which the runner may lack;
+      # no fallback, and an empty history (a shallow checkout) fails too, so
+      # the job never ships an image without history.
+      - name: Set build info
+        run: |
+          git log --no-show-signature --first-parent --merges -n 100 '--format=%cI%x1f%s%x1f%b%x1e' > internal/buildinfo/history/merges.log
+          test -s internal/buildinfo/history/merges.log
+          echo "VERSION=$(git describe --tags --exact-match 2>/dev/null || true)" >> "$GITHUB_ENV"
+          echo "GIT_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
       - name: Build image
         run: |
           tags=(-t "${REGISTRY}/contextmatrix-architect:${IMAGE_TAG}")
           if [ "${PUSH_LATEST}" = "true" ]; then
             tags+=(-t "${REGISTRY}/contextmatrix-architect:latest")
           fi
-          docker build "${tags[@]}" .
+          docker build --build-arg VERSION="${VERSION}" --build-arg GIT_COMMIT="${GIT_COMMIT}" --build-arg BUILD_TIME="${BUILD_TIME}" "${tags[@]}" .
 
       - name: Push image
         run: |

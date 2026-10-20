@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mhersson/contextmatrix-architect/internal/blueprint"
+	"github.com/mhersson/contextmatrix-architect/internal/buildinfo"
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/code"
 	"github.com/mhersson/contextmatrix-architect/internal/config"
@@ -78,9 +79,10 @@ func newLogger(level string) *slog.Logger {
 }
 
 // buildServer wires store, pack, controller and the webhook server. The
-// runner is injected so tests can replace the model. The returned cleanup
+// runner is injected so tests can replace the model, and the build so a test
+// can tell a wired build from an unstamped test binary's. The returned cleanup
 // stops the replay janitor and the controller's runs, then closes the store.
-func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, runner blueprint.Runner) (*webhook.Server, func(context.Context) error, error) {
+func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, runner blueprint.Runner, build protocol.BuildInfo) (*webhook.Server, func(context.Context) error, error) {
 	if err := os.MkdirAll(cfg.StateDir, 0o750); err != nil {
 		return nil, nil, fmt.Errorf("state dir: %w", err)
 	}
@@ -160,6 +162,7 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 		Hub:        hub,
 		Logger:     logger,
 		Controller: ctl,
+		Build:      build,
 	})
 
 	// Stops the runs before closing the store, so no run writes to a closed DB.
@@ -232,7 +235,7 @@ func runServe(ctx context.Context, cfg *config.Config) error {
 	slog.SetDefault(logger)
 	warnMissingSearchTools(logger, exec.LookPath)
 
-	srv, cleanup, err := buildServer(ctx, cfg, logger, stage.NewRunner())
+	srv, cleanup, err := buildServer(ctx, cfg, logger, stage.NewRunner(), buildinfo.Info())
 	if err != nil {
 		return err
 	}

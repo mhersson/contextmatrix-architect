@@ -659,6 +659,24 @@ func TestHealthAndReadyz(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestHealth_ReportsBuild(t *testing.T) {
+	build := protocol.BuildInfo{
+		Commit: "0dca66e0123456789abcdef0123456789abcdef0", BuildTime: "2026-10-21T08:00:00Z",
+		Changes: []protocol.Change{{Number: 33, Kind: protocol.ChangeKindFix, Title: "name the cards", MergedAt: "2026-10-20T16:00:00Z"}},
+	}
+	hub := logbridge.NewHub(func(e protocol.LogEntry) string { return e.SessionID }, nil)
+	srv := NewServer(Config{APIKey: testKey, Hub: hub, Controller: &stubController{}, Logger: slog.New(slog.DiscardHandler), Build: build})
+
+	w := do(srv, httptest.NewRequest(http.MethodGet, "/health", nil)) // unsigned: /health is open
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp protocol.HealthResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.NotNil(t, resp.Build)
+	assert.Equal(t, build, *resp.Build)
+	assert.NotContains(t, w.Body.String(), "worker_image_revision", "the architect has no worker image")
+}
+
 func TestMessage_CommandsAreRouted(t *testing.T) {
 	tests := []struct {
 		text         string

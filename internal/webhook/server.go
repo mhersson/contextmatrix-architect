@@ -50,7 +50,9 @@ type Config struct {
 	Hub          *logbridge.Hub
 	Logger       *slog.Logger
 	Metrics      *metrics.Metrics
-	Controller   Controller
+	// Build is the build every /health answer reports.
+	Build      protocol.BuildInfo
+	Controller Controller
 }
 
 // Server mounts the protocol routes on the shared transport core.
@@ -90,6 +92,7 @@ func NewServer(cfg Config) *Server {
 		Hub:             cfg.Hub,
 		LogsFilterParam: "session_id",
 		LogsFilterAttr:  "session_id",
+		Build:           cfg.Build,
 	})
 
 	return &Server{Core: core, ctl: cfg.Controller, dedup: dedup, logger: logger, keepalive: liveKeepalive, liveDone: make(chan struct{})}

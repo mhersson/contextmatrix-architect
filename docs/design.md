@@ -1566,6 +1566,15 @@ frames on the session's chat stream.
   service's PATH. `state_dir` defaults to the XDG state directory, which
   `svc.sh` whitelists and creates. `serve` logs a
   warning at startup when rg is missing and starts anyway.
+- **Build.** `make build` and `make install` stamp the version, commit and
+  build time into `internal/buildinfo` with ldflags, and record the
+  first-parent merge history in `internal/buildinfo/history/merges.log`, which
+  the binary embeds. `/health` reports them as `build`, with the last 20
+  merged pull requests as the change list, through backendkit's shared
+  handler. A bare `go build` of a fresh clone reports no commit and an empty
+  list. `make docker` passes the same values as build args, and CI's image job
+  writes the history and the args from a full-history checkout. ContextMatrix
+  reads it for its About popup.
 - **Client.** The panel, through CM. Local use is
   `contextmatrix-architect serve` on the laptop pointed at a CM instance.
   There is no CM-less mode.
@@ -1573,8 +1582,8 @@ frames on the session's chat stream.
 ## Runtime
 
 - Go 1.27, `contextmatrix-harness` v0.26.0 (loop, llm client, jailed read
-  tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.9.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.35.0
+  tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.10.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.36.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
@@ -1644,6 +1653,7 @@ internal/cm          MCP client: the project list, the stage read tools, and the
 internal/outcomes    outcomes stage and lessons
 internal/export      markdown rendering into the state directory
 internal/config
+internal/buildinfo   build version, commit and time (ldflags) and the embedded merge history
 internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, resume and continue commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
 ```
 
