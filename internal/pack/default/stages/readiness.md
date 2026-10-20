@@ -9,6 +9,10 @@ subtasks or fewer, and that every path and symbol under Where exists. In an
 empty repository (repo_info marks it empty), Where names the files a card
 creates: judge that they are new, not that they exist.
 
+A finding is only what would make an agent with only this repository and
+this card fail or build the wrong thing. A point the agent can settle on its
+own, such as whether a file it touches is new, is no finding.
+
 A card of a project the task names as POC, a proof of concept, is judged on
 clarity and buildability, not hardening: Tests expected that covers the main
 behaviour and the card's criteria is ready, and one that asks for edge-case
@@ -33,11 +37,14 @@ it in the playbook delivers, is not ready, and its finding names the card it
 collides with or lacks.
 
 With an approved mockup (the `mockup` input; read_artifact returns its
-source), every card of a slice in which any card names a screen in `mockup`
-carries the whole mockup once emitted. Such a card whose mockup shows
-something the decisions dropped, without its Solution saying which part not
-to build, is not ready; so is a card that builds or changes a screen of the
-mockup without naming it in `mockup`.
+source), the architect itself attaches the whole mockup, when it emits the
+cards, to every card of a slice that builds a screen. A card's `mockup`
+field names only the screens that card builds or changes, and a card that
+builds none names none, so never judge whether a card carries the mockup.
+Two mockup findings exist, and no other: a card that builds or changes a
+screen of the mockup without naming it in `mockup`; and a card that builds or
+changes a screen on which the mockup shows something the decisions dropped,
+when its Solution does not say not to build that part.
 
 Then judge the blueprint as a whole, each artifact against the others:
 decisions, contracts, cards and assumptions that disagree; two assumptions

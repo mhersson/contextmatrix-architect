@@ -818,7 +818,7 @@ adds to a card that cites a source tag (see Emission).
 | No mockup block in a draft card's body                             | mechanical                 |
 | One deliverable, no open decisions, no optional scope              | model-judged               |
 | Estimated planner split of two subtasks or fewer                   | model-judged               |
-| "Could an agent with only this repo finish this card?"             | model-judged, adversarial  |
+| "Could an agent with only this repo finish this card?"; a point the agent can settle on its own is no finding | model-judged, adversarial  |
 | No card duplicates an open card of its project                     | model-judged (cm tools)    |
 
 The contract lives here: the default pack's `card.md` and `lists.yaml` plus
