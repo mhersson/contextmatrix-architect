@@ -74,8 +74,8 @@ func TestArtifact_TheBoard(t *testing.T) {
 	through(t, c, st, "readiness") // seven runs at 0.1
 	appendEvent(t, st, EventEmitted, map[string]any{
 		"cards": []any{
-			map[string]any{"draft": "D1", "project": "alpha", "card": "ALPHA-1", "title": "One"},
-			map[string]any{"draft": "D2", "project": "alpha", "card": "ALPHA-2", "title": "Two"},
+			map[string]any{"draft": "D1", "project": "alpha", "card": "ALPHA-1", "title": "One", "type": "feature", "priority": "high"},
+			map[string]any{"draft": "D2", "project": "alpha", "card": "ALPHA-2", "title": "Two", "type": "bug", "priority": ""},
 		},
 		"playbook": "PB-1", "manual": nil, "steps": []any{"set the verify command"},
 	})
@@ -90,7 +90,7 @@ func TestArtifact_TheBoard(t *testing.T) {
 
 	var b struct {
 		Cards []struct {
-			Draft, Project, Card, Title, State, PR string
+			Draft, Project, Card, Title, Type, Priority, State, PR string
 		} `json:"cards"`
 		Playbook string `json:"playbook"`
 		Repos    []struct {
@@ -106,6 +106,15 @@ func TestArtifact_TheBoard(t *testing.T) {
 	require.NoError(t, json.Unmarshal(art.Data, &b))
 	require.Len(t, b.Cards, 2)
 	assert.Equal(t, "ALPHA-1", b.Cards[0].Card)
+	assert.Equal(t, "feature", b.Cards[0].Type)
+	assert.Equal(t, "high", b.Cards[0].Priority)
+	assert.Equal(t, "bug", b.Cards[1].Type)
+
+	var raw struct{ Cards []map[string]any }
+
+	require.NoError(t, json.Unmarshal(art.Data, &raw))
+	require.Len(t, raw.Cards, 2)
+	assert.NotContains(t, raw.Cards[1], "priority", "a draft without a priority has no key, not an empty one")
 	assert.Equal(t, "done", b.Cards[0].State)
 	assert.Equal(t, "https://example.com/pr/1", b.Cards[0].PR)
 	assert.Empty(t, b.Cards[1].State, "a card the watch has not seen has no state yet")
@@ -117,6 +126,28 @@ func TestArtifact_TheBoard(t *testing.T) {
 	assert.InDelta(t, 0.7, b.CostUSD, 1e-9)
 	assert.True(t, b.Priced)
 	assert.NotContains(t, string(art.Data), "null")
+}
+
+func TestArtifact_ABoardFromBeforeCardColoursHasNoTypeOrPriority(t *testing.T) {
+	c, st := newViewController(t, "default", 0)
+
+	through(t, c, st, "readiness")
+	appendEvent(t, st, EventEmitted, map[string]any{
+		"cards":    []any{map[string]any{"draft": "D1", "project": "alpha", "card": "ALPHA-1", "title": "One"}},
+		"playbook": "PB-1", "manual": nil, "steps": []any{},
+	})
+
+	art, err := c.Artifact(context.Background(), viewID, emissionStage, "", 1)
+	require.NoError(t, err)
+
+	var b struct {
+		Cards []map[string]any `json:"cards"`
+	}
+
+	require.NoError(t, json.Unmarshal(art.Data, &b))
+	require.Len(t, b.Cards, 1)
+	assert.NotContains(t, b.Cards[0], "type")
+	assert.NotContains(t, b.Cards[0], "priority")
 }
 
 func TestArtifact_ASignoffShownThenApprovedAutomatically(t *testing.T) {

@@ -1465,10 +1465,11 @@ frames on the session's chat stream.
   `signoff_auto` event after the approval, never shown in the transcript),
   so its artifact exists, stamped approved automatically. The board
   (`emission`, version 1) exists once the cards are emitted. Its data is
-  the created cards with their ids and, once the watch has seen them, their
-  state and pull request, plus the playbook, compare links, manual checks
-  and steps, and the total cost. The need as typed and reviewer verdicts
-  are not artifacts here; verdicts travel in the view.
+  the created cards with their ids, draft type and priority and, once the
+  watch has seen them, their state and pull request, plus the playbook,
+  compare links, manual checks and steps, and the total cost. The need as
+  typed and reviewer verdicts are not artifacts here; verdicts travel in
+  the view.
 - **Live stream.** `Subscribe` sends a snapshot of the view first. After
   every controller event, state change and harness line it sends a fresh
   snapshot, at most four a second. It sends an `artifact_stored` hint when
@@ -1644,6 +1645,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | `poc` on the project config, switched only by a human in Project Settings and returned in `list_projects`' project config, omitted when false | POC projects |
 | Pin protocol v0.34.0; the new-session dialog has a plain-language toggle, and CM stores the flag on the session row and sends it as `ArchitectStart.PlainLanguage` on every start; panel: the pane header shows that a blueprint runs in plain language, from `view.plain_language` once a view has loaded; a round entry's `detail`, a prompt's `detail` and the view's `end_detail` fold under their plain text; on a plain-language blueprint a responder round renders folded into its summary card; the sign-off sheet shows `plain_summary` first (what will be built, what you can do with it, the consequences you accepted, a changed one marked "changed since you accepted it"), an entry's `consequence` under its technical text with a "consequence accepted by you, round <n>" marker from `consequence_accepted`, and a superseded answer's row muted with a "superseded by Q<m>" chip from `superseded_by` | plain language |
 | Pin protocol v0.35.0 (`MessagePayload.Mockup`, `MockupReply`); panel: the mockup sheet while `mockup:<n>` is open, the source sealed in CM's mockup frame (no access to CM or the session; network blocked by policy; see CM's trust model) with `window.mockupSettings` set before its first script and a `mockup:settings` event on every flip, the suggestions as switches and choices that flip it with no message, a chat box that sends `chat` with the settings shown, "Use this design" sending `use` with every setting of the revision shown, and "Skip mockups" sending `skip`; a card's fenced `mockup` block shown sealed the same way behind "Show mockup"; `create_card` and `update_card`'s lint skipping a mockup block's content by the shared grammar | mockups |
+| Panel: board cards take their colours from the board's `cards[].type` and `priority`, as the Cards sheet does; a board without them stays grey | board colours |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

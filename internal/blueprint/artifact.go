@@ -14,9 +14,9 @@ import (
 )
 
 // board is the emission pseudo-artifact's data: the created cards with
-// their ContextMatrix ids and, once the watch has seen them, their state
-// and pull request; the playbook, the compare links, the manual checks and
-// steps, and the architect's total cost.
+// their ContextMatrix ids, draft type and priority and, once the watch
+// has seen them, their state and pull request; the playbook, the compare
+// links, the manual checks and steps, and the architect's total cost.
 type board struct {
 	Cards    []boardCard       `json:"cards"`
 	Playbook string            `json:"playbook,omitempty"`
@@ -28,12 +28,14 @@ type board struct {
 }
 
 type boardCard struct {
-	Draft   string `json:"draft"`
-	Project string `json:"project"`
-	Card    string `json:"card"`
-	Title   string `json:"title"`
-	State   string `json:"state,omitempty"`
-	PR      string `json:"pr,omitempty"`
+	Draft    string `json:"draft"`
+	Project  string `json:"project"`
+	Card     string `json:"card"`
+	Title    string `json:"title"`
+	Type     string `json:"type,omitempty"`
+	Priority string `json:"priority,omitempty"`
+	State    string `json:"state,omitempty"`
+	PR       string `json:"pr,omitempty"`
 }
 
 // Artifact is one version of an artifact on blueprint id's sheet: a pack

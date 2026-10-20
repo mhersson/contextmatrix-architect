@@ -641,7 +641,10 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 
 	for _, id := range draft.Order {
 		if card, ok := byID[id]; ok {
-			cards = append(cards, map[string]any{"draft": id, "project": card.Project, "card": cmIDs[id], "title": card.Title})
+			cards = append(cards, map[string]any{
+				"draft": id, "project": card.Project, "card": cmIDs[id], "title": card.Title,
+				"type": card.Type, "priority": card.Priority,
+			})
 		}
 	}
 

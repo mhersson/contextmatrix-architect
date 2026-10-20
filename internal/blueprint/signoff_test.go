@@ -208,6 +208,33 @@ func TestSignoff_AutoEmitApprovesWhenPreflightIsClean(t *testing.T) {
 	assert.Equal(t, store.ResponderAuto, gates[0].Responder)
 }
 
+func TestEmit_TheEmittedCardsCarryTheirTypeAndPriority(t *testing.T) {
+	cards := goodCards()
+	cards["cards"].([]any)[0].(map[string]any)["priority"] = "high"
+
+	script := happyScript()
+	script["decomposition"] = returns("# Cards", cards)
+
+	c, _, _, rec, _ := newPipeline(t, script)
+	c.opts.ConnectCM = newFakeCM().connect
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeAutoEmit
+	driveIn(t, c, in)
+
+	ev, ok := rec.first(EventEmitted)
+	require.True(t, ok)
+
+	emitted, ok := ev.Payload["cards"].([]any)
+	require.True(t, ok)
+	require.Len(t, emitted, 1)
+
+	card, ok := emitted[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "feature", card["type"])
+	assert.Equal(t, "high", card["priority"])
+}
+
 func TestSignoff_AutoEmitEmitsAfterAFirstCommitToAnEmptyRepository(t *testing.T) {
 	c, _, _, rec, ws := newPipeline(t, happyScript())
 	ws.empty = map[string]bool{"alpha": true}
