@@ -11,6 +11,7 @@ import (
 
 	"github.com/mhersson/contextmatrix-architect/internal/blueprint"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
+	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -500,26 +501,66 @@ func roundFrame(p map[string]any) (int, protocol.LogRound, bool) {
 // mockupRoundEntry is a mockup round's snapshot as the transcript shows it:
 // a mockup is a round inside the architect, never a round prompt. A revision
 // or a reply adds the designer's chat entry, the one the run behind it saw
-// last, which is a text row; any other change adds no row.
+// last, which is a text row. The auto responder's change request and its
+// use of a revision are system rows that name it. Any other change adds no
+// row: CM shows the person's own messages and replies, and a failed
+// responder's error row says what became of the revision.
 func mockupRoundEntry(entry protocol.LogEntry, p map[string]any) (protocol.LogEntry, bool) {
-	switch str(p["change"]) {
-	case "posted", "revision", "reply":
-	default:
-		return protocol.LogEntry{}, false
-	}
-
 	_, frame, ok := roundFrame(p)
 	if !ok || len(frame.Chat) == 0 {
 		return protocol.LogEntry{}, false
 	}
 
-	seen := int(num(p["seen"]))
-	if seen < 1 || seen > len(frame.Chat) {
-		seen = len(frame.Chat)
+	var m struct {
+		Revision    int                      `json:"revision"`
+		Suggestions []stage.MockupSuggestion `json:"suggestions"`
+		Chosen      map[string]string        `json:"chosen"`
+		By          string                   `json:"by"`
+		Failed      bool                     `json:"failed"`
 	}
 
-	entry.Type = "text"
-	entry.Content = frame.Chat[seen-1].Text
+	if raw, err := json.Marshal(p["mockup"]); err != nil || json.Unmarshal(raw, &m) != nil {
+		return protocol.LogEntry{}, false
+	}
+
+	switch str(p["change"]) {
+	case "posted", "revision", "reply":
+		seen := int(num(p["seen"]))
+		if seen < 1 || seen > len(frame.Chat) {
+			seen = len(frame.Chat)
+		}
+
+		entry.Type = "text"
+		entry.Content = frame.Chat[seen-1].Text
+	case "chat":
+		last := frame.Chat[len(frame.Chat)-1]
+		if last.From != "responder" {
+			return protocol.LogEntry{}, false
+		}
+
+		entry.Type = "system"
+		entry.Content = fmt.Sprintf("The auto responder asks for a change to revision %d of the mockup: %s", m.Revision, last.Text)
+	case "chosen":
+		// A failed responder made no pick: its error row says the revision
+		// is used as set.
+		if m.By != store.ResponderAuto || m.Failed {
+			return protocol.LogEntry{}, false
+		}
+
+		set := make([]string, 0, len(m.Suggestions))
+		for _, sug := range m.Suggestions {
+			set = append(set, fmt.Sprintf("%s: %s", sug.Title, sug.Label(m.Chosen[sug.ID])))
+		}
+
+		entry.Type = "system"
+		entry.Content = fmt.Sprintf("The auto responder uses revision %d of the mockup.", m.Revision)
+
+		if len(set) > 0 {
+			entry.Content = fmt.Sprintf("The auto responder uses revision %d of the mockup, set to %s.", m.Revision, strings.Join(set, "; "))
+		}
+	default:
+		return protocol.LogEntry{}, false
+	}
 
 	return entry, true
 }
@@ -923,6 +964,11 @@ func policyText(p map[string]any) string {
 		text += " Its open round of questions stays with whoever it was put to."
 	}
 
+	// A mockup is never a round to the person, so its line names none.
+	if str(p["open"]) == "mockup" {
+		text += " Its open mockup stays with whoever steers it until its next revision."
+	}
+
 	if str(p["open"]) == "gate" {
 		text += " Its open gate stays as it is; decide it with approve or reject."
 	}
@@ -974,7 +1020,11 @@ func modeText(p map[string]any, sliced bool) string {
 
 	text := fmt.Sprintf("Mode changed from %s to %s.", modeName(str(p["from"])), modeName(str(p["to"])))
 
-	if n := num(p["hands_over"]); n > 0 {
+	// A mockup is never a round to the person, so its hand-over names none.
+	switch n := num(p["hands_over"]); {
+	case n > 0 && p["mockup"] == true:
+		text += " The mockup goes to the auto responder, which steers it on from the revision shown."
+	case n > 0:
 		text += fmt.Sprintf(" Round %.0f goes to the auto responder, which answers what is still open; the answers already sent stay.", n)
 	}
 
@@ -1019,11 +1069,19 @@ func abortedText(p map[string]any, sliced bool) string {
 // stopsStage reports an error that is a stage run's own stop, which
 // continue runs again: it names the stage and why the run ended, and is
 // neither a cap stop, whose message says to raise the cap, nor a responder
-// refused inside a run that goes on.
+// refused inside a run that goes on, nor a mockup responder that failed,
+// whose revision is used.
 func stopsStage(p map[string]any) bool {
 	reason := str(p["reason"])
 
-	return str(p["stage"]) != "" && reason != "" && reason != "responder_refused" && str(p["cap"]) == ""
+	return str(p["stage"]) != "" && reason != "" && !goesOn(reason) && str(p["cap"]) == ""
+}
+
+// goesOn reports an error reason after which the pipeline goes on by
+// itself: a responder a cap refused inside its asking run, and a mockup
+// responder that failed, whose revision is then used.
+func goesOn(reason string) bool {
+	return reason == "responder_refused" || reason == "responder_failed"
 }
 
 // resumeText renders a resume reply: the stage it runs again, or that
@@ -1193,9 +1251,12 @@ func problemsList(v any) string {
 func decidedText(p map[string]any, sliced bool) string {
 	reject, auto := str(p["decision"]) == "reject", str(p["responder"]) == "auto"
 
-	// A mockup's use or skip, which settles its step; no gate decided it.
+	// A mockup's use or skip, which settles its step; no gate decided it. A
+	// use a failed responder left to the architect is no pick of its own.
 	if p["mockup"] == true {
 		switch {
+		case p["failed"] == true:
+			return fmt.Sprintf("The architect uses revision %.0f of the mockup as it is set and designs the rest from it.", num(p["version"]))
 		case reject:
 			return fmt.Sprintf("Mockup skipped at revision %.0f: the architect goes on without one.", num(p["version"]))
 		case auto:

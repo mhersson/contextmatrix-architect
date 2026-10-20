@@ -49,11 +49,12 @@ func waitsOnUser(e blueprint.Event) bool {
 		blueprint.EventAwaitInput, blueprint.EventGate, blueprint.EventSignOff, blueprint.EventRunStarted, blueprint.EventWatchEnded:
 		return true
 	case blueprint.EventError:
-		// A refused responder leaves the asking stage running, and a stale
-		// reply that lands while a run works leaves it working.
+		// A refused responder leaves the asking stage running, a failed
+		// mockup responder leaves its revision to be used, and a stale reply
+		// that lands while a run works leaves it working.
 		duringRun, _ := e.Payload["during_run"].(bool)
 
-		return e.Payload["reason"] != "responder_refused" && !duringRun
+		return !goesOn(str(e.Payload["reason"])) && !duringRun
 	case blueprint.EventRound:
 		// An open round a human answers waits on the user. A closed one, one
 		// the responder answers, one whose every question has an answer and

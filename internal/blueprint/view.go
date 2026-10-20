@@ -269,16 +269,18 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 		return record{}, err
 	}
 
+	// A handed-over mockup reads as one the auto responder steers.
 	switch {
 	case !found || place.state.Frame.Closed:
+	case place.state.Mockup != nil:
+		rec.round, rec.roundStage, rec.mockup = place.state.Number, place.state.Frame.Stage, true
+		_, writing := rec.flightOf(place.state.Frame.Stage)
+		rec.unprompted = place.state.Frame.Responder || writing || place.state.Mockup.Action != ""
 	case place.state.HandedOver != nil:
 		// A handed-over round waits for nobody: the responder answers it.
 		rec.handedRound = place.state.BuilderRound
 	default:
 		rec.round, rec.roundStage = place.state.Number, place.state.Frame.Stage
-		_, writing := rec.flightOf(place.state.Frame.Stage)
-		rec.mockup = place.state.Mockup != nil
-		rec.unprompted = rec.mockup && (place.state.Frame.Responder || writing || place.state.Mockup.Action != "")
 	}
 
 	return rec, nil

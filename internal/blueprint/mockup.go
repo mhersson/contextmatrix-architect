@@ -20,7 +20,8 @@ import (
 // revision's suggestions, the settings it opened with (Opening) and the
 // last ones the architect knew (Settings), the auto responder's change
 // requests so far, and once decided the action (use or skip), the chosen
-// settings, who decided and the reply's message id.
+// settings, who decided and the reply's message id. Failed marks a use the
+// auto responder never made: it failed, and the revision is used as set.
 type mockupState struct {
 	Revision    int                      `json:"revision"`
 	Suggestions []stage.MockupSuggestion `json:"suggestions"`
@@ -31,6 +32,7 @@ type mockupState struct {
 	Chosen      map[string]string        `json:"chosen,omitempty"`
 	By          string                   `json:"by,omitempty"`
 	MessageID   string                   `json:"message_id,omitempty"`
+	Failed      bool                     `json:"failed,omitempty"`
 }
 
 // mockupData is a revision's artifact data, in the wire's shape: chosen is
@@ -290,7 +292,8 @@ func suggestionLabels(sug stage.MockupSuggestion) []string {
 
 // settleMockup ends the mockup step on the closed mockup round the pipeline
 // stands at: an approve (use) or reject (skip) gates row on the revision,
-// by whoever decided, with the reply's message id, then the step's settle
+// by whoever decided, with the reply's message id (its event marks a use a
+// failed responder left to the architect), then the step's settle
 // run, a stage run with no model and no cost that ends done with reason
 // used or skipped, so the step is done by the rule every stage follows.
 // Each part is written once, so a reopen finishes what a restart cut short.
@@ -326,7 +329,12 @@ func (c *Controller) settleMockup(ctx context.Context, r *run, sess *session, bp
 		return stageStopped
 	}
 
-	if have == "" && !c.decideWith(bg, au, id, stageID, m.Revision, decision, "", m.By, m.MessageID, map[string]any{"mockup": true}) {
+	extra := map[string]any{"mockup": true}
+	if m.Failed {
+		extra["failed"] = true
+	}
+
+	if have == "" && !c.decideWith(bg, au, id, stageID, m.Revision, decision, "", m.By, m.MessageID, extra) {
 		return stageStopped
 	}
 

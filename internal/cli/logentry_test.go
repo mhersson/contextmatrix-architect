@@ -48,6 +48,7 @@ func TestLogEntryFor_AnErrorNamesContinueOnlyWhenItStoppedAStageRun(t *testing.T
 		{"a bound blueprint cap stop", map[string]any{"stage": "solution_design", "reason": "max_cost", "cap": "blueprint", "message": "cap used up."}, false},
 		{"a refusal cap stop", map[string]any{"stage": "solution_design", "cap": "blueprint", "message": "cap used up."}, false},
 		{"a refused responder", map[string]any{"stage": "solution_design", "reason": "responder_refused", "message": "refused."}, false},
+		{"a mockup responder that failed, whose revision is used", map[string]any{"stage": "mockup", "reason": "responder_failed", "revision": 1, "message": "failed."}, false},
 		{"a stage error that gave no reason", map[string]any{"stage": "solution_design", "message": "stopped."}, false},
 		{"a stale reply", map[string]any{"reason": "stale_reply", "message": "answers nothing."}, false},
 		{"a failure with no stage", map[string]any{"message": "boom."}, false},
@@ -1537,4 +1538,129 @@ func TestLogEntry_AMockupDecisionIsItsOwnRow(t *testing.T) {
 	assert.NotEqual(t, use, skip)
 	assert.NotEqual(t, use, content("approve", "human", 3, true), "the revision is named")
 	assert.NotEqual(t, use, content("approve", "auto", 2, true), "the responder's pick reads as its own")
+}
+
+// A use a failed responder left to the architect reads apart from the
+// responder's own pick and the person's, and still names its revision.
+func TestLogEntry_AFailedRespondersUseIsTheArchitects(t *testing.T) {
+	content := func(version int, failed bool) string {
+		t.Helper()
+
+		p := map[string]any{"stage": "mockup", "decision": "approve", "feedback": "", "responder": "auto", "version": version, "message_id": "", "mockup": true}
+		if failed {
+			p["failed"] = true
+		}
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: p})
+		require.True(t, ok)
+		assert.Equal(t, "system", entry.Type)
+
+		return entry.Content
+	}
+
+	assert.NotEqual(t, content(2, false), content(2, true), "no pick of the responder's")
+	assert.NotEqual(t, content(2, true), content(3, true), "the revision is named")
+}
+
+// The auto responder's change requests and its pick are system rows that
+// name it: a request quotes its text, a pick names its revision and what it
+// chose. The person's own chat and use add no row: CM shows their message.
+func TestLogEntry_TheRespondersTurnsAreSystemRows(t *testing.T) {
+	notes := map[string]any{"from": "designer", "text": "A list of the day's free times."}
+	request := map[string]any{"from": "responder", "text": "Show the next free time first."}
+	person := map[string]any{"from": "user", "text": "Bigger buttons, please."}
+
+	row := func(p map[string]any) (protocol.LogEntry, bool) {
+		t.Helper()
+
+		return logEntryFor(blueprint.Event{Kind: blueprint.EventRound, BlueprintID: "S1", Payload: p})
+	}
+
+	asked, ok := row(mockupRoundPayload("chat", 1, notes, request))
+	require.True(t, ok)
+	assert.Equal(t, "system", asked.Type)
+	assert.Nil(t, asked.Prompt)
+	assert.Contains(t, asked.Content, "Show the next free time first.")
+
+	_, ok = row(mockupRoundPayload("chat", 1, notes, person))
+	assert.False(t, ok, "the person's chat is CM's own row")
+
+	chosen := func(by string, revision int) map[string]any {
+		p := mockupRoundPayload("chosen", 1, notes)
+		m, _ := p["mockup"].(map[string]any)
+		m["revision"], m["action"], m["by"] = revision, "use", by
+		m["suggestions"] = []any{map[string]any{
+			"id": "slots", "title": "Free times as", "kind": "choice", "why": "A grid shows the day.", "default": "list",
+			"options": []any{map[string]any{"value": "list", "label": "A list"}, map[string]any{"value": "grid", "label": "A grid"}},
+		}}
+		m["chosen"] = map[string]any{"slots": "grid"}
+
+		return p
+	}
+
+	pick, ok := row(chosen("auto", 2))
+	require.True(t, ok)
+	assert.Equal(t, "system", pick.Type)
+	assert.Nil(t, pick.Prompt)
+	assert.Contains(t, pick.Content, "A grid", "the label it chose")
+
+	later, ok := row(chosen("auto", 3))
+	require.True(t, ok)
+	assert.NotEqual(t, pick.Content, later.Content, "the revision is named")
+
+	_, ok = row(chosen("human", 2))
+	assert.False(t, ok, "the person's use is CM's own row")
+
+	failed := chosen("auto", 2)
+	failed["mockup"].(map[string]any)["failed"] = true
+	_, ok = row(failed)
+	assert.False(t, ok, "a failed responder picked nothing; its error row says what became of the revision")
+}
+
+// A gate reply while a mockup is open names no round, which the person never
+// sees, and reads apart from a reply at an open round and at nothing open.
+func TestLogEntry_AGateReplyAtAnOpenMockupNamesNoRound(t *testing.T) {
+	content := func(open string) string {
+		t.Helper()
+
+		p := map[string]any{"stage": "mockup", "policy": "human", "message_id": "m1", "during_run": true}
+		if open != "" {
+			p["open"] = open
+		}
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventPolicy, BlueprintID: "S1", Payload: p})
+		require.True(t, ok)
+
+		return entry.Content
+	}
+
+	assert.NotEqual(t, content("round"), content("mockup"))
+	assert.NotEqual(t, content(""), content("mockup"), "the open mockup is said")
+}
+
+// A mode switch that hands the mockup to the responder names no round, which
+// the person never sees, and still says the mockup changed hands.
+func TestLogEntry_AModeSwitchHandingOverTheMockupNamesNoRound(t *testing.T) {
+	content := func(round int, mockup bool) string {
+		t.Helper()
+
+		p := map[string]any{"from": "default", "to": "auto", "during_run": false}
+		if round > 0 {
+			p["hands_over"] = round
+		}
+
+		if mockup {
+			p["mockup"] = true
+		}
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventMode, BlueprintID: "S1", Payload: p})
+		require.True(t, ok)
+
+		return entry.Content
+	}
+
+	assert.NotEqual(t, content(3, false), content(7, false), "a question round is named")
+	assert.Equal(t, content(3, true), content(7, true))
+	assert.NotEqual(t, content(3, true), content(3, false))
+	assert.NotEqual(t, content(0, false), content(3, true), "the hand-over is said")
 }

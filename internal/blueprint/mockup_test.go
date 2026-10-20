@@ -196,6 +196,32 @@ func listRevision() stage.MockupRevision {
 	}
 }
 
+// bookingSource imitates a salon's booking screen on a tablet: the day's
+// free times and a confirm step.
+const bookingSource = `<!doctype html><html><head><style>body{margin:0;font-family:system-ui;width:1024px}
+.slot{display:inline-block;margin:6px;padding:14px;border:1px solid #aaa;border-radius:8px}.row{padding:10px}</style></head>
+<body><h1>Book a visit</h1><div id="day"></div><div id="confirm" hidden>Confirm your visit</div><script>
+function draw(s){var c = s.slots === "grid" ? "slot" : "row"; var head = s.staff === "on" ? "<p>Stylist: anyone free</p>" : "";
+document.getElementById("day").innerHTML = head + ["09:00", "09:30", "10:00"].map(function(t){ return "<div class=" + c + ">" + t + "</div>" }).join("")}
+draw(window.mockupSettings || {}); window.addEventListener("mockup:settings", function(e){ draw(e.detail) });
+</script></body></html>`
+
+// bookingRevision is a salon's booking screen on a tablet.
+func bookingRevision() stage.MockupRevision {
+	return stage.MockupRevision{
+		Notes:   "Pick a day, then a free time, then confirm.",
+		Source:  bookingSource,
+		Screens: []stage.MockupScreen{{ID: "day", Title: "The day"}, {ID: "confirm", Title: "Confirm"}},
+		Suggestions: []stage.MockupSuggestion{
+			{
+				ID: "slots", Title: "Free times as", Kind: stage.MockupChoice, Why: "A grid shows the whole day at a glance.", Default: "list",
+				Options: []stage.MockupOption{{Value: "list", Label: "A list"}, {Value: "grid", Label: "A grid"}},
+			},
+			{ID: "staff", Title: "Pick a stylist", Kind: stage.MockupSwitch, Why: "Regulars ask for the same stylist.", Default: "off"},
+		},
+	}
+}
+
 // storedRevision decodes version v of BP1's mockup.
 func storedRevision(t *testing.T, st *store.Store, v int) mockupData {
 	t.Helper()
@@ -371,13 +397,30 @@ func TestMockup_AChatRunShowsTheNextRevisionInTheSameRound(t *testing.T) {
 }
 
 // Under auto the responder steers the mockup: the round is the responder's
-// and no prompt waits for the person.
+// and no prompt waits for the person while its turn runs.
 func TestMockup_UnderAutoTheRevisionWaitsForNoPerson(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+
 	script := withScreen(dialogScript(), true)
 	script["mockup"] = showing(photoRevision())
+	script["mockup.responder"] = func(context.Context, stage.Input) (stage.Output, error) {
+		close(started)
+		<-release
+
+		return done("", map[string]any{"use": true}), nil
+	}
 
 	c, st, _, rec, _ := newMockup(t, script)
-	driveIn(t, c, autoStart("BP1"))
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, autoStart("BP1")))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	receive(t, started, "the responder's turn")
+
+	t.Cleanup(func() {
+		close(release)
+		c.Wait("BP1")
+	})
 
 	assert.Equal(t, 1, storedRevision(t, st, 1).Revision)
 
@@ -400,7 +443,9 @@ func TestMockup_UnderAutoTheRevisionWaitsForNoPerson(t *testing.T) {
 
 	v := view(t, c)
 	assert.Nil(t, v.Open, "no mockup prompt waits for the person")
-	assert.Equal(t, "waiting", stepOf(t, v, "mockup").Status)
+	assert.Equal(t, "running", stepOf(t, v, "mockup").Status, "the responder's run is in flight")
+	require.NotNil(t, v.Current)
+	assert.Equal(t, store.RunKindResponder, v.Current.Kind)
 }
 
 // A revision reaches the live stream as a stored artifact, never as a draft.

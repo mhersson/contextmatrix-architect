@@ -24,7 +24,9 @@ const (
 // it. A switch to the mode in effect, once emission has started or after
 // the pipeline ended, is refused and changes nothing. Into a mode other than
 // default, the round waiting for a human goes to the auto responder at once
-// when its stage's policy is now auto (see handOver). Into auto+emit or
+// when its stage's policy is now auto (see handOver); into default, a mockup
+// whose responder's turn waits to run goes back to the person (see
+// claimHandBack). Into auto+emit or
 // yolo, a sign-off that waits for a human runs again, preflight included,
 // and approves itself under the rule the sign-off always follows. On a
 // switch into auto, auto+emit or yolo, a stage gate shown only because its
@@ -52,7 +54,7 @@ func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error 
 		r       *run
 		runCtx  context.Context
 		end     outcome
-		handed  int
+		handed  *roundState
 		signs   bool
 		gate    outcome
 		folded  []store.Artifact
@@ -67,15 +69,19 @@ func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error 
 		}
 	}
 
-	if applied && handed == 0 && emitsOnItsOwn(mode) {
+	if applied && mode == protocol.ArchitectModeDefault {
+		r, runCtx = c.claimHandBack(ctx, sess, bp)
+	}
+
+	if applied && handed == nil && emitsOnItsOwn(mode) {
 		r, runCtx, end, signs = c.claimWaitingSignoff(ctx, sess, bp)
 	}
 
-	if applied && mode != protocol.ArchitectModeDefault && handed == 0 && !signs {
+	if applied && mode != protocol.ArchitectModeDefault && handed == nil && !signs {
 		r, runCtx, gate, folded, decides = c.claimWaitingGate(ctx, sess, bp)
 	}
 
-	if applied && mode != protocol.ArchitectModeDefault && handed == 0 && !signs && !decides {
+	if applied && mode != protocol.ArchitectModeDefault && handed == nil && !signs && !decides {
 		r, runCtx, offered = c.claimWaitingOffer(ctx, sess, bp)
 	}
 
@@ -83,8 +89,14 @@ func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error 
 		payload["gate"] = gate.stage
 	}
 
-	if handed > 0 {
-		payload["hands_over"] = handed
+	// A mockup is a round inside the architect only, so its hand-over is
+	// marked for the transcript to word without the round's number.
+	if handed != nil {
+		payload["hands_over"] = handed.Number
+
+		if handed.Mockup != nil {
+			payload["mockup"] = true
+		}
 	}
 
 	if signs {
@@ -121,36 +133,39 @@ func (c *Controller) SetMode(ctx context.Context, id, mode, msgID string) error 
 
 // handOver hands the round waiting for a human to the auto responder when
 // its stage's policy is now auto (a gate reply still wins) and the pack has
-// responder instructions. The round turns read-only, the answers and
-// decisions stored so far stay and are recorded as the human's, and each
-// assumption left undecided is accepted. The run slot is poked: a free one
-// is claimed and returned for the caller to settle, a held one acts on the
-// round when it is released. It returns the round's number, 0 when nothing
-// was handed over. The caller has stored the new mode. A round whose run
-// read the policy before the switch and has not yet ended on it is not found
-// and stays with its human.
-func (c *Controller) handOver(ctx context.Context, sess *session, bp store.Blueprint, msgID string) (int, *run, context.Context, error) {
-	if c.opts.Pack.ResponderInstructions() == "" {
-		return 0, nil, nil, nil
-	}
-
+// responder instructions for it, a mockup's own for a mockup. The round
+// turns read-only, the answers and decisions stored so far stay and are
+// recorded as the human's, and each assumption left undecided is accepted;
+// a mockup is handed over as it stands, its settings the person's last. The
+// run slot is poked: a free one is claimed and returned for the caller to
+// settle, a held one acts on the round when it is released. It returns the
+// handed-over snapshot, nil when nothing was handed over. The caller has
+// stored the new mode. A round whose run read the policy before the switch
+// and has not yet ended on it is not found and stays with its human.
+func (c *Controller) handOver(ctx context.Context, sess *session, bp store.Blueprint, msgID string) (*roundState, *run, context.Context, error) {
 	lock := c.roundLock(bp.ID)
 	lock.Lock()
 	defer lock.Unlock()
 
 	place, found, err := c.roundAt(ctx, bp.ID)
 	if err != nil || !found {
-		return 0, nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	s := place.state
-	if s.Frame.Closed || s.Frame.Responder || s.complete() {
-		return 0, nil, nil, nil
+
+	instructions := c.opts.Pack.ResponderInstructions()
+	if s.Mockup != nil {
+		instructions = c.opts.Pack.MockupResponderInstructions()
+	}
+
+	if instructions == "" || s.Frame.Closed || s.Frame.Responder || s.complete() {
+		return nil, nil, nil, nil
 	}
 
 	policy, err := c.policy(ctx, bp, s.Frame.Stage)
 	if err != nil || policy != pack.PolicyAuto {
-		return 0, nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	h := &handover{}
@@ -169,7 +184,42 @@ func (c *Controller) handOver(ctx context.Context, sess *session, bp store.Bluep
 
 	r, runCtx := c.poke(bp.ID)
 
-	return s.Number, r, runCtx, nil
+	return &next, r, runCtx, nil
+}
+
+// claimHandBack takes the run slot while the mockup the pipeline stands at
+// waits for a turn of the auto responder that nothing runs now, as after an
+// abort, and the mockup stage's policy is no longer auto, for the caller to
+// run the turn, which hands the mockup back to the person; nil, and the slot
+// free, anywhere else. A held slot is left alone: the next turn or revision
+// its holder reaches reads the policy and hands the mockup back.
+func (c *Controller) claimHandBack(ctx context.Context, sess *session, bp store.Blueprint) (*run, context.Context) {
+	r, runCtx, claimed, _ := c.claimAttached(bp.ID, sess)
+	if !claimed {
+		return nil, nil
+	}
+
+	place, found, err := c.roundAt(ctx, bp.ID)
+
+	back := err == nil && found && place.next == roundTurn
+	if back {
+		var policy string
+
+		policy, err = c.policy(ctx, bp, place.state.Frame.Stage)
+		back = err == nil && policy != pack.PolicyAuto
+	}
+
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: read the mockup a mode switch hands back", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
+	}
+
+	if !back {
+		c.release(bp.ID, r)
+
+		return nil, nil
+	}
+
+	return r, runCtx
 }
 
 // respondHandedOver has the auto responder answer each question of the

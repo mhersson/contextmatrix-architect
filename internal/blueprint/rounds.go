@@ -44,6 +44,9 @@ const (
 	// changeRevision: a designer's chat run showed the next revision on a
 	// mockup round.
 	changeRevision = "revision"
+	// changeHandedBack: the auto responder's turn found the mockup stage's
+	// policy no longer auto and gave the mockup back to the person.
+	changeHandedBack = "handed_back"
 )
 
 // roundState is one snapshot of a question round: the frame the panel shows
@@ -782,6 +785,9 @@ const (
 	roundContinue
 	// roundSettle: a closed mockup round, whose step settles (settleMockup).
 	roundSettle
+	// roundTurn: a mockup the auto responder steers, posted under auto or
+	// handed over, waits for its next turn (mockupTurn).
+	roundTurn
 )
 
 // roundPlace is the round the pipeline stands at, what it waits for, and
@@ -789,6 +795,8 @@ const (
 // for the next message, as a failed stage does. An open handed-over round is
 // never stalled: the switch that handed it over is the go-ahead, as the use
 // or skip is for a decided mockup, whatever its chat run in flight then did.
+// A handed-over mockup stalls as any mockup does: its switch runs the turn
+// at once, so a designer run that fails after that waits for a message.
 type roundPlace struct {
 	state   roundState
 	next    roundNext
@@ -843,10 +851,12 @@ func (c *Controller) roundAt(ctx context.Context, id string) (roundPlace, bool, 
 	decided := s.Mockup != nil && s.Mockup.Action != ""
 
 	place := roundPlace{state: s}
-	place.stalled = !decided && (s.HandedOver == nil || s.Frame.Closed) &&
+	place.stalled = !decided && (s.HandedOver == nil || s.Mockup != nil || s.Frame.Closed) &&
 		(last.Status == store.RunFailed || (last.Status == store.RunCanceled && last.Reason != reasonSessionEnded))
 
-	// A mockup round never reaches the handed-over round's responder.
+	// A mockup round never reaches the handed-over round's responder: it has
+	// no questions to answer, and the auto responder takes turns on it
+	// instead.
 	switch {
 	case s.Mockup != nil && s.Frame.Closed:
 		place.next = roundSettle
@@ -856,6 +866,8 @@ func (c *Controller) roundAt(ctx context.Context, id string) (roundPlace, bool, 
 		place.next = roundClose
 	case s.Mockup != nil && s.chatPending():
 		place.next = roundChat
+	case s.Mockup != nil && s.Frame.Responder:
+		place.next = roundTurn
 	case s.Mockup != nil:
 		place.next = roundWait
 	case s.HandedOver != nil:
