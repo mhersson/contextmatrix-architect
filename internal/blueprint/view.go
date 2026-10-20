@@ -84,12 +84,13 @@ type record struct {
 	flights  []flightView
 	// round is the open round's number and roundStage its stage; 0 and ""
 	// when none waits. mockup marks a mockup round, and unprompted one no
-	// prompt waits on: the auto responder steers it, a designer run is
-	// writing its next revision or reply, or a use or skip decided it.
+	// prompt waits on: the auto responder steers it (steered), a designer run
+	// is writing its next revision or reply, or a use or skip decided it.
 	round      int
 	roundStage string
 	mockup     bool
 	unprompted bool
+	steered    bool
 	// handedRound is the builder round an open round handed to the
 	// responder was asked in; 0 when there is none.
 	handedRound int
@@ -276,6 +277,7 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 		rec.round, rec.roundStage, rec.mockup = place.state.Number, place.state.Frame.Stage, true
 		_, writing := rec.flightOf(place.state.Frame.Stage)
 		rec.unprompted = place.state.Frame.Responder || writing || place.state.Mockup.Action != ""
+		rec.steered = place.state.Frame.Responder
 	case place.state.HandedOver != nil:
 		// A handed-over round waits for nobody: the responder answers it.
 		rec.handedRound = place.state.BuilderRound
@@ -683,7 +685,9 @@ func (rec record) stageStatus(st pipelineStep, i, current int) string {
 		}
 	}
 
-	if (rec.round > 0 && rec.roundStage == st.ID) || rec.offer {
+	// A mockup the auto responder steers waits for nobody, so a failure there
+	// is the step's: CM reads waiting with no prompt as the responder at work.
+	if (rec.round > 0 && rec.roundStage == st.ID && (!rec.steered || !rec.failed())) || rec.offer {
 		return stepWaiting
 	}
 

@@ -110,9 +110,11 @@ func TestBakeMockup_FixesTheChosenSettings(t *testing.T) {
 
 func TestBakeMockup_TheFirstScriptIsTheFirstElement(t *testing.T) {
 	// A script tag inside a comment, a style or a text area is no script
-	// element; the fixed settings go before the first real one.
+	// element, and one inside a template never runs as the page loads; the
+	// fixed settings go before the first real one.
 	source := "<!doctype html><!-- <script>old</script> --><style>p::after{content:\"<script>\"}</style>" +
-		"<textarea><script>typed</script></textarea><SCRIPT>draw(window.mockupSettings)</SCRIPT>"
+		"<textarea><script>typed</script></textarea><template><p><script>later()</script></p></template>" +
+		"<SCRIPT>draw(window.mockupSettings)</SCRIPT>"
 
 	baked := stripLeadingComment(bakeMockup(source, map[string]string{"sort": "name"}, "x"))
 	fixed := `<script>window.mockupSettings = {"sort":"name"};</script>`

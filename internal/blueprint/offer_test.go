@@ -106,6 +106,51 @@ func TestOffer_AnyOtherReplyIsANote(t *testing.T) {
 	v := view(t, c)
 	require.NotNil(t, v.Open)
 	assert.Equal(t, protocol.OpenPrompt{PromptID: offerPromptID, Kind: promptGate}, *v.Open)
+
+	// The note left the run slot free, so the next reply takes the offer.
+	takeOffer(t, c)
+	assert.Contains(t, stagesRun(runner), "mockup")
+}
+
+// A person who took the offer can still go on without a mockup while no
+// revision was shown, as when the designer's first run failed.
+func TestOffer_SkipMockupLeavesAFirstLookThatFailed(t *testing.T) {
+	c, st, runner, rec, _ := newMockup(t, offerScript())
+	drive(t, c, "BP1")
+	takeOffer(t, c)
+	require.Equal(t, "failed", stepOf(t, view(t, c), "mockup").Status)
+
+	require.NoError(t, c.Message(context.Background(), "BP1", "skip mockup", "m3"))
+	c.Wait("BP1")
+
+	offers := rec.all(EventMockupOffer)
+	assert.Equal(t, "declined", offers[len(offers)-1].Payload["state"])
+	assert.Equal(t, "m3", offers[len(offers)-1].Payload["message_id"])
+	assert.Equal(t, "skipped", stepOf(t, view(t, c), "mockup").Status)
+	assert.Contains(t, stagesRun(runner), "slicing")
+	assert.Len(t, inputsOf(runner, "mockup"), 1, "the designer ran once")
+
+	_, err := st.LatestArtifact(context.Background(), "BP1", "mockup")
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+// Any other text after a first look that failed runs the designer again.
+func TestOffer_ANoteAfterAFailedFirstLookRunsItAgain(t *testing.T) {
+	c, _, runner, rec, _ := newMockup(t, offerScript())
+	drive(t, c, "BP1")
+	takeOffer(t, c)
+
+	require.NoError(t, c.Message(context.Background(), "BP1", "try once more", "m3"))
+	c.Wait("BP1")
+
+	assert.Len(t, inputsOf(runner, "mockup"), 2)
+	assert.NotContains(t, stagesRun(runner), "slicing")
+	assert.Equal(t, []any{"shown", "accepted"}, offerStates(rec))
+
+	notes := rec.all(EventNote)
+	require.NotEmpty(t, notes)
+	assert.Equal(t, "mockup", notes[len(notes)-1].Payload["retries"])
+	assert.Equal(t, firstLookHint, notes[len(notes)-1].Payload["hint"], "the note says skip mockup still goes on without one")
 }
 
 func TestOffer_AReopenShowsItAgain(t *testing.T) {

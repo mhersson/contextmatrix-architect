@@ -434,8 +434,10 @@ func (c *Controller) unreadable(ctx context.Context, au audit, id string, err er
 
 // input handles a message that arrives while no run is in flight and no
 // human's round takes it as chat: a note at a round, the need while the
-// first stage has no artifact, a reply to the mockup offer, a decision at an
-// open gate or the sign-off, else a note. The caller holds the run slot.
+// first stage has no artifact, a reply to the mockup offer, or its skip
+// while no revision was shown since it was accepted, a decision at an open
+// gate or the sign-off, else a note, which names that skip while it applies.
+// The caller holds the run slot.
 func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, id, text, msgID string) error {
 	bp, err := c.opts.Store.GetBlueprint(ctx, id)
 	if err != nil {
@@ -491,7 +493,16 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 		return fmt.Errorf("blueprint: message: %w", err)
 	}
 
-	if offer {
+	pending := false
+	if !offer {
+		if pending, err = c.firstLookPending(ctx, id, out); err != nil {
+			c.release(id, r)
+
+			return fmt.Errorf("blueprint: message: %w", err)
+		}
+	}
+
+	if offer || (pending && skipsMockup(text)) {
 		return c.atOffer(ctx, runCtx, r, sess, bp, text, msgID)
 	}
 
@@ -524,6 +535,11 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 		note.Payload["retries"] = out.stage
 	} else {
 		note.Payload["ended"] = true
+	}
+
+	// The accepted offer's prompt is gone, so the way out is told here.
+	if pending {
+		note.Payload["hint"] = firstLookHint
 	}
 
 	sess.audit.event(ctx, note)

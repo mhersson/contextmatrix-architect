@@ -463,6 +463,114 @@ func TestMockupTurn_ASwitchToDefaultAfterAnAbortHandsItBack(t *testing.T) {
 	assert.NotContains(t, onlyMode(t, rec).Payload, "hands_over")
 }
 
+// A switch to default while the designer's run on the responder's request
+// has failed hands the mockup back at once; before it the step reads failed,
+// as nobody waits on it.
+func TestMockupTurn_ASwitchToDefaultAfterAFailedDesignerRunHandsItBack(t *testing.T) {
+	first := showing(bookingRevision())
+
+	script := withScreen(dialogScript(), true)
+	script["mockup"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if in.Chat {
+			return stage.Output{}, errors.New("model down")
+		}
+
+		return first(ctx, in)
+	}
+	script["mockup.responder"] = reacting(map[string]any{"request": "Show the next free slot first."})
+
+	c, st, runner, _, _ := newMockup(t, script)
+	driveIn(t, c, autoStart("BP1"))
+
+	require.Len(t, inputsOf(runner, "mockup"), 2, "the first run and the failed chat run")
+
+	v := view(t, c)
+	assert.Nil(t, v.Open)
+	assert.Equal(t, "failed", stepOf(t, v, "mockup").Status)
+
+	require.NoError(t, c.SetMode(context.Background(), "BP1", protocol.ArchitectModeDefault, "m-mode"))
+	c.Wait("BP1")
+
+	s := onlyMockupRound(t, c)
+	assert.False(t, s.Frame.Responder)
+	assert.Nil(t, s.HandedOver)
+	assert.Equal(t, changeHandedBack, s.Change)
+
+	v = view(t, c)
+	require.NotNil(t, v.Open)
+	assert.Equal(t, protocol.OpenPrompt{PromptID: mockupPromptID(s.Number), Kind: promptMockup}, *v.Open)
+	assert.Equal(t, "waiting", stepOf(t, v, "mockup").Status)
+
+	assert.Len(t, inputsOf(runner, "mockup"), 2, "the hand-back runs no designer")
+	assert.Len(t, inputsOf(runner, "mockup.responder"), 1)
+	assert.Empty(t, mockupGates(t, st))
+}
+
+// A switch to default while the responder's turn runs takes the steering
+// back as the turn ends: the use it reaches, its own or the one a failure
+// leaves, is not stored, and the mockup waits for the person with the
+// settings the responder sent.
+func TestMockupTurn_ASwitchToDefaultDuringATurnHandsBackItsUse(t *testing.T) {
+	tests := map[string]struct {
+		react func(context.Context, stage.Input) (stage.Output, error)
+		want  map[string]string
+	}{
+		"a use": {
+			react: reacting(map[string]any{"settings": map[string]any{"slots": "grid", "staff": "on"}, "use": true}),
+			want:  map[string]string{"slots": "grid", "staff": "on"},
+		},
+		"a failed responder": {
+			react: func(context.Context, stage.Input) (stage.Output, error) {
+				return stage.Output{}, errors.New("model down")
+			},
+			want: map[string]string{"slots": "list", "staff": "off"},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			started, release := make(chan struct{}, 1), make(chan struct{})
+			unblock := closer(t, release)
+
+			script := withScreen(dialogScript(), true)
+			script["mockup"] = showing(bookingRevision())
+			script["mockup.responder"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+				signal(started)
+				<-release
+
+				return tt.react(ctx, in)
+			}
+
+			c, st, runner, _, _ := newMockup(t, script)
+			ctx := context.Background()
+
+			require.NoError(t, c.Start(ctx, autoStart("BP1")))
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			receive(t, started, "the responder's turn")
+
+			require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeDefault, "m-mode"))
+			unblock()
+			c.Wait("BP1")
+
+			assert.Empty(t, mockupGates(t, st), "the turn's use is not stored")
+			assert.NotContains(t, stagesRun(runner), "slicing")
+			assert.Len(t, inputsOf(runner, "mockup.responder"), 1)
+
+			s := onlyMockupRound(t, c)
+			assert.False(t, s.Frame.Responder)
+			assert.Nil(t, s.HandedOver)
+			assert.Empty(t, s.Mockup.Action)
+			assert.Equal(t, changeHandedBack, s.Change)
+			assert.Equal(t, tt.want, s.Mockup.Settings, "the responder's settings")
+
+			v := view(t, c)
+			require.NotNil(t, v.Open)
+			assert.Equal(t, protocol.OpenPrompt{PromptID: mockupPromptID(s.Number), Kind: promptMockup}, *v.Open)
+			assert.Equal(t, "waiting", stepOf(t, v, "mockup").Status)
+		})
+	}
+}
+
 // A reopen after the session's end cut the responder's turn short runs the
 // turn again.
 func TestMockupTurn_AReopenRunsTheTurnTheSessionsEndCutShort(t *testing.T) {

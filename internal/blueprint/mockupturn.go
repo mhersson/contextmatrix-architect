@@ -117,10 +117,12 @@ func turnDue(s roundState) bool {
 // answers, or uses the revision as it set it. A responder that fails, or a
 // cost cap refuses, uses the revision with the last known settings, marked
 // failed, and the turn says so in an error event. A turn that finds the
-// blueprint in default mode and the stage's policy not auto runs nothing and
-// hands the mockup back to the person. stageAsked hands the round to
-// nextSegment; a cancel leaves the blueprint idle, and a turn that cannot be
-// read or stored fails it. The caller holds the run slot.
+// person taking the steering back (handsBack) runs nothing and hands the
+// mockup back; one that finds it as it ends stores no use, its own or a
+// failure's, and hands the mockup back with the settings the responder sent,
+// while its request stands. stageAsked hands the round to nextSegment; a
+// cancel leaves the blueprint idle, and a turn that cannot be read or stored
+// fails it. The caller holds the run slot.
 func (c *Controller) mockupTurn(ctx context.Context, r *run, sess *session, bp store.Blueprint) stageEnd {
 	bg, au, id := context.WithoutCancel(ctx), sess.audit, bp.ID
 	lock := c.roundLock(id)
@@ -194,6 +196,32 @@ func (c *Controller) mockupTurn(ctx context.Context, r *run, sess *session, bp s
 	next.MessageID, next.Dropped = "", 0
 	sugs := cur.Mockup.Suggestions
 
+	// A switch to default while the turn ran takes the steering back, so the
+	// use is the person's to make, from the settings the responder reached. A
+	// request stands: the revision that answers it is the person's.
+	if err != nil || re.Use {
+		back, berr := c.handsBack(bg, bp, cur.Frame.Stage)
+		if berr != nil {
+			c.fail(bg, au, id, 0, berr.Error())
+
+			return stageStopped
+		}
+
+		if back {
+			if err == nil {
+				next.Mockup.Settings, _ = cleanSettings(sugs, re.Settings, cur.Mockup.Settings)
+			}
+
+			if berr := c.handBack(bg, au, id, next); berr != nil {
+				c.fail(bg, au, id, 0, berr.Error())
+
+				return stageStopped
+			}
+
+			return stageAsked
+		}
+	}
+
 	switch {
 	case err != nil:
 		next.Change = changeChosen
@@ -227,9 +255,9 @@ func (c *Controller) mockupTurn(ctx context.Context, r *run, sess *session, bp s
 }
 
 // turnStart reads the mockup round the pipeline stands at for a turn: due is
-// false when no turn is due, and when the blueprint is in default mode and
-// the stage's policy is not auto, in which case the mockup goes back to the
-// person first. The caller holds the round lock.
+// false when no turn is due, and when the person takes the steering back
+// (handsBack), in which case the mockup goes back to them first. The caller
+// holds the round lock.
 func (c *Controller) turnStart(ctx context.Context, au audit, bp store.Blueprint) (roundState, bool, error) {
 	place, found, err := c.roundAt(ctx, bp.ID)
 	if err != nil || !found || !turnDue(place.state) {
@@ -238,39 +266,57 @@ func (c *Controller) turnStart(ctx context.Context, au audit, bp store.Blueprint
 
 	s := place.state
 
-	// Read under the lock, as a revision reads it, so the turn never runs
-	// for a switch to default it raced.
-	policy, err := c.policy(ctx, bp, s.Frame.Stage)
-	if err != nil {
+	back, err := c.handsBack(ctx, bp, s.Frame.Stage)
+
+	switch {
+	case err != nil:
+		return roundState{}, false, err
+	case !back:
+		return s, true, nil
+	}
+
+	if err := c.handBack(ctx, au, bp.ID, s); err != nil {
 		return roundState{}, false, err
 	}
 
-	if policy == pack.PolicyAuto {
-		return s, true, nil
+	return roundState{}, false, nil
+}
+
+// handsBack reports whether the person takes back the steering of a mockup
+// of stageID that the auto responder holds: the blueprint is in default mode
+// and the stage's policy is not auto. Only a mode switch hands one back: in
+// another mode a gate reply acts from the next revision, as an open round
+// keeps its responder. The caller holds the round lock, as a revision reads
+// the policy under it, so a turn never runs, or ends, on a switch to default
+// it raced.
+func (c *Controller) handsBack(ctx context.Context, bp store.Blueprint, stageID string) (bool, error) {
+	policy, err := c.policy(ctx, bp, stageID)
+	if err != nil || policy == pack.PolicyAuto {
+		return false, err
 	}
 
-	// Only a mode switch hands back a mockup the responder holds: a gate
-	// reply acts from the next revision, as an open round keeps its
-	// responder.
 	cur, err := c.opts.Store.GetBlueprint(ctx, bp.ID)
 	if err != nil {
-		return roundState{}, false, fmt.Errorf("blueprint: read the mode: %w", err)
+		return false, fmt.Errorf("blueprint: read the mode: %w", err)
 	}
 
-	if cur.Mode != "" && cur.Mode != protocol.ArchitectModeDefault {
-		return s, true, nil
-	}
+	return cur.Mode == "" || cur.Mode == protocol.ArchitectModeDefault, nil
+}
 
+// handBack stores mockup round s given back to the person, so the open
+// prompt mockup:<n> returns with its use and skip. The caller holds the round
+// lock.
+func (c *Controller) handBack(ctx context.Context, au audit, id string, s roundState) error {
 	back := s.clone()
 	back.Frame.Responder, back.HandedOver = false, nil
 	back.Change, back.MessageID, back.Dropped = changeHandedBack, "", 0
-	c.putRound(ctx, au, bp.ID, 0, back)
+	c.putRound(ctx, au, id, 0, back)
 
-	if !c.landed(ctx, bp.ID, back) {
-		return roundState{}, false, errors.New("the mockup could not be handed back to the person")
+	if !c.landed(ctx, id, back) {
+		return errors.New("the mockup could not be handed back to the person")
 	}
 
-	return roundState{}, false, nil
+	return nil
 }
 
 // landed reports whether snapshot next of a turn is its round's newest. A

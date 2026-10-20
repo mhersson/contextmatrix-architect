@@ -1217,6 +1217,70 @@ func TestMockup_LaterStagesGetTheApprovedDesignInWords(t *testing.T) {
 	assert.Contains(t, whole, "IMG_0001.jpg", "read_artifact returns the source")
 }
 
+// readData decodes the data a read_artifact result holds.
+func readData(t *testing.T, text string) mockupData {
+	t.Helper()
+
+	_, rest, ok := strings.Cut(text, "```json\n")
+	require.True(t, ok, "the read holds data")
+
+	raw, _, ok := strings.Cut(rest, "\n```")
+	require.True(t, ok)
+
+	var d mockupData
+	require.NoError(t, json.Unmarshal([]byte(raw), &d))
+
+	return d
+}
+
+// read_artifact gives a later stage the revision the person used with the
+// settings they chose, and no other revision of the mockup.
+func TestMockup_ReadArtifactReturnsTheUsedRevisionAsChosen(t *testing.T) {
+	type reads struct {
+		used   string
+		older  error
+		latest string
+	}
+
+	var got atomic.Value
+
+	script := withScreen(dialogScript(), true)
+	script["mockup"] = showing(listRevision())
+	script["slicing"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if reader := toolNamed(t, in, "read_artifact"); reader != nil {
+			used, err := reader.Execute(ctx, map[string]any{"stage": "mockup", "version": float64(2)})
+			if err != nil {
+				return stage.Output{}, err
+			}
+
+			latest, err := reader.Execute(ctx, map[string]any{"stage": "mockup"})
+			if err != nil {
+				return stage.Output{}, err
+			}
+
+			_, older := reader.Execute(ctx, map[string]any{"stage": "mockup", "version": float64(1)})
+			got.Store(reads{used: used.Text, older: older, latest: latest.Text})
+		}
+
+		return done("# Slices", oneSlice()), nil
+	}
+
+	c, _, _, _, _ := newMockup(t, script)
+	drive(t, c, "BP1")
+	takeOffer(t, c)
+	chatMockup(t, c, "Group the list by aisle, please.", nil)
+	useMockup(t, c, map[string]string{"layout": "cards", "group": "on"})
+
+	r, ok := got.Load().(reads)
+	require.True(t, ok, "slicing read the mockup")
+
+	used := readData(t, r.used)
+	assert.Equal(t, 2, used.Revision)
+	assert.Equal(t, map[string]string{"layout": "cards", "group": "on"}, used.Chosen)
+	assert.Equal(t, used, readData(t, r.latest), "a read without a version is the used one")
+	assert.Error(t, r.older, "a revision the person did not use is not read")
+}
+
 func TestMockup_ASkippedMockupGivesLaterStagesNothing(t *testing.T) {
 	var (
 		task  atomic.Value

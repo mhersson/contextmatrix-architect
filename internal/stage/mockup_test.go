@@ -148,6 +148,49 @@ func TestShowMockup_RefusesWhatTheFrameBlocks(t *testing.T) {
 
 			return a
 		}},
+		{"a screen title that reads as a heading", func() map[string]any {
+			a := mockupArgs(terminalSource)
+			a["screens"].([]any)[0].(map[string]any)["title"] = "## The run"
+
+			return a
+		}},
+		{"a suggestion title that starts with a hash", func() map[string]any {
+			a := mockupArgs(terminalSource)
+			a["suggestions"].([]any)[0].(map[string]any)["title"] = "#1 dry run"
+
+			return a
+		}},
+		{"a suggestion title over two lines", func() map[string]any {
+			a := mockupArgs(terminalSource)
+			a["suggestions"].([]any)[0].(map[string]any)["title"] = "Show a\n## dry run"
+
+			return a
+		}},
+		{"an option label that reads as a heading", func() map[string]any {
+			a := mockupArgs(terminalSource)
+			a["suggestions"].([]any)[1].(map[string]any)["options"].([]any)[0].(map[string]any)["label"] = "## Date taken"
+
+			return a
+		}},
+		{"an option label over two lines", func() map[string]any {
+			a := mockupArgs(terminalSource)
+			a["suggestions"].([]any)[1].(map[string]any)["options"].([]any)[0].(map[string]any)["label"] = "Date\ntaken"
+
+			return a
+		}},
+		{"settings read in an event attribute only", func() map[string]any {
+			return mockupArgs(`<!doctype html><html><body onload="document.body.textContent = String(window.mockupSettings || {}); ` +
+				`window.addEventListener('mockup:settings', function(e){ document.body.textContent = String(e.detail) })"></body></html>`)
+		}},
+		{"settings read in a template's script only", func() map[string]any {
+			return mockupArgs(strings.Replace(src("</script>", "</script></template>"), "<script>", "<template><script>", 1))
+		}},
+		{"notes too long", func() map[string]any {
+			a := mockupArgs(terminalSource)
+			a["notes"] = strings.Repeat("n", 4001)
+
+			return a
+		}},
 	}
 
 	for _, tt := range tests {

@@ -25,8 +25,8 @@ const (
 // the pipeline ended, is refused and changes nothing. Into a mode other than
 // default, the round waiting for a human goes to the auto responder at once
 // when its stage's policy is now auto (see handOver); into default, a mockup
-// whose responder's turn waits to run goes back to the person (see
-// claimHandBack). Into auto+emit or
+// the responder holds with nothing running on it goes back to the person
+// (see claimHandBack). Into auto+emit or
 // yolo, a sign-off that waits for a human runs again, preflight included,
 // and approves itself under the rule the sign-off always follows. On a
 // switch into auto, auto+emit or yolo, a stage gate shown only because its
@@ -187,39 +187,70 @@ func (c *Controller) handOver(ctx context.Context, sess *session, bp store.Bluep
 	return &next, r, runCtx, nil
 }
 
-// claimHandBack takes the run slot while the mockup the pipeline stands at
-// waits for a turn of the auto responder that nothing runs now, as after an
-// abort, and the mockup stage's policy is no longer auto, for the caller to
-// run the turn, which hands the mockup back to the person; nil, and the slot
-// free, anywhere else. A held slot is left alone: the next turn or revision
-// its holder reaches reads the policy and hands the mockup back.
+// claimHandBack takes the run slot while nothing runs on the mockup the
+// auto responder holds at the pipeline's step and the person takes the
+// steering back (handsBack). A mockup that waits for a turn, as after an
+// abort, is returned for the caller to run the turn, which hands it back; one
+// whose designer's run on the responder's request failed or was aborted is
+// handed back here, the request left for the next chat run, and the slot is
+// released. nil, and the slot free, anywhere else. A held slot is left
+// alone: the turn or revision its holder is on reads the policy and hands
+// the mockup back. A designer's chat run on a request that holds it and then
+// fails or is aborted leaves the mockup with the responder, no prompt open,
+// until a message or continue runs it again: a revision it shows is the
+// person's, and a reply in words hands it back at the next turn.
 func (c *Controller) claimHandBack(ctx context.Context, sess *session, bp store.Blueprint) (*run, context.Context) {
 	r, runCtx, claimed, _ := c.claimAttached(bp.ID, sess)
 	if !claimed {
 		return nil, nil
 	}
 
-	place, found, err := c.roundAt(ctx, bp.ID)
-
-	back := err == nil && found && place.next == roundTurn
-	if back {
-		var policy string
-
-		policy, err = c.policy(ctx, bp, place.state.Frame.Stage)
-		back = err == nil && policy != pack.PolicyAuto
-	}
-
+	turn, err := c.handBackIdle(ctx, sess.audit, bp)
 	if err != nil {
-		c.opts.Logger.Warn("blueprint: read the mockup a mode switch hands back", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
+		c.opts.Logger.Warn("blueprint: hand the mockup back on a mode switch", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))
 	}
 
-	if !back {
+	if !turn {
 		c.release(bp.ID, r)
 
 		return nil, nil
 	}
 
 	return r, runCtx
+}
+
+// handBackIdle hands back the mockup the auto responder holds at the
+// pipeline's step, for a holder of the run slot with nothing in flight: turn
+// is true when it waits for a turn, which the caller runs and which hands it
+// back, and a stalled chat run on it is handed back at once. The caller
+// holds the run slot.
+func (c *Controller) handBackIdle(ctx context.Context, au audit, bp store.Blueprint) (bool, error) {
+	lock := c.roundLock(bp.ID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	place, found, err := c.roundAt(ctx, bp.ID)
+	if err != nil || !found {
+		return false, err
+	}
+
+	s := place.state
+	stalled := place.next == roundChat && place.stalled && s.Mockup != nil && s.Frame.Responder
+
+	if place.next != roundTurn && !stalled {
+		return false, nil
+	}
+
+	back, err := c.handsBack(ctx, bp, s.Frame.Stage)
+	if err != nil || !back {
+		return false, err
+	}
+
+	if stalled {
+		return false, c.handBack(ctx, au, bp.ID, s)
+	}
+
+	return true, nil
 }
 
 // respondHandedOver has the auto responder answer each question of the

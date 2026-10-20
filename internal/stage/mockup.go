@@ -184,8 +184,11 @@ func parseMockup(args map[string]any) (MockupRevision, error) {
 		Source: strings.TrimSpace(stringArg(args, "source")),
 	}
 
-	if m.Notes == "" {
+	switch {
+	case m.Notes == "":
 		return MockupRevision{}, errors.New("notes are required: what this revision shows, for the person")
+	case utf8.RuneCountInString(m.Notes) > maxReplyRunes:
+		return MockupRevision{}, fmt.Errorf("notes are at most %d characters", maxReplyRunes)
 	}
 
 	screens, err := mockupScreens(args["screens"])
@@ -239,9 +242,18 @@ func mockupTitle(title, what string) error {
 		return fmt.Errorf("%s needs a title", what)
 	case utf8.RuneCountInString(title) > maxTitleRunes:
 		return fmt.Errorf("%s's title is at most %d characters", what, maxTitleRunes)
+	case !commentLine(title):
+		return fmt.Errorf("%s's title must be one line that does not start with #", what)
 	}
 
 	return nil
+}
+
+// commentLine reports text a card's mockup comment can list on a line of its
+// own: the agent's section parser trims each card line and does not track
+// the block, so a line that starts with # can read as a heading.
+func commentLine(text string) bool {
+	return !strings.HasPrefix(text, "#") && !strings.ContainsAny(text, "\r\n")
 }
 
 // mockupIDOf checks id, unique among seen, and records it.
@@ -372,6 +384,8 @@ func choiceSuggestion(s MockupSuggestion, options []map[string]any) (MockupSugge
 			return MockupSuggestion{}, fmt.Errorf("suggestion %s: option value %q is given twice", s.ID, o.Value)
 		case o.Label == "":
 			return MockupSuggestion{}, fmt.Errorf("suggestion %s: option %s needs a label", s.ID, o.Value)
+		case !commentLine(o.Label):
+			return MockupSuggestion{}, fmt.Errorf("suggestion %s: option %s's label must be one line that does not start with #", s.ID, o.Value)
 		}
 
 		s.Options = append(s.Options, o)
@@ -500,6 +514,13 @@ func checkSource(src string, settings bool) error {
 		return errors.New("the source must render from window.mockupSettings at load and again on each window mockup:settings event, or flipping a suggestion changes nothing")
 	}
 
+	// A card fixes the chosen settings in a script before the first script
+	// element that runs as the document loads; without one it renders the
+	// defaults.
+	if settings && code.loaded == 0 {
+		return errors.New("the source must read the settings in a script element outside any template, which runs as the document loads")
+	}
+
 	return nil
 }
 
@@ -507,8 +528,13 @@ func checkSource(src string, settings bool) error {
 type piece struct{ text, where string }
 
 // code is a source's css, from its style elements and attributes, and its
-// script, from its script elements and on* attributes, in document order.
-type code struct{ styles, scripts []piece }
+// script, from its script elements and on* attributes, in document order;
+// loaded counts its script elements outside any template, which run as the
+// document loads.
+type code struct {
+	styles, scripts []piece
+	loaded          int
+}
 
 // checkMarkup tokenizes src, refuses a tag or an address that loads,
 // submits or navigates, and returns its code.
@@ -517,6 +543,8 @@ func checkMarkup(src string) (code, error) {
 		out code
 		// in is the raw-text element the tokenizer stands in, "" for none.
 		in string
+		// templates counts the template elements open around the tokenizer.
+		templates int
 	)
 
 	z := html.NewTokenizer(strings.NewReader(src))
@@ -537,11 +565,22 @@ func checkMarkup(src string) (code, error) {
 				out.scripts = append(out.scripts, piece{text: string(z.Text()), where: "script element"})
 			}
 		case html.EndTagToken:
+			if name, _ := z.TagName(); string(name) == "template" && templates > 0 {
+				templates--
+			}
+
 			in = ""
 		case html.StartTagToken, html.SelfClosingTagToken:
 			name, err := checkTag(z, &out)
 			if err != nil {
 				return code{}, err
+			}
+
+			switch {
+			case name == "template":
+				templates++
+			case name == "script" && templates == 0:
+				out.loaded++
 			}
 
 			in = name

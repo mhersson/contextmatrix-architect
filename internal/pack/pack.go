@@ -680,12 +680,12 @@ func validateMockup(stages []Stage) error {
 		return fmt.Errorf("pack: mockup stage %q has no gate, reviewer, fold, loop or slices, but sets %s", s.ID, key)
 	}
 
-	if len(screens) == 0 || screens[0] > i {
+	if len(screens) == 0 || screens[0] >= i {
 		return fmt.Errorf("pack: mockup stage %q needs an earlier stage that checks %s", s.ID, CheckScreen)
 	}
 
-	if slicing := slices.IndexFunc(stages, func(t Stage) bool { return slices.Contains(t.Checks, CheckSlices) }); slicing >= 0 && i > slicing {
-		return fmt.Errorf("pack: mockup stage %q sits before the stage that checks slices", s.ID)
+	if slicing := slices.IndexFunc(stages, func(t Stage) bool { return slices.Contains(t.Checks, CheckSlices) }); slicing >= 0 && i >= slicing {
+		return fmt.Errorf("pack: mockup stage %q must sit before the stage that checks slices", s.ID)
 	}
 
 	return nil

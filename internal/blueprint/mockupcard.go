@@ -137,8 +137,8 @@ func withMockup(body string, m mockupResult, d mockupData, screens []string) str
 
 // bakeMockup is source with comment before it, as an HTML comment no text
 // can close early, and the chosen settings fixed in a script before the
-// source's first script element, so that script reads them. A source
-// without a script, or a nil chosen, gets no settings.
+// source's first script element that runs as it loads, so that script
+// reads them. A source without one, or a nil chosen, gets no settings.
 func bakeMockup(source string, chosen map[string]string, comment string) string {
 	for strings.Contains(comment, "--") {
 		comment = strings.ReplaceAll(comment, "--", "- -")
@@ -166,10 +166,11 @@ func bakeMockup(source string, chosen map[string]string, comment string) string 
 
 // firstScript is the byte offset of source's first script start tag as the
 // HTML tokenizer reads it, so a tag inside a comment, a style or a text
-// area does not count; -1 when there is none.
+// area does not count, outside any template, whose scripts do not run as
+// the document loads; -1 when there is none.
 func firstScript(source string) int {
 	z := html.NewTokenizer(strings.NewReader(source))
-	at := 0
+	at, templates := 0, 0
 
 	for {
 		tt := z.Next()
@@ -178,11 +179,16 @@ func firstScript(source string) int {
 		}
 
 		n := len(z.Raw())
+		name, _ := z.TagName()
 
-		if tt == html.StartTagToken || tt == html.SelfClosingTagToken {
-			if name, _ := z.TagName(); string(name) == "script" {
-				return at
-			}
+		switch {
+		case tt == html.EndTagToken && string(name) == "template" && templates > 0:
+			templates--
+		case tt != html.StartTagToken && tt != html.SelfClosingTagToken:
+		case string(name) == "template":
+			templates++
+		case string(name) == "script" && templates == 0:
+			return at
 		}
 
 		at += n

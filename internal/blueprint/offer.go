@@ -25,6 +25,13 @@ const (
 // offerByMode marks an offer a mode switch took.
 const offerByMode = "mode"
 
+// The hints of a note at the offer, and of one that runs the mockup step
+// again while no revision was shown since the offer was accepted.
+const (
+	offerHint     = "Reply show mockup for a first look, or skip mockup to go on without one."
+	firstLookHint = "Reply skip mockup to go on without a mockup."
+)
+
 // offerActions are the replies the offer takes: show mockup, recommended,
 // runs the mockup step; skip mockup goes on without it.
 func offerActions() []gateAction {
@@ -177,7 +184,43 @@ func (c *Controller) offerAt(ctx context.Context, id string, out outcome) (bool,
 	return c.offerOpen(ctx, id)
 }
 
-// atOffer handles a message while the offer is open: show mockup records the
+// firstLookPending reports whether out stands at the mockup step after its
+// offer was accepted and before any revision was shown, as when the
+// designer's first run failed or a cap refused it: skip mockup still goes on
+// without a mockup there, and a step that showed nothing reads skipped. Any
+// other text is a note that runs the step again.
+func (c *Controller) firstLookPending(ctx context.Context, id string, out outcome) (bool, error) {
+	mockup := c.opts.Pack.MockupStage()
+	if mockup == "" || out.stage != mockup || out.gate {
+		return false, nil
+	}
+
+	state, err := c.offerState(ctx, id)
+	if err != nil || state != offerAccepted {
+		return false, err
+	}
+
+	_, err = c.opts.Store.LatestArtifact(ctx, id, mockup)
+
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return true, nil
+	case err != nil:
+		return false, fmt.Errorf("blueprint: read the mockup: %w", err)
+	}
+
+	return false, nil
+}
+
+// skipsMockup reports whether text is the offer's skip mockup reply.
+func skipsMockup(text string) bool {
+	action, _, ok := matchAction(text, offerActions())
+
+	return ok && action.Decision == offerDeclined
+}
+
+// atOffer handles a message while the offer is open, or a skip while the
+// first look is pending (firstLookPending): show mockup records the
 // acceptance and runs the mockup step, skip mockup records the decline,
 // which collapses the step, and runs what follows it, and any other text is
 // a note that leaves the offer open. The caller holds the run slot.
@@ -187,7 +230,7 @@ func (c *Controller) atOffer(ctx, runCtx context.Context, r *run, sess *session,
 	action, _, ok := matchAction(text, offerActions())
 	if !ok {
 		note := noteEvent(bp.ID, text, msgID, mockup, false)
-		note.Payload["hint"] = "Reply show mockup for a first look, or skip mockup to go on without one."
+		note.Payload["hint"] = offerHint
 		sess.audit.event(ctx, note)
 		c.release(bp.ID, r)
 

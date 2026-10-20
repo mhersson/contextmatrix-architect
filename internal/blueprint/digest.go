@@ -391,7 +391,14 @@ func (r artifactReader) Execute(ctx context.Context, args map[string]any) (tools
 		return tools.Result{}, fmt.Errorf("read_artifact: this run reads %s, not %s", strings.Join(readable, ", "), key)
 	}
 
-	art, err := r.version(ctx, key, args["version"])
+	var art store.Artifact
+
+	if key == r.c.opts.Pack.MockupStage() {
+		art, err = r.usedMockup(ctx, key, args["version"])
+	} else {
+		art, err = r.version(ctx, key, args["version"])
+	}
+
 	if err != nil {
 		return tools.Result{}, err
 	}
@@ -402,6 +409,28 @@ func (r artifactReader) Execute(ctx context.Context, args map[string]any) (tools
 	writeArtifact(&b, key, art)
 
 	return tools.Result{Text: b.String()}, nil
+}
+
+// usedMockup is the mockup revision the person used, with the settings they
+// chose added as the artifact read adds them: the stored settings are only
+// what it opened with. It is the one revision a later stage reads, so v,
+// when given, must name it.
+func (r artifactReader) usedMockup(ctx context.Context, key string, v any) (store.Artifact, error) {
+	res, err := r.c.mockupResult(ctx, r.id)
+	if err != nil {
+		return store.Artifact{}, fmt.Errorf("read_artifact: %w", err)
+	}
+
+	if n, ok := v.(float64); v != nil && (!ok || n != float64(res.Revision)) {
+		return store.Artifact{}, fmt.Errorf("read_artifact: %s reads only version %d, the revision the person used", key, res.Revision)
+	}
+
+	art := res.Art
+	if art.Data, err = r.c.withChosen(ctx, r.id, art); err != nil {
+		return store.Artifact{}, fmt.Errorf("read_artifact: %w", err)
+	}
+
+	return art, nil
 }
 
 // version is key's stored version v, the latest when v is absent.

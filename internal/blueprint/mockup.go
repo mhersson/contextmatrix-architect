@@ -513,8 +513,16 @@ func (iv *interviewer) Show(ctx context.Context, m stage.MockupRevision) (string
 	au := iv.sess.audit
 
 	data := mockupData{Revision: v, Screens: m.Screens, Suggestions: sugs, Settings: settings, Source: m.Source}
-	if _, err := au.artifact(bg, id, iv.st.ID, m.Notes, data.fields()); err != nil {
+
+	// The data names its revision before the store numbers it; only a write
+	// outside the round lock could make the two differ.
+	stored, err := au.artifact(bg, id, iv.st.ID, m.Notes, data.fields())
+	if err != nil {
 		return "", err
+	}
+
+	if stored != v {
+		return "", fmt.Errorf("blueprint: mockup revision %d was stored as version %d", v, stored)
 	}
 
 	// The artifact row holds the source; the event only names the version.

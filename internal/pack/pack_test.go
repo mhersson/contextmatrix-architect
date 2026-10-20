@@ -621,6 +621,16 @@ func TestLoad_MockupStageInvalid(t *testing.T) {
 		{name: "no stage states the screen", stages: strings.Replace(lookYAML, "    consumes: [need]\n", "", 1), want: "screen"},
 		{name: "the screen stage after it", stages: strings.Replace(lookYAML, "    consumes: [need]\n", "", 1) + screenYAML, want: "screen"},
 		{name: "after slicing", stages: screenYAML + cutYAML + lookYAML + designYAML + cardsYAML, want: "before the stage that checks slices"},
+		{
+			name:   "checking slices itself",
+			stages: screenYAML + strings.Replace(lookYAML, "checks: [mockup]", "checks: [mockup, slices]", 1) + designYAML + cardsYAML,
+			want:   "before the stage that checks slices",
+		},
+		{
+			name:   "checking the screen itself",
+			stages: strings.Replace(strings.Replace(lookYAML, "    consumes: [need]\n", "", 1), "checks: [mockup]", "checks: [screen, mockup]", 1),
+			want:   "earlier stage that checks screen",
+		},
 		{name: "a gate", stages: screenYAML + gated, want: "no gate"},
 		{name: "per slice", stages: screenYAML + cutYAML + strings.Replace(lookYAML, "    policy: human\n", "    per_slice: true\n", 1), want: "mockup"},
 		{name: "two of them", stages: screenYAML + lookYAML + strings.Replace(lookYAML, "id: look", "id: look2", 1), want: "one"},
