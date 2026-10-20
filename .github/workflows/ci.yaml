@@ -169,8 +169,10 @@ jobs:
           # scan does.
           scanners: vuln
 
-  # Never runs for a pull request, so a fork cannot reach the self-hosted
-  # runner. On push the checks are skipped, which this guard lets through.
+  # Publishes only from a push or a dispatch, never from a pull request. A
+  # fork's pull request runs its own copy of this file, so keeping forks off
+  # the self-hosted runner is the repo's fork-PR approval policy, not this
+  # guard. On push the checks are skipped, which this guard lets through.
   image:
     name: image
     runs-on: self-hosted
