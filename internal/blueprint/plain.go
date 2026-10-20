@@ -467,3 +467,159 @@ func (r consequenceRecord) mark(a *assumption, stated string, answered map[strin
 		a.Consequence = shown
 	}
 }
+
+// writePlainWording gives a reviewer of a plain-language blueprint what it
+// judges of the wording: the experience questions the attempt's person's
+// rounds asked (is one a technical question in disguise?), each stated
+// consequence beside its technical text, each consequence of a stage's entry
+// those rounds showed that no stated one repeats, and each answer
+// consequence they showed beside the question and answer it describes (does
+// it state the effect truly?). It writes nothing when there is none.
+func (c *Controller) writePlainWording(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pipelineStep, art store.Artifact, attempt int) error {
+	ofAttempt, err := c.attemptRuns(ctx, bp.ID, st.ID, attempt)
+	if err != nil {
+		return fmt.Errorf("blueprint: plain wording for %s: %w", st.ID, err)
+	}
+
+	rounds, err := c.rounds(ctx, bp.ID)
+	if err != nil {
+		return fmt.Errorf("blueprint: plain wording for %s: %w", st.ID, err)
+	}
+
+	var statedPart strings.Builder
+
+	// stated holds each stated consequence beside its technical text, as
+	// normalText makes them, so a tab entry it repeats is listed once.
+	stated := map[[2]string]bool{}
+
+	for _, a := range statedAssumptions(art) {
+		if a.Consequence == "" {
+			continue
+		}
+
+		stated[[2]string{normalText(a.Text), normalText(a.Consequence)}] = true
+
+		// The data's blueprint-wide id, which the reviewer's verdicts name;
+		// an entry without one is listed without.
+		label := "- "
+		if a.ID != "" {
+			label += a.ID + ": "
+		}
+
+		fmt.Fprintf(&statedPart, "%s%s\n  Consequence: %s\n", label, a.Text, a.Consequence)
+	}
+
+	var section, tabPart strings.Builder
+
+	shown := map[int]bool{}
+	asked := map[int]bool{}
+
+	for _, s := range rounds {
+		if !s.Plain || !ofAttempt[s.PostedBy] {
+			continue
+		}
+
+		for _, q := range s.Frame.Questions {
+			if s.Audiences[q.Number] != stage.AudienceExperience || asked[q.Number] {
+				continue
+			}
+
+			asked[q.Number] = true
+
+			fmt.Fprintf(&section, "- Q%d: %s\n", q.Number, q.Text)
+
+			if q.Why != "" {
+				fmt.Fprintf(&section, "  Why: %s\n", q.Why)
+			}
+
+			for _, o := range q.Options {
+				fmt.Fprintf(&section, "  Option: %s", o.Title)
+
+				if o.Summary != "" {
+					fmt.Fprintf(&section, " - %s", o.Summary)
+				}
+
+				section.WriteString("\n")
+
+				for _, p := range o.Pros {
+					fmt.Fprintf(&section, "    Pro: %s\n", p)
+				}
+
+				for _, con := range o.Cons {
+					fmt.Fprintf(&section, "    Con: %s\n", con)
+				}
+			}
+		}
+
+		for _, n := range s.Consequences {
+			shown[n] = true
+		}
+
+		for _, a := range s.Frame.Assumptions {
+			key := [2]string{normalText(a.Detail), normalText(a.Text)}
+
+			if _, isAnswer := s.Consequences[a.ID]; isAnswer || a.Detail == "" || stated[key] {
+				continue
+			}
+
+			stated[key] = true
+
+			fmt.Fprintf(&tabPart, "- %s: %s\n  Consequence: %s\n", acceptanceTag(s.Number, a.ID), a.Detail, a.Text)
+		}
+	}
+
+	var questionsPart strings.Builder
+
+	if section.Len() > 0 {
+		questionsPart.WriteString("Experience questions the person was asked; judge each: is it a technical question in disguise?\n\n")
+		questionsPart.WriteString(section.String())
+		questionsPart.WriteString("\n")
+	}
+
+	var answersPart strings.Builder
+
+	if len(shown) > 0 {
+		notes, err := answerNotes(ctx, c.opts.Store, bp.ID)
+		if err != nil {
+			return fmt.Errorf("blueprint: plain wording for %s: %w", st.ID, err)
+		}
+
+		questions, err := c.opts.Store.ListQuestions(ctx, bp.ID)
+		if err != nil {
+			return fmt.Errorf("blueprint: plain wording for %s: %w", st.ID, err)
+		}
+
+		for _, q := range questions {
+			if note := notes[q.Number]; shown[q.Number] && note.Consequence != "" {
+				fmt.Fprintf(&answersPart, "- Q%d: %s Answer: %s\n  Consequence: %s\n", q.Number, q.Text, q.Answer, note.Consequence)
+			}
+		}
+	}
+
+	if questionsPart.Len() == 0 && statedPart.Len() == 0 && tabPart.Len() == 0 && answersPart.Len() == 0 {
+		return nil
+	}
+
+	b.WriteString("## Plain language to judge\n\n")
+	b.WriteString(questionsPart.String())
+
+	if statedPart.Len() > 0 {
+		b.WriteString("Each consequence the artifact states beside its technical text; judge each: does it state the effect truly?\n\n")
+		b.WriteString(statedPart.String())
+		b.WriteString("\n")
+	}
+
+	if tabPart.Len() > 0 {
+		b.WriteString("Each consequence the person was shown for an assumption, by its tab entry's tag, beside its technical text; judge each the same way:\n\n")
+		b.WriteString(tabPart.String())
+		b.WriteString("\n")
+	}
+
+	if answersPart.Len() > 0 {
+		b.WriteString("Each consequence shown for an answer; judge each the same way:\n\n")
+		b.WriteString(answersPart.String())
+		b.WriteString("\n")
+	}
+
+	return nil
+}

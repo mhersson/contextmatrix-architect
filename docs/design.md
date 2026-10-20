@@ -984,6 +984,12 @@ superseded. No stage, whatever checks it declares, may submit until its
 attempt has asked a turned-down answer again, and no question cap counts a
 re-ask. A re-ask whose responder fails supersedes nothing.
 
+The stage reviewers that already run also judge, in the same run, each
+experience question the attempt asked (is it a technical question in
+disguise?) and each consequence the artifact states or the attempt's rounds
+showed against its technical text (does it state the effect truly?); their
+findings count as any others. No extra model run guards the wording.
+
 ## Tools
 
 | Group    | Tools                                                                                                   | Notes                                                                                                                                             |

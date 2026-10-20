@@ -783,6 +783,12 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipe
 		return "", err
 	}
 
+	if bp.PlainLanguage {
+		if err := c.writePlainWording(ctx, &b, bp, st, art, attempt); err != nil {
+			return "", err
+		}
+	}
+
 	c.writeEdgeCases(&b, st)
 	writePOC(&b, poc)
 

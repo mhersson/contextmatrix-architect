@@ -55,9 +55,10 @@ type assumption struct {
 	SupersededBy        string
 }
 
-// stated is one assumption as a stage submitted it.
+// stated is one assumption as a stage submitted it. ID is the id the stored
+// entry carries, which numberAssumptions wrote; "" for none.
 type stated struct {
-	Text, Basis, Consequence string
+	ID, Text, Basis, Consequence string
 }
 
 // verdict is a later stage's finding on one assumption.
@@ -312,6 +313,7 @@ func statedAssumptions(art store.Artifact) []stated {
 		case string:
 			s.Text = a
 		case map[string]any:
+			s.ID, _ = a["id"].(string)
 			s.Text, _ = a["text"].(string)
 			basis, _ := a["basis"].(string)
 			s.Basis = normalTag(basis)

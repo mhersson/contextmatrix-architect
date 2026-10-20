@@ -2241,3 +2241,84 @@ func TestPlain_AReAskUnderTheAutoPolicyCarriesTheConcern(t *testing.T) {
 	require.Len(t, answers, 3)
 	assert.Equal(t, 1, answers[2].Payload["supersedes"])
 }
+
+// consequenceDesign is a solution design fake: a fresh run asks question as
+// an experience question with technical on its tab, carrying consequence
+// when it is set; its continuation states technical with the acceptance's
+// tag (the person's round's), carrying consequence when it is set.
+func consequenceDesign(question, technical, consequence, tag string) func(context.Context, stage.Input) (stage.Output, error) {
+	return func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if in.History == nil {
+			rd := stage.Round{
+				Questions:   []stage.RoundQuestion{experienceQ("Choice", question, "Yes", "No")},
+				Assumptions: []string{technical},
+			}
+			if consequence != "" {
+				rd.Consequences = []string{consequence}
+			}
+
+			_, err := in.Interviewer.Ask(ctx, rd)
+
+			return askedOutput(in), err
+		}
+
+		entry := map[string]any{"text": technical, "basis": tag}
+		if consequence != "" {
+			entry["consequence"] = consequence
+		}
+
+		data := goodDesign("assumption")
+		data["assumptions"] = []any{entry}
+
+		return done("# Design", data), nil
+	}
+}
+
+func TestPlain_TheReviewerGetsTheAnswersConsequences(t *testing.T) {
+	const (
+		question    = "Should every member see the others' phone numbers?"
+		technical   = "Phone numbers are readable by the board role alone."
+		consequence = "Only the club's board can see members' phone numbers."
+		answered    = "Two board members can change the list at the same time."
+		unstated    = "Members are listed in the order they joined."
+		unrestated  = "New members always appear at the bottom of the list."
+	)
+
+	// The responder round is round 1, so the person's round is round 2.
+	design := consequenceDesign(question, technical, consequence, "round2.A1")
+	script := dialogScript()
+	script["solution_design.responder"] = respondsWithConsequence("A database", answered)
+	script["solution_design"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if in.History != nil {
+			return design(ctx, in)
+		}
+
+		_, err := in.Interviewer.Ask(ctx, stage.Round{
+			Questions: []stage.RoundQuestion{
+				experienceQ("Privacy", question, "Every member", "The board only"),
+				technicalQ("Records", "Where are the member records kept?", "One shared file", "A database"),
+			},
+			Assumptions: []string{technical, unstated}, Consequences: []string{consequence, unrestated},
+		})
+
+		return askedOutput(in), err
+	}
+
+	c, _, runner, _, _ := newDialog(t, script)
+	driveIn(t, c, plainStart("BP1"))
+
+	// The person turns the second entry down, so the design does not state it.
+	person := latestRound(t, c, "BP1", 2)
+	require.Len(t, person.Frame.Questions, 1)
+	require.Len(t, person.Frame.Assumptions, 3)
+	require.Equal(t, unrestated, person.Frame.Assumptions[1].Text)
+
+	tab := person.Frame.Assumptions
+	decide(t, c, "BP1", 2, []protocol.RoundAnswer{pick(person.Frame.Questions[0].Number, 1)}, accept(tab[0].ID), convert(tab[1].ID), accept(tab[2].ID))
+	c.Wait("BP1")
+
+	reviews := inputsOf(runner, "solution_design.review")
+	require.NotEmpty(t, reviews)
+	assert.Contains(t, reviews[0].Task, answered, "an answer's consequence reaches the reviewer only through the plain section")
+	assert.Contains(t, reviews[0].Task, unrestated, "so does a consequence the person was shown that the design does not state")
+}
