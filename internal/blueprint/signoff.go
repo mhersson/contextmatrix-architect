@@ -26,6 +26,10 @@ const signoffHint = "Reply approve to emit the cards, or reject <feedback> to re
 // takes a reason.
 const signoffCriticalHint = "Reply approve <reason> to emit the cards over the critical findings, or reject <feedback> to re-run the cards with your feedback."
 
+// signoffOpenHint is signoffHint over the card findings readiness's last
+// round left open, where approve takes a reason.
+const signoffOpenHint = "Reply approve <reason> to emit the cards over the open findings, or reject <feedback> to re-run the cards with your feedback."
+
 // emitsOnItsOwn reports whether a mode approves the sign-off itself.
 func emitsOnItsOwn(mode string) bool {
 	return mode == protocol.ArchitectModeAutoEmit || mode == protocol.ArchitectModeYolo
@@ -84,7 +88,8 @@ func (c *Controller) holdForSignoff(r *run) {
 // resumed when it stopped partway. Undecided in an emitting mode: preflight,
 // then an automatic approval when nothing needs a human. Otherwise the
 // sign-off is shown and the blueprint waits for approve or reject. An
-// emitting mode never approves over a critical finding across the blueprint.
+// emitting mode never approves over a critical finding across the blueprint
+// or over the card findings readiness's last round left open.
 func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Blueprint, out outcome) {
 	bg := context.WithoutCancel(ctx)
 	au := sess.audit
@@ -127,6 +132,7 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	}
 
 	critical := criticalCross(crossOf(out.art))
+	open := len(out.findings) > 0
 	payload := c.signoffPayload(bg, au, bp, out, draft, pf, pfErr)
 
 	// The mode's approval of a sign-off a human was shown closes its prompt
@@ -161,7 +167,7 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	// they are shown again with the emitted cards. The approval goes first and the
 	// record of what it approved after it, so a crash between the two leaves an
 	// approved sign-off the restart emits, never an unapproved record.
-	if auto && !critical && ctx.Err() == nil && pfErr == nil && len(pf.Blocking) == 0 && len(pf.Warnings) == 0 {
+	if auto && !critical && !open && ctx.Err() == nil && pfErr == nil && len(pf.Blocking) == 0 && len(pf.Warnings) == 0 {
 		decided := c.decideWith(bg, au, bp.ID, signoffStage, out.art.Version, store.GateApprove, "", store.ResponderAuto, "", approval)
 		lock.Unlock()
 
@@ -183,7 +189,7 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	}
 
 	payload["auto_stopped"] = auto
-	payload["actions"] = actionsPayload(signoffActions(len(pf.Warnings) > 0, critical))
+	payload["actions"] = actionsPayload(signoffActions(len(pf.Warnings) > 0, critical, open))
 
 	// The typed replies are never buttons; the transcript lists them.
 	if steps, _, err := c.steps(bg, bp.ID); err != nil {
@@ -207,11 +213,12 @@ func nonNil(list []string) []string {
 
 // signoffPayload is what a sign-off carries: the cards in playbook order,
 // the manual checks, the playbook title, what preflight found but its steps
-// and notices, which the caller adds under the mode lock, readiness's
-// findings across the blueprint, critical first, and the assumptions,
-// riskiest first. Assumptions that cannot be read show as none, and the log
-// says why; an intake from before assumptions were data gives its section's
-// text, which the panel shows as it shows an older sign-off.
+// and notices, which the caller adds under the mode lock, the card findings
+// readiness's last round left open (not_ready), readiness's findings across
+// the blueprint, critical first, and the assumptions, riskiest first.
+// Assumptions that cannot be read show as none, and the log says why; an
+// intake from before assumptions were data gives its section's text, which
+// the panel shows as it shows an older sign-off.
 func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blueprint, out outcome, draft contract.Draft, pf preflightResult, pfErr error) map[string]any {
 	var (
 		assumptions any = []any{}
@@ -253,7 +260,7 @@ func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blue
 	payload := map[string]any{
 		"version": out.art.Version, "cards": cards, "order": draft.Order, "manual": manual, "title": draft.Title,
 		"blocking": nonNil(pf.Blocking), "warnings": nonNil(pf.Warnings), "assumptions": assumptions,
-		"cross": crossPayload(crossOf(out.art)),
+		"cross": crossPayload(crossOf(out.art)), "not_ready": nonNil(out.findings),
 	}
 
 	if pfErr != nil {
@@ -429,9 +436,10 @@ func (c *Controller) rejectStep(ctx, runCtx context.Context, r *run, sess *sessi
 // again; one that names no step of the blueprint is a note with a hint.
 // Approved with emission unfinished: approve resumes it, and other text is
 // a note with that hint, or without one when the record cannot be read.
-// Over a critical finding across the blueprint approve takes a reason, and a
-// bare approve is a note asking for it. Anything else is a note. The caller
-// holds the run slot.
+// Over a critical finding across the blueprint, or over the card findings
+// readiness's last round left open, approve takes a reason, and a bare
+// approve is a note asking for it. Anything else is a note. The caller holds
+// the run slot.
 func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, out outcome, text, msgID string) error {
 	decision, err := c.gateDecision(ctx, bp.ID, signoffStage, out.art.Version)
 	if err != nil {
@@ -459,8 +467,9 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 	// Only an undecided sign-off wants the reason: once approved, a bare
 	// approve resumes a stopped emission or a held run.
 	critical := decision == "" && criticalCross(crossOf(out.art))
+	open := decision == "" && len(out.findings) > 0
 
-	action, feedback, matched := matchAction(text, append(signoffActions(false, critical), typed...))
+	action, feedback, matched := matchAction(text, append(signoffActions(false, critical, open), typed...))
 	approve := matched && action.Decision == store.GateApprove
 	retarget := matched && action.Decision == store.GateReject && action.Target != ""
 	reject := matched && action.Decision == store.GateReject && action.Target == ""
@@ -474,10 +483,10 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 	case "":
 		switch {
 		case approve:
-			// Over a critical finding the reply's text is the reason, which
-			// the decision and the sign-off's data keep.
+			// Over a critical finding or open card findings the reply's text
+			// is the reason, which the decision and the sign-off's data keep.
 			var extra map[string]any
-			if critical {
+			if critical || open {
 				extra = map[string]any{"override_reason": feedback}
 			}
 
@@ -519,10 +528,16 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 			note.Payload["hint"] = "Say what to change: reply reject <feedback>."
 		case critical && strings.EqualFold(strings.TrimSpace(text), store.GateApprove):
 			note.Payload["hint"] = "Readiness found a critical problem across the blueprint. Say why you approve over it: reply approve <reason>, or reject <feedback>."
+		case open && strings.EqualFold(strings.TrimSpace(text), store.GateApprove):
+			note.Payload["hint"] = "Readiness's rounds ran out with cards not ready. Say why you approve over them: reply approve <reason>, or reject <feedback>."
 		default:
 			hint := signoffHint
-			if critical {
+
+			switch {
+			case critical:
 				hint = signoffCriticalHint
+			case open:
+				hint = signoffOpenHint
 			}
 
 			note.Payload["hint"] = hint

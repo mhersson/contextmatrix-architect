@@ -1184,23 +1184,6 @@ func TestView_AnEndedPipeline(t *testing.T) {
 			unreached: []string{"readiness"},
 		},
 		{
-			name: "readiness's rounds spent",
-			setup: func(t *testing.T, c *Controller, st *store.Store) {
-				through(t, c, st, "decomposition")
-
-				for round := 1; round <= 3; round++ {
-					ran(t, st, "readiness", store.RunKindStage, round, 1, 0.1)
-					put(t, st, "readiness", map[string]any{"cards": []any{map[string]any{"id": "D1", "ready": false, "findings": []any{"no"}}}})
-
-					if round < 3 {
-						ran(t, st, "decomposition", store.RunKindStage, round+1, 1, 0.1)
-						put(t, st, "decomposition", stageData("decomposition"))
-					}
-				}
-			},
-			stopped: "readiness", done: []string{"decomposition"},
-		},
-		{
 			name: "a sliced blueprint whose slicing holds none", sliced: true,
 			setup: func(t *testing.T, _ *Controller, st *store.Store) {
 				throughSliced(t, st, "intake")
@@ -1330,6 +1313,29 @@ func TestView_AnEndedPipeline(t *testing.T) {
 		assert.Equal(t, stepDone, stepOf(t, v, signoffStage).Status)
 		assert.Equal(t, 1, stepOf(t, v, signoffStage).LatestVersion)
 		assert.Equal(t, stepNotReached, stepOf(t, v, emissionStage).Status)
+	})
+
+	t.Run("readiness's rounds spent go to the sign-off, not an end", func(t *testing.T) {
+		c, st := newViewController(t, "default", 0)
+		through(t, c, st, "decomposition")
+
+		for round := 1; round <= 3; round++ {
+			ran(t, st, "readiness", store.RunKindStage, round, 1, 0.1)
+			put(t, st, "readiness", map[string]any{"cards": []any{map[string]any{"id": "D1", "ready": false, "findings": []any{"no"}}}})
+
+			if round < 3 {
+				ran(t, st, "decomposition", store.RunKindStage, round+1, 1, 0.1)
+				put(t, st, "decomposition", stageData("decomposition"))
+			}
+		}
+
+		// The spent rounds go to the sign-off, which no event shows yet.
+		v := view(t, c)
+		assert.NotEqual(t, viewEnded, v.State)
+		assert.Empty(t, v.EndReason)
+		assert.Equal(t, stepDone, stepOf(t, v, "readiness").Status)
+		assert.Equal(t, stepRunning, stepOf(t, v, signoffStage).Status)
+		assert.Equal(t, stepPending, stepOf(t, v, emissionStage).Status)
 	})
 
 	t.Run("a ready end is no end", func(t *testing.T) {

@@ -141,8 +141,8 @@ func (c *Controller) signoffArtifact(ctx context.Context, id string, version int
 }
 
 // overrideReason is the reason a person gave to approve the sign-off of
-// version over a critical finding: the approval's feedback; "" when it was
-// approved without one or not approved.
+// version over a critical finding or open card findings: the approval's
+// feedback; "" when it was approved without one or not approved.
 func (c *Controller) overrideReason(ctx context.Context, id string, version int) (string, error) {
 	gates, err := c.opts.Store.ListGates(ctx, id, signoffStage)
 	if err != nil {

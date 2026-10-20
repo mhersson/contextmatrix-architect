@@ -92,7 +92,7 @@ func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID s
 
 	switch {
 	case strings.EqualFold(stageID, signoffStage):
-		payload["refused"] = "The sign-off follows the mode: default and auto modes show it, auto+emit and yolo approve it when preflight finds nothing for a human."
+		payload["refused"] = "The sign-off follows the mode: default and auto modes show it, auto+emit and yolo approve it unless something needs a person (preflight, a critical finding or cards not ready)."
 	case !known:
 		payload["refused"] = fmt.Sprintf("There is no stage %s; the stages are %s.", stageID, strings.Join(c.stageIDs(), ", "))
 	default:

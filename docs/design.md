@@ -362,7 +362,7 @@ designer (SD), senior developer (DEV), tester (TST), reviewer (REV).
 | 6  | Grounding        | DEV     | the slice's design | once per slice, per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        | -        |
 | 7  | Acceptance       | DEV     | the slice's design, grounding | once per slice: criteria checkable inside one repo; human and live checks split into manual steps | `auto` by default | TST      |
 | 8  | Decomposition    | DEV     | all above, earlier slices' cards | once per slice: draft cards with type and priority, `depends_on` per project, the mockup's screens each card builds, manual entries for human and live checks, the order, and the setup for a project without a verify command or instruction file; the last slice's draft gives the playbook title | no        | -        |
-| 9  | Readiness        | REV     | every slice's cards | contract check per card; failures loop back to 8 for the slice that holds the card and every later slice, three rounds max | no        | -        |
+| 9  | Readiness        | REV     | every slice's cards | contract check per card; failures loop back to 8 for the slice that holds the card and every later slice, three rounds max, then sign-off with the cards still not ready | no        | -        |
 | 10 | Sign-off         | human   | everything        | approval; then emission of one playbook                                                                | yes       | -        |
 | -  | Outcomes         | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   | -        |
 
@@ -445,20 +445,22 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   earliest such slice, and then to every later slice's decomposition, since
   those read its cards; the later slices' designs, grounding and acceptance
   do not run again. A verdict that names no card of the draft starts at SL1.
-  The three rounds count per blueprint. Readiness also judges the
-  blueprint as a whole and reports, in its data's `cross`, findings between
-  artifacts (decisions, contracts, cards and assumptions that disagree, a
-  near-duplicate assumption, an outcome no criterion proves), each `X<n>`
-  with a severity (critical, major or minor), its text and the ids it
-  names; they never loop. The `readiness` check refuses a cards list of
-  another shape (`readiness_shape`), an entry without an id, a ready flag
-  or findings that say why, a card judged twice, or a ready card that
-  carries a finding (`card_entry`), a card of the draft left out
-  (`card_unjudged`) or one no draft holds (`card_unknown`), and a cross
-  finding of another shape or with a bad id, severity, text or refs
-  (`cross_shape`, `cross_id`, `cross_severity`, `cross_text`,
-  `cross_refs`); bounded, never fatal. With two or more slices it reads
-  each slice's grounding as a digest of its project facts and verdicts.
+  The three rounds count per blueprint; a third verdict that still finds
+  cards not ready goes to the sign-off with those findings (see Emission),
+  and ends the pipeline only on a pack with no stage that checks cards.
+  Readiness also judges the blueprint as a whole and reports, in its data's
+  `cross`, findings between artifacts (decisions, contracts, cards and
+  assumptions that disagree, a near-duplicate assumption, an outcome no
+  criterion proves), each `X<n>` with a severity (critical, major or minor),
+  its text and the ids it names; they never loop. The `readiness` check
+  refuses a cards list of another shape (`readiness_shape`), an entry
+  without an id, a ready flag or findings that say why, a card judged twice,
+  or a ready card that carries a finding (`card_entry`), a card of the draft
+  left out (`card_unjudged`) or one no draft holds (`card_unknown`), and a
+  cross finding of another shape or with a bad id, severity, text or refs
+  (`cross_shape`, `cross_id`, `cross_severity`, `cross_text`, `cross_refs`);
+  bounded, never fatal. With two or more slices it reads each slice's
+  grounding as a digest of its project facts and verdicts.
 - Solution design's submit is checked: it has slices, every slice of slicing
   among them, or a per-slice design's own slice alone (`slice_missing`,
   `slice_extra`); every decision has a chosen option, a rejected option and
@@ -993,8 +995,9 @@ Sessions), and every question, gate and sign-off reads it as it stands then.
   a switch into an auto mode hands it a mockup that waits for the person,
   and a switch back to default hands it back (see Mockups).
 - **`auto+emit`**: as above, then emits the playbook and stops. It never
-  approves over a critical finding across the blueprint: the sign-off stops
-  for a human. When it approves a clean sign-off itself, it records what it
+  approves over a critical finding across the blueprint or over cards
+  readiness did not pass after its last round: the sign-off stops for a
+  human. When it approves a clean sign-off itself, it records what it
   approved, for the sheet.
 - **`yolo`**: as `auto+emit`, then starts the run, unless a card's repository
   has no commits: the cards are emitted, the session is told to push a first
@@ -1129,19 +1132,22 @@ holds.
 
 ## Emission
 
-Cards that pass readiness go to sign-off. When decomposition ran per slice,
-the sign-off, preflight and emission read one draft: every slice's latest
-cards, manual entries and order in slice order, with each project's setup as
-the earliest slice that sets it gives it and the last slice's title, so the
-blueprint ends in one playbook across every project. Default and `auto`
-modes show the sign-off (the entries in playbook order with the card that
-also writes `AGENTS.md` marked, the playbook title, the assumptions, the
-preflight result and, at the top, readiness's findings across the blueprint,
-critical first and, on a plain-language blueprint, the plain summary) and
-wait: `approve` emits (over a critical finding it takes a reason, `approve
-<reason>`, which the button asks for: recorded as the
-approval's feedback and the decided event's `override_reason`, served in the
-sign-off's data and kept by the export; a bare `approve` is then a note
+Cards that pass readiness go to sign-off, and so do cards readiness still
+finds not ready after its last round, with those card findings (`not_ready`,
+in `D<n>: <finding>` form, an empty list when every card passed). When
+decomposition ran per slice, the sign-off, preflight and emission read one
+draft: every slice's latest cards, manual entries and order in slice order,
+with each project's setup as the earliest slice that sets it gives it and
+the last slice's title, so the blueprint ends in one playbook across every
+project. Default and `auto` modes show the sign-off (the entries in playbook
+order with the card that also writes `AGENTS.md` marked, the playbook title,
+the assumptions, the preflight result and, at the top, the cards readiness
+did not pass and readiness's findings across the blueprint, critical first
+and, on a plain-language blueprint, the plain summary) and wait: `approve`
+emits (over a critical finding, or over cards readiness did not pass, it
+takes a reason, `approve <reason>`, which the button asks for: recorded as
+the approval's feedback and the decided event's `override_reason`, served in
+the sign-off's data and kept by the export; a bare `approve` is then a note
 asking for it), and `reject <feedback>` stores the feedback and re-runs
 decomposition, every slice's in slice order, and readiness with it, the
 three readiness rounds counted again from the rejection. `reject slicing
@@ -1152,15 +1158,16 @@ every slice. Those are typed and never offered as buttons; the sign-off's
 text lists `reject slicing` always and the others with two or more slices;
 one that names no step of the blueprint is a note with a hint. `auto+emit`
 and `yolo` approve on their own when preflight runs and finds nothing
-blocking and no warning, never over a critical finding across the blueprint,
-and stop for a human otherwise. The sign-off reads the mode as it stands
-when it decides, under a lock a `mode` reply shares, so a switch lands
-before an approval or is refused after it; a switch into `auto+emit` or
-`yolo` while a sign-off waits for a human runs it again, preflight
-included, and when the mode approves a sign-off or a stage gate that was
-shown, that decision's transcript row carries a `decision` marker (the
-stage, its slice and the version; a folded stage's row carries none) that
-closes the shown prompt in the panel. Every decision is a row in `gates`.
+blocking and no warning, never over a critical finding across the blueprint
+or over cards readiness did not pass, and stop for a human otherwise. The
+sign-off reads the mode as it stands when it decides, under a lock a `mode`
+reply shares, so a switch lands before an approval or is refused after it; a
+switch into `auto+emit` or `yolo` while a sign-off waits for a human runs it
+again, preflight included, and when the mode approves a sign-off or a stage
+gate that was shown, that decision's transcript row carries a `decision`
+marker (the stage, its slice and the version; a folded stage's row carries
+none) that closes the shown prompt in the panel. Every decision is a row in
+`gates`.
 Then, in order:
 
 1. **Preflight**, at sign-off and again at the start of every emission
@@ -1284,7 +1291,7 @@ the mockup reply (see Mockups):
 | `show mockup`, `skip mockup`  | Answers the mockup offer (see Mockups): show runs the mockup step, skip goes on without it. Matched as a gate's replies are; any other text while the offer waits is a note and the offer stays open. |
 | `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round, gate or mockup offer keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
 | `cap <usd>`, `cap off`        | Sets the blueprint's cost cap (see below); CM sends it when the person clicks the cost in the sheet header. Exactly two words, the amount one plain decimal number, so an answer that starts with "cap" stays an answer. Works while a stage runs. |
-| `mode default\|auto\|auto+emit\|yolo` | Switches the blueprint's mode; every later question, gate and the sign-off follow the new one, and the gate plan, once posted, is posted again. Into `auto+emit` or `yolo`, a sign-off waiting for a human runs again, preflight included, and approves itself unless a critical finding across the blueprint or preflight stops it. Into any mode but default, the round waiting for a human goes to the auto responder at once when its stage's policy is now `auto` (a `gate` reply still wins): it turns read-only, the answers and decisions already sent stay the human's, the responder answers each open question and every undecided assumption is accepted, and the stage then continues; a switch back to default after that leaves it with the responder, and `continue`, the next message or a reopen finishes one an abort or a restart cut short. Into any mode but default, a mockup offer waiting for a human is taken when the mockup stage's policy is now `auto`, and the step runs; a mockup waiting for the person goes to the auto responder as it stands, and the row names the mockup, never a round. Into default, a mockup the responder steers comes back to the person at once when nothing runs on it, as a running turn ends (storing no use it reached), else at its next revision or turn (see Mockups). Into `auto`, `auto+emit` or `yolo`, a stage gate shown only because its policy asked a human is approved when the policies are now `auto` (a `gate` reply still wins) and its reviewer's verdict passes, and the pipeline goes on; one shown because its verdict did not pass stays with its human, as it would in auto, and a switch back to default decides no gate. A round whose asking run read the policy before the switch and had not yet ended on it stays with its human too. Exactly two words, the mode one of the four, case ignored, so an answer that starts with "mode" stays an answer. Works while a stage runs. Refused, changing nothing, for the mode in effect, once emission has started (the sign-off approved) and after the pipeline ended. The stored mode survives a reopen: a later start's mode is ignored, as its cap is. Each reply is a `mode` event with the switch, or the refusal's reason (`unchanged`, `emission_started`, `ended`). |
+| `mode default\|auto\|auto+emit\|yolo` | Switches the blueprint's mode; every later question, gate and the sign-off follow the new one, and the gate plan, once posted, is posted again. Into `auto+emit` or `yolo`, a sign-off waiting for a human runs again, preflight included, and approves itself unless a critical finding across the blueprint, cards readiness did not pass or preflight stops it. Into any mode but default, the round waiting for a human goes to the auto responder at once when its stage's policy is now `auto` (a `gate` reply still wins): it turns read-only, the answers and decisions already sent stay the human's, the responder answers each open question and every undecided assumption is accepted, and the stage then continues; a switch back to default after that leaves it with the responder, and `continue`, the next message or a reopen finishes one an abort or a restart cut short. Into any mode but default, a mockup offer waiting for a human is taken when the mockup stage's policy is now `auto`, and the step runs; a mockup waiting for the person goes to the auto responder as it stands, and the row names the mockup, never a round. Into default, a mockup the responder steers comes back to the person at once when nothing runs on it, as a running turn ends (storing no use it reached), else at its next revision or turn (see Mockups). Into `auto`, `auto+emit` or `yolo`, a stage gate shown only because its policy asked a human is approved when the policies are now `auto` (a `gate` reply still wins) and its reviewer's verdict passes, and the pipeline goes on; one shown because its verdict did not pass stays with its human, as it would in auto, and a switch back to default decides no gate. A round whose asking run read the policy before the switch and had not yet ended on it stays with its human too. Exactly two words, the mode one of the four, case ignored, so an answer that starts with "mode" stays an answer. Works while a stage runs. Refused, changing nothing, for the mode in effect, once emission has started (the sign-off approved) and after the pipeline ended. The stored mode survives a reopen: a later start's mode is ignored, as its cap is. Each reply is a `mode` event with the switch, or the refusal's reason (`unchanged`, `emission_started`, `ended`). |
 | `resume`, `continue`          | Runs the stopped stage again once, as a retry message would but storing no note (see below); a stage the cap stopped runs too and meets the cap again. The whole message, case ignored, so an answer that starts with either word stays an answer. While a run is in flight, or where nothing is stopped (an open gate, the mockup offer, a round waiting for answers, the sign-off, an ended pipeline, no need yet), nothing starts and the panel says so. Each reply is a `resume` event with the stage it runs again, or with `nothing` and the stage `running`, if any. |
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, the mockup version a use took carrying its `chosen` as the sheet shows it, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
@@ -1367,9 +1374,11 @@ the mockup reply (see Mockups):
   stores no note, and runs intake on the need already stored. An abort that
   cuts a stage's run, and a stage run's failure, tell the user to reply
   `continue`; a cap stop tells them to raise the cap, and a cut emission or
-  run start to reply approve. A pipeline stopped by the card contract or by
-  readiness's rounds is not re-run; the user starts a new blueprint with a
-  better design.
+  run start to reply approve. A pipeline stopped by the card contract, or by
+  readiness's rounds on a pack with no stage that checks cards, is not
+  re-run; the user starts a new blueprint with a better design. With such a
+  stage, readiness's spent rounds go to the sign-off, whose reject re-runs
+  the cards.
 - From slice 4, a project may opt into automatic export in config: a target
   repo, branch and directory; the bundle is committed there at each gate or at
   sign-off. Off by default.
@@ -1454,18 +1463,19 @@ frames on the session's chat stream.
   decomposition chain runs, the per-slice steps after it that it does not
   run read done.
   A pipeline that ended before the sign-off (slicing that holds no slices,
-  cards the contract stopped, readiness's rounds spent) reads `ended`, with
-  a one-line `end_reason` (plain on a plain-language blueprint, with the
-  technical reason in `end_detail`), whatever state the blueprint's row
-  holds (idle): it is read from the record, so a blueprint that ended before
-  the view said so reads ended too. The step whose artifact the end carries is
-  stopped, its newest version current on the sheet. A step after it reads
-  skipped when it collapsed and its collapse is recorded, not_reached when
-  it collapsed otherwise, holds no version or holds one a reject
-  superseded, and done or folded when it holds a version from before the
-  end (a loop's chain the end cut short); the sign-off reads done when one
-  was shown before the end and not_reached otherwise, and the board
-  not_reached. A cost-cap stop is no end: it waits, as before.
+  cards the contract stopped, readiness's rounds spent on a pack with no
+  stage that checks cards) reads `ended`, with a one-line `end_reason`
+  (plain on a plain-language blueprint, with the technical reason in
+  `end_detail`), whatever state the blueprint's row holds (idle): it is read
+  from the record, so a blueprint that ended before the view said so reads
+  ended too. The step whose artifact the end carries is stopped, its newest
+  version current on the sheet. A step after it reads skipped when it
+  collapsed and its collapse is recorded, not_reached when it collapsed
+  otherwise, holds no version or holds one a reject superseded, and done or
+  folded when it holds a version from before the end (a loop's chain the end
+  cut short); the sign-off reads done when one was shown before the end and
+  not_reached otherwise, and the board not_reached. A cost-cap stop is no
+  end: it waits, as before.
   `Seq` is the id of the newest events row the view reflects, and every
   state change writes one. The view reads the store and memory only, so an
   ended session's blueprint has one while the architect is up. A record the
@@ -1667,6 +1677,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |
 | Endpoint returning a selection context for non-backend consumers                                     | later               |
 | Richer writeback: pull-request link, review state, merge, epic transition                           | Jira mirror (later) |
+| Panel: the Sign-off sheet lists the sign-off data's `not_ready` (the cards readiness's last round left not ready, each `<card id>: <finding>`), and its override note reads true over critical or open findings | spent readiness rounds |
 
 ## Delivery slices
 

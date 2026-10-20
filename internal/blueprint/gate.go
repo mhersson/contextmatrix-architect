@@ -43,13 +43,17 @@ func stageGateActions(stageID string) []gateAction {
 // signoffActions are the replies the sign-off takes: approve, which also
 // overrides the warnings it was shown with, and reject with feedback, which
 // re-runs the loop's target stage. Over a critical finding across the
-// blueprint, approve takes a reason, which it records.
-func signoffActions(warnings, critical bool) []gateAction {
+// blueprint, or over the card findings readiness's last round left open
+// (open), approve takes a reason, which it records; a critical finding's
+// wording wins when both apply.
+func signoffActions(warnings, critical, open bool) []gateAction {
 	approve := gateAction{Label: "Approve", Reply: store.GateApprove, Decision: store.GateApprove}
 
 	switch {
 	case critical:
 		approve.Label, approve.Feedback, approve.Ask = "Approve over critical findings", true, "Why approve over the critical findings?"
+	case open:
+		approve.Label, approve.Feedback, approve.Ask = "Approve over open findings", true, "Why approve over the cards readiness did not pass?"
 	case warnings:
 		approve.Label = "Approve and override warnings"
 	}

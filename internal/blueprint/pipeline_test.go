@@ -417,8 +417,58 @@ func TestPipeline_ReadinessLoopsBackThenReports(t *testing.T) {
 	report, ok := rec.first(EventReport)
 	require.True(t, ok)
 	assert.Equal(t, false, report.Payload["ready"])
+	assert.Equal(t, true, report.Payload["signoff"], "the sign-off follows the spent rounds")
 	assert.Equal(t, 3, report.Payload["rounds"])
 	assert.Contains(t, report.Payload["findings"], "D1: two deliverables")
+
+	bp, err := st.GetBlueprint(context.Background(), "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, string(StateWaiting), bp.State)
+
+	// The sign-off waits: a message is a note with its hint and runs nothing.
+	require.NoError(t, c.Message(context.Background(), "BP1", "try again", "m3"))
+	c.Wait("BP1")
+	assert.Equal(t, 8, runner.calls())
+
+	note, ok := rec.first(EventNote)
+	require.True(t, ok)
+	assert.Equal(t, signoffOpenHint, note.Payload["hint"])
+}
+
+// withoutCardsCheck drops the cards check from pk's stages, in memory only:
+// a pack with no stage that checks cards has no sign-off.
+func withoutCardsCheck(pk *pack.Pack) *pack.Pack {
+	for i := range pk.Stages {
+		pk.Stages[i].Checks = slices.DeleteFunc(slices.Clone(pk.Stages[i].Checks), func(ch string) bool { return ch == pack.CheckCards })
+	}
+
+	return pk
+}
+
+func TestPipeline_ReadinessRoundsSpentEndAPackWithoutACardsStage(t *testing.T) {
+	var readinessRuns int
+
+	script := happyScript()
+	script["readiness"] = func(context.Context, stage.Input) (stage.Output, error) {
+		readinessRuns++
+
+		return done(fmt.Sprintf("# Not ready %d", readinessRuns), readiness(false)), nil
+	}
+
+	c, st, runner, rec, _ := newPipeline(t, script)
+	withoutCardsCheck(c.opts.Pack)
+	drive(t, c, "BP1")
+
+	require.Equal(t, 8, runner.calls())
+	assert.Equal(t, 3, readinessRuns)
+
+	report, ok := rec.first(EventReport)
+	require.True(t, ok)
+	assert.Equal(t, false, report.Payload["ready"])
+	assert.Equal(t, false, report.Payload["signoff"], "no sign-off follows without a stage that checks cards")
+	assert.Equal(t, 3, report.Payload["rounds"])
+	assert.Contains(t, report.Payload["findings"], "D1: two deliverables")
+	assert.False(t, rec.has(EventSignOff))
 
 	bp, err := st.GetBlueprint(context.Background(), "BP1")
 	require.NoError(t, err)
@@ -428,6 +478,10 @@ func TestPipeline_ReadinessLoopsBackThenReports(t *testing.T) {
 	require.NoError(t, c.Message(context.Background(), "BP1", "try again", "m3"))
 	c.Wait("BP1")
 	assert.Equal(t, 8, runner.calls())
+
+	note, ok := rec.first(EventNote)
+	require.True(t, ok)
+	assert.Equal(t, true, note.Payload["ended"])
 }
 
 func TestPipeline_StagesSeeTheCardsInTheData(t *testing.T) {

@@ -88,9 +88,17 @@ func TestSignoff_RejectRerunsDecompositionWithTheFeedbackAndAFreshBudget(t *test
 	reports := rec.all(EventReport)
 	require.Len(t, reports, 2, "the ready report, then the not-ready one")
 	assert.Equal(t, true, reports[0].Payload["signoff"], "the sign-off follows a ready end")
-	assert.Equal(t, false, reports[1].Payload["signoff"])
+	assert.Equal(t, true, reports[1].Payload["signoff"], "and the spent rounds")
 	assert.Equal(t, 1, reports[0].Payload["rounds"])
 	assert.Equal(t, 3, reports[1].Payload["rounds"], "the rounds count again from the rejection")
+
+	capped, err := st.LatestArtifact(ctx, "BP1", "readiness")
+	require.NoError(t, err)
+
+	shown := rec.all(EventSignOff)
+	require.Len(t, shown, 2, "the spent rounds show a second sign-off")
+	assert.Equal(t, capped.Version, shown[1].Payload["version"], "it signs off the capped verdict")
+	assert.Contains(t, shown[1].Payload["not_ready"], "D1: two deliverables")
 
 	gates, err := st.ListGates(ctx, "BP1", signoffStage)
 	require.NoError(t, err)
@@ -1603,6 +1611,282 @@ func TestSignoff_ABareApproveResumesAnEmissionApprovedOverACriticalFinding(t *te
 	assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
 }
 
+// spentScript is happyScript whose readiness never passes D1, so its rounds
+// run out with the card not ready.
+func spentScript() stageScript {
+	script := happyScript()
+	script["readiness"] = returns("# Not ready", readiness(false))
+
+	return script
+}
+
+// noSignoffGates asserts that nothing decided the sign-off.
+func noSignoffGates(t *testing.T, st *store.Store) {
+	t.Helper()
+
+	gates, err := st.ListGates(context.Background(), "BP1", signoffStage)
+	require.NoError(t, err)
+	assert.Empty(t, gates, "nothing decides the sign-off")
+}
+
+func TestSignoff_SpentReadinessRoundsStopForAHumanInEveryMode(t *testing.T) {
+	tests := []struct {
+		mode string
+		auto bool
+	}{
+		{mode: protocol.ArchitectModeDefault},
+		{mode: protocol.ArchitectModeAuto},
+		{mode: protocol.ArchitectModeAutoEmit, auto: true},
+		{mode: protocol.ArchitectModeYolo, auto: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			c, st, runner, rec, _ := newPipeline(t, spentScript())
+			fake := newFakeCM()
+			c.opts.ConnectCM = fake.connect
+			ctx := context.Background()
+
+			in := startInput("BP1")
+			in.Mode = tt.mode
+			driveIn(t, c, in)
+
+			assert.Len(t, inputsOf(runner, "readiness"), 3)
+
+			reports := rec.all(EventReport)
+			require.NotEmpty(t, reports)
+
+			report := reports[len(reports)-1]
+			assert.Equal(t, false, report.Payload["ready"])
+			assert.Equal(t, true, report.Payload["signoff"], "the sign-off follows the spent rounds")
+			assert.Equal(t, 3, report.Payload["rounds"])
+			assert.Contains(t, report.Payload["findings"], "D1: two deliverables")
+
+			so, ok := rec.first(EventSignOff)
+			require.True(t, ok, "the sign-off is shown")
+			assert.Equal(t, []string{"D1: two deliverables"}, so.Payload["not_ready"])
+			assert.Equal(t, tt.auto, so.Payload["auto_stopped"])
+
+			approve := anyList(so.Payload["actions"])[0].(map[string]any)
+			assert.Equal(t, "approve", approve["reply"])
+			assert.Equal(t, true, approve["feedback"])
+			assert.Equal(t, "Why approve over the cards readiness did not pass?", approve["ask"])
+
+			assert.Empty(t, fake.titles(), "nothing is emitted")
+			noSignoffGates(t, st)
+			assert.Equal(t, string(StateWaiting), stateOf(t, st, "BP1"))
+
+			v, err := c.View(ctx, "BP1")
+			require.NoError(t, err)
+			assert.Equal(t, string(StateWaiting), v.State, "the pipeline has not ended")
+			assert.Empty(t, v.EndReason)
+			assert.Equal(t, stepWaiting, stepOf(t, v, signoffStage).Status)
+			require.NotNil(t, v.Open)
+			assert.Equal(t, "gate:signoff:v3", v.Open.PromptID)
+		})
+	}
+}
+
+func TestSignoff_ApproveOverOpenFindingsTakesAReason(t *testing.T) {
+	c, st, _, rec, _ := newPipeline(t, spentScript())
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	ctx := context.Background()
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeYolo
+	driveIn(t, c, in)
+	require.True(t, rec.has(EventSignOff))
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	noSignoffGates(t, st)
+	assert.Empty(t, fake.titles())
+
+	notes := rec.all(EventNote)
+	require.NotEmpty(t, notes)
+	assert.Equal(t, "Readiness's rounds ran out with cards not ready. Say why you approve over them: reply approve <reason>, or reject <feedback>.",
+		notes[len(notes)-1].Payload["hint"], "the bare approve's note asks for a reason")
+
+	const reason = "D1 is one deliverable in practice"
+
+	require.NoError(t, c.Message(ctx, "BP1", "approve "+reason, "m4"))
+	c.Wait("BP1")
+
+	gates, err := st.ListGates(ctx, "BP1", signoffStage)
+	require.NoError(t, err)
+	require.Len(t, gates, 1)
+	assert.Equal(t, store.GateApprove, gates[0].Decision)
+	assert.Equal(t, reason, gates[0].Feedback)
+
+	var decided Event
+
+	for _, e := range rec.all(EventDecided) {
+		if e.Payload["stage"] == signoffStage {
+			decided = e
+		}
+	}
+
+	assert.Equal(t, reason, decided.Payload["override_reason"])
+
+	art, err := c.Artifact(ctx, "BP1", signoffStage, "", 3)
+	require.NoError(t, err)
+
+	var data map[string]any
+	require.NoError(t, json.Unmarshal(art.Data, &data))
+	assert.Equal(t, reason, data["override_reason"])
+
+	assert.NotEmpty(t, fake.titles(), "emission runs")
+}
+
+func TestSignoff_RejectOverOpenFindingsRerunsWithFreshRounds(t *testing.T) {
+	var readinessRuns atomic.Int32
+
+	script := happyScript()
+	script["readiness"] = func(context.Context, stage.Input) (stage.Output, error) {
+		if readinessRuns.Add(1) <= 3 {
+			return done("# Not ready", readiness(false)), nil
+		}
+
+		return done("# Ready", readiness(true)), nil
+	}
+
+	c, st, runner, rec, _ := newPipeline(t, script)
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	require.True(t, rec.has(EventSignOff))
+
+	before := len(inputsOf(runner, "decomposition"))
+
+	require.NoError(t, c.Message(ctx, "BP1", "reject split the card in two", "m3"))
+	c.Wait("BP1")
+
+	cards := inputsOf(runner, "decomposition")
+	require.Greater(t, len(cards), before, "decomposition runs again")
+	assert.Contains(t, cards[before].Task, "split the card in two", "the next decomposition sees the feedback")
+	assert.Equal(t, int32(4), readinessRuns.Load())
+
+	shown := rec.all(EventSignOff)
+	require.Len(t, shown, 2, "the ready end shows a second sign-off")
+	assert.Equal(t, 4, shown[1].Payload["version"])
+	assert.Equal(t, []string{}, shown[1].Payload["not_ready"])
+
+	reports := rec.all(EventReport)
+	require.Len(t, reports, 2)
+	assert.Equal(t, 1, reports[1].Payload["rounds"], "the rounds count again from the rejection")
+	assert.Equal(t, true, reports[1].Payload["ready"])
+
+	gates, err := st.ListGates(ctx, "BP1", signoffStage)
+	require.NoError(t, err)
+	require.Len(t, gates, 1)
+	assert.Equal(t, store.GateReject, gates[0].Decision)
+	assert.Equal(t, 3, gates[0].Version)
+	assert.Equal(t, string(StateWaiting), stateOf(t, st, "BP1"))
+}
+
+func TestReopen_SpentReadinessRoundsReopenAtTheSignoff(t *testing.T) {
+	yolo := startInput("BP1")
+	yolo.Mode = protocol.ArchitectModeYolo
+
+	t.Run("the open sign-off is shown again as it was", func(t *testing.T) {
+		c, st, _, rec, ws := newPipeline(t, spentScript())
+		driveIn(t, c, yolo)
+
+		shown, ok := rec.first(EventSignOff)
+		require.True(t, ok)
+
+		second := newFakeCM()
+		_, rec2 := reopen(t, c, st, ws, spentScript(), second, yolo)
+
+		again, ok := rec2.first(EventSignOff)
+		require.True(t, ok, "the sign-off is shown again")
+		assert.JSONEq(t, payloadJSON(t, shown), payloadJSON(t, again))
+		assert.False(t, rec2.has(EventSignOffAuto), "nothing approves it")
+		assert.Empty(t, second.titles(), "nothing is emitted")
+		noSignoffGates(t, st)
+		assert.Equal(t, string(StateWaiting), stateOf(t, st, "BP1"))
+	})
+
+	t.Run("a record that ended at the cap reopens at the sign-off", func(t *testing.T) {
+		c, st, _, rec, ws := newPipeline(t, spentScript())
+		withoutCardsCheck(c.opts.Pack)
+		driveIn(t, c, yolo)
+		require.False(t, rec.has(EventSignOff), "the record ended at the cap")
+
+		second := newFakeCM()
+		c2, rec2 := reopen(t, c, st, ws, spentScript(), second, yolo)
+
+		so, ok := rec2.first(EventSignOff)
+		require.True(t, ok, "the reopen shows the sign-off")
+		assert.Equal(t, []string{"D1: two deliverables"}, so.Payload["not_ready"])
+		assert.Equal(t, true, so.Payload["auto_stopped"])
+		assert.Empty(t, second.titles(), "nothing is emitted")
+		noSignoffGates(t, st)
+		assert.Equal(t, string(StateWaiting), stateOf(t, st, "BP1"))
+
+		v, err := c2.View(context.Background(), "BP1")
+		require.NoError(t, err)
+		assert.NotEqual(t, viewEnded, v.State)
+	})
+
+	t.Run("a reject the re-run never followed runs decomposition", func(t *testing.T) {
+		c, st, _, rec, ws := newPipeline(t, spentScript())
+		ctx := context.Background()
+
+		drive(t, c, "BP1")
+		require.True(t, rec.has(EventSignOff))
+
+		// The reject is recorded; the re-run it starts was cut short.
+		_, err := st.AddGate(ctx, store.Gate{
+			BlueprintID: "BP1", Stage: signoffStage, Version: 3, Decision: store.GateReject,
+			Feedback: "split the card in two", Responder: store.ResponderHuman, DecidedAt: time.Now(),
+		})
+		require.NoError(t, err)
+
+		require.NoError(t, c.End(ctx, "BP1"))
+		require.NoError(t, c.Shutdown(ctx))
+
+		second := newFakeCM()
+		c2, runner2, rec2 := restart(t, st, ws, happyScript(), second.connect, startInput("BP1"))
+		c2.Wait("BP1")
+
+		require.NotZero(t, runner2.calls())
+		assert.Equal(t, "decomposition", runner2.input(0).Stage, "the reject's re-run runs, not the sign-off")
+		assert.Contains(t, runner2.input(0).Task, "split the card in two")
+
+		shown := rec2.all(EventSignOff)
+		require.Len(t, shown, 1)
+		assert.Equal(t, 4, shown[0].Payload["version"], "only the re-run's ready end is signed off")
+		assert.Equal(t, []string{}, shown[0].Payload["not_ready"])
+		assert.Empty(t, second.titles(), "nothing is emitted")
+	})
+}
+
+func TestSignoff_AModeSwitchIntoYoloStillStopsOverOpenFindings(t *testing.T) {
+	c, st, _, rec, _ := newPipeline(t, spentScript())
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	require.True(t, rec.has(EventSignOff))
+
+	require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeYolo, "m-mode"))
+	c.Wait("BP1")
+
+	assert.Equal(t, true, onlyMode(t, rec).Payload["signoff"], "the switch runs the sign-off again")
+
+	shown := rec.all(EventSignOff)
+	require.Len(t, shown, 2, "the sign-off runs again and stops")
+	assert.Equal(t, true, shown[1].Payload["auto_stopped"])
+	assert.Equal(t, []string{"D1: two deliverables"}, shown[1].Payload["not_ready"])
+	assert.Empty(t, fake.titles(), "nothing is emitted over open findings")
+	noSignoffGates(t, st)
+	assert.Equal(t, string(StateWaiting), stateOf(t, st, "BP1"))
+}
+
 func TestCrossOf_NeverDropsACriticalFindingForAMalformedField(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1635,21 +1919,24 @@ func TestCrossOf_NeverDropsACriticalFindingForAMalformedField(t *testing.T) {
 
 func TestSignoffActions_TheCriticalApproveWinsOverWarnings(t *testing.T) {
 	tests := []struct {
-		name               string
-		warnings, critical bool
-		label              string
-		feedback           bool
-		ask                bool
+		name                     string
+		warnings, critical, open bool
+		label                    string
+		feedback                 bool
+		ask                      bool
 	}{
-		{"neither", false, false, "Approve", false, false},
-		{"warnings", true, false, "Approve and override warnings", false, false},
-		{"critical", false, true, "Approve over critical findings", true, true},
-		{"both", true, true, "Approve over critical findings", true, true},
+		{"neither", false, false, false, "Approve", false, false},
+		{"warnings", true, false, false, "Approve and override warnings", false, false},
+		{"critical", false, true, false, "Approve over critical findings", true, true},
+		{"both", true, true, false, "Approve over critical findings", true, true},
+		{"open findings", false, false, true, "Approve over open findings", true, true},
+		{"open findings and warnings", true, false, true, "Approve over open findings", true, true},
+		{"critical and open findings", false, true, true, "Approve over critical findings", true, true},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			approve := signoffActions(tc.warnings, tc.critical)[0]
+			approve := signoffActions(tc.warnings, tc.critical, tc.open)[0]
 
 			assert.Equal(t, store.GateApprove, approve.Reply)
 			assert.Equal(t, tc.label, approve.Label)
