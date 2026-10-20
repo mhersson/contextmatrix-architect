@@ -1141,3 +1141,49 @@ func TestSignoff_ApprovalsHoldTheModeLock(t *testing.T) {
 		assert.Equal(t, []bool{false}, *free)
 	})
 }
+
+func TestSetMode_YoloTurnsTheVerifyStepIntoANotice(t *testing.T) {
+	notice := verifyNotice("alpha", "go test ./...")
+
+	tests := []struct {
+		mode    string
+		steps   []string
+		notices []string
+	}{
+		{mode: protocol.ArchitectModeYolo, notices: []string{notice}},
+		{mode: protocol.ArchitectModeAutoEmit, steps: []string{verifyStep}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			c, _, rec, _ := newSetupPipeline(t)
+			ctx := context.Background()
+
+			drive(t, c, "BP1")
+
+			so, ok := rec.first(EventSignOff)
+			require.True(t, ok)
+			assert.Equal(t, []string{verifyStep}, so.Payload["steps"])
+
+			require.NoError(t, c.SetMode(ctx, "BP1", tt.mode, "m-mode"))
+			c.Wait("BP1")
+
+			for _, kind := range []string{EventSignOffAuto, EventEmitted} {
+				e, ok := rec.first(kind)
+				require.True(t, ok, kind)
+
+				if tt.steps == nil {
+					assert.Empty(t, e.Payload["steps"], kind)
+				} else {
+					assert.Equal(t, tt.steps, e.Payload["steps"], kind)
+				}
+
+				if tt.notices == nil {
+					assert.Empty(t, e.Payload["notices"], kind)
+				} else {
+					assert.Equal(t, tt.notices, e.Payload["notices"], kind)
+				}
+			}
+		})
+	}
+}

@@ -155,12 +155,12 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	}
 
 	auto := emitsOnItsOwn(cur.Mode)
+	payload["steps"], payload["notices"] = pf.setup(pf.runsAtOnce(cur.Mode))
 
-	// Steps do not stop it: creating the cards does not need them, and they
-	// are shown again with the emitted cards. The approval goes first and
-	// the record of what it approved after it, so a crash between the two
-	// leaves an approved sign-off the restart emits, never an unapproved
-	// record.
+	// Steps and notices do not stop it: creating the cards does not need them, and
+	// they are shown again with the emitted cards. The approval goes first and the
+	// record of what it approved after it, so a crash between the two leaves an
+	// approved sign-off the restart emits, never an unapproved record.
 	if auto && !critical && ctx.Err() == nil && pfErr == nil && len(pf.Blocking) == 0 && len(pf.Warnings) == 0 {
 		decided := c.decideWith(bg, au, bp.ID, signoffStage, out.art.Version, store.GateApprove, "", store.ResponderAuto, "", approval)
 		lock.Unlock()
@@ -196,8 +196,18 @@ func (c *Controller) signoff(ctx context.Context, sess *session, bp store.Bluepr
 	au.event(bg, Event{Kind: EventSignOff, BlueprintID: bp.ID, Payload: payload})
 }
 
+// nonNil is list, or an empty list for none, so a payload never sends null.
+func nonNil(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+
+	return list
+}
+
 // signoffPayload is what a sign-off carries: the cards in playbook order,
-// the manual checks, the playbook title, what preflight found, readiness's
+// the manual checks, the playbook title, what preflight found but its steps
+// and notices, which the caller adds under the mode lock, readiness's
 // findings across the blueprint, critical first, and the assumptions,
 // riskiest first. Assumptions that cannot be read show as none, and the log
 // says why; an intake from before assumptions were data gives its section's
@@ -242,7 +252,7 @@ func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blue
 
 	payload := map[string]any{
 		"version": out.art.Version, "cards": cards, "order": draft.Order, "manual": manual, "title": draft.Title,
-		"blocking": pf.Blocking, "warnings": pf.Warnings, "steps": pf.Steps, "assumptions": assumptions,
+		"blocking": nonNil(pf.Blocking), "warnings": nonNil(pf.Warnings), "assumptions": assumptions,
 		"cross": crossPayload(crossOf(out.art)),
 	}
 

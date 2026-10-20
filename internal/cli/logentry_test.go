@@ -209,6 +209,10 @@ func TestLogEntryFor(t *testing.T) {
 			"cards": []any{map[string]any{"card": "ALPHA-001"}}, "playbook": "",
 			"steps": []any{"set verify command `go test ./...` on project alpha in ContextMatrix"},
 		}}, "text", []string{"ALPHA-001", "set verify command `go test ./...` on project alpha in ContextMatrix"}, false},
+		{"emitted with a notice", blueprint.Event{Kind: blueprint.EventEmitted, BlueprintID: "S1", Payload: map[string]any{
+			"cards": []any{map[string]any{"card": "ALPHA-001"}}, "playbook": "",
+			"notices": []any{"project alpha declares no verify command, so each card's agent looks for one"},
+		}}, "text", []string{"Notices (no step needed before the cards run):", "project alpha declares no verify command, so each card's agent looks for one"}, false},
 		{"decided by the mode", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{"decision": "approve", "responder": "auto"}}, "system", []string{"needs a human first"}, false},
 		{"decided reject", blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: map[string]any{"decision": "reject", "responder": "human", "feedback": "split it"}}, "system", []string{"Rejected"}, false},
 		{"gate", blueprint.Event{Kind: blueprint.EventGate, BlueprintID: "S1", Payload: map[string]any{
@@ -386,6 +390,11 @@ func TestLogEntryFor_SignoffSaysWhatPreflightFound(t *testing.T) {
 			name: "steps", preflight: map[string]any{"blocking": []any{}, "warnings": []any{}, "steps": []any{"set verify command `go test ./...` on project alpha in ContextMatrix"}},
 			carries: []string{"Manual steps for you before the cards run", "set verify command `go test ./...` on project alpha in ContextMatrix"},
 			lacks:   []string{"found nothing", "overrides the warnings"},
+		},
+		{
+			name: "notices", preflight: map[string]any{"blocking": []any{}, "warnings": []any{}, "notices": []any{"project alpha declares no verify command, so each card's agent looks for one"}},
+			carries: []string{"Notices (no step needed before the cards run):", "project alpha declares no verify command, so each card's agent looks for one"},
+			lacks:   []string{"Manual steps for you", "found nothing", "overrides the warnings"},
 		},
 		{
 			name: "not run", preflight: map[string]any{"blocking": []any{}, "warnings": []any{}, "preflight_error": "connect: refused"},
@@ -1309,6 +1318,23 @@ func TestLogEntryFor_APlainPromptWordsEachMomentByItsSituation(t *testing.T) {
 		assert.NotEqual(t, render(t, blueprint.EventSignOff, critical, true).Prompt.Text, render(t, blueprint.EventSignOff, criticalSteps, true).Prompt.Text)
 	})
 
+	t.Run("notices say the work settles some setup", func(t *testing.T) {
+		const (
+			settles   = "settle some technical setup on its own"
+			technical = "needs someone technical"
+		)
+
+		notices := []any{"a notice"}
+
+		only := render(t, blueprint.EventSignOff, signoff(map[string]any{"notices": notices}), true)
+		assert.Contains(t, only.Prompt.Text, settles)
+		assert.NotContains(t, only.Prompt.Text, technical)
+
+		both := render(t, blueprint.EventSignOff, signoff(map[string]any{"notices": notices, "steps": []any{"Set up the thing"}}), true)
+		assert.Contains(t, both.Prompt.Text, settles)
+		assert.Contains(t, both.Prompt.Text, technical)
+	})
+
 	t.Run("every stop kind folds its text and keeps its reply", func(t *testing.T) {
 		for _, resume := range []string{"emission", "run", "held"} {
 			p := map[string]any{"stage": "signoff", "resume": resume, "version": 1, "prompt": "p", "text": "technical stop"}
@@ -1352,6 +1378,73 @@ func TestLogEntryFor_APlainSetupNoteLeadsPlainlyAndKeepsTheSteps(t *testing.T) {
 	assert.NotEqual(t, technical.Content, plain.Content)
 	assert.Contains(t, plain.Content, technical.Content, "the technical steps follow unchanged")
 	assert.Equal(t, technical.Type, plain.Type)
+}
+
+func TestLogEntryFor_APlainSetupNoteLeadsWithAPersonOnlyForAStep(t *testing.T) {
+	gap := func(verify, file, empty bool) map[string]any {
+		return map[string]any{"project": "alpha", "has_verify": verify, "has_instruction_file": file, "empty": empty}
+	}
+
+	tests := []struct {
+		name   string
+		mode   any
+		gap    map[string]any
+		person bool
+	}{
+		{name: "instruction file only", mode: protocol.ArchitectModeDefault, gap: gap(true, false, false)},
+		{name: "empty repository", mode: protocol.ArchitectModeDefault, gap: gap(true, true, true), person: true},
+		{name: "verify gap, default", mode: protocol.ArchitectModeDefault, gap: gap(false, true, false), person: true},
+		{name: "verify gap, yolo", mode: protocol.ArchitectModeYolo, gap: gap(false, true, false)},
+		{name: "verify gap, no mode", gap: gap(false, true, false), person: true},
+		{name: "verify gap and empty repository, yolo", mode: protocol.ArchitectModeYolo, gap: gap(false, true, true), person: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := map[string]any{"projects": []any{tt.gap}}
+			if tt.mode != nil {
+				p["mode"] = tt.mode
+			}
+
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSetupGaps, BlueprintID: "S1", Payload: p, Plain: true})
+			require.True(t, ok)
+
+			want := plainSetupSettledLead
+			if tt.person {
+				want = plainSetupLead
+			}
+
+			assert.True(t, strings.HasPrefix(entry.Content, want))
+		})
+	}
+}
+
+func TestLogEntryFor_APlainEmittedEntryLeadsPlainlyAndKeepsTheDetails(t *testing.T) {
+	payload := func(extra map[string]any) map[string]any {
+		p := map[string]any{"cards": []any{map[string]any{"card": "ALPHA-001"}}, "playbook": "", "manual": []any{}}
+		maps.Copy(p, extra)
+
+		return p
+	}
+	render := func(p map[string]any, plain bool) protocol.LogEntry {
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventEmitted, BlueprintID: "S1", Payload: p, Plain: plain})
+		require.True(t, ok)
+
+		return entry
+	}
+
+	with := payload(map[string]any{"steps": []any{"push a commit"}, "notices": []any{"a notice"}})
+	technical, plain := render(with, false), render(with, true)
+
+	assert.NotEqual(t, technical.Content, plain.Content)
+	assert.Contains(t, plain.Content, technical.Content, "the technical text follows unchanged")
+	assert.Contains(t, plain.Content, plainStepsSentence)
+	assert.Contains(t, plain.Content, plainNoticesSentence)
+	assert.Equal(t, technical.Type, plain.Type)
+
+	bare := render(payload(nil), true)
+	assert.NotContains(t, bare.Content, plainStepsSentence)
+	assert.NotContains(t, bare.Content, plainNoticesSentence)
 }
 
 func TestLogEntry_TheOfferIsAGatePrompt(t *testing.T) {

@@ -244,7 +244,12 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		entry.Content = setupGapsText(p)
 
 		if e.Plain {
-			entry.Content = plainSetupLead + "\n\n" + entry.Content
+			lead := plainSetupSettledLead
+			if setupNeedsAPerson(p) {
+				lead = plainSetupLead
+			}
+
+			entry.Content = lead + "\n\n" + entry.Content
 		}
 	case blueprint.EventPolicy:
 		entry.Type = "system"
@@ -454,7 +459,19 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			}
 		}
 
+		if notices := stringsOf(p["notices"]); len(notices) > 0 {
+			b.WriteString("\n\nNotices (no step needed before the cards run):")
+
+			for _, s := range notices {
+				b.WriteString("\n- " + s)
+			}
+		}
+
 		entry.Content = b.String()
+
+		if e.Plain {
+			entry.Content = plainEmittedText(p) + "\n\n" + entry.Content
+		}
 	case blueprint.EventAnswer:
 		// CM shows a human's answer as the message it was.
 		if str(p["responder"]) != store.ResponderAuto {
@@ -844,7 +861,7 @@ func signoffText(p map[string]any, sliced bool) (body, reply string) {
 		b.WriteString("\nAssumptions: none recorded.\n")
 	}
 
-	blocking, warnings, steps, pfErr := stringsOf(p["blocking"]), stringsOf(p["warnings"]), stringsOf(p["steps"]), str(p["preflight_error"])
+	blocking, warnings, steps, notices, pfErr := stringsOf(p["blocking"]), stringsOf(p["warnings"]), stringsOf(p["steps"]), stringsOf(p["notices"]), str(p["preflight_error"])
 
 	if len(blocking) > 0 {
 		b.WriteString("\nBlocking (fix these in ContextMatrix first):\n")
@@ -870,11 +887,19 @@ func signoffText(p map[string]any, sliced bool) (body, reply string) {
 		}
 	}
 
+	if len(notices) > 0 {
+		b.WriteString("\nNotices (no step needed before the cards run):\n")
+
+		for _, s := range notices {
+			b.WriteString("- " + s + "\n")
+		}
+	}
+
 	if pfErr != "" {
 		b.WriteString("\nPreflight could not run: " + pfErr + "\n")
 	}
 
-	if len(blocking) == 0 && len(warnings) == 0 && len(steps) == 0 && pfErr == "" {
+	if len(blocking) == 0 && len(warnings) == 0 && len(steps) == 0 && len(notices) == 0 && pfErr == "" {
 		b.WriteString("\nPreflight found nothing for a human.\n")
 	}
 
@@ -1459,8 +1484,9 @@ func plainGateText(p map[string]any, sliced bool) string {
 }
 
 // plainSignoffText is what a person reads of the sign-off: a critical finding
-// across the blueprint is the one moment the architect is stuck, and setup
-// steps are named whenever the sign-off carries any.
+// across the blueprint is the one moment the architect is stuck, setup steps
+// are named whenever the sign-off carries any, and notices say the work
+// settles some setup itself.
 func plainSignoffText(p map[string]any) string {
 	var text string
 
@@ -1471,15 +1497,70 @@ func plainSignoffText(p map[string]any) string {
 	}
 
 	if len(stringsOf(p["blocking"])) > 0 || len(stringsOf(p["warnings"])) > 0 || len(stringsOf(p["steps"])) > 0 {
-		text += " Some setup needs someone technical before the work can run; the steps are below."
+		text += plainStepsSentence
+	}
+
+	if len(stringsOf(p["notices"])) > 0 {
+		text += plainNoticesSentence
+	}
+
+	return text
+}
+
+const (
+	plainStepsSentence   = " Some setup needs someone technical before the work can run; the steps are below."
+	plainNoticesSentence = " The work will settle some technical setup on its own; a technical helper can read how below."
+)
+
+// plainEmittedText is what a person reads above the announcement of the
+// emitted cards, which stays technical below it.
+func plainEmittedText(p map[string]any) string {
+	text := "The work is created in ContextMatrix."
+
+	if len(stringsOf(p["manual"])) > 0 {
+		text += " A few checks for a person to run once the work is built are listed below."
+	}
+
+	if len(stringsOf(p["steps"])) > 0 {
+		text += plainStepsSentence
+	}
+
+	if len(stringsOf(p["notices"])) > 0 {
+		text += plainNoticesSentence
 	}
 
 	return text
 }
 
 // plainSetupLead is what a person reads above the setup gaps the code
-// checkout found, which stay technical for the helper who sets them up.
+// checkout found when one needs a person, which stay technical for the
+// helper who sets them up.
 const plainSetupLead = "Someone technical needs to set up a few things in the projects before the work can run; the details for them follow."
+
+// plainSetupSettledLead is the same note when no gap needs a person before
+// the cards run.
+const plainSetupSettledLead = "The work will settle a few things in the projects on its own; the details for a technical helper follow."
+
+// setupNeedsAPerson is whether a gap in the setup note needs a person before
+// the cards run: a repository with no commits always does, a missing verify
+// command does unless the blueprint runs in yolo, where it is a notice, and
+// a missing instruction file never does, a card writes it. An event without
+// a mode reads as not yolo.
+func setupNeedsAPerson(p map[string]any) bool {
+	yolo := str(p["mode"]) == protocol.ArchitectModeYolo
+
+	for _, g := range anyMaps(p["projects"]) {
+		if empty, _ := g["empty"].(bool); empty {
+			return true
+		}
+
+		if verify, _ := g["has_verify"].(bool); !verify && !yolo {
+			return true
+		}
+	}
+
+	return false
+}
 
 // plainAwaitText is what a person reads of a stopped emission or run start.
 func plainAwaitText() string {
@@ -1535,7 +1616,7 @@ func setupGapsText(p map[string]any) string {
 		name := str(g["project"])
 
 		if verify, _ := g["has_verify"].(bool); !verify {
-			fmt.Fprintf(&b, "\n- %s declares no verify command in ContextMatrix. Decomposition proposes one, and the manual steps shown before the cards run include setting it; setting it now works too.", name)
+			fmt.Fprintf(&b, "\n- %s declares no verify command in ContextMatrix. Decomposition proposes one, and the sign-off names it while it is still unset; setting it before the cards run pins it.", name)
 		}
 
 		if file, _ := g["has_instruction_file"].(bool); !file {

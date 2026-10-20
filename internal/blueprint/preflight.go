@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 
+	protocol "github.com/mhersson/contextmatrix-protocol"
+
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/code"
 	"github.com/mhersson/contextmatrix-architect/internal/contract"
@@ -15,26 +17,65 @@ import (
 // preflightResult is what preflight found. Blocking problems refuse
 // emission until they are fixed and the human approves again. Warnings need
 // a human: an approve after they were shown overrides them, and an emitting
-// mode stops for a human instead of approving. Steps are setup only a human
-// can do before the cards run, in ContextMatrix or in a repository; they
-// are shown but neither block emission nor stop an emitting mode, because
-// creating the cards does not need them. EmptyRepos are the identities
-// (clean urls) of the repositories of card projects with no commits, in
-// source order; a yolo run waits for them.
+// mode stops for a human instead of approving. Steps are the repository
+// setup only a human can do before the cards run; they are shown but
+// neither block emission nor stop an emitting mode, because creating the
+// cards does not need them. Verify are the projects that declare no verify
+// command while the cards propose one: setup turns them into steps or
+// notices, because when the run starts at once no human can set it.
+// EmptyRepos are the identities (clean urls) of the repositories of card
+// projects with no commits, in source order; a yolo run waits for them.
 type preflightResult struct {
 	Blocking   []string
 	Warnings   []string
 	Steps      []string
+	Verify     []verifyGap
 	EmptyRepos []string
 }
 
-// preflight checks what emission needs: every card's project in
-// ContextMatrix with a repository; every repository's default branch where
-// the checkout read it; and no draft title already a card in another runnable
-// playbook. A project ContextMatrix declares no verify command for is a
-// step when the draft proposes one and a warning when it proposes none. A
-// missing instruction file is no finding: the contract makes a card write
-// it.
+// verifyGap is a project with no verify command that the cards propose one
+// for.
+type verifyGap struct {
+	Project, Command string
+}
+
+// runsAtOnce is whether the cards run with no human in between: only yolo
+// does, and a repository with no commits holds its run start for one.
+func (r preflightResult) runsAtOnce(mode string) bool {
+	return mode == protocol.ArchitectModeYolo && len(r.EmptyRepos) == 0
+}
+
+// setup is what a human is told about setup. A verify gap is a step while a
+// person can still set the command before the cards run, and a notice of
+// what happens without it when the run starts at once. Neither list is nil.
+func (r preflightResult) setup(runsAtOnce bool) (steps, notices []string) {
+	steps, notices = []string{}, []string{}
+
+	if runsAtOnce {
+		for _, g := range r.Verify {
+			notices = append(notices, verifyNotice(g.Project, g.Command))
+		}
+	} else {
+		for _, g := range r.Verify {
+			steps = append(steps, fmt.Sprintf("set verify command `%s` on project %s in ContextMatrix", g.Command, g.Project))
+		}
+	}
+
+	return append(steps, r.Steps...), notices
+}
+
+// verifyNotice says what a run does for a project with no verify command:
+// the agent's own search, then a model proposal, then none.
+func verifyNotice(project, command string) string {
+	return fmt.Sprintf("project %s declares no verify command, so each card's agent looks for one in the repository as the cards build it (a test target or the project's test command), else uses one its model proposes, else runs unverified. The cards propose `%s`; set it on project %s in ContextMatrix to pin it.", project, command, project)
+}
+
+// preflight checks what emission needs: every card's project in ContextMatrix
+// with a repository; every repository's default branch where the checkout read
+// it; and no draft title already a card in another runnable playbook. A project
+// ContextMatrix declares no verify command for is a verify gap when the draft
+// proposes one and a warning when it proposes none. A missing instruction file
+// is no finding: the contract makes a card write it.
 func (c *Controller) preflight(ctx context.Context, sess *session, bp store.Blueprint, draft contract.Draft, client CMClient) (preflightResult, error) {
 	var res preflightResult
 
@@ -81,7 +122,7 @@ func (c *Controller) preflight(ctx context.Context, sess *session, bp store.Blue
 		}
 
 		if command := draft.Setup[name].VerifyCommand; command != "" {
-			res.Steps = append(res.Steps, fmt.Sprintf("set verify command `%s` on project %s in ContextMatrix", command, name))
+			res.Verify = append(res.Verify, verifyGap{Project: name, Command: command})
 		} else {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("project %s declares no verify command and the cards propose none", name))
 		}

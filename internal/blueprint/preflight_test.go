@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	protocol "github.com/mhersson/contextmatrix-protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -43,6 +44,7 @@ func TestPreflight(t *testing.T) {
 		blocking string // substring expected among the blocking problems
 		warning  string // substring expected among the warnings
 		step     string // substring expected among the steps
+		verify   []verifyGap
 		empty    []string
 	}{
 		{name: "clean", arrange: noop},
@@ -61,7 +63,7 @@ func TestPreflight(t *testing.T) {
 		{
 			name: "no verify command, and the cards propose one", cards: setupCards(),
 			arrange: func(_ *testing.T, f *fakeCM, _ *fakeWorkspace, _ string) { f.projects = unset },
-			step:    "set verify command `go test ./...` on project alpha in ContextMatrix",
+			verify:  []verifyGap{{Project: "alpha", Command: "go test ./..."}},
 		},
 		{
 			name:    "no verify command, and the cards propose none",
@@ -132,6 +134,7 @@ func TestPreflight(t *testing.T) {
 			res := preflightOf(t, c, st, fake)
 
 			assert.Equal(t, tt.empty, res.EmptyRepos)
+			assert.Equal(t, tt.verify, res.Verify)
 
 			for _, check := range []struct {
 				got  []string
@@ -232,6 +235,55 @@ func TestMovedRepos_EmptyRepositories(t *testing.T) {
 			for i, want := range tt.warnings {
 				assert.Contains(t, warnings[i], want)
 			}
+		})
+	}
+}
+
+func TestPreflightSetup(t *testing.T) {
+	const push = "push an initial commit to https://example.com/alpha.git's default branch before running the cards; the agent needs a base branch"
+
+	res := preflightResult{Verify: []verifyGap{{Project: "alpha", Command: "go test ./..."}}, Steps: []string{push}}
+
+	tests := []struct {
+		name       string
+		res        preflightResult
+		runsAtOnce bool
+		steps      []string
+		notices    []string
+	}{
+		{name: "a person can still set it", res: res, steps: []string{verifyStep, push}, notices: []string{}},
+		{name: "the run starts at once", res: res, runsAtOnce: true, steps: []string{push}, notices: []string{verifyNotice("alpha", "go test ./...")}},
+		{name: "nothing found", steps: []string{}, notices: []string{}},
+		{name: "nothing found, the run starts at once", runsAtOnce: true, steps: []string{}, notices: []string{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			steps, notices := tt.res.setup(tt.runsAtOnce)
+
+			assert.Equal(t, tt.steps, steps)
+			assert.Equal(t, tt.notices, notices)
+		})
+	}
+}
+
+func TestPreflightRunsAtOnce(t *testing.T) {
+	tests := []struct {
+		name  string
+		mode  string
+		empty []string
+		want  bool
+	}{
+		{name: "yolo", mode: protocol.ArchitectModeYolo, want: true},
+		{name: "yolo with a repository with no commits", mode: protocol.ArchitectModeYolo, empty: []string{"https://example.com/alpha.git"}},
+		{name: "auto+emit", mode: protocol.ArchitectModeAutoEmit},
+		{name: "auto", mode: protocol.ArchitectModeAuto},
+		{name: "default", mode: protocol.ArchitectModeDefault},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, preflightResult{EmptyRepos: tt.empty}.runsAtOnce(tt.mode))
 		})
 	}
 }
