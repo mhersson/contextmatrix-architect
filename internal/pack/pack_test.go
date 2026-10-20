@@ -568,3 +568,62 @@ func TestLoadEmbedded_ListsTheEdgeCases(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, p.Lists().EdgeCases, "acceptance sweeps the default pack's edge cases")
 }
+
+const (
+	screenYAML = "  - id: need\n    persona: po\n    checks: [screen]\n"
+	lookYAML   = "  - id: look\n    persona: po\n    consumes: [need]\n    tools: [code]\n    checks: [mockup]\n    policy: human\n"
+)
+
+// mockupPack is slicedPack with the screen and mockup stages' files and the
+// mockup responder's instructions.
+func mockupPack(stagesYAML string) fstest.MapFS {
+	fsys := slicedPack(stagesYAML)
+	for _, name := range []string{"stages/need.md", "stages/look.md", "stages/mockup_responder.md"} {
+		fsys[name] = &fstest.MapFile{Data: []byte("instructions")}
+	}
+
+	return fsys
+}
+
+func TestLoad_MockupStage(t *testing.T) {
+	p, err := load(mockupPack(screenYAML + lookYAML + cutYAML + designYAML + cardsYAML))
+	require.NoError(t, err)
+	assert.Equal(t, "look", p.MockupStage())
+	assert.Equal(t, "need", p.ScreenStage())
+	assert.NotEmpty(t, p.MockupResponderInstructions())
+
+	none, err := load(packFS("", nil))
+	require.NoError(t, err)
+	assert.Empty(t, none.MockupStage())
+	assert.Empty(t, none.ScreenStage())
+}
+
+func TestLoad_MockupStageInvalid(t *testing.T) {
+	gated := strings.Replace(lookYAML, "    policy: human\n", "    gate: true\n    reviewer: {persona: po, threshold: 4}\n", 1)
+	tests := []struct {
+		name, stages string
+		drop         string
+		want         string
+	}{
+		{name: "no stage states the screen", stages: strings.Replace(lookYAML, "    consumes: [need]\n", "", 1), want: "screen"},
+		{name: "the screen stage after it", stages: strings.Replace(lookYAML, "    consumes: [need]\n", "", 1) + screenYAML, want: "screen"},
+		{name: "after slicing", stages: screenYAML + cutYAML + lookYAML + designYAML + cardsYAML, want: "before the stage that checks slices"},
+		{name: "a gate", stages: screenYAML + gated, want: "no gate"},
+		{name: "per slice", stages: screenYAML + cutYAML + strings.Replace(lookYAML, "    policy: human\n", "    per_slice: true\n", 1), want: "mockup"},
+		{name: "two of them", stages: screenYAML + lookYAML + strings.Replace(lookYAML, "id: look", "id: look2", 1), want: "one"},
+		{name: "no responder instructions", stages: screenYAML + lookYAML, drop: "stages/mockup_responder.md", want: "stages/mockup_responder.md"},
+		{name: "the reserved id", stages: screenYAML + "  - id: mockup_responder\n    persona: po\n", want: "reserved"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fsys := mockupPack(tt.stages)
+			fsys["stages/look2.md"] = &fstest.MapFile{Data: []byte("x")}
+			delete(fsys, tt.drop)
+
+			_, err := load(fsys)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}

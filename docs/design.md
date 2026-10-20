@@ -582,9 +582,11 @@ pack.yaml          stage order; per stage: persona, consumes,
                    responder's question cap, loop target and rounds, whether
                    it repeats per slice (`per_slice`) and which earlier
                    slices' stages it reads (`earlier_slices`), and whether it
-                   settles what every slice shares (`shared`)
+                   settles what every slice shares (`shared`); the checks include `screen`
+                   (the stage whose data states whether the need has a screen)
+                   and `mockup` (the stage that draws the mockups)
 personas/*.md      role text, one file per persona
-stages/*.md        instructions, one file per stage, review.md for every reviewer run, responder.md for every responder run and plain.md (optional) for every run of a plain-language blueprint
+stages/*.md        instructions, one file per stage, review.md for every reviewer run, responder.md for every responder run, mockup_responder.md for every mockup responder run and plain.md (optional) for every run of a plain-language blueprint
 card.md            the card body template
 lists.yaml         data for mechanical checks: required sections, stripped headings,
                    defect phrases, maintenance labels and verbs, forbidden content,
@@ -610,6 +612,11 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
   cards and criteria both repeat per slice or neither does, so cards are
   checked against the criteria of their own scope. No stage id holds `@`,
   which joins a per-slice stage's id and its slice in the record.
+  A mockup stage has no gate, reviewer, fold, loop, `per_slice` or `shared`,
+  follows the one stage that checks `screen` and precedes the stage that
+  checks slices, and the pack carries `stages/mockup_responder.md`; at most
+  one stage checks `mockup` and one checks `screen`, and `mockup_responder`
+  is a reserved stage id.
   The loader refuses a pack that breaks one of these, and one whose `gate`
   is not true or false, such as a pack from before version 0.5 with `gate:
   questions`.
