@@ -187,7 +187,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		// The question cap is per attempt, so a round counts what the
 		// attempt's earlier rounds asked.
 		attempt, number = rd.attempt, rd.number
-		asked, err = c.askedIn(bg, id, stageID, attempt)
+		asked, err = c.askedIn(bg, bp, stageID, attempt)
 	} else {
 		attempt, err = c.nextAttempt(bg, id, stageID)
 	}
@@ -520,6 +520,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	in := stage.Input{
 		Stage: st.ID, Persona: c.opts.Pack.Persona(st.Persona),
 		Instructions: withPlain(bp, c.opts.Pack.Instructions(st.Stage.ID), c.opts.Pack.PlainInstructions()), Task: task,
+		PlainLanguage: bp.PlainLanguage,
 	}
 
 	steps, pieces, err := c.steps(context.WithoutCancel(ctx), bp.ID)
@@ -682,8 +683,12 @@ func (c *Controller) nextAttempt(ctx context.Context, id, stageID string) (int, 
 }
 
 // askedIn counts the questions the runs of stageID's attempt asked: in the
-// rounds they posted, and alone in a record from before rounds.
-func (c *Controller) askedIn(ctx context.Context, id, stageID string, attempt int) (int, error) {
+// rounds they posted, and alone in a record from before rounds. On a
+// plain-language blueprint only the responder's rounds count: the question
+// cap leaves the person's experience questions alone.
+func (c *Controller) askedIn(ctx context.Context, bp store.Blueprint, stageID string, attempt int) (int, error) {
+	id := bp.ID
+
 	runs, err := c.opts.Store.ListRuns(ctx, id)
 	if err != nil {
 		return 0, fmt.Errorf("list runs failed: %w", err)
@@ -705,7 +710,7 @@ func (c *Controller) askedIn(ctx context.Context, id, stageID string, attempt in
 	n := 0
 
 	for _, s := range rounds {
-		if in[s.PostedBy] {
+		if in[s.PostedBy] && (!bp.PlainLanguage || s.Frame.Responder) {
 			n += len(s.Frame.Questions)
 		}
 	}

@@ -63,8 +63,11 @@ type RoundQuestion struct {
 type Round struct {
 	Questions []RoundQuestion
 	// Assumptions is the round's last tab: the stage's assumptions, each to
-	// be accepted or turned into a question.
-	Assumptions []string
+	// be accepted or turned into a question. Consequences is aligned with it:
+	// what each means for the person using the result, "" for none, nil when
+	// none has one.
+	Assumptions  []string
+	Consequences []string
 }
 
 // ChatAnswer is what answer_chat sends: the reply for the round's chat and
@@ -72,8 +75,10 @@ type Round struct {
 type ChatAnswer struct {
 	Reply     string
 	Questions []RoundQuestion
-	// Assumptions, when not nil, replaces the open round's tab.
-	Assumptions []string
+	// Assumptions, when not nil, replaces the open round's tab; Consequences
+	// is aligned with it as on a Round.
+	Assumptions  []string
+	Consequences []string
 }
 
 // Interviewer posts a run's rounds and answers the chat about the open one.
@@ -93,7 +98,19 @@ type terminalMark struct {
 	fatal *FatalCheckError
 }
 
-const assumptionsSchema = `{"type":"array","items":{"type":"string"},"description":"before you submit: the decisions you made that nobody confirmed, one standalone sentence each, for the person to accept or turn into a question"}`
+// tabEntrySchema is an assumptions tab entry: a sentence, or on a
+// plain-language blueprint also {text, consequence}.
+func tabEntrySchema(plain bool) string {
+	if !plain {
+		return `{"type":"string"}`
+	}
+
+	return `{"oneOf":[{"type":"string"},{"type":"object","properties":{"text":{"type":"string"},"consequence":{"type":"string","description":"what the decision means for the person using the result, in one plain sentence; leave it out when they would notice nothing"}},"required":["text"]}]}`
+}
+
+func assumptionsSchema(plain bool) string {
+	return `{"type":"array","items":` + tabEntrySchema(plain) + `,"description":"before you submit: the decisions you made that nobody confirmed, one standalone sentence each, for the person to accept or turn into a question"}`
+}
 
 const optionSchema = `{"type":"object","properties":{
 	"title":{"type":"string","description":"the option, a few words; never write (recommended) into it"},
@@ -122,18 +139,20 @@ func questionSchema(revise bool) string {
 type askQuestionsTool struct {
 	iv   Interviewer
 	mark *terminalMark
+	// plain offers the tool's plain-language forms (Input.PlainLanguage).
+	plain bool
 }
 
 func (askQuestionsTool) Name() string   { return askQuestionsName }
 func (askQuestionsTool) Terminal() bool { return true }
 
-func (askQuestionsTool) Schema() llm.Tool {
+func (t askQuestionsTool) Schema() llm.Tool {
 	return llm.Tool{Type: "function", Function: llm.ToolFunction{
 		Name: askQuestionsName,
 		Description: "Ask the person driving this blueprint a round of questions you cannot settle from the code or your sources; " +
 			"where your stage records assumptions, post them as the round's last tab before you submit. " +
 			"Your run ends when the round is posted; the answers arrive as your next message, numbered Q<n>, which is how to cite them.",
-		Parameters: json.RawMessage(`{"type":"object","properties":{"questions":{"type":"array","items":` + questionSchema(false) + `},"assumptions":` + assumptionsSchema + `}}`),
+		Parameters: json.RawMessage(`{"type":"object","properties":{"questions":{"type":"array","items":` + questionSchema(false) + `},"assumptions":` + assumptionsSchema(t.plain) + `}}`),
 	}}
 }
 
@@ -143,13 +162,13 @@ func (t askQuestionsTool) Execute(ctx context.Context, args map[string]any) (too
 		return tools.Result{}, fmt.Errorf("%s: %w", askQuestionsName, err)
 	}
 
-	assumptions := textList(args["assumptions"])
+	assumptions, consequences := tabEntries(args["assumptions"])
 
 	if len(qs) == 0 && len(assumptions) == 0 {
 		return tools.Result{}, fmt.Errorf("%s: a round needs at least one question or assumption", askQuestionsName)
 	}
 
-	text, err := t.iv.Ask(ctx, Round{Questions: qs, Assumptions: assumptions})
+	text, err := t.iv.Ask(ctx, Round{Questions: qs, Assumptions: assumptions, Consequences: consequences})
 	if err != nil {
 		return tools.Result{}, fmt.Errorf("%s: %w", askQuestionsName, err)
 	}
@@ -162,12 +181,14 @@ func (t askQuestionsTool) Execute(ctx context.Context, args map[string]any) (too
 type answerChatTool struct {
 	iv   Interviewer
 	mark *terminalMark
+	// plain is askQuestionsTool's.
+	plain bool
 }
 
 func (answerChatTool) Name() string   { return AnswerChatName }
 func (answerChatTool) Terminal() bool { return true }
 
-func (answerChatTool) Schema() llm.Tool {
+func (t answerChatTool) Schema() llm.Tool {
 	return llm.Tool{Type: "function", Function: llm.ToolFunction{
 		Name: AnswerChatName,
 		Description: "Reply in the open round's chat. Revise a question (give its number) or add one when the person's point changes the round; " +
@@ -177,7 +198,7 @@ func (answerChatTool) Schema() llm.Tool {
 		Parameters: json.RawMessage(`{"type":"object","properties":{
 			"reply":{"type":"string","description":"your reply in the round's chat"},
 			"questions":{"type":"array","items":` + questionSchema(true) + `},
-			"assumptions":{"type":"array","items":{"type":"string"},"description":"replaces the round's assumptions tab: every assumption you still hold, one standalone sentence each; leave it out to keep the tab; never an empty list"}},"required":["reply"]}`),
+			"assumptions":{"type":"array","items":` + tabEntrySchema(t.plain) + `,"description":"replaces the round's assumptions tab: every assumption you still hold, one standalone sentence each; leave it out to keep the tab; never an empty list"}},"required":["reply"]}`),
 	}}
 }
 
@@ -198,20 +219,25 @@ func (t answerChatTool) Execute(ctx context.Context, args map[string]any) (tools
 
 	// A present list replaces the tab; nil keeps it. An empty or mistyped
 	// value is refused so a reflexive [] cannot wipe the person's decisions.
-	var assumptions []string
+	var assumptions, consequences []string
 
 	if raw, ok := args["assumptions"]; ok && raw != nil {
 		if _, isList := raw.([]any); !isList {
-			return tools.Result{}, fmt.Errorf("%s: assumptions must be a list of sentences", AnswerChatName)
+			form := "sentences"
+			if t.plain {
+				form += " or {text, consequence} entries"
+			}
+
+			return tools.Result{}, fmt.Errorf("%s: assumptions must be a list of %s", AnswerChatName, form)
 		}
 
-		assumptions = textList(raw)
+		assumptions, consequences = tabEntries(raw)
 		if len(assumptions) == 0 {
 			return tools.Result{}, fmt.Errorf("%s: assumptions is empty; leave it out to keep the tab, or list every assumption you still hold", AnswerChatName)
 		}
 	}
 
-	text, err := t.iv.Answer(ctx, ChatAnswer{Reply: reply, Questions: qs, Assumptions: assumptions})
+	text, err := t.iv.Answer(ctx, ChatAnswer{Reply: reply, Questions: qs, Assumptions: assumptions, Consequences: consequences})
 	if err != nil {
 		return tools.Result{}, fmt.Errorf("%s: %w", AnswerChatName, err)
 	}
@@ -353,6 +379,42 @@ func textList(v any) []string {
 	}
 
 	return out
+}
+
+// tabEntries reads an assumptions tab, each entry a sentence or {text,
+// consequence}; an entry without text is dropped. consequences is aligned
+// with texts, "" for none, and nil when no entry has one.
+func tabEntries(v any) (texts, consequences []string) {
+	items, _ := v.([]any)
+
+	has := false
+
+	for _, item := range items {
+		var text, consequence string
+
+		switch e := item.(type) {
+		case string:
+			text = e
+		case map[string]any:
+			text, _ = e["text"].(string)
+			consequence, _ = e["consequence"].(string)
+		}
+
+		if text = strings.TrimSpace(text); text == "" {
+			continue
+		}
+
+		consequence = strings.TrimSpace(consequence)
+		has = has || consequence != ""
+
+		texts, consequences = append(texts, text), append(consequences, consequence)
+	}
+
+	if !has {
+		consequences = nil
+	}
+
+	return texts, consequences
 }
 
 // tagList reads source tags as the model wrote them ("[s3]") in the form the

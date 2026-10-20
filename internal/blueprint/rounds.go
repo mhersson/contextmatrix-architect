@@ -79,8 +79,26 @@ type roundState struct {
 	HandedOver *handover `json:"handed_over,omitempty"`
 	// Audiences is the audience each question was asked for, by number;
 	// recorded in every mode, read only in plain language.
-	Audiences map[int]string    `json:"audiences,omitempty"`
-	Frame     protocol.LogRound `json:"frame"`
+	Audiences map[int]string `json:"audiences,omitempty"`
+	// Plain marks the round a plain-language blueprint put to its person:
+	// each tab entry's Text is a plain consequence and its Detail the
+	// technical text. Technical is the responder's round of the same ask, 0
+	// for none, and Consequences maps each entry that describes one of its
+	// answers to that answer's question number.
+	Plain        bool              `json:"plain,omitempty"`
+	Technical    int               `json:"technical,omitempty"`
+	Consequences map[string]int    `json:"consequences,omitempty"`
+	Frame        protocol.LogRound `json:"frame"`
+}
+
+// tabText is the technical text of a tab entry: its Detail on a plain
+// round, else its Text.
+func tabText(a protocol.RoundAssumption) string {
+	if a.Detail != "" {
+		return a.Detail
+	}
+
+	return a.Text
 }
 
 // handover records what a human had settled on a round when a mode switch
@@ -455,7 +473,7 @@ func retabbed(s roundState, texts []string) roundState {
 
 	idOf := map[string][]string{}
 	for _, a := range out.Frame.Assumptions {
-		idOf[a.Text] = append(idOf[a.Text], a.ID)
+		idOf[tabText(a)] = append(idOf[tabText(a)], a.ID)
 	}
 
 	var kept []protocol.RoundAssumption
@@ -510,7 +528,11 @@ func writeOpenRound(b *strings.Builder, s roundState) {
 	}
 
 	for _, a := range s.Frame.Assumptions {
-		fmt.Fprintf(b, "- %s: %s\n", a.ID, a.Text)
+		writeTabEntry(b, a)
+
+		if n, ok := s.Consequences[a.ID]; ok {
+			fmt.Fprintf(b, "  Kept on the tab for you: it describes the answer to Q%d; leave it out when you replace the tab.\n", n)
+		}
 
 		if accept, ok := decisions[a.ID]; ok {
 			fmt.Fprintf(b, "  Decision so far: %s\n", decisionText(accept))
@@ -832,6 +854,22 @@ func (c *Controller) continuation(ctx context.Context, bp store.Blueprint, s rou
 
 	var b strings.Builder
 
+	// A plain round's technical questions went to the responder's round of
+	// the same ask, which the conversation is told first.
+	if s.Technical > 0 {
+		rounds, err := c.rounds(ctx, bp.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, tr := range rounds {
+			if tr.Number == s.Technical {
+				writeRoundAnswers(&b, tr)
+				writeRoundAssumptions(&b, tr, accepted)
+			}
+		}
+	}
+
 	writeRoundAnswers(&b, s)
 	writeRoundAssumptions(&b, s, accepted)
 	writeRoundChat(&b, s)
@@ -894,14 +932,29 @@ func writeRoundAssumptions(b *strings.Builder, s roundState, accepted []accepted
 		converted[id] = true
 	}
 
+	accepts := map[string]bool{}
+	for _, d := range s.Frame.Decisions {
+		accepts[d.ID] = d.Accept
+	}
+
 	fmt.Fprintf(b, "## Assumptions tab of round %d\n\n", s.Number)
 
 	for _, a := range s.Frame.Assumptions {
-		fmt.Fprintf(b, "- %s: %s\n", a.ID, a.Text)
+		writeTabEntry(b, a)
+
+		question, isAnswer := s.Consequences[a.ID]
 
 		switch tag := tags[a.ID]; {
 		case s.responderDecided(a.ID):
 			b.WriteString("  Accepted automatically under the auto policy; it stays unverified: state it without a basis.\n")
+		case isAnswer && accepts[a.ID]:
+			fmt.Fprintf(b, "  The person accepted what the answer to Q%d means for them.\n", question)
+		case isAnswer && converted[a.ID]:
+			fmt.Fprintf(b, "  The person did not accept what the answer to Q%d means for them.\n", question)
+		case s.Plain && tag != "":
+			fmt.Fprintf(b, "  The person accepted what it means for them as [%s]: state it with the basis %s.\n", tag, tag)
+		case s.Plain && converted[a.ID]:
+			fmt.Fprintf(b, "  The person did not accept what it means for them (%s): rethink the decision behind it, ask any technical follow-up as a technical question, and ask the person a plain follow-up only if you need their view.\n", a.Text)
 		case tag != "":
 			fmt.Fprintf(b, "  Accepted by the user as [%s]: state it with the basis %s.\n", tag, tag)
 		case converted[a.ID]:
@@ -910,6 +963,16 @@ func writeRoundAssumptions(b *strings.Builder, s roundState, accepted []accepted
 	}
 
 	b.WriteString("\n")
+}
+
+// writeTabEntry lists a tab entry by its technical text, followed on a
+// plain round by the consequence the person was shown.
+func writeTabEntry(b *strings.Builder, a protocol.RoundAssumption) {
+	fmt.Fprintf(b, "- %s: %s\n", a.ID, tabText(a))
+
+	if a.Detail != "" {
+		fmt.Fprintf(b, "  What it means for the person: %s\n", a.Text)
+	}
 }
 
 // writeRoundChat gives a resumed conversation the chat entries it has not

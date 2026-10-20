@@ -16,12 +16,14 @@ import (
 )
 
 // answer is a responder's reply: the answer, why, whether a tool result
-// settles it, and the source tags and findings that say so.
+// settles it, the source tags and findings that say so, and what the answer
+// means for the person using the result when they would notice it.
 type answer struct {
-	Answer    string `json:"answer"`
-	Reasoning string `json:"reasoning"`
-	Grounded  bool   `json:"grounded"`
-	Evidence  string `json:"evidence"`
+	Answer      string `json:"answer"`
+	Reasoning   string `json:"reasoning"`
+	Grounded    bool   `json:"grounded"`
+	Evidence    string `json:"evidence"`
+	Consequence string `json:"consequence"`
 }
 
 var (
@@ -102,6 +104,8 @@ func parseAnswer(data map[string]any) (answer, error) {
 		return answer{}, errors.New("answer is required")
 	}
 
+	a.Consequence = strings.TrimSpace(a.Consequence)
+
 	return a, nil
 }
 
@@ -166,10 +170,24 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion) (p
 		evidence = ans.Evidence
 	}
 
-	au.event(bg, Event{Kind: EventAnswer, BlueprintID: iv.bp.ID, RunID: iv.runID, Payload: map[string]any{
+	payload := map[string]any{
 		"number": q.Number, "text": ans.Answer, "responder": store.ResponderAuto,
 		"reasoning": ans.Reasoning, "grounded": grounded, "evidence": evidence,
-	}})
+	}
+
+	// Only a plain-language blueprint records a consequence; its asking run
+	// may put it on the person's tab.
+	if iv.bp.PlainLanguage && ans.Consequence != "" {
+		payload["consequence"] = ans.Consequence
+
+		if iv.consequences == nil {
+			iv.consequences = map[int]string{}
+		}
+
+		iv.consequences[q.Number] = ans.Consequence
+	}
+
+	au.event(bg, Event{Kind: EventAnswer, BlueprintID: iv.bp.ID, RunID: iv.runID, Payload: payload})
 
 	options := make([]string, 0, len(q.Options))
 	for _, o := range q.Options {

@@ -38,8 +38,9 @@ type interviewer struct {
 	// poc is the run's read of which targets are proofs of concept, which
 	// its responder is told.
 	poc []string
-	// max caps the questions the run's attempt may ask under auto, 0 none;
-	// asked counts them, the attempt's earlier runs included.
+	// max caps the questions the run's attempt may put to the responder,
+	// under auto or as a plain round's technical questions, 0 none; asked
+	// counts them, the attempt's earlier runs included.
 	max, asked int
 	// attempt, builderRound and findings are the run's place, which a
 	// continuation of its round takes over.
@@ -51,6 +52,9 @@ type interviewer struct {
 	// responded is set when the run's round was answered by the responder
 	// under auto, so nothing waits on the person.
 	responded bool
+	// consequences are the plain consequences the responder wrote with its
+	// answers on a plain-language blueprint, by question number.
+	consequences map[int]string
 	// seen is how many chat entries a chat run was given; its reply follows
 	// them.
 	seen int
@@ -79,8 +83,9 @@ func (iv *interviewer) Ask(ctx context.Context, rd stage.Round) (string, error) 
 	}
 
 	auto := policy == pack.PolicyAuto
+	split := iv.bp.PlainLanguage && !auto
 
-	if iv.bp.PlainLanguage && !auto {
+	if split {
 		if err := needAudiences(rd.Questions); err != nil {
 			return "", err
 		}
@@ -92,6 +97,9 @@ func (iv *interviewer) Ask(ctx context.Context, rd stage.Round) (string, error) 
 	case auto && iv.max > 0 && iv.asked+len(rd.Questions) > iv.max:
 		return "", fmt.Errorf("under the auto policy this stage may ask %d question(s) per attempt and %d are left; ask at most that many and decide the rest yourself, recording each decision as an assumption where this stage records them",
 			iv.max, max(iv.max-iv.asked, 0))
+	case split && iv.max > 0 && iv.asked+technicalCount(rd.Questions) > iv.max:
+		return "", fmt.Errorf("the auto responder answers this blueprint's technical questions, %d per attempt of this stage, and %d are left; ask at most that many technical questions and decide the rest yourself, recording each decision as an assumption where this stage records them",
+			iv.max, max(iv.max-iv.asked, 0))
 	}
 
 	if err := c.repeated(bg, iv.bp.ID, rd.Questions); err != nil {
@@ -101,6 +109,10 @@ func (iv *interviewer) Ask(ctx context.Context, rd stage.Round) (string, error) 
 	sources, err := c.roundSources(bg, iv.bp.ID, rd.Questions)
 	if err != nil {
 		return "", err
+	}
+
+	if split {
+		return iv.askPlain(ctx, rd, sources)
 	}
 
 	lock := c.roundLock(iv.bp.ID)
@@ -123,6 +135,20 @@ func (iv *interviewer) Ask(ctx context.Context, rd stage.Round) (string, error) 
 	}
 
 	return postedText(s), nil
+}
+
+// technicalCount counts the technical questions of qs: on a plain round they
+// go to the responder, which the question cap bounds as it does under auto.
+func technicalCount(qs []stage.RoundQuestion) int {
+	n := 0
+
+	for _, q := range qs {
+		if q.Audience == stage.AudienceTechnical {
+			n++
+		}
+	}
+
+	return n
 }
 
 // needAudiences refuses a question without its audience.
@@ -173,16 +199,26 @@ func (iv *interviewer) numbered(ctx context.Context, rd stage.Round, sources map
 	return s, nil
 }
 
-// respondAll has the responder answer each question of auto round s inside
-// the asking run, accepts every assumption on its tab, stores the round
-// closed and read-only, and ends the run on it like a human's round; the
-// stage continues at once. A cancel leaves no round; the answers already
-// given stay recorded, and a re-run asks only what is still unanswered. A
-// question the responder cannot answer is left to the stage, which decides
-// it.
+// respondAll answers auto round s with respondRound and ends the run on it
+// like a human's round; the stage continues at once.
 func (iv *interviewer) respondAll(ctx context.Context, s roundState) (string, error) {
+	s, err := iv.respondRound(ctx, s)
+	if err != nil {
+		return "", err
+	}
+
+	iv.responded, iv.posted = true, s.Number
+
+	return postedText(s), nil
+}
+
+// respondRound has the responder answer each question of round s inside the
+// asking run, accepts every assumption on its tab, and stores the round
+// closed and read-only. A cancel leaves no round; the answers already given
+// stay recorded, and a re-run asks only what is still unanswered. A question
+// the responder cannot answer is left to the stage, which decides it.
+func (iv *interviewer) respondRound(ctx context.Context, s roundState) (roundState, error) {
 	s.Frame.Responder = true
-	iv.responded = true
 
 	for _, a := range s.Frame.Assumptions {
 		s.Frame.Decisions = append(s.Frame.Decisions, protocol.AssumptionDecision{ID: a.ID, Accept: true})
@@ -193,7 +229,7 @@ func (iv *interviewer) respondAll(ctx context.Context, s roundState) (string, er
 
 		switch {
 		case ctx.Err() != nil:
-			return "", ctx.Err()
+			return roundState{}, ctx.Err()
 		case err != nil:
 			ans = protocol.RoundAnswer{Number: q.Number, Text: err.Error()}
 		}
@@ -211,9 +247,7 @@ func (iv *interviewer) respondAll(ctx context.Context, s roundState) (string, er
 	iv.c.putRound(bg, iv.sess.audit, iv.bp.ID, iv.runID, s)
 	lock.Unlock()
 
-	iv.posted = s.Number
-
-	return postedText(s), nil
+	return s, nil
 }
 
 // Answer is a chat run's reply in its round's chat, with the questions it
@@ -272,6 +306,13 @@ func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, 
 		return "", fmt.Errorf("round %d takes no changes now", iv.qround)
 	}
 
+	// A plain round is the person's half of its ask: its technical questions
+	// went to the responder's half.
+	plain := place.state.Plain
+	if plain && slices.ContainsFunc(a.Questions, func(q stage.RoundQuestion) bool { return q.Audience == stage.AudienceTechnical }) {
+		return "", errors.New("technical questions go in ask_questions once this round closes")
+	}
+
 	first, err := c.nextQuestionNumber(bg, iv.bp.ID)
 	if err != nil {
 		return "", err
@@ -282,7 +323,12 @@ func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, 
 		return "", err
 	}
 
-	if a.Assumptions != nil {
+	switch {
+	case a.Assumptions != nil && plain:
+		if next, err = plainRetab(next, a.Assumptions, a.Consequences); err != nil {
+			return "", err
+		}
+	case a.Assumptions != nil:
 		next = retabbed(next, a.Assumptions)
 	}
 
@@ -380,12 +426,17 @@ func postedText(s roundState) string {
 		return fmt.Sprintf("Round %d is posted with its assumptions tab. Your run ends here; the decisions arrive as your next message.", s.Number)
 	}
 
+	return fmt.Sprintf("Round %d is posted as %s. Your run ends here; the answers arrive as your next message.", s.Number, questionTags(qs))
+}
+
+// questionTags names a round's questions: Q<n>, or the range Q<n>-Q<m>.
+func questionTags(qs []protocol.RoundQuestion) string {
 	tags := fmt.Sprintf("Q%d", qs[0].Number)
 	if len(qs) > 1 {
 		tags += fmt.Sprintf("-Q%d", qs[len(qs)-1].Number)
 	}
 
-	return fmt.Sprintf("Round %d is posted as %s. Your run ends here; the answers arrive as your next message.", s.Number, tags)
+	return tags
 }
 
 func personaName(id string) string { return strings.ReplaceAll(id, "_", " ") }

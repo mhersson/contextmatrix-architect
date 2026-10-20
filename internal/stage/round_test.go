@@ -253,6 +253,49 @@ func TestRun_TheRoundToolsOfferTheAssumptionsTab(t *testing.T) {
 	}
 }
 
+func TestRun_APlainLanguageRunsRoundToolsTakeAConsequence(t *testing.T) {
+	for _, tt := range []struct {
+		tool string
+		chat bool
+	}{
+		{askQuestionsName, false},
+		{AnswerChatName, true},
+	} {
+		t.Run(tt.tool, func(t *testing.T) {
+			f := &fakeLLM{responses: []llm.Response{{ToolCalls: []llm.ToolCall{toolCall("c1", AnswerChatName, `{"reply":"Yes."}`)}, FinishReason: "tool_calls"}}}
+
+			in := baseInput(&bytes.Buffer{})
+			in.Interviewer, in.Chat, in.PlainLanguage = &stubInterviewer{}, tt.chat, true
+
+			_, _ = runnerWith(f).Run(context.Background(), in)
+			require.NotEmpty(t, f.requests)
+
+			var schema struct {
+				Properties map[string]struct {
+					Items struct {
+						OneOf []struct {
+							Type string `json:"type"`
+						} `json:"oneOf"`
+					} `json:"items"`
+				} `json:"properties"`
+			}
+
+			for _, offered := range f.requests[0].Tools {
+				if offered.Function.Name == tt.tool {
+					require.NoError(t, json.Unmarshal(offered.Function.Parameters, &schema))
+				}
+			}
+
+			var entries []string
+			for _, o := range schema.Properties["assumptions"].Items.OneOf {
+				entries = append(entries, o.Type)
+			}
+
+			assert.Equal(t, []string{"string", "object"}, entries, "an entry is a sentence or {text, consequence}")
+		})
+	}
+}
+
 func TestRun_AnInterviewerRefusalIsAToolError(t *testing.T) {
 	f := &fakeLLM{responses: []llm.Response{
 		{ToolCalls: []llm.ToolCall{toolCall("c1", "ask_questions", twoQuestions)}, FinishReason: "tool_calls"},
@@ -494,5 +537,63 @@ func TestParseQuestion_Audience(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, q.Audience)
 		})
+	}
+}
+
+func TestAskQuestions_AssumptionEntries(t *testing.T) {
+	tests := []struct {
+		name             string
+		tab              string
+		wantTexts        []string
+		wantConsequences []string
+	}{
+		{
+			name: "sentences and entries", tab: `["plain sentence",{"text":"t","consequence":"c"},{"text":"u"}]`,
+			wantTexts: []string{"plain sentence", "t", "u"}, wantConsequences: []string{"", "c", ""},
+		},
+		{
+			name: "no consequence", tab: `["plain sentence",{"text":"t"}]`,
+			wantTexts: []string{"plain sentence", "t"},
+		},
+		{
+			name: "an entry without text is dropped", tab: `[" ",{"consequence":"c"},{"text":" "},{"text":"t","consequence":" d "}]`,
+			wantTexts: []string{"t"}, wantConsequences: []string{"d"},
+		},
+	}
+
+	for _, tool := range []string{askQuestionsName, AnswerChatName} {
+		for _, tt := range tests {
+			t.Run(tool+"/"+tt.name, func(t *testing.T) {
+				chat := tool == AnswerChatName
+
+				args := `{"assumptions":` + tt.tab + `}`
+				if chat {
+					args = `{"reply":"Yes.","assumptions":` + tt.tab + `}`
+				}
+
+				f := &fakeLLM{responses: []llm.Response{{ToolCalls: []llm.ToolCall{toolCall("c1", tool, args)}, FinishReason: "tool_calls"}}}
+				iv := &stubInterviewer{}
+
+				in := baseInput(&bytes.Buffer{})
+				in.Interviewer, in.Chat = iv, chat
+
+				out, err := runnerWith(f).Run(context.Background(), in)
+				require.NoError(t, err)
+				require.True(t, out.Asked)
+
+				var texts, consequences []string
+
+				if chat {
+					require.Len(t, iv.answers, 1)
+					texts, consequences = iv.answers[0].Assumptions, iv.answers[0].Consequences
+				} else {
+					require.Len(t, iv.asked, 1)
+					texts, consequences = iv.asked[0].Assumptions, iv.asked[0].Consequences
+				}
+
+				assert.Equal(t, tt.wantTexts, texts)
+				assert.Equal(t, tt.wantConsequences, consequences)
+			})
+		}
 	}
 }
