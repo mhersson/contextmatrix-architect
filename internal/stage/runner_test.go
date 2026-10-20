@@ -257,7 +257,7 @@ type namedTool struct {
 func (n namedTool) Name() string { return n.name }
 
 func TestRun_ToolNamedLikeABuiltInIsRefused(t *testing.T) {
-	for _, name := range []string{"ask_questions", "answer_chat", "submit_artifact"} {
+	for _, name := range []string{"ask_questions", "answer_chat", "submit_artifact", "show_mockup"} {
 		t.Run(name, func(t *testing.T) {
 			f := &fakeLLM{}
 
@@ -823,4 +823,46 @@ func TestRun_PassesARecordedHistoryThroughUnchanged(t *testing.T) {
 	}
 
 	assert.Equal(t, []string{"lookup: 2 hits", "lookup: not transient\n\nbody"}, results)
+}
+
+// offered is the names of the tools req offers.
+func offered(req llm.Request) []string {
+	names := make([]string, 0, len(req.Tools))
+	for _, tool := range req.Tools {
+		names = append(names, tool.Function.Name)
+	}
+
+	return names
+}
+
+func TestRun_ADesignerGetsShowMockupInPlaceOfSubmit(t *testing.T) {
+	args, err := json.Marshal(mockupArgs(terminalSource))
+	require.NoError(t, err)
+
+	tests := []struct {
+		name string
+		chat bool
+		want []string
+	}{
+		{"a first run", false, []string{ShowMockupName}},
+		{"a chat run", true, []string{AnswerChatName, ShowMockupName}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeLLM{responses: []llm.Response{{ToolCalls: []llm.ToolCall{toolCall("c1", ShowMockupName, string(args))}, FinishReason: "tool_calls"}}}
+			d := &fakeDesigner{}
+
+			in := baseInput(&bytes.Buffer{})
+			in.Interviewer, in.Designer, in.Chat = &stubInterviewer{}, d, tt.chat
+
+			out, err := runnerWith(f).Run(context.Background(), in)
+			require.NoError(t, err)
+			assert.True(t, out.Asked, "a shown revision ends the run asked")
+			assert.Len(t, d.got, 1)
+
+			require.NotEmpty(t, f.requests)
+			assert.ElementsMatch(t, tt.want, offered(f.requests[0]))
+		})
+	}
 }

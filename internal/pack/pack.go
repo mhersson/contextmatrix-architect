@@ -55,6 +55,11 @@ const (
 	// card, and its findings across the blueprint, each X<n> with a
 	// severity and its text.
 	CheckReadiness = "readiness"
+	// CheckScreen marks the stage whose data states screen: true or false,
+	// whether the need has a screen to draw.
+	CheckScreen = "screen"
+	// CheckMockup marks the stage that draws the mockups.
+	CheckMockup = "mockup"
 )
 
 // Responder policies: who answers a stage's questions and decides its gate.
@@ -69,6 +74,8 @@ const (
 	reviewInstructions    = "review"
 	responderInstructions = "responder"
 	plainInstructions     = "plain"
+	// mockupResponderInstructions is what every mockup responder run reads.
+	mockupResponderInstructions = "mockup_responder"
 )
 
 // stepSeparator joins a per-slice stage's id and its slice in a step key;
@@ -182,6 +189,7 @@ type Pack struct {
 	card         string
 	review       string
 	responder    string
+	mockupResp   string
 	plain        string
 }
 
@@ -267,6 +275,10 @@ func load(fsys fs.FS) (*Pack, error) {
 		return nil, err
 	}
 
+	if err := validateMockup(p.Stages); err != nil {
+		return nil, err
+	}
+
 	for i, s := range p.Stages {
 		if s.Fold != nil && !slices.ContainsFunc(p.Stages[i+1:], func(t Stage) bool { return t.Gate && !t.Shared }) {
 			return nil, fmt.Errorf("pack: stage %q folds, but no later stage has a gate to fold into (a shared stage's gate takes no fold)", s.ID)
@@ -325,6 +337,13 @@ func load(fsys fs.FS) (*Pack, error) {
 	}
 
 	p.responder = string(responder)
+
+	mockupResp, err := optionalFile(fsys, path.Join("stages", mockupResponderInstructions+".md"), p.MockupStage(), "draws mockups")
+	if err != nil {
+		return nil, err
+	}
+
+	p.mockupResp = string(mockupResp)
 
 	plain, err := optionalFile(fsys, path.Join("stages", plainInstructions+".md"), "", "")
 	if err != nil {
@@ -415,7 +434,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 		return fmt.Errorf("pack: stage needs an id: %+v", s)
 	}
 
-	if s.ID == reviewInstructions || s.ID == responderInstructions || s.ID == plainInstructions {
+	if s.ID == reviewInstructions || s.ID == responderInstructions || s.ID == plainInstructions || s.ID == mockupResponderInstructions {
 		return fmt.Errorf("pack: stage id %q is reserved for the %s instructions", s.ID, s.ID)
 	}
 
@@ -453,7 +472,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	}
 
 	for _, check := range s.Checks {
-		if !slices.Contains([]string{CheckCards, CheckAssumptions, CheckDecisions, CheckSlices, CheckCriteria, CheckOutcomes, CheckReadiness}, check) {
+		if !slices.Contains([]string{CheckCards, CheckAssumptions, CheckDecisions, CheckSlices, CheckCriteria, CheckOutcomes, CheckReadiness, CheckScreen, CheckMockup}, check) {
 			return fmt.Errorf("pack: stage %q: unknown check %q", s.ID, check)
 		}
 	}
@@ -607,6 +626,71 @@ func validateDialog(s Stage) error {
 	return nil
 }
 
+// validateMockup holds the mockup stage to one plain run: no gate, reviewer,
+// fold, loop or slices, after the one stage that states the screen and before
+// the stage that checks slices.
+func validateMockup(stages []Stage) error {
+	has := func(check string) []int {
+		var at []int
+
+		for i, s := range stages {
+			if slices.Contains(s.Checks, check) {
+				at = append(at, i)
+			}
+		}
+
+		return at
+	}
+
+	mockups, screens := has(CheckMockup), has(CheckScreen)
+
+	if len(screens) > 1 {
+		return fmt.Errorf("pack: only one stage may check %s, not %q and %q", CheckScreen, stages[screens[0]].ID, stages[screens[1]].ID)
+	}
+
+	if len(mockups) > 1 {
+		return fmt.Errorf("pack: only one stage may check %s, not %q and %q", CheckMockup, stages[mockups[0]].ID, stages[mockups[1]].ID)
+	}
+
+	if len(mockups) == 0 {
+		return nil
+	}
+
+	i := mockups[0]
+	s := stages[i]
+
+	var key string
+
+	switch {
+	case s.Gate:
+		key = "gate"
+	case s.Reviewer != nil:
+		key = "reviewer"
+	case s.Fold != nil:
+		key = "fold"
+	case s.LoopsTo != "":
+		key = "loops_to"
+	case s.PerSlice:
+		key = "per_slice"
+	case s.Shared:
+		key = "shared"
+	}
+
+	if key != "" {
+		return fmt.Errorf("pack: mockup stage %q has no gate, reviewer, fold, loop or slices, but sets %s", s.ID, key)
+	}
+
+	if len(screens) == 0 || screens[0] >= i {
+		return fmt.Errorf("pack: mockup stage %q needs an earlier stage that checks %s", s.ID, CheckScreen)
+	}
+
+	if slicing := slices.IndexFunc(stages, func(t Stage) bool { return slices.Contains(t.Checks, CheckSlices) }); slicing >= 0 && i >= slicing {
+		return fmt.Errorf("pack: mockup stage %q must sit before the stage that checks slices", s.ID)
+	}
+
+	return nil
+}
+
 // SlicingStage is the id of the first stage that checks slices, whose newest
 // version decides how often the per-slice stages run; "" when the pack has
 // none.
@@ -650,6 +734,28 @@ func (p *Pack) ReviewInstructions() string { return p.review }
 // ResponderInstructions returns what every responder run reads; empty when
 // the pack has none, and then an auto question returns to its stage.
 func (p *Pack) ResponderInstructions() string { return p.responder }
+
+// MockupStage is the id of the stage that checks mockups; "" when the pack
+// has none.
+func (p *Pack) MockupStage() string { return p.checking(CheckMockup) }
+
+// ScreenStage is the id of the stage that states whether the need has a
+// screen; "" when the pack has none.
+func (p *Pack) ScreenStage() string { return p.checking(CheckScreen) }
+
+func (p *Pack) checking(check string) string {
+	for _, s := range p.Stages {
+		if slices.Contains(s.Checks, check) {
+			return s.ID
+		}
+	}
+
+	return ""
+}
+
+// MockupResponderInstructions returns what every mockup responder run reads;
+// empty when the pack has no mockup stage.
+func (p *Pack) MockupResponderInstructions() string { return p.mockupResp }
 
 // PlainInstructions are added to every stage, responder and reviewer run of a
 // plain-language blueprint; empty when the pack has none.

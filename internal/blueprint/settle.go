@@ -15,8 +15,9 @@ import (
 const reasonStaleReply = "stale_reply"
 
 // segmentStep is what runs next on a run slot: a stage run, a critique, a
-// run that goes on from a round (seg), or the responder's answers to a
-// handed-over round. The zero step runs nothing.
+// run that goes on from a round (seg), the responder's answers to a
+// handed-over round, the auto responder's turn on a mockup, or the settle of
+// a decided mockup. The zero step runs nothing.
 type segmentStep struct {
 	stage    string
 	critique bool
@@ -24,6 +25,11 @@ type segmentStep struct {
 	// handover has the auto responder answer what a handed-over round still
 	// holds open.
 	handover bool
+	// settle ends the mockup step on its closed round (settleMockup).
+	settle bool
+	// mockupTurn has the auto responder take its turn on the mockup it
+	// steers (mockupTurn).
+	mockupTurn bool
 }
 
 // Reply stores a round's answers and assumption decisions as far as they fit
@@ -64,16 +70,8 @@ func (c *Controller) storeReply(ctx context.Context, sess *session, id string, r
 	}
 
 	s := place.state
-	if !found || s.Frame.Closed || s.Frame.Responder || rr.PromptID != roundPromptID(s.Number) {
-		c.mu.Lock()
-		running := c.runs[id] != nil
-		c.mu.Unlock()
-
-		// during_run tells the panel whether a run goes on working after it.
-		sess.audit.event(ctx, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{
-			"reason": reasonStaleReply, "prompt_id": rr.PromptID, "message_id": msgID, "during_run": running,
-			"message": fmt.Sprintf("That reply answers %s, which takes no answers now; nothing was stored.", rr.PromptID),
-		}})
+	if !found || s.Frame.Closed || s.Frame.Responder || s.Mockup != nil || rr.PromptID != roundPromptID(s.Number) {
+		c.staleReply(ctx, sess, id, rr.PromptID, msgID)
 
 		return nil, nil, nil
 	}
@@ -85,6 +83,16 @@ func (c *Controller) storeReply(ctx context.Context, sess *session, id string, r
 	r, runCtx := c.poke(id)
 
 	return r, runCtx, nil
+}
+
+// staleReply reports a reply to promptID, which takes no reply now; nothing
+// is stored.
+func (c *Controller) staleReply(ctx context.Context, sess *session, id, promptID, msgID string) {
+	// during_run tells the panel whether a run goes on working after it.
+	sess.audit.event(ctx, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{
+		"reason": reasonStaleReply, "prompt_id": promptID, "message_id": msgID, "during_run": c.running(id),
+		"message": fmt.Sprintf("That reply answers %s, which takes no answers now; nothing was stored.", promptID),
+	}})
 }
 
 // poke acts on a round change the caller stored and still holds id's round
@@ -175,10 +183,12 @@ func (c *Controller) follow(ctx, runCtx context.Context, r *run, sess *session, 
 
 // nextSegment is what follows the round the pipeline stands at, for the
 // holder of the run slot with nothing in flight: the continuation once every
-// question has an answer (the round is closed first), the responder's
+// question has an answer (the round is closed first), the settle of a
+// decided mockup (closed first, by closeMockup), the responder's
 // answers while a handed-over round holds questions open, a chat run while
-// chat its stage has not seen waits, or nothing while the round waits for
-// answers, which leaves the blueprint waiting. A stalled
+// chat its stage has not seen waits, the auto responder's turn on a mockup
+// it steers, or nothing while the round waits for answers, which leaves the
+// blueprint waiting. A stalled
 // round, whose run after it failed or was aborted, runs again only when
 // wake is set: a message arrived. The caller holds the run slot.
 func (c *Controller) nextSegment(ctx context.Context, sess *session, bp store.Blueprint, wake bool) (segmentStep, error) {
@@ -201,7 +211,14 @@ func (c *Controller) nextSegment(ctx context.Context, sess *session, bp store.Bl
 
 	s := place.state
 
-	if place.next == roundClose {
+	switch {
+	case place.next == roundClose && s.Mockup != nil:
+		if s, err = c.closeMockup(ctx, sess.audit, bp, s); err != nil {
+			return segmentStep{}, err
+		}
+
+		place.next = roundSettle
+	case place.next == roundClose:
 		if s, err = c.closeRound(ctx, sess.audit, bp, s); err != nil {
 			return segmentStep{}, err
 		}
@@ -210,6 +227,8 @@ func (c *Controller) nextSegment(ctx context.Context, sess *session, bp store.Bl
 	}
 
 	switch place.next {
+	case roundSettle:
+		return segmentStep{stage: s.Frame.Stage, settle: true}, nil
 	case roundContinue:
 		rd, err := c.continuation(ctx, bp, s)
 		if err != nil {
@@ -230,6 +249,8 @@ func (c *Controller) nextSegment(ctx context.Context, sess *session, bp store.Bl
 		return segmentStep{stage: s.Frame.Stage, seg: rd}, nil
 	case roundRespond:
 		return segmentStep{stage: s.Frame.Stage, handover: true}, nil
+	case roundTurn:
+		return segmentStep{stage: s.Frame.Stage, mockupTurn: true}, nil
 	default:
 		c.setState(ctx, bp.ID, StateWaiting)
 
@@ -267,8 +288,9 @@ func (c *Controller) chatAbout(ctx context.Context, sess *session, id, text, msg
 }
 
 // storeChat adds text to the chat of the round a human answers while it
-// waits; false when no such round waits or text is empty. The caller holds
-// id's round lock.
+// waits, a mockup waiting for the person included, whose settings it leaves
+// as they are; false when no such round waits or text is empty. The caller
+// holds id's round lock.
 func (c *Controller) storeChat(ctx context.Context, sess *session, id, text, msgID string) (bool, error) {
 	if text == "" {
 		return false, nil
@@ -279,8 +301,9 @@ func (c *Controller) storeChat(ctx context.Context, sess *session, id, text, msg
 		return false, err
 	}
 
+	// A decided mockup waits for nobody: it closes and settles.
 	s := place.state
-	if s.Frame.Closed || s.Frame.Responder {
+	if s.Frame.Closed || s.Frame.Responder || (s.Mockup != nil && s.Mockup.Action != "") {
 		return false, nil
 	}
 
@@ -295,10 +318,16 @@ func (c *Controller) storeChat(ctx context.Context, sess *session, id, text, msg
 // chatSegment is the run that answers the chat about open round s: its
 // attempt and builder round, the conversation of the run that last touched
 // it, and the user's entries it has not seen as the next message. Without
-// that conversation it is given the round itself.
+// that conversation it is given the round itself. A mockup round's run is
+// told the revision the person is looking at and its settings, in words,
+// and without the conversation that revision's notes and suggestions too.
 func (c *Controller) chatSegment(ctx context.Context, bp store.Blueprint, s roundState) (*round, error) {
 	rd := &round{attempt: s.Attempt, number: s.BuilderRound, segment: SegmentChat, qround: s.Number, seen: len(s.Frame.Chat)}
 	rd.history = c.runHistory(ctx, bp.ID, s.RunID)
+
+	if s.Mockup != nil {
+		return c.mockupChatSegment(ctx, bp, s, rd)
+	}
 
 	var b strings.Builder
 
@@ -323,10 +352,45 @@ func (c *Controller) chatSegment(ctx context.Context, bp store.Blueprint, s roun
 	return rd, nil
 }
 
+// mockupChatSegment is chatSegment for mockup round s, on rd.
+func (c *Controller) mockupChatSegment(ctx context.Context, bp store.Blueprint, s roundState, rd *round) (*round, error) {
+	var b strings.Builder
+
+	notes := ""
+
+	if rd.history == nil {
+		art, err := c.opts.Store.GetArtifact(ctx, bp.ID, s.Frame.Stage, s.Mockup.Revision)
+		if err != nil {
+			return nil, fmt.Errorf("blueprint: read mockup revision %d: %w", s.Mockup.Revision, err)
+		}
+
+		notes = art.Body
+	}
+
+	writeMockupLook(&b, s, notes, rd.history == nil)
+
+	fmt.Fprintf(&b, "## The person writes about revision %d\n\n", s.Mockup.Revision)
+
+	for _, m := range s.Frame.Chat[s.Seen:] {
+		fmt.Fprintf(&b, "> %s\n\n", m.Text)
+	}
+
+	b.WriteString("Answer with answer_chat, or show the next revision with show_mockup when the point changes the design. Read the code first when the answer needs it.\n\n")
+
+	if err := c.writeNewNotes(ctx, &b, bp.ID, s.RunID); err != nil {
+		return nil, err
+	}
+
+	rd.task = b.String()
+
+	return rd, nil
+}
+
 // atRound handles a message the round the pipeline stands at takes no chat
 // from, while nothing runs: a note the stage's later runs get. When the run
-// after a closed round failed or was aborted, the note runs it again, and on
-// a handed-over round the responder answers what is left.
+// after a closed round failed or was aborted, the note runs it again, on a
+// handed-over round the responder answers what is left, and on a mockup the
+// auto responder steers it takes its turn.
 func (c *Controller) atRound(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, place roundPlace, text, msgID string) error {
 	s := place.state
 
@@ -346,9 +410,9 @@ func (c *Controller) atRound(ctx, runCtx context.Context, r *run, sess *session,
 // resumeRound acts on the round a reopened blueprint stands at, on slot r,
 // which the caller holds: an open round is shown again with what is stored
 // and waits, or has a chat run answer chat its stage has not seen, a
-// handed-over one has the responder answer what is left, an answered one
-// closes and its continuation runs, and a stalled one waits for the next
-// message.
+// handed-over one has the responder answer what is left, a mockup the auto
+// responder steers has it take its turn, an answered one closes and its
+// continuation runs, and a stalled one waits for the next message.
 func (c *Controller) resumeRound(ctx context.Context, r *run, sess *session, bp store.Blueprint, place roundPlace) {
 	bg := context.WithoutCancel(ctx)
 

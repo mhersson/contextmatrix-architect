@@ -69,8 +69,9 @@ func ParseCommand(text string) (string, []string) {
 }
 
 // SetPolicy records a stage's responder policy for this blueprint, for its
-// questions and its gate, from the next one on: a round or gate already
-// open keeps the responder it was put to. The sign-off follows the
+// questions and its gate, from the next one on: a round, gate or mockup
+// offer already open keeps the responder it was put to, and an open mockup
+// whoever steers it until its next revision. The sign-off follows the
 // mode and an unknown stage is refused; each is reported and never stored as
 // a policy. Like export, it works while a stage runs.
 func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID string) error {
@@ -97,11 +98,13 @@ func (c *Controller) SetPolicy(ctx context.Context, id, stageID, policy, msgID s
 	default:
 		payload["stage"] = st.ID
 
-		switch {
-		case c.roundOpenAt(ctx, id, st.ID):
-			payload["open"] = "round"
+		switch open := c.openRoundAt(ctx, id, st.ID); {
+		case open != "":
+			payload["open"] = open
 		case !running && c.gateOpenAt(ctx, id, st.ID):
 			payload["open"] = "gate"
+		case !running && c.offerOpenFor(ctx, id, st.ID):
+			payload["open"] = "offer"
 		}
 	}
 
@@ -309,20 +312,30 @@ func (c *Controller) gateOpenAt(ctx context.Context, id, stageID string) bool {
 	return out.gate && !out.critique && gated == stageID
 }
 
-// roundOpenAt reports whether stageID's round, of any slice, waits for
-// answers; an open round keeps the responder it was put to. A record that
-// cannot be read reports none and is logged: it only drops a hint.
-func (c *Controller) roundOpenAt(ctx context.Context, id, stageID string) bool {
+// openRoundAt is what of stageID's, of any slice, is open at its round:
+// "round" for a round that waits for answers, "mockup" for a mockup, which
+// is never a round to the person, and "" for none. An open round keeps the
+// responder it was put to, and a mockup whoever steers it until its next
+// revision. A record that cannot be read reports none and is logged: it
+// only drops a hint.
+func (c *Controller) openRoundAt(ctx context.Context, id, stageID string) string {
 	place, found, err := c.roundAt(ctx, id)
 	if err != nil {
 		c.opts.Logger.Warn("blueprint: read the round for a gate reply", "blueprint", id, "stage", stageID, "error", err)
 
-		return false
+		return ""
 	}
 
 	asking, _ := pack.SplitStep(place.state.Frame.Stage)
 
-	return found && !place.state.Frame.Closed && asking == stageID
+	switch {
+	case !found || place.state.Frame.Closed || asking != stageID:
+		return ""
+	case place.state.Mockup != nil:
+		return "mockup"
+	default:
+		return "round"
+	}
 }
 
 // stageIDs names the pack's stages in order: the stages a gate reply may name.
@@ -441,6 +454,11 @@ func (c *Controller) postGatePlan(ctx context.Context, sess *session, bp store.B
 	stages := make([]any, 0, len(c.opts.Pack.Stages))
 
 	for _, st := range c.opts.Pack.Stages {
+		// A need without a screen never shows the mockup step.
+		if i := stepIndex(steps, st.ID); i >= 0 && steps[i].Collapsed && st.ID == c.opts.Pack.MockupStage() {
+			continue
+		}
+
 		policy, err := c.resolvePolicy(cur.Mode, cur.PlainLanguage, events, st.ID, false)
 		if err != nil {
 			c.opts.Logger.Warn("blueprint: gate plan not posted", "blueprint", bp.ID, "error", sess.audit.text(err.Error()))

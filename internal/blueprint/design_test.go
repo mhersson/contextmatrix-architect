@@ -197,7 +197,7 @@ func TestSolutionDesign_ThePanelIsToldWhatTheCheckoutFoundBeforeTheGate(t *testi
 	drive(t, c, "BP1")
 
 	rec.mu.Lock()
-	events := slices.Clone(rec.events)
+	events := slices.Clone(rec.recorded)
 	rec.mu.Unlock()
 
 	at := func(kind string) int {

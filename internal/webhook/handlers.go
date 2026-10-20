@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 
 	"github.com/mhersson/contextmatrix-backendkit/webhookcore"
 	protocol "github.com/mhersson/contextmatrix-protocol"
@@ -130,6 +131,12 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if p.Mockup != nil && !slices.Contains([]string{protocol.MockupUse, protocol.MockupSkip, protocol.MockupChat}, p.Mockup.Action) {
+		webhookcore.WriteError(w, http.StatusBadRequest, protocol.CodeInvalidField, "mockup.action must be use, skip or chat")
+
+		return
+	}
+
 	if s.dedup.CheckAndRecord(p.SessionID, p.MessageID) {
 		webhookcore.WriteJSON(w, http.StatusOK, protocol.SuccessResponse{
 			OK: true, Message: "duplicate message acknowledged", MessageID: p.MessageID,
@@ -142,11 +149,14 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
-	if p.Round != nil {
-		// Content is only the readable summary of a structured reply; it is
-		// never parsed as a command.
+	// Content is only the readable summary of a structured reply, or a
+	// mockup chat's text; it is never parsed as a command.
+	switch {
+	case p.Round != nil:
 		err = s.ctl.Reply(ctx, p.SessionID, *p.Round, p.MessageID)
-	} else {
+	case p.Mockup != nil:
+		err = s.ctl.Mockup(ctx, p.SessionID, *p.Mockup, p.Content, p.MessageID)
+	default:
 		switch name, args := blueprint.ParseCommand(p.Content); name {
 		case blueprint.CommandAbort:
 			err = s.ctl.Abort(ctx, p.SessionID, p.MessageID)

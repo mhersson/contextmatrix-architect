@@ -41,6 +41,12 @@ const (
 	// open questions.
 	changeHandedOver = "handed_over"
 	changeResponded  = "responded"
+	// changeRevision: a designer's chat run showed the next revision on a
+	// mockup round.
+	changeRevision = "revision"
+	// changeHandedBack: the auto responder's turn found the mockup stage's
+	// policy no longer auto and gave the mockup back to the person.
+	changeHandedBack = "handed_back"
 )
 
 // roundState is one snapshot of a question round: the frame the panel shows
@@ -90,7 +96,10 @@ type roundState struct {
 	Consequences map[string]int `json:"consequences,omitempty"`
 	// Reasks maps each question that asks a turned-down answer again to the
 	// question whose answer it asks again.
-	Reasks map[int]int       `json:"reasks,omitempty"`
+	Reasks map[int]int `json:"reasks,omitempty"`
+	// Mockup makes the round a mockup step's: no questions, the revision it
+	// shows in its place. It never reaches the wire as a round.
+	Mockup *mockupState      `json:"mockup,omitempty"`
 	Frame  protocol.LogRound `json:"frame"`
 }
 
@@ -155,8 +164,15 @@ func (s roundState) clone() roundState {
 }
 
 // complete reports whether every question has an answer and every
-// assumption a decision.
-func (s roundState) complete() bool { return RoundAnswered(s.Frame) }
+// assumption a decision; a mockup round is complete once a use or a skip
+// is stored on it.
+func (s roundState) complete() bool {
+	if s.Mockup != nil {
+		return s.Mockup.Action != ""
+	}
+
+	return RoundAnswered(s.Frame)
+}
 
 // RoundAnswered reports whether every question of round f has an answer and
 // every assumption a decision: an open round like that closes and its stage
@@ -767,12 +783,20 @@ const (
 	roundClose
 	// roundContinue: closed, so the stage continues from it.
 	roundContinue
+	// roundSettle: a closed mockup round, whose step settles (settleMockup).
+	roundSettle
+	// roundTurn: a mockup the auto responder steers, posted under auto or
+	// handed over, waits for its next turn (mockupTurn).
+	roundTurn
 )
 
 // roundPlace is the round the pipeline stands at, what it waits for, and
 // whether the run after it failed or was aborted (stalled): that run waits
 // for the next message, as a failed stage does. An open handed-over round is
-// never stalled: the switch that handed it over is the go-ahead.
+// never stalled: the switch that handed it over is the go-ahead, as the use
+// or skip is for a decided mockup, whatever its chat run in flight then did.
+// A handed-over mockup stalls as any mockup does: its switch runs the turn
+// at once, so a designer run that fails after that waits for a message.
 type roundPlace struct {
 	state   roundState
 	next    roundNext
@@ -824,15 +848,28 @@ func (c *Controller) roundAt(ctx context.Context, id string) (roundPlace, bool, 
 		return roundPlace{}, false, nil
 	}
 
+	decided := s.Mockup != nil && s.Mockup.Action != ""
+
 	place := roundPlace{state: s}
-	place.stalled = (s.HandedOver == nil || s.Frame.Closed) &&
+	place.stalled = !decided && (s.HandedOver == nil || s.Mockup != nil || s.Frame.Closed) &&
 		(last.Status == store.RunFailed || (last.Status == store.RunCanceled && last.Reason != reasonSessionEnded))
 
+	// A mockup round never reaches the handed-over round's responder: it has
+	// no questions to answer, and the auto responder takes turns on it
+	// instead.
 	switch {
+	case s.Mockup != nil && s.Frame.Closed:
+		place.next = roundSettle
 	case s.Frame.Closed:
 		place.next = roundContinue
 	case s.complete():
 		place.next = roundClose
+	case s.Mockup != nil && s.chatPending():
+		place.next = roundChat
+	case s.Mockup != nil && s.Frame.Responder:
+		place.next = roundTurn
+	case s.Mockup != nil:
+		place.next = roundWait
 	case s.HandedOver != nil:
 		place.next = roundRespond
 	case s.chatPending():

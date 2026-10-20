@@ -124,6 +124,12 @@ const (
 	// EventDecided records a decision at a stage's gate or the sign-off, by a
 	// human or the auto policy, or a stage's fold into a later gate.
 	EventDecided = "decided"
+	// EventMockupOffer records the offer of a first look before the mockup
+	// step runs: its state (shown, with the replies it takes; accepted;
+	// declined), the mockup stage, the message id of the reply that decided
+	// it, and by "mode" when a mode switch took it. The newest one is the
+	// offer.
+	EventMockupOffer = "mockup_offer"
 	// EventEnded records that CM ended the session; the blueprint persists.
 	EventEnded = "session_ended"
 	// EventHarness wraps one raw harness JSONL line; the payload is the line.

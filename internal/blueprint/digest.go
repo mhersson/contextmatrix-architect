@@ -285,6 +285,24 @@ func readsDigests(steps []pipelineStep, pieces []piece, st pipelineStep) bool {
 	})
 }
 
+// readsArtifacts reports whether st's run is offered read_artifact: its task
+// holds a digest, or describes the approved mockup, whose source only that
+// tool returns.
+func (c *Controller) readsArtifacts(ctx context.Context, id string, steps []pipelineStep, pieces []piece, st pipelineStep) (bool, error) {
+	if readsDigests(steps, pieces, st) {
+		return true, nil
+	}
+
+	for _, in := range consumedSteps(steps, st) {
+		shown, err := c.mockupShown(ctx, id, in)
+		if err != nil || shown {
+			return shown, err
+		}
+	}
+
+	return false, nil
+}
+
 // writeDigest gives a step another slice's artifact as its digest, with the
 // read_artifact call that returns the whole.
 func writeDigest(b *strings.Builder, in pipelineStep, art store.Artifact, d digest) error {
@@ -351,16 +369,36 @@ func (r artifactReader) Execute(ctx context.Context, args map[string]any) (tools
 	var readable []string
 
 	for _, in := range consumedSteps(steps, r.st) {
-		if !in.Collapsed {
-			readable = append(readable, in.ID)
+		if in.Collapsed {
+			continue
 		}
+
+		if in.Stage.ID == r.c.opts.Pack.MockupStage() {
+			shown, err := r.c.mockupShown(ctx, r.id, in)
+			if err != nil {
+				return tools.Result{}, fmt.Errorf("read_artifact: %w", err)
+			}
+
+			if !shown {
+				continue
+			}
+		}
+
+		readable = append(readable, in.ID)
 	}
 
 	if !slices.Contains(readable, key) {
 		return tools.Result{}, fmt.Errorf("read_artifact: this run reads %s, not %s", strings.Join(readable, ", "), key)
 	}
 
-	art, err := r.version(ctx, key, args["version"])
+	var art store.Artifact
+
+	if key == r.c.opts.Pack.MockupStage() {
+		art, err = r.usedMockup(ctx, key, args["version"])
+	} else {
+		art, err = r.version(ctx, key, args["version"])
+	}
+
 	if err != nil {
 		return tools.Result{}, err
 	}
@@ -371,6 +409,28 @@ func (r artifactReader) Execute(ctx context.Context, args map[string]any) (tools
 	writeArtifact(&b, key, art)
 
 	return tools.Result{Text: b.String()}, nil
+}
+
+// usedMockup is the mockup revision the person used, with the settings they
+// chose added as the artifact read adds them: the stored settings are only
+// what it opened with. It is the one revision a later stage reads, so v,
+// when given, must name it.
+func (r artifactReader) usedMockup(ctx context.Context, key string, v any) (store.Artifact, error) {
+	res, err := r.c.mockupResult(ctx, r.id)
+	if err != nil {
+		return store.Artifact{}, fmt.Errorf("read_artifact: %w", err)
+	}
+
+	if n, ok := v.(float64); v != nil && (!ok || n != float64(res.Revision)) {
+		return store.Artifact{}, fmt.Errorf("read_artifact: %s reads only version %d, the revision the person used", key, res.Revision)
+	}
+
+	art := res.Art
+	if art.Data, err = r.c.withChosen(ctx, r.id, art); err != nil {
+		return store.Artifact{}, fmt.Errorf("read_artifact: %w", err)
+	}
+
+	return art, nil
 }
 
 // version is key's stored version v, the latest when v is absent.

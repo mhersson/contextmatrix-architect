@@ -873,7 +873,12 @@ func (c *Controller) reviewerTools(ctx context.Context, sess *session, bp store.
 		return nil, "", err
 	}
 
-	if readsDigests(steps, pieces, st) {
+	reads, err := c.readsArtifacts(ctx, bp.ID, steps, pieces, st)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if reads {
 		ts = append(ts, artifactReader{c: c, id: bp.ID, st: st})
 	}
 

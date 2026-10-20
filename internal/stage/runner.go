@@ -56,8 +56,12 @@ type Input struct {
 	// tool.
 	Interviewer Interviewer
 	// Chat makes the run answer the chat about the open round: answer_chat,
-	// which needs the Interviewer, is its only built-in tool and ends it.
+	// which needs the Interviewer and ends it, is its built-in tool, with
+	// show_mockup beside it for a Designer.
 	Chat bool
+	// Designer shows a mockup stage's revisions: show_mockup takes the place
+	// of ask_questions and submit_artifact. nil offers no show_mockup.
+	Designer Designer
 	// PlainLanguage offers the round tools' plain-language forms: a tab
 	// entry's {text, consequence}, and ask_questions' reasks; off it, an
 	// entry is a sentence.
@@ -186,7 +190,7 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 	// The registry keeps the last tool under a name, so a clash would silently
 	// replace a built-in.
 	for _, t := range in.Tools {
-		if name := t.Name(); name == askQuestionsName || name == AnswerChatName || name == submitArtifactName {
+		if name := t.Name(); slices.Contains([]string{askQuestionsName, AnswerChatName, submitArtifactName, ShowMockupName}, name) {
 			return Output{}, fmt.Errorf("stage %s: tool %q clashes with a built-in tool", in.Stage, name)
 		}
 	}
@@ -225,9 +229,16 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 
 	var builtins []tools.Tool
 
-	if in.Chat {
+	switch {
+	case in.Chat:
 		builtins = append(builtins, answerChatTool{iv: in.Interviewer, mark: mark, plain: in.PlainLanguage})
-	} else {
+
+		if in.Designer != nil {
+			builtins = append(builtins, showMockupTool{d: in.Designer, mark: mark})
+		}
+	case in.Designer != nil:
+		builtins = append(builtins, showMockupTool{d: in.Designer, mark: mark})
+	default:
 		if in.Interviewer != nil {
 			builtins = append(builtins, askQuestionsTool{iv: in.Interviewer, mark: mark, plain: in.PlainLanguage})
 		}

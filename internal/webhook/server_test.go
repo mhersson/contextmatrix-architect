@@ -33,6 +33,7 @@ type stubController struct {
 	starts    []blueprint.StartInput
 	messages  []string
 	replies   []protocol.RoundReply
+	mockups   []mockupCall
 	aborts    []string
 	exports   []string
 	policies  []string
@@ -81,6 +82,22 @@ func (s *stubController) Reply(ctx context.Context, _ string, rr protocol.RoundR
 	defer s.mu.Unlock()
 
 	s.replies = append(s.replies, rr)
+	s.ctxErrs = append(s.ctxErrs, ctx.Err())
+
+	return s.msgErr
+}
+
+// mockupCall is one Mockup call as the stub saw it.
+type mockupCall struct {
+	id, content, msgID string
+	reply              protocol.MockupReply
+}
+
+func (s *stubController) Mockup(ctx context.Context, id string, mr protocol.MockupReply, content, msgID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.mockups = append(s.mockups, mockupCall{id: id, content: content, msgID: msgID, reply: mr})
 	s.ctxErrs = append(s.ctxErrs, ctx.Err())
 
 	return s.msgErr
@@ -708,6 +725,51 @@ func TestMessage_ARoundReplyIsNeverACommand(t *testing.T) {
 	assert.Equal(t, "round:1", ctl.replies[0].PromptID)
 	assert.Empty(t, ctl.aborts)
 	assert.Empty(t, ctl.messages)
+}
+
+func TestMessage_RoutesAMockupReply(t *testing.T) {
+	ctl := &stubController{}
+	srv, _ := newTestServer(t, ctl)
+
+	reply := protocol.MockupReply{
+		PromptID: "mockup:3", Revision: 2, Action: protocol.MockupUse, Settings: map[string]string{"layout": "cards", "group": "on"},
+	}
+
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, signed(t, http.MethodPost, "/message", protocol.MessagePayload{
+		SessionID: "BP1", Content: "abort", MessageID: "m1", Mockup: &reply,
+	}, nextTS()))
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+	require.Len(t, ctl.mockups, 1)
+	assert.Equal(t, mockupCall{id: "BP1", content: "abort", msgID: "m1", reply: reply}, ctl.mockups[0])
+	assert.Empty(t, ctl.replies)
+	assert.Empty(t, ctl.aborts, "a mockup reply is never a command")
+	assert.Empty(t, ctl.messages)
+}
+
+func TestMessage_RefusesAMockupReplyWithAnUnknownAction(t *testing.T) {
+	ctl := &stubController{}
+	srv, _ := newTestServer(t, ctl)
+
+	msg := protocol.MessagePayload{
+		SessionID: "BP1", Content: "Use this design", MessageID: "m1",
+		Mockup: &protocol.MockupReply{PromptID: "mockup:3", Revision: 2, Action: "keep"},
+	}
+
+	w := do(srv, signed(t, http.MethodPost, "/message", msg, nextTS()))
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	var body protocol.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, protocol.CodeInvalidField, body.Code)
+	assert.Empty(t, ctl.mockups)
+	assert.Empty(t, ctl.messages)
+
+	msg.Mockup.Action = protocol.MockupUse
+	w = do(srv, signed(t, http.MethodPost, "/message", msg, nextTS()))
+	assert.Equal(t, http.StatusAccepted, w.Code, "the corrected reply is delivered, not taken for a duplicate")
+	assert.Len(t, ctl.mockups, 1)
 }
 
 func TestStart_RefusedWhileDraining(t *testing.T) {

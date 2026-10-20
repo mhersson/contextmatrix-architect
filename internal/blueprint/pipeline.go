@@ -237,7 +237,8 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 	var collapse *folding
 
 	for from < len(steps) && steps[from].Collapsed {
-		if collapse == nil {
+		// Only a shared step records its collapse as a fold.
+		if collapse == nil && steps[from].Shared {
 			collapse = &folding{stage: steps[from].ID, into: foldTarget(steps, steps[from].ID)}
 		}
 
@@ -433,8 +434,10 @@ func (c *Controller) unreadable(ctx context.Context, au audit, id string, err er
 
 // input handles a message that arrives while no run is in flight and no
 // human's round takes it as chat: a note at a round, the need while the
-// first stage has no artifact, a decision at an open gate or the sign-off,
-// else a note. The caller holds the run slot.
+// first stage has no artifact, a reply to the mockup offer, or its skip
+// while no revision was shown since it was accepted, a decision at an open
+// gate or the sign-off, else a note, which names that skip while it applies.
+// The caller holds the run slot.
 func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, id, text, msgID string) error {
 	bp, err := c.opts.Store.GetBlueprint(ctx, id)
 	if err != nil {
@@ -483,6 +486,26 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 		return nil
 	}
 
+	offer, err := c.offerAt(ctx, id, out)
+	if err != nil {
+		c.release(id, r)
+
+		return fmt.Errorf("blueprint: message: %w", err)
+	}
+
+	pending := false
+	if !offer {
+		if pending, err = c.firstLookPending(ctx, id, out); err != nil {
+			c.release(id, r)
+
+			return fmt.Errorf("blueprint: message: %w", err)
+		}
+	}
+
+	if offer || (pending && skipsMockup(text)) {
+		return c.atOffer(ctx, runCtx, r, sess, bp, text, msgID)
+	}
+
 	if out.gate && out.critique {
 		// A review or builder round that failed or was aborted:
 		// the message is a note and runs it again.
@@ -512,6 +535,11 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 		note.Payload["retries"] = out.stage
 	} else {
 		note.Payload["ended"] = true
+	}
+
+	// The accepted offer's prompt is gone, so the way out is told here.
+	if pending {
+		note.Payload["hint"] = firstLookHint
 	}
 
 	sess.audit.event(ctx, note)
@@ -573,9 +601,9 @@ type stopPoint struct {
 }
 
 // stoppedAt reads where bp stands stopped, as input reads it for a message;
-// false when it stands at no stop: a round waits for answers, a gate or the
-// sign-off is open, the pipeline has ended, or there is no need yet. The
-// caller holds the run slot.
+// false when it stands at no stop: a round waits for answers, the mockup
+// offer, a gate or the sign-off is open, the pipeline has ended, or there is
+// no need yet. The caller holds the run slot.
 func (c *Controller) stoppedAt(ctx context.Context, bp store.Blueprint) (stopPoint, bool, error) {
 	place, atRound, err := c.roundAt(ctx, bp.ID)
 	if err != nil {
@@ -615,7 +643,12 @@ func (c *Controller) stoppedAt(ctx context.Context, bp store.Blueprint) (stopPoi
 				return stopPoint{}, false, err
 			}
 
-			if out.stage == "" || (out.gate && !out.critique) {
+			offer, err := c.offerAt(ctx, bp.ID, out)
+			if err != nil {
+				return stopPoint{}, false, err
+			}
+
+			if out.stage == "" || (out.gate && !out.critique) || offer {
 				return stopPoint{}, false, nil
 			}
 
@@ -634,7 +667,8 @@ func (c *Controller) stoppedAt(ctx context.Context, bp store.Blueprint) (stopPoi
 // a cap stop of stageID, and the cap it stopped under. A run of stageID
 // since says no, and so does a run of another stage, which places the
 // pipeline past an older stop, or an error that names no stage, a failure.
-// A stale reply's error stops nothing and is passed over.
+// A stale reply's error, or a stale mockup revision's or a blank mockup
+// chat's, stops nothing and is passed over.
 func (c *Controller) stoppedByCap(ctx context.Context, id, stageID string) (bool, float64, error) {
 	var events []store.Event
 
@@ -660,7 +694,7 @@ func (c *Controller) stoppedByCap(ctx context.Context, id, stageID string) (bool
 			return false, 0, fmt.Errorf("blueprint: read event %d: %w", e.ID, err)
 		}
 
-		if e.Kind == EventError && p.Reason == reasonStaleReply {
+		if e.Kind == EventError && (p.Reason == reasonStaleReply || p.Reason == reasonStaleRevision || p.Reason == reasonEmptyChat) {
 			continue
 		}
 
@@ -1034,8 +1068,13 @@ func (c *Controller) writeInputs(ctx context.Context, b *strings.Builder, bp sto
 
 // writeInput gives st the latest artifact of in, a step it consumes: whole,
 // or as a digest (digested) when its shape has one; a collapsed shared
-// stage is named, since it has none.
+// stage is named, since it has none. The mockup is described, never given
+// whole (writeMockupInput).
 func (c *Controller) writeInput(ctx context.Context, b *strings.Builder, id string, st, in pipelineStep, sliced bool, what string) error {
+	if in.Stage.ID == c.opts.Pack.MockupStage() {
+		return c.writeMockupInput(ctx, b, id, in)
+	}
+
 	if in.Collapsed {
 		fmt.Fprintf(b, "## %s\n\nNot run for this blueprint: the design settles what every slice shares.\n\n", in.ID)
 
@@ -1250,10 +1289,11 @@ func (s *validatorState) round() int {
 // until the run's turns are spent. When the pack has acceptance, every
 // criterion must be carried by exactly one card of its project and every
 // manual check by a manual entry; acceptance data that does not decode is a
-// finding of its own. A draft that does not decode is refused without
-// spending a round. A per-slice step's submit is checked inside the draft
-// of every earlier slice and itself, and must take no id an earlier slice
-// holds; the last slice's draft carries the playbook's title.
+// finding of its own. A card names only screens of a used mockup, and none
+// without one, and its body holds no mockup block. A draft that does not decode is refused without spending a
+// round. A per-slice step's submit is checked inside the draft of every
+// earlier slice and itself, and must take no id an earlier slice holds; the
+// last slice's draft carries the playbook's title.
 func (c *Controller) cardsValidator(sess *session, bp store.Blueprint, st pipelineStep) (func(context.Context, stage.Artifact) error, *validatorState) {
 	state := &validatorState{}
 	lists := c.opts.Pack.Lists()
@@ -1307,6 +1347,24 @@ func (c *Controller) cardsValidator(sess *session, bp store.Blueprint, st pipeli
 			}
 
 			problems = append(problems, f.String())
+		}
+
+		_, mockup, used, err := c.approvedMockup(ctx, bp.ID)
+		if err != nil {
+			return fmt.Errorf("the cards were not judged (%w); submit the same draft again", err)
+		}
+
+		for _, f := range contract.CheckMockups(draft, mockup.screenIDs(), used) {
+			problems = append(problems, f.String())
+		}
+
+		// Only emission writes a mockup block: the phrase scans skip a
+		// block's text, so one in a draft would hide it from them.
+		for _, card := range draft.Cards {
+			if contract.WithoutMockups(card.Body) != card.Body {
+				problems = append(problems, problem(card.ID, "mockup_block",
+					"the body holds a fenced mockup block; describe the screen in words, as emission adds the approved mockup itself"))
+			}
 		}
 
 		acc, acceptanceID, found, err := c.acceptanceOf(ctx, bp.ID, st.Slice)

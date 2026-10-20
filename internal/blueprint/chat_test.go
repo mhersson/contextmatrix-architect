@@ -378,7 +378,7 @@ func TestChat_TheReplyReachesTheLogOnlyInTheRoundFrame(t *testing.T) {
 	c.Wait("BP1")
 
 	rec.mu.Lock()
-	lines, events := slices.Clone(rec.lines), slices.Clone(rec.events)
+	lines, events := slices.Clone(rec.lines), slices.Clone(rec.recorded)
 	rec.mu.Unlock()
 
 	var forwarded []string

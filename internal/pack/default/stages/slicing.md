@@ -1,6 +1,7 @@
 # Slicing
 
-Input: the need and a read-only checkout of each target project.
+Input: the need, the mockup when the person approved one, and a read-only
+checkout of each target project.
 
 Cut the need into slices, each delivering value on its own. One slice is
 the normal case; cut more only where a part ships and pays off without the
@@ -12,6 +13,12 @@ end to end; then the slices that carry the most risk or the most unknowns,
 so they surface early; polish and extensions last. A later slice builds on
 the earlier ones, never the other way round. Say in the markdown why the
 order is what it is. The slices are named SL1, SL2, ... in that order.
+
+An approved mockup (the `mockup` input: the revision the person approved,
+its screens and the settings they chose; read_artifact returns its source)
+is the look and behaviour the person chose. Cut the slices to build it,
+never ask again what it settles, and say in each slice's section which of
+its screens, by id, the slice builds or changes, or that it builds none.
 
 Read the code before you ask (repo_info, read, grep, glob). A fact the code
 settles, such as what already exists, the conventions in use or a choice

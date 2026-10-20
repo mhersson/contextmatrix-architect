@@ -55,10 +55,12 @@ const (
 	byAutomatic = "automatic"
 )
 
-// Open prompt kinds, as the prompts themselves name them.
+// Open prompt kinds, as the prompts themselves name them; a mockup has no
+// transcript prompt, only the open one.
 const (
-	promptGate  = "gate"
-	promptRound = "round"
+	promptGate   = "gate"
+	promptRound  = "round"
+	promptMockup = "mockup"
 )
 
 // record is what one view is built from: the blueprint's stored record,
@@ -81,12 +83,20 @@ type record struct {
 	last     store.Run
 	flights  []flightView
 	// round is the open round's number and roundStage its stage; 0 and ""
-	// when none waits.
+	// when none waits. mockup marks a mockup round, and unprompted one no
+	// prompt waits on: the auto responder steers it (steered), a designer run
+	// is writing its next revision or reply, or a use or skip decided it.
 	round      int
 	roundStage string
+	mockup     bool
+	unprompted bool
+	steered    bool
 	// handedRound is the builder round an open round handed to the
 	// responder was asked in; 0 when there is none.
 	handedRound int
+	// offer is set while the mockup offer waits at the step the pipeline
+	// stands at.
+	offer bool
 	// policies is each stage's gate policy, its question policy when it has no gate.
 	policies map[string]string
 	// steps is the blueprint's pipeline and pieces the slices it repeats
@@ -178,7 +188,12 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 		slicing = &arts[len(arts)-1]
 	}
 
-	rec.steps, rec.pieces = blueprintSteps(c.opts.Pack, rec.runs, slicing)
+	noMockup, err := c.mockupCollapsed(ctx, bp.ID)
+	if err != nil {
+		return record{}, err
+	}
+
+	rec.steps, rec.pieces = blueprintSteps(c.opts.Pack, rec.runs, slicing, noMockup)
 
 	gates, err := c.opts.Store.AllGates(ctx, bp.ID)
 	if err != nil {
@@ -246,13 +261,23 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 		rec.pos, rec.last = outcome{}, store.Run{}
 	}
 
+	if rec.offer, err = c.offerAt(ctx, bp.ID, rec.pos); err != nil {
+		return record{}, err
+	}
+
 	place, found, err := c.roundAt(ctx, bp.ID)
 	if err != nil {
 		return record{}, err
 	}
 
+	// A handed-over mockup reads as one the auto responder steers.
 	switch {
 	case !found || place.state.Frame.Closed:
+	case place.state.Mockup != nil:
+		rec.round, rec.roundStage, rec.mockup = place.state.Number, place.state.Frame.Stage, true
+		_, writing := rec.flightOf(place.state.Frame.Stage)
+		rec.unprompted = place.state.Frame.Responder || writing || place.state.Mockup.Action != ""
+		rec.steered = place.state.Frame.Responder
 	case place.state.HandedOver != nil:
 		// A handed-over round waits for nobody: the responder answers it.
 		rec.handedRound = place.state.BuilderRound
@@ -630,7 +655,7 @@ func (rec record) stageStatus(st pipelineStep, i, current int) string {
 	case rec.ended() && current >= 0 && i > current:
 		return rec.unreached(st)
 	case st.Collapsed:
-		// Its collapse is a fold row at version 0, which is no fold.
+		// A collapsed shared step has a fold row at version 0, which is no fold; the mockup has none.
 		return stepSkipped
 	case rec.ended() && i == current:
 		return stepStopped
@@ -660,7 +685,9 @@ func (rec record) stageStatus(st pipelineStep, i, current int) string {
 		}
 	}
 
-	if rec.round > 0 && rec.roundStage == st.ID {
+	// A mockup the auto responder steers waits for nobody, so a failure there
+	// is the step's: CM reads waiting with no prompt as the responder at work.
+	if (rec.round > 0 && rec.roundStage == st.ID && (!rec.steered || !rec.failed())) || rec.offer {
 		return stepWaiting
 	}
 
@@ -785,17 +812,24 @@ func (rec record) current() *protocol.CurrentRun {
 	}
 }
 
-// open is the prompt that waits for the operator: the open round, a shown
-// gate or the shown sign-off, undecided, or a stopped emission or run start,
-// which approve resumes.
+// open is the prompt that waits for the operator: the open round, the
+// mockup waiting for the person, the mockup offer, a shown gate or the
+// shown sign-off, undecided, or a stopped emission or run start, which
+// approve resumes.
 func (rec record) open() *protocol.OpenPrompt {
 	if rec.waitsToResume() {
 		return &protocol.OpenPrompt{PromptID: fmt.Sprintf("emission:v%d", signoffVersion(*rec.resume)), Kind: promptGate}
 	}
 
 	switch {
+	case rec.unprompted:
+		return nil
+	case rec.mockup:
+		return &protocol.OpenPrompt{PromptID: mockupPromptID(rec.round), Kind: promptMockup}
 	case rec.round > 0:
 		return &protocol.OpenPrompt{PromptID: roundPromptID(rec.round), Kind: promptRound}
+	case rec.offer:
+		return &protocol.OpenPrompt{PromptID: offerPromptID, Kind: promptGate}
 	case rec.pos.gate && !rec.pos.critique && rec.shown[rec.pos.stage][rec.pos.art.Version]:
 		return &protocol.OpenPrompt{PromptID: GatePromptID(rec.pos.stage, rec.pos.art.Version), Kind: promptGate}
 	case rec.pos.end && rec.pos.ready && rec.signoffRecorded(rec.pos.art.Version):

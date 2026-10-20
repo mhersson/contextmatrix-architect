@@ -49,8 +49,9 @@ type interviewer struct {
 	attempt, builderRound int
 	findings              []string
 	// qround is the round a chat run answers; posted the round the run
-	// posted or answered, for its end event.
-	qround, posted int
+	// posted or answered, for its end event, and revision the mockup
+	// revision it showed, 0 for none.
+	qround, posted, revision int
 	// responded is set when the run's round was answered by the responder
 	// under auto, so nothing waits on the person.
 	responded bool
@@ -388,6 +389,10 @@ func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, 
 	}
 
 	c, bg := iv.c, context.WithoutCancel(ctx)
+
+	if slices.Contains(iv.st.Checks, pack.CheckMockup) && (len(a.Questions) > 0 || len(a.Assumptions) > 0) {
+		return "", errors.New("a mockup takes no questions; reply, or show a revision")
+	}
 
 	if err := iv.takesAssumptions(a.Assumptions); err != nil {
 		return "", err

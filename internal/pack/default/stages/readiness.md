@@ -1,6 +1,6 @@
 # Readiness
 
-Input: every slice's cards, in slicing order, whole, with the need, the slices, the shared decisions, and each slice's design, grounding and acceptance, the design and acceptance as digests and grounding as its project facts and verdicts when there are two or more slices (`read_artifact` returns the whole); a read-only checkout of each target project.
+Input: every slice's cards, in slicing order, whole, with the need, the mockup when the person approved one, the slices, the shared decisions, and each slice's design, grounding and acceptance, the design and acceptance as digests and grounding as its project facts and verdicts when there are two or more slices (`read_artifact` returns the whole); a read-only checkout of each target project.
 
 For every card, answer with the checkout open: could an agent with only this
 repository and this card finish it on the first attempt? Judge one
@@ -31,6 +31,13 @@ Judge the cards of every slice together: a card that duplicates another
 slice's card, or that relies on work that neither the code nor a card before
 it in the playbook delivers, is not ready, and its finding names the card it
 collides with or lacks.
+
+With an approved mockup (the `mockup` input; read_artifact returns its
+source), every card of a slice in which any card names a screen in `mockup`
+carries the whole mockup once emitted. Such a card whose mockup shows
+something the decisions dropped, without its Solution saying which part not
+to build, is not ready; so is a card that builds or changes a screen of the
+mockup without naming it in `mockup`.
 
 Then judge the blueprint as a whole, each artifact against the others:
 decisions, contracts, cards and assumptions that disagree; two assumptions

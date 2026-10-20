@@ -12,8 +12,8 @@ small. Every stage before the cards exists only to make the cards better.
 
 A user opens a blueprint session in CM's chat panel and states a need ("get
 this project running containerised on Kubernetes"). The architect researches it,
-plays the roles a team would (product owner, system designer, senior developer,
-tester, reviewer), asks what it cannot decide, records every decision and
+plays the roles a team would (product owner, designer, system designer, senior
+developer, tester, reviewer), asks what it cannot decide, records every decision and
 assumption, drafts the cards, checks them against the card contract, and
 emits the playbook. CM does what CM does from there. In yolo mode the whole
 path from need to merged pull requests on a playbook branch runs without a
@@ -31,7 +31,7 @@ waits for a first commit and an `approve`.
 | question      | Something a stage cannot decide alone, asked in a round.                                            |
 | round         | The questions a stage asks together, and its assumptions as the last tab: one tab each in the session, answered in one sitting or in batches, stored until every question has an answer and every assumption a decision. |
 | responder     | Who answers a question or decides a gate: a human in the CM session, or the AI (`auto`).            |
-| persona       | The role a run plays: product owner, system designer, senior developer, tester, reviewer.            |
+| persona       | The role a run plays: product owner, designer, system designer, senior developer, tester, reviewer. |
 | pack          | A team's stages, personas, gate policies, checks and card template. Data, not code.                 |
 | source        | One external input a blueprint used, with its identity and version.                                 |
 | card contract | The rules a card must satisfy to be emitted. The core of this design.                               |
@@ -103,9 +103,11 @@ stage runner (internal/stage)       one harness.Run per round: persona + stage p
      |-- cm tools        read-only MCP reads for grounding and readiness:
      |                   cm_list_projects, cm_list_cards, cm_get_card, cm_get_playbook
      |-- slice tools     read_artifact (the whole of an earlier slice's artifact,
-     |                   where the task gives it as a digest)
+     |                   where the task gives it as a digest; the approved
+     |                   mockup's source)
      |-- control tools   ask_questions (posts a round, ends the run),
      |                   answer_chat (replies in a round's chat, ends the run),
+     |                   show_mockup (shows a mockup revision, ends the run),
      |                   submit_artifact (terminal)
      |
 store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions, gates,
@@ -123,9 +125,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   keep the raw id. A gate a human answers is a text entry carrying a prompt
   (`LogEntry.Prompt`): actions, each a label and the exact reply text, which
   the panel shows as buttons, the markdown staying the readable fallback. A
-  gate's, the sign-off's, a stopped emission's or a run start's prompt
-  carries the entry without its reply instruction as its text, and the kind
-  `gate`. A click sends the reply as an ordinary message, so the
+  gate's, the sign-off's, the mockup offer's, a stopped emission's or a run
+  start's prompt carries the entry without its reply instruction as its
+  text, and the kind `gate`. A click sends the reply as an ordinary message, so the
   architect's reply parsing is the same for a click and a typed answer.
   A stage asks in rounds: a round is a text
   entry whose prompt has the kind `round`, the id `round:<n>` and the round
@@ -138,15 +140,18 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   (`MessagePayload.Round`); the reply's content is only a readable summary,
   never parsed as a command. A reply carries every answer the panel holds
   and replaces per question, and a reply for a round that takes no answers
-  stores nothing and says so.
+  stores nothing and says so. The mockup waiting for the person takes its
+  own reply (`MessagePayload.Mockup`; see Mockups), whose content is
+  likewise never parsed as a command.
   Round 1 of each attempt of a stage run is a stage divider
   (`LogEntry.Marker` of kind `stage`, a system entry), and a stored
   artifact is a sheet reference (kind `artifact`, a text entry) to that
   stage and version in place of its body. Its one-line note says what is
   known when it is stored: the persona that drew it, the findings a
-  revision was given, a loop stage's round, or that its checks refused it
-  until round 3. A marker and a round's frame carry a per-slice step's
-  stage and its slice apart. A reviewer's verdict is a review marker (kind
+  revision was given, a loop stage's round, that its checks refused it
+  until round 3, or a mockup's revision ("Revision <v>"). A marker and a
+  round's frame carry a per-slice step's stage and its slice apart. A
+  reviewer's verdict is a review marker (kind
   `review`, a text entry) naming the reviewed stage, its slice, the version
   and the reviewer, rendered from the view's review of that version. Gate
   decisions stay prose entries.
@@ -157,11 +162,14 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   reference, review or answer is the row. Other model text is shown.
   Rounds are `round:<n>` and their questions `Q<n>`, gates
   `gate:<stage>:v<n>` (`gate:<stage>:<slice>:v<n>` for a per-slice step's),
-  the sign-off `gate:signoff:v<n>`, and a stopped
-  emission or run start `emission:v<n>`.
+  the sign-off `gate:signoff:v<n>`, the mockup offer `mockup:offer`, the
+  mockup waiting for the person `mockup:<n>` (an open prompt only, never a
+  transcript prompt; see Mockups), and a stopped emission or run start
+  `emission:v<n>`.
   A gate the auto policy approves never leaves a prompt open, and the gate
-  plan is plain text. A gate or the sign-off stays open across a reply that
-  matches none of its actions, so it is never published again.
+  plan is plain text. A gate, the mockup offer or the sign-off stays open
+  across a reply that matches none of its actions, so it is never published
+  again.
 - **Every blueprint is a CM session, started by CM.** The start payload is the
   `ChatStartPayload` with its `architect` block: the architect takes its LLM
   endpoint (fail-closed, no local fallback), MCP key, model and
@@ -295,10 +303,10 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | Table         | Holds                                                                                                                        |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price and context window as CM sent them, and whether it runs in plain language |
-| stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets |
+| stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets; a mockup's settle run has no model and costs nothing (see Mockups) |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, whether it passed, its summary when it gave one, its findings ledger with ids, severities, statuses and the reviewer's notes, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
-| questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes, or at the responder's answer under auto, or at the answer for one asked alone before rounds; an assumption a human accepted on a tab is recorded on its round, not here |
-| gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded; a fold at version 0 records a stage that collapsed), feedback, responder (human, auto), decided at |
+| questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes, or at the responder's answer under auto, or at the answer for one asked alone before rounds, or, one per suggestion, when a mockup closes on a use; an assumption a human accepted on a tab is recorded on its round, not here |
+| gates         | append-only, one row per decision at a stage's gate or the sign-off, and at the mockup step its use (approve) or skip (reject) of a revision: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded; a fold at version 0 records a stage that collapsed), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted, each web search result list replaced by its query and result count, and each `read_artifact` result by its first line |
 | events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning; every change of the blueprint's state is a `state` row, stored and never sent to the panel; every web search and page read is a `research` event (the query and result count, the URL and source tag, or the rule that refused it), and a session that runs a research stage without research says so once in a `research_off` event; a round is its `round` snapshots, the newest per round number winning |
 | sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage; a page `web_fetch` read is a `url` source versioned by the sha256 of its text, its title on its `research` event |
@@ -341,24 +349,25 @@ cited.
 
 ## Stages
 
-The default pack. Personas: product owner (PO), system designer (SD), senior
-developer (DEV), tester (TST), reviewer (REV).
+The default pack. Personas: product owner (PO), designer (DES), system
+designer (SD), senior developer (DEV), tester (TST), reviewer (REV).
 
 | #  | Stage            | Persona | Consumes          | Produces                                                                                              | Gate      | Reviewer |
 | -- | ---------------- | ------- | ----------------- | ----------------------------------------------------------------------------------------------------- | --------- | -------- |
-| 1  | Intake           | PO      | the need          | need: problem, value, scope in and out, measurable outcomes numbered O1, O2, ..., the expected shape, reading the code   | `auto` by default; its questions go to a human | SD       |
-| 2  | Slicing          | PO      | need              | slices in order, the thinnest working one first and riskier ones before polish, each delivering standalone value; one slice is fine; reads the code | yes; folds into 4's gate when there is one slice | SD       |
-| 3  | Shared decisions | SD      | need, slices      | the decisions every slice shares: tooling, conventions, platform, cross-slice contracts, cross-cutting qualities; asks a question for each decision with real alternatives; reads the code; collapses, unrun, with one slice | yes       | DEV      |
-| 4  | Solution design  | SD      | need, slices, shared decisions, earlier slices | once per slice: projects involved, decisions with rejected options and their basis, cross-project contracts; asks a question for each decision with real alternatives; reads the code | yes       | DEV      |
-| 5  | Grounding        | DEV     | the slice's design | once per slice, per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        | -        |
-| 6  | Acceptance       | DEV     | the slice's design, grounding | once per slice: criteria checkable inside one repo; human and live checks split into manual steps | `auto` by default | TST      |
-| 7  | Decomposition    | DEV     | all above, earlier slices' cards | once per slice: draft cards with type and priority, `depends_on` per project, manual entries for human and live checks, the order, and the setup for a project without a verify command or instruction file; the last slice's draft gives the playbook title | no        | -        |
-| 8  | Readiness        | REV     | every slice's cards | contract check per card; failures loop back to 7 for the slice that holds the card and every later slice, three rounds max | no        | -        |
-| 9  | Sign-off         | human   | everything        | approval; then emission of one playbook                                                                | yes       | -        |
+| 1  | Intake           | PO      | the need          | need: problem, value, scope in and out, measurable outcomes numbered O1, O2, ..., the expected shape, whether it has a screen and is a re-design, reading the code   | `auto` by default; its questions go to a human | SD       |
+| 2  | Mockup           | DES     | the need          | a live mockup with suggestions and the chosen settings, reading the UI code; skipped without a screen; offered first in default mode | no        | -        |
+| 3  | Slicing          | PO      | need, mockup      | slices in order, the thinnest working one first and riskier ones before polish, each delivering standalone value; one slice is fine; reads the code | yes; folds into 5's gate when there is one slice | SD       |
+| 4  | Shared decisions | SD      | need, mockup, slices | the decisions every slice shares: tooling, conventions, platform, cross-slice contracts, cross-cutting qualities; asks a question for each decision with real alternatives; reads the code; collapses, unrun, with one slice | yes       | DEV      |
+| 5  | Solution design  | SD      | need, mockup, slices, shared decisions, earlier slices | once per slice: projects involved, decisions with rejected options and their basis, cross-project contracts, how the slice builds the mockup's screens; asks a question for each decision with real alternatives; reads the code | yes       | DEV      |
+| 6  | Grounding        | DEV     | the slice's design | once per slice, per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        | -        |
+| 7  | Acceptance       | DEV     | the slice's design, grounding | once per slice: criteria checkable inside one repo; human and live checks split into manual steps | `auto` by default | TST      |
+| 8  | Decomposition    | DEV     | all above, earlier slices' cards | once per slice: draft cards with type and priority, `depends_on` per project, the mockup's screens each card builds, manual entries for human and live checks, the order, and the setup for a project without a verify command or instruction file; the last slice's draft gives the playbook title | no        | -        |
+| 9  | Readiness        | REV     | every slice's cards | contract check per card; failures loop back to 8 for the slice that holds the card and every later slice, three rounds max | no        | -        |
+| 10 | Sign-off         | human   | everything        | approval; then emission of one playbook                                                                | yes       | -        |
 | -  | Outcomes         | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   | -        |
 
 The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign-off is the controller's step after readiness (see Emission).
-Every stage is a model run, except a shared stage that collapses with one slice, which is recorded and not run; a design the user already has goes in the need or an answer, and solution design adopts it.
+Every stage is a model run, except a shared stage that collapses with one slice, which is recorded and not run, and the mockup step of a need without a screen, which never runs: the view lists it pending until intake decides, then skipped. A mockup step whose first look the person declined reads skipped from the decline on. A design the user already has goes in the need or an answer, and solution design adopts it.
 
 - Intake states the shape it expects (slices, projects involved). When its
   run completes, the controller posts the gate plan: who answers each
@@ -367,6 +376,8 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   with one slice, and the `gate <stage> human|auto` reply that
   changes it, so the operator can change a policy before solution design
   spends anything. A mode switch posts it again.
+- In a pack with a mockup step, intake also states whether the need has a
+  screen (`screen`, and `redesign` with one); see Mockups.
 - Every stage that interviews (intake, slicing, shared decisions and solution
   design) reads the code, so it states what the code answers as a finding and
   asks only what neither the code nor the need settles.
@@ -400,8 +411,10 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   (grounding) digests to those project facts and its verdicts. A
   whole-blueprint stage reads the stage it loops to whole for every slice.
   Data that fits no such shape, does not decode or holds an item of another
-  shape is given whole. A run whose task holds a digest is offered
-  `read_artifact` for the whole. A per-slice task opens by naming its slice.
+  shape is given whole. A run whose task holds a digest, or describes an
+  approved mockup, is offered `read_artifact` for the whole. The mockup is
+  never digested: it is described (see Mockups).
+  A per-slice task opens by naming its slice.
   A gate reply (`gate <stage> human|auto`) and a stage's policies cover
   every slice of the stage. A rejection at a slice's gate runs that slice's
   step again. A run's cost floor reads every slice's runs of its stage. A
@@ -552,10 +565,16 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   and one chat run per chat reply. A need cut into n slices, n of two or
   more, costs 7 + 6n runs on the same terms: slicing's own review, shared
   decisions and its review, and design and its review, grounding, acceptance
-  and its review and decomposition once per slice.
+  and its review and decomposition once per slice. A need with a screen adds
+  one designer run per revision of its mockup (its first run, then the chat
+  run that answers each change request with the next revision), and in the
+  auto modes one mockup responder run per revision; the settle that records
+  the choice is a run row with no model and no cost.
 - In default mode a one-slice need touches the human at the rounds of intake,
   slicing and solution design (no limit when a human answers), the solution
-  design gate with slicing folded into it, and the sign-off. A need that
+  design gate with slicing folded into it, and the sign-off; a need with a
+  screen also at the mockup's offer and, once they take it, at the mockup
+  until they use or skip it. A need that
   slices into several gets slicing's own gate, the shared decisions' rounds
   and gate, and the rounds and gate of each slice's design, without anyone
   classifying it. Intake's gate is `auto`: its reviewer's verdict decides it,
@@ -582,9 +601,11 @@ pack.yaml          stage order; per stage: persona, consumes,
                    responder's question cap, loop target and rounds, whether
                    it repeats per slice (`per_slice`) and which earlier
                    slices' stages it reads (`earlier_slices`), and whether it
-                   settles what every slice shares (`shared`)
+                   settles what every slice shares (`shared`); the checks include `screen`
+                   (the stage whose data states whether the need has a screen)
+                   and `mockup` (the stage that draws the mockups)
 personas/*.md      role text, one file per persona
-stages/*.md        instructions, one file per stage, review.md for every reviewer run, responder.md for every responder run and plain.md (optional) for every run of a plain-language blueprint
+stages/*.md        instructions, one file per stage, review.md for every reviewer run, responder.md for every responder run, mockup_responder.md for every mockup responder run and plain.md (optional) for every run of a plain-language blueprint
 card.md            the card body template
 lists.yaml         data for mechanical checks: required sections, stripped headings,
                    defect phrases, maintenance labels and verbs, forbidden content,
@@ -610,6 +631,11 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
   cards and criteria both repeat per slice or neither does, so cards are
   checked against the criteria of their own scope. No stage id holds `@`,
   which joins a per-slice stage's id and its slice in the record.
+  A mockup stage has no gate, reviewer, fold, loop, `per_slice` or `shared`,
+  follows the one stage that checks `screen` and precedes the stage that
+  checks slices, and the pack carries `stages/mockup_responder.md`; at most
+  one stage checks `mockup` and one checks `screen`, and `mockup_responder`
+  is a reserved stage id.
   The loader refuses a pack that breaks one of these, and one whose `gate`
   is not true or false, such as a pack from before version 0.5 with `gate:
   questions`.
@@ -622,6 +648,36 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
   applied at load time, so a lesson never needs a code change.
 - Pack prose is never tested. Tests check only that a pack parses and that
   every stage, persona and list reference resolves.
+
+### Mockups
+
+A pack can state whether the need has a screen and carry a mockup step. The stage that checks `screen` (intake, in a pack that has the step) states `screen: true|false` in its data, and `redesign: true|false` beside `screen: true`: whether the person asks to re-design a screen that exists. The `screen` check refuses a `screen` that is not a boolean (`screen_shape`) and, with `screen: true`, a `redesign` that is not a boolean (`redesign_shape`); bounded like the other checks, never fatal.
+
+The mockup step collapses once the screen stage has stored an artifact that does not hold `screen: true`, or once the newest offer was declined; until then it is pending. The collapse is decided from that stored artifact and the offer's events, so it holds across restarts, and a record from before mockups has no `screen` key and collapses. A collapsed mockup step is never run, writes no fold row (only a shared step's collapse is recorded as a fold) and shows `skipped`.
+
+**The offer.** Under the mockup stage's `human` policy (default mode), the step's first run asks first: the architect posts a `mockup_offer` event with state `shown` and the blueprint waits with the run slot free. Its transcript entry is a gate prompt, id `mockup:offer` and kind `gate`, with the replies `show mockup` (recommended) and `skip mockup`, worded the same with plain language on or off; while it waits the view's open prompt is `{mockup:offer, gate}` and the step is `waiting`. `show mockup` records `accepted` with the reply's message id and runs the step; `skip mockup` records `declined`, the step collapses and what follows it runs. Any other text is a note that runs nothing, and the offer stays open. A reopen while it waits posts it again with the same id; once accepted, a re-run of the step (after a failure, a restart or the session's end) asks nothing. While no revision has been shown since, as when the designer's first run failed or a cap refused it, `skip mockup` still declines the accepted offer: `declined` with the reply's message id, the step collapses and reads `skipped`, and what follows runs; any other text there is a note that runs the step again, its row saying that `skip mockup` goes on without a mockup. When the step's first run comes under the `auto` policy (every mode but default, or after a `gate` reply) there is no offer and the step runs at once. A shown offer stays with its person until a reply decides it: a `gate` reply after it is shown does not withdraw it (the reply's event says the offer is open), and a reopen posts it again whatever the policy says now. Only a mode switch that makes the policy `auto` while the offer waits takes it unasked: `accepted` with `by: "mode"`, a system entry carrying `LogMarker{Kind: "decision", Stage: "mockup"}`, which closes the prompt as a reply would, and the step runs.
+
+The operator's existing-UI rule: where a UI exists, the mockup keeps to its look unless intake says `redesign: true`; a stored intake without the flag reads as no re-design.
+
+**Revisions.** With the code tools its stage names, the designer reads the UI code and design material in every target project's checkout. Its run shows revisions instead of submitting: `show_mockup` is offered in place of `ask_questions` and `submit_artifact` (beside `answer_chat` in a chat run), and a revision it accepts ends the run asked. A revision is the screen people will use imitated in one self-contained HTML document (a phone or tablet app, a desktop window, a full-screen terminal interface, a web page; HTML is the medium only), the designer's notes, the 1 to 8 screens the document shows and at most 12 suggestions. Each revision is stored as the next artifact version of stage `mockup`, version v being revision v: the body is the notes, the data `revision`, `screens`, `suggestions`, `settings` (what the revision opens with) and `source`. Its `artifact` event names the stage, version, persona and revision, never the body or the source; the live stream sends an `artifact_stored` frame for it, the transcript a sheet reference noted "Revision <v>", and the stage drafts nothing. Inside the architect a mockup is a round with no questions, carrying the revision's state: the first revision posts it under the next round number with the notes as the designer's chat entry, and each revision a chat run shows updates that same round, its notes following the chat entries the run was given. Its snapshots never reach the transcript as a round prompt: one that adds the designer's notes or reply is a text row, and any other adds no row; a designer run's start and end rows name the mockup and the revision shown, never the round. The round is the auto responder's when the stage's policy is `auto` as the revision is shown (read under the round lock, so a mode switch's handover is never undone), and the person's otherwise. While it waits for the person, the view's open prompt is `mockup:<n>` of kind `mockup`, the same across the revisions. There is none while the auto responder steers, when the step is running during its turns and waiting between them, or while a designer run writes the next revision or a reply, when the step is running. `show_mockup` is refused as a tool error when a first run finds a mockup already waiting, and when a chat run's round is closed, gone or already decided.
+
+**Replies.** The person answers the mockup waiting for them with a mockup reply (`MessagePayload.Mockup`); one whose `action` is not `use`, `skip` or `chat` is refused at the endpoint with 400 `invalid_field`, before deduplication. Its `prompt_id` must be the open `mockup:<n>`, else it is refused as a stale round reply is (an `error` event with reason `stale_reply`, nothing stored). `use` and `skip` must name the newest revision; one that names another is refused with an `error` event of reason `stale_revision` that names the newest, nothing is stored and the prompt stays open. A use keeps each setting the revision takes and gives an id it leaves out the revision's opening value; an id the revision lacks and a value its suggestion does not take are dropped, and the snapshot counts the drops. A skip ignores the settings. Either is stored on the mockup round with who decided and the reply's message id, and the open prompt goes. A chat run in flight does not make the reply stale, and cannot undo it: the revision that run then shows is refused, and its `answer_chat` still replies. `chat` carries the person's text in `Content` (blank stores nothing and says so, with an `error` event of reason `empty_chat`) and, when sent, the settings they look at, recorded as the round's last known settings as far as the revision takes them; a plain message while the mockup waits is chat too, with the settings unknown, so the last known ones stay. The designer's chat run is told the revision the person looks at and those settings in words, and without its stored conversation also that revision's notes and suggestions. It replies with `answer_chat`, which takes no questions or assumptions on a mockup, or shows the next revision, whose settings carry over from the last known ones.
+
+**The auto responder.** Under the mockup stage's `auto` policy the auto responder plays the person. While the mockup is its own (posted under `auto`, or handed over by a mode switch), undecided and with no chat the designer has not seen, the run slot runs a turn: one mockup responder run (see Interaction). Its task holds the target projects, the need, the step's inputs and the user's notes, then the revision: its notes, its screens, each suggestion with its why, the values it takes and how it is set now (the last known settings: the ones the person last sent, else the revision's opening ones), its source, the conversation about the mockup so far and the change requests left. It submits its settings with `request`, the one change it wants next, or with `use: true`: exactly one of the two, with settings that name only the revision's suggestions and values they take, or the submit is refused and it submits again. A request is the round's chat entry from `responder`, its settings the round's last known ones; the designer's chat run answers it in words or with the next revision, whose settings carry over from them, and the next turn judges what it then shows. A mockup takes at most 5 change requests from the responder (the person's chat does not count): with none left a request is refused and the turn must use, though it may use sooner. A use is stored as the person's would be, by `auto`, with the settings it sent over the last known ones, and the mockup closes and settles: its questions rows are the responder's assumptions, the gates row is by `auto`, and the sheet's `decided_by` reads `automatic`. A responder that fails, or that a cost cap refuses, uses the revision with the last known settings, by `auto` and marked `failed` on the round, and the turn records an `error` event with reason `responder_failed`, the stage and the revision; the pipeline goes on. In the transcript a request is a system row that names the responder and quotes it, and the responder's use a system row that names the revision and the settings it chose; a failed responder's use adds no pick row beside its error row, and the settle's row says the architect used the revision; the person's own chat and replies are CM's rows. While a turn runs the step is `running` with `Current.Kind` `responder`; between turns it is `waiting` with no open prompt, or `failed` once the blueprint failed, as when the designer's run on a request failed, since nobody waits on it. An abort leaves the turn to `continue`, the next message or a reopen, which runs it again, and a turn whose snapshot cannot be stored fails the blueprint instead of running again.
+
+**Hand-over and hand-back.** A mode switch into an auto mode while the mockup waits for the person, the mockup stage's policy now `auto`, hands it to the responder at once as it stands: the revision shown, the settings the person last sent and the same 5 requests. The `mode` event carries `mockup: true` beside `hands_over`, and its system row names the mockup, never a round. After a switch to default, the stage's policy no longer `auto`, the person takes the steering back: the mockup goes back to them (the round snapshot `handed_back`) and the open prompt `mockup:<n>` returns with its use and skip. The responder's next turn runs nothing and hands it back, and a revision a designer run shows then waits for the person. A turn already running at the switch reads the mode again as it ends, under the round lock: it stores no use, its own or the one a failed responder leaves, and hands the mockup back with the settings the responder sent as the last known ones; a request it sends stands, and the revision that answers it waits for the person. A switch to default while nothing runs on the mockup hands it back at once: a turn that waits to run, as after an abort, runs and hands it back, and a mockup whose designer's run on the responder's request failed or was aborted is handed back with that request left for the next chat run, which the person's next message or `continue` starts. A switch that lands while that designer's run is in flight finds the run slot held, so a run that then fails or is aborted leaves the mockup with the responder, no prompt open (the step `failed` after a failure), until a message or `continue` runs it again: a revision it shows waits for the person, and a reply in words hands the mockup back at the next turn. A `gate` reply hands nothing back or over: the mockup stays with whoever steers it until its next revision, which is the person's or the responder's as the policy then says, and the reply's event names the open mockup (`open: "mockup"`), never a round. One case follows from the mode: in default mode, after a `gate mockup auto` reply gave the responder the mockup, a `gate mockup human` reply hands it back as the responder's running turn ends, or at its next turn. A designer run that fails on a handed-over mockup waits for a message or `continue`, as a failed designer run on any mockup does.
+
+**The close and the settle.** Once no chat run is in flight, a decided mockup closes. A use writes one questions row per suggestion of the revision used, numbered after every question so far: the title is the question, the labels the options (`Off` and `On` for a switch), the why the context and the chosen label the answer, with who decided as the responder. A skip writes none. The closed snapshot follows, then the settle: an `approve` (use) or `reject` (skip) gates row on the revision, with who decided and the reply's message id, announced by a `decided` event with `mockup: true` (a system row; with `failed: true` beside it when a failed responder left the use to the architect, and the row then says the architect used the revision as it is set), and a stage run of the step with no model and cost 0 that ends `done` with reason `used` or `skipped`. The step is then done by the rule every stage follows and what follows it runs. Each part is written once, so a reopen after a restart between them finishes the close or the settle and writes no row twice. On the sheet, the version a use took reads `approved` and every other `superseded`; after a skip the newest reads `rejected` and the older ones `superseded`; `decided_by` is who decided (`you` for the person). The artifact read of the version a use took adds `chosen`, the settings it chose, read from the closed round: artifacts are append-only, so nothing is stored twice.
+
+**Suggestions and settings.** A suggestion has an id, a title of at most 48 characters, a kind, a why and a default. A screen's or a suggestion's title and an option's label are one line that does not start with `#`: a card's mockup comment lists them on lines of their own, and the agent's section parser, which trims each card line and does not track the block, could take such a line for a heading. A revision's notes are at most 4000 characters. Suggestion and screen ids match `^[a-z][a-z0-9_]{0,31}$`, each unique in its list, and keep their meaning across revisions. A `switch` has no options and is `on` or `off`, off unless its default says otherwise; a `choice` has 2 to 4 options, each a value (`^[a-z0-9_-]{1,32}$`, unique) and a label, and its default is one of them, the first unless given. A revision's `settings` carry over by id from the round's last known settings: each suggestion keeps the value it had while the revision still takes it, and takes its default otherwise, so the first revision opens at the defaults.
+
+**What later stages read.** A step that consumes the mockup step gets, when a mockup was used, a section holding the revision used, its notes, its screens (`id: title`) and each suggestion as `title: chosen label (why)`, the chosen label read from the closed round and the revision's opening value for an id the round lacks. The section never holds the source; the step is offered `read_artifact`, whose `mockup` stage returns the revision used, whole, source included, with `chosen` added as the artifact read adds it; it reads no other revision. After a skip, a declined offer or a need without a screen the task holds nothing of a mockup and `read_artifact` does not offer it.
+
+**The frame contract.** CM shows a source sealed in its mockup frame (no access to CM or the session; network blocked by policy; see CM's trust model). Before the source's first script runs, `window.mockupSettings` holds the settings, each suggestion id to its string value; on every flip CM sets it again and dispatches a window `mockup:settings` `CustomEvent` whose `detail` is the settings. The source renders from `window.mockupSettings` at load and re-renders on the event without resetting the screen or tab the person is on, so a flip re-renders the mockup with no model run. `show_mockup` checks the source as a quality guard, so a revision does not show broken in that frame; the frame, not the check, is the boundary. It refuses, as a tool error naming the rule and storing nothing, in this order: a source that is empty or over 64 KiB; a line whose text, trimmed, starts with `## `, which the agent's section parser (it trims each card line and does not track fences) can take for a section it strips, cutting the rest of the mockup from its prompts, so the designer writes the first `#` as `&#35;` or keeps the text on its tag's line; a `link`, `iframe`, `frame`, `object`, `embed`, `form` or `base` element, a `meta` with `http-equiv`, or a `src`, `href`, `xlink:href`, `srcset`, `poster`, `action`, `formaction` or `data` attribute whose value is no `data:` URI (or, for a link, a `#` fragment); in a style element or attribute, an `@import` or a `url(` that is no `data:` URI or fragment; in a script element or an `on*` attribute, case ignored, `localStorage`, `sessionStorage`, `document.cookie`, `fetch(`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `alert(`, `confirm(`, `prompt(` or `window.open(` where no identifier character (`[A-Za-z0-9_$]`) precedes the name, so the source's own `showAlert(` or `myLocalStorage` passes, the script read as plain text with its comments and strings (a screen may show these names as text in its markup, as a developer tool or a terminal does), or an assignment to `mockupSettings`, plain or compound (`=`, `||=` and the like, never `==`, `===` or `=>`), which would overwrite the settings CM sets and a card bakes in, while a read with a fallback (`window.mockupSettings || {...}`) passes; and, when the revision has suggestions, a source that never names `mockupSettings` or `mockup:settings`, or that has no script element outside a template, before whose first one a card fixes the chosen settings. The designer corrects it and shows again in the same run.
+
+**Cards.** A draft card names the screens of the used mockup it builds or changes as `mockup: [<screen id>]`; a card that builds no screen names none. The contract refuses an id the used revision does not show (`mockup_screen`) and any screen named when no mockup was used (`mockup_none`), bounded like every cards check. Emission puts the mockup on every card of a slice that names a screen, that slice's other cards included (see Emission), as a mockup block: a fenced code block whose info string is exactly `mockup`, backticks at column 0 and one backtick more than the longest run in its content, at least three. The content is the used revision's HTML document, whole, baked with the chosen settings: a leading HTML comment lists the revision, each suggestion as `title: chosen label` and the screens the card builds, or says it builds none, with every `--` in it broken up so it cannot close early; and `<script>window.mockupSettings = {...};</script>` sits before the first script start tag the HTML tokenizer finds outside a template, whose scripts do not run as the document loads (a source without one gets none). Nothing else of the source changes. Every carrying card holds the full source, at most 64 KiB; no repository file and no `depends_on` carries it.
+
+**What the contract skips.** The block's grammar is shared with CM's card lint and the agent's card classifier: an opening line matching ``^(`{3,})mockup[ \t]*$`` at column 0, closed by a line of only backticks, at least as many as the opening, plus optional spaces or tabs, else running to the end of the body; tilde and indented fences are not mockup blocks. The contract's phrase scans read a body without its blocks (`contract.WithoutMockups`), so a source's own copy, such as an `error:` message or a path a screen shows, is no finding: defect phrases (the agent's classifier skips blocks too), dangling references, forbidden references (CM's lint skips blocks too) and other projects' repositories. The structural scans (headings, required and stripped sections, numbered criteria) read the whole body, because the agent's section parser does not track fences. Emission reads a body's source tags outside its blocks too. A draft card's body holds no mockup block of its own: decomposition's submit refuses one (`mockup_block`, bounded like every cards check), so every block the scans skip is one emission wrote.
 
 ## Card contract
 
@@ -686,6 +742,9 @@ release.
 - `criteria` names the acceptance criteria the card carries. Every
   criterion of a slice is carried by exactly one card of its project, and
   every manual check of acceptance by a manual entry.
+- `mockup` names, by screen id, the screens of the used mockup the card
+  builds or changes; a card that builds no screen names none, and with no
+  used mockup no card names one (see Mockups).
 
 **Body** (plain `##` sections)
 
@@ -698,11 +757,17 @@ release.
 | Tests expected      | The test cases to write; for a POC project's card, the main behaviour and what its criteria demand only.   |
 | Out of scope        | Explicit non-goals.                                                                                        |
 
+Emission adds a `## Mockup` section after these on every card of a slice
+that builds a screen of the used mockup, before the `## Sources` section it
+adds to a card that cites a source tag (see Emission).
+
 **Never**
 
 - A `## Diagnosis` or `## Design` section: the first is discarded, the second
   is invisible to the coder and reviewer.
 - Criteria under any heading the agent strips.
+- A fenced `mockup` block: emission adds the approved mockup, and the
+  phrase scans skip a block's text.
 - A defect phrase anywhere in a feature card, including negated ("does not
   panic").
 - A link as the only source of a fact.
@@ -746,6 +811,8 @@ release.
 | A project without a verify command: the proposed command in every card's criteria | mechanical (`list_projects`) |
 | A repository without an instruction file: one card writes `AGENTS.md`, every other card of the project depends on it | mechanical (code tool) |
 | Type and priority are ones the project declares                    | mechanical (`list_projects`) |
+| A card's mockup screens exist in the approved mockup               | mechanical                 |
+| No mockup block in a draft card's body                             | mechanical                 |
 | One deliverable, no open decisions, no optional scope              | model-judged               |
 | Estimated planner split of two subtasks or fewer                   | model-judged               |
 | "Could an agent with only this repo finish this card?"             | model-judged, adversarial  |
@@ -776,6 +843,12 @@ then plain language, which makes every gate `auto`, then the pack: the
 stage's `policy` for its questions, and its `gate_policy` for its gate, which
 defaults to `policy`.
 In the default pack intake's questions go to a human and its gate is `auto`.
+The mockup stage's question policy, as the step first runs, also decides who
+sees its offer: under `human` the person is asked for a first look before the
+designer runs, under `auto` nobody is asked (see Mockups). Its policy as
+each revision is shown decides who steers the mockup: the person under
+`human`, the auto responder under `auto`; a switch to default also hands the
+mockup back as the responder's running turn ends, or at its next turn.
 A stage that declares the `assumptions` check records what it decides
 itself as data, and every responder answer is recorded as an assumption;
 only these reach the sign-off and the cards.
@@ -812,6 +885,16 @@ without `stages/responder.md` an auto round is refused and the stage decides
 every question. On a priced model a responder spends from the asking run's
 cost cap; one a cap refuses (the asking run's spent, or less than its floor
 left of the blueprint's) leaves its question to the stage too.
+
+**A mockup responder run** plays the person on a mockup the auto responder
+steers, one run per turn, outside any stage run and capped as a run of its
+own: kind `responder` on the mockup stage, its persona and
+`stages/mockup_responder.md` (with `stages/plain.md` on a plain-language
+blueprint, as every run), no tools. It reads the need, the step's
+inputs, the user's notes, the revision (its notes, screens, suggestions and
+settings), its source and the chat about the mockup so far, never the
+designer's transcript, and returns its settings with one change request or
+the use of the revision (see Mockups).
 
 **Assumptions are data.** Before it submits, a stage that declares the
 `assumptions` check (intake, shared decisions and solution design) posts its
@@ -891,14 +974,21 @@ blueprint; a `mode <m>` reply switches it until emission starts (see
 Sessions), and every question, gate and sign-off reads it as it stands then.
 
 - **Default**: policies as the pack sets them. The embedded pack makes
-  intake, slicing, shared decisions and solution design `human` and every
-  other stage `auto`;
+  intake, the mockup, slicing, shared decisions and solution design `human`
+  and every other stage `auto`;
   intake's gate alone differs from its stage's policy: it is `auto`,
   decided by its reviewer's verdict. The sign-off waits for a human. A
   `gate <stage> human|auto` reply, listed in the gate plan posted after
-  intake, changes a stage's policy for this blueprint.
+  intake, changes a stage's policy for this blueprint. In a pack with a
+  mockup step, the person is offered a first look before it runs (see
+  Mockups).
 - **`auto`**: every policy `auto`. Stops before emission. Cards auto-vet in
-  CM on the non-Jira path, so this stop is the only human backstop.
+  CM on the non-Jira path, so this stop is the only human backstop. A
+  mockup step runs without an offer, and a switch into this mode, or
+  `auto+emit` or `yolo`, while an offer waits takes it. The auto responder
+  steers the mockup in the person's place, with up to 5 change requests;
+  a switch into an auto mode hands it a mockup that waits for the person,
+  and a switch back to default hands it back (see Mockups).
 - **`auto+emit`**: as above, then emits the playbook and stops. It never
   approves over a critical finding across the blueprint: the sign-off stops
   for a human. When it approves a clean sign-off itself, it records what it
@@ -1024,8 +1114,8 @@ The wording is fixed per situation, in the server.
 | code     | `repo_info`; harness `read`, `grep`, `glob` jailed to the blueprint's checkout                          | The server keeps one bare mirror per repo (URL from `list_projects`), fetched with go-git under a per-repo lock the first time a run needs the trees: at the start of the first stage with the code tools (intake), or earlier, at a research stage's first leak-guard check that needs them, and one tree per blueprint and repository from that mirror at the default-branch sha it records as a source. Blueprints on the same project never share a tree, so parallel runs never see each other's fetches, and the recorded sha is the one readiness verifies and sign-off compares against. It never reads a developer's own checkout. Credentials come per repo from CM's `GET /api/worker/git-credentials` with the session's token, so project credential bindings apply. A repository with no commits checks out as an empty tree with no sha. `repo_info` returns the sha, instruction file presence, the project's verify command, whether the repository is empty and, to the stage that fetched the tree, the default branch. A reviewer whose pack entry names `code` gets the same tools, and can be the first to fetch the trees. |
 | research | `web_search`, `web_fetch` | Offered to the stages whose pack names the group (intake, slicing, shared decisions and solution design in the default pack) when the session's research settings name a provider the architect can build; otherwise the group is absent and the session says once, at the first such stage, that research is off. `web_search` asks the provider (Brave Search) for ten results: titles, URLs and snippets the model reads in that run only, since a run's stored messages keep only the query and the result count. `web_fetch` reads an http or https page from a public address: every connection's address is checked after the name resolves, redirects included (five at most), and no proxy is used; it reads at most 5 MiB in 20 seconds, keeps 48 KiB of text, turns HTML into readable text (the main or article element, without scripts, navigation or footers), takes text types as they are and refuses the rest. A page read is recorded as a `url` source and its result starts with the tag; a page with no readable text is a tool error, not a source. A leak guard checks every query and every URL's host labels, path and query and refuses, as a tool error naming the rule: a token with a path separator (acronym pairs like CI/CD and HTTP/1.1 pass) or a file extension (a `<name>.js` library passes), code punctuation (a URL path segment may carry a name's `(` or `=`, as in `Raft_(algorithm)`), a compound identifier the blueprint's checkouts declare (not a name of a package they depend on, and nothing in a lockfile), the root module path's owner or name (a nested module's compound name is a declared identifier), a target project's name or its repositories' owner or name, a ContextMatrix card id, and a query, or a URL path segment, query key or query value, over 160 characters; plain words and technology names pass. A URL's host labels get the name, module, identifier and card-id rules but not the shape rules, since a page can ask for a host that carries data; its path segments skip the path and file-name rules, which a URL's own syntax breaks; its query keys and values get every query rule. It reads the checkouts once per run, at the first check that needs them, checking them out first in a stage without the code tools, and refuses everything while it cannot read them. The responder shares its stage's tools. Every query and page read is a `research` event. A reviewer whose entry names `research` gets `web_fetch` alone behind the same guard, and never posts the research-off notice. |
 | cm       | `list_projects`, `list_cards`, `get_card`, `get_playbook` as `cm_`-prefixed reads | Offered to grounding and readiness over the session's MCP key, one MCP session per run, chat's bridge adapter on the architect's client with a `cm_` prefix and an allowlist that skips tools CM does not serve. No `agent_id` is sent, so CM keeps redacting unvetted imported text; `get_card` never attaches images; a credential embedded in a URL is removed from every result and error before the model or the record sees it, since CM returns project config as stored; every result carries the blueprint's ContextMatrix source tag. Creating cards and playbooks and starting runs are controller calls with the configured caller identity, never model tools. |
-| artifacts | `read_artifact` | Offered to a run whose task can hold a digest of another slice's artifact: the whole body and data of any stored version of a step the run reads. The stored transcript keeps each result's first line, since the record holds the artifact. |
-| control  | `ask_questions`, `answer_chat`, `submit_artifact`                                          | `ask_questions` posts a round and ends the run: per question a tab title, the question, why it matters, options with a summary, pros, cons and source tags (only tags a tool result of this blueprint returned; the panel shows a page `web_fetch` read by its title (its address when it has none), linked to its address, and any other source by its identity), and the recommended position; an audience, `experience` (what the person wants, who uses it, how it should look, feel and behave) or `technical` (how it is built), recorded on the round in every mode and required on a plain-language blueprint's questions under the human policy; a trailing "(recommended)" a model writes into an option title is cut and marks it. A stage that declares the `assumptions` check may add its assumptions as the round's last tab, each a sentence (or, on a plain-language blueprint, `{text, consequence}`), or post the tab alone; any other stage's tab is refused. A tab entry the user already accepted on a closed round is refused. A round asks at most 10 questions of at most 6 options, 96 KiB in all, its assumptions included. A question already answered with the same options is refused unless it re-asks a turned-down answer (`reasks`, offered and taken on plain-language blueprints only); a changed option set makes a new question. Under `auto` its responder answers before the run ends. Questions are numbered `Q<n>` per blueprint. `answer_chat` replies in an open round's chat, at most 4000 characters, revising or adding questions under the same limits or replacing the assumptions tab, and ends the run. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
+| artifacts | `read_artifact` | Offered to a run whose task can hold a digest of another slice's artifact or describes an approved mockup: the whole body and data of any stored version of a step the run reads; of the mockup only the revision used, with its `chosen` settings. The stored transcript keeps each result's first line, since the record holds the artifact. |
+| control  | `ask_questions`, `answer_chat`, `show_mockup`, `submit_artifact`                           | `ask_questions` posts a round and ends the run: per question a tab title, the question, why it matters, options with a summary, pros, cons and source tags (only tags a tool result of this blueprint returned; the panel shows a page `web_fetch` read by its title (its address when it has none), linked to its address, and any other source by its identity), and the recommended position; an audience, `experience` (what the person wants, who uses it, how it should look, feel and behave) or `technical` (how it is built), recorded on the round in every mode and required on a plain-language blueprint's questions under the human policy; a trailing "(recommended)" a model writes into an option title is cut and marks it. A stage that declares the `assumptions` check may add its assumptions as the round's last tab, each a sentence (or, on a plain-language blueprint, `{text, consequence}`), or post the tab alone; any other stage's tab is refused. A tab entry the user already accepted on a closed round is refused. A round asks at most 10 questions of at most 6 options, 96 KiB in all, its assumptions included. A question already answered with the same options is refused unless it re-asks a turned-down answer (`reasks`, offered and taken on plain-language blueprints only); a changed option set makes a new question. Under `auto` its responder answers before the run ends. Questions are numbered `Q<n>` per blueprint. `answer_chat` replies in an open round's chat, at most 4000 characters, revising or adding questions under the same limits or replacing the assumptions tab, and ends the run. `show_mockup` is the mockup stage's, in place of `ask_questions` and `submit_artifact` and beside `answer_chat` in its chat runs: it shows a revision (the notes, the HTML source, its screens and suggestions) under the limits and the source check of Mockups, and ends the run. `submit_artifact` is terminal: the markdown body and the structured yaml block the stage's schema requires. |
 
 Every tool result passes the harness redactor for every secret the process
 holds.
@@ -1088,13 +1178,25 @@ Then, in order:
 2. **Cards**, in playbook order, which the contract keeps dependency-first,
    so `depends_on` carries real ids within a project. Each created id is
    stored in `emissions` at once, so a retry after a failure skips what
-   exists. Each body ends with a `## Sources` section saying what every
-   source tag it cites stands for: its project's repository at the commit
-   the checkout recorded, or the ContextMatrix board. Another project's
-   repository is not named, and a body citing no tag gets no section. A
-   `create_card` warning is reported and emission continues: CM creates the
-   card before it lints it, the readiness checks mirror its lint, and the
-   outcomes stage learns from what slips through.
+   exists. When a mockup was used, every card of a slice whose draft names
+   a screen of it, that slice's other cards included, so the work behind a
+   screen sees its target, gets a `## Mockup` section after its own
+   sections and before Sources; on an unsliced blueprint the one draft is
+   the slice, and no card of a slice that names no screen gets one. The
+   section holds two fixed sentences and the used revision's source baked
+   with the chosen settings in one mockup block (see Mockups). A card that
+   names screens reads that the design is the one approved for the screens
+   it builds; one that names none reads that it builds none of them and
+   that the design is the target its work serves; both are told to build
+   for the chosen variant only, as the source also holds code for variants
+   nobody chose. Each body ends with a `## Sources` section saying what
+   every source tag it cites outside its mockup blocks stands for: its
+   project's repository at the commit the checkout recorded, or the
+   ContextMatrix board. Another project's repository is not named, and a
+   body citing no tag gets no section. A `create_card` warning is reported
+   and emission continues: CM creates the card before it lints it, the
+   readiness checks mirror its lint, and the outcomes stage learns from
+   what slips through.
 3. **Playbook**, for two or more cards: card and manual entries in draft
    order, the draft's title, and a description with intake's problem and
    value and every assumption with its latest status, with a Sources
@@ -1158,15 +1260,17 @@ stream into it as log entries. The binary, `contextmatrix-architect`, has one
 server command, `serve`, plus the `config defaults` and `config validate`
 helpers.
 
-Replies the server understands, besides a round's structured answers:
+Replies the server understands, besides a round's structured answers and
+the mockup reply (see Mockups):
 
 | Reply                         | Effect                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
 | `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At a slice's design gate, `reject slicing <feedback>` runs slicing and everything after it again, and `reject shared_decisions <feedback>` the shared decisions and every slice. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition, every slice's in slice order, with the feedback. `reject slicing <feedback>` runs slicing and everything after it again, `reject SL<n> <feedback>` that slice's design and every later slice, and `reject shared_decisions <feedback>` the shared decisions and every slice; the sign-off records its rejection first, then a rejection of the step that runs again, and the replaced versions superseded. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
-| `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round or gate keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
+| `show mockup`, `skip mockup`  | Answers the mockup offer (see Mockups): show runs the mockup step, skip goes on without it. Matched as a gate's replies are; any other text while the offer waits is a note and the offer stays open. |
+| `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round, gate or mockup offer keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
 | `cap <usd>`, `cap off`        | Sets the blueprint's cost cap (see below); CM sends it when the person clicks the cost in the sheet header. Exactly two words, the amount one plain decimal number, so an answer that starts with "cap" stays an answer. Works while a stage runs. |
-| `mode default\|auto\|auto+emit\|yolo` | Switches the blueprint's mode; every later question, gate and the sign-off follow the new one, and the gate plan, once posted, is posted again. Into `auto+emit` or `yolo`, a sign-off waiting for a human runs again, preflight included, and approves itself unless a critical finding across the blueprint or preflight stops it. Into any mode but default, the round waiting for a human goes to the auto responder at once when its stage's policy is now `auto` (a `gate` reply still wins): it turns read-only, the answers and decisions already sent stay the human's, the responder answers each open question and every undecided assumption is accepted, and the stage then continues; a switch back to default after that leaves it with the responder, and `continue`, the next message or a reopen finishes one an abort or a restart cut short. Into `auto`, `auto+emit` or `yolo`, a stage gate shown only because its policy asked a human is approved when the policies are now `auto` (a `gate` reply still wins) and its reviewer's verdict passes, and the pipeline goes on; one shown because its verdict did not pass stays with its human, as it would in auto, and a switch back to default decides no gate. A round whose asking run read the policy before the switch and had not yet ended on it stays with its human too. Exactly two words, the mode one of the four, case ignored, so an answer that starts with "mode" stays an answer. Works while a stage runs. Refused, changing nothing, for the mode in effect, once emission has started (the sign-off approved) and after the pipeline ended. The stored mode survives a reopen: a later start's mode is ignored, as its cap is. Each reply is a `mode` event with the switch, or the refusal's reason (`unchanged`, `emission_started`, `ended`). |
-| `resume`, `continue`          | Runs the stopped stage again once, as a retry message would but storing no note (see below); a stage the cap stopped runs too and meets the cap again. The whole message, case ignored, so an answer that starts with either word stays an answer. While a run is in flight, or where nothing is stopped (an open gate, a round waiting for answers, the sign-off, an ended pipeline, no need yet), nothing starts and the panel says so. Each reply is a `resume` event with the stage it runs again, or with `nothing` and the stage `running`, if any. |
+| `mode default\|auto\|auto+emit\|yolo` | Switches the blueprint's mode; every later question, gate and the sign-off follow the new one, and the gate plan, once posted, is posted again. Into `auto+emit` or `yolo`, a sign-off waiting for a human runs again, preflight included, and approves itself unless a critical finding across the blueprint or preflight stops it. Into any mode but default, the round waiting for a human goes to the auto responder at once when its stage's policy is now `auto` (a `gate` reply still wins): it turns read-only, the answers and decisions already sent stay the human's, the responder answers each open question and every undecided assumption is accepted, and the stage then continues; a switch back to default after that leaves it with the responder, and `continue`, the next message or a reopen finishes one an abort or a restart cut short. Into any mode but default, a mockup offer waiting for a human is taken when the mockup stage's policy is now `auto`, and the step runs; a mockup waiting for the person goes to the auto responder as it stands, and the row names the mockup, never a round. Into default, a mockup the responder steers comes back to the person at once when nothing runs on it, as a running turn ends (storing no use it reached), else at its next revision or turn (see Mockups). Into `auto`, `auto+emit` or `yolo`, a stage gate shown only because its policy asked a human is approved when the policies are now `auto` (a `gate` reply still wins) and its reviewer's verdict passes, and the pipeline goes on; one shown because its verdict did not pass stays with its human, as it would in auto, and a switch back to default decides no gate. A round whose asking run read the policy before the switch and had not yet ended on it stays with its human too. Exactly two words, the mode one of the four, case ignored, so an answer that starts with "mode" stays an answer. Works while a stage runs. Refused, changing nothing, for the mode in effect, once emission has started (the sign-off approved) and after the pipeline ended. The stored mode survives a reopen: a later start's mode is ignored, as its cap is. Each reply is a `mode` event with the switch, or the refusal's reason (`unchanged`, `emission_started`, `ended`). |
+| `resume`, `continue`          | Runs the stopped stage again once, as a retry message would but storing no note (see below); a stage the cap stopped runs too and meets the cap again. The whole message, case ignored, so an answer that starts with either word stays an answer. While a run is in flight, or where nothing is stopped (an open gate, the mockup offer, a round waiting for answers, the sign-off, an ended pipeline, no need yet), nothing starts and the panel says so. Each reply is a `resume` event with the stage it runs again, or with `nothing` and the stage `running`, if any. |
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
 | `lessons`                     | Lists lessons and their state.                                          |
@@ -1255,10 +1359,11 @@ Replies the server understands, besides a round's structured answers:
   repo, branch and directory; the bundle is committed there at each gate or at
   sign-off. Off by default.
 - A message that arrives after the need, while no human's round waits
-  (then it is chat about the round), and that decides no open gate is a
+  (then it is chat about the round, the mockup waiting for the person
+  included), and that decides no open gate is a
   note: it is logged and given to every model run that starts later, in
   arrival order. A note never reaches a run already in
-  flight, and a note at an open gate leaves the gate open. A note that is only
+  flight, and a note at an open gate or the mockup offer leaves it open. A note that is only
   `approve` or `reject` is a misplaced decision, not guidance: it is logged
   and reaches no run.
 
@@ -1278,24 +1383,31 @@ frames on the session's chat stream.
   Each step carries its persona, gate, policy (the gate policy for a gated
   stage), fold target, status (pending, running, reviewing, revising,
   waiting, done, failed, folded, skipped, stopped or not_reached; a
-  collapsed shared stage is skipped), attempt, a loop stage's round of its
+  collapsed shared stage is skipped, and the mockup step waits while its
+  offer is open and while a revision waits for the person or the
+  responder, and is done once a use or skip settles it), attempt, a loop stage's round of its
   maximum, latest version and cost. The view also carries the run in flight
   (stage, kind, persona, model, start, and the turns, tool calls and tokens
   its harness lines have counted), the open prompt (`round:<n>` of kind
   `round`, `gate:<stage>:v<n>`, `gate:<stage>:<slice>:v<n>` for a per-slice
-  gate, `gate:signoff:v<n>`, or `emission:v<n>` for a stopped emission or
-  run start), and the cost: the ledger plus the runs in flight, the
+  gate, `gate:signoff:v<n>`, `mockup:offer` of kind `gate` while the mockup
+  offer waits, `mockup:<n>` of kind `mockup` while a revision waits for the
+  person, not while the auto responder steers it or a designer run writes
+  the next one, nor once a use or skip decided it, or `emission:v<n>` for a stopped emission or run start), and
+  the cost: the ledger plus the runs in flight, the
   blueprint and per-run caps, and whether every run was priced.
   While a round waits, its stage's step is waiting and no run is in
   flight; while a chat run answers its chat, the step is running and the
-  round stays the open prompt. A round a mode switch handed to the
-  responder is no open prompt: nobody waits for the operator on it, and its
+  round stays the open prompt (a mockup's does not; see Mockups). A round
+  a mode switch handed to the responder is no open prompt: nobody waits
+  for the operator on it (a mockup reads as one the auto responder steers;
+  see Mockups), and its
   stage's step reads as an auto round's would at the same point: running, or
   revising in a builder round, while the responder answers, and as after an
   aborted run of its stage once an abort stops the responder.
   Every artifact version is listed with its
   status (current, reviewing, at_gate, approved, rejected, superseded,
-  folded), who decided
+  folded; a mockup's revisions as Mockups says), who decided
   its gate (you, or automatically: a stage gate the auto policy approved on
   its reviewer's verdict, or a sign-off an emitting mode approved) and when,
   and its reviewer's verdict: the score, the threshold, whether it passed
@@ -1346,7 +1458,8 @@ frames on the session's chat stream.
   skipped.
 - **Artifacts.** `Artifact` returns one version's body, data and the
   problems its checks accepted it with; a per-slice stage's is asked for
-  with its slice. The sign-off is a pseudo-artifact
+  with its slice. The mockup's version a use took carries `chosen` in its
+  data, added from the closed round (see Mockups). The sign-off is a pseudo-artifact
   per version recorded, its data the sign-off's payload. An emitting mode
   that approves a clean sign-off on its own records what it approved (a
   `signoff_auto` event after the approval, never shown in the transcript),
@@ -1396,9 +1509,10 @@ frames on the session's chat stream.
   sends no reset for it. A submit whose arguments the harness repairs never
   executes, so its draft is marked refused with the repair error. Each model
   call starts a fresh draft, whatever tool-call ids the provider reuses.
-  Reviewer and responder runs draft nothing. A model whose stream carries
-  no tool-call fragments shows its body at submit. A restart loses the
-  draft, and the run re-runs from the ledger.
+  Reviewer and responder runs draft nothing, and neither does the mockup
+  stage: each revision is stored whole as it is shown. A model whose
+  stream carries no tool-call fragments shows its body at submit. A
+  restart loses the draft, and the run re-runs from the ledger.
 
 ## Deployment
 
@@ -1434,7 +1548,7 @@ frames on the session's chat stream.
 
 - Go 1.27, `contextmatrix-harness` v0.26.0 (loop, llm client, jailed read
   tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.9.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.34.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.35.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
@@ -1529,6 +1643,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Pin protocol v0.32.0; panel: step statuses `stopped` (the failed ink, "Stopped the pipeline") and `not_reached` (its own quiet tone, "Not reached", never clickable); on an `ended` view the current step is the stopped one and the where line reads "Stopped: <end_reason>"; a feedback box labelled by its action's `ask`; Outcomes tables on the need, shared decisions and design sheets; an Outcomes column and an Edge cases table per slice on the acceptance sheet; an "Across the blueprint" table on the readiness and sign-off sheets, and the sign-off's override reason; `A<n>` and `O<n>` basis chips | quality checks |
 | `poc` on the project config, switched only by a human in Project Settings and returned in `list_projects`' project config, omitted when false | POC projects |
 | Pin protocol v0.34.0; the new-session dialog has a plain-language toggle, and CM stores the flag on the session row and sends it as `ArchitectStart.PlainLanguage` on every start; panel: the pane header shows that a blueprint runs in plain language, from `view.plain_language` once a view has loaded; a round entry's `detail`, a prompt's `detail` and the view's `end_detail` fold under their plain text; on a plain-language blueprint a responder round renders folded into its summary card; the sign-off sheet shows `plain_summary` first (what will be built, what you can do with it, the consequences you accepted, a changed one marked "changed since you accepted it"), an entry's `consequence` under its technical text with a "consequence accepted by you, round <n>" marker from `consequence_accepted`, and a superseded answer's row muted with a "superseded by Q<m>" chip from `superseded_by` | plain language |
+| Pin protocol v0.35.0 (`MessagePayload.Mockup`, `MockupReply`); panel: the mockup sheet while `mockup:<n>` is open, the source sealed in CM's mockup frame (no access to CM or the session; network blocked by policy; see CM's trust model) with `window.mockupSettings` set before its first script and a `mockup:settings` event on every flip, the suggestions as switches and choices that flip it with no message, a chat box that sends `chat` with the settings shown, "Use this design" sending `use` with every setting of the revision shown, and "Skip mockups" sending `skip`; a card's fenced `mockup` block shown sealed the same way behind "Show mockup"; `create_card` and `update_card`'s lint skipping a mockup block's content by the shared grammar | mockups |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |
