@@ -1175,3 +1175,76 @@ func TestMockup_AChatReplyTakesNoQuestions(t *testing.T) {
 	assert.Equal(t, "Tabs come with the next revision.", s.Frame.Chat[len(s.Frame.Chat)-1].Text)
 	assert.Equal(t, promptMockup, view(t, c).Open.Kind)
 }
+
+func TestMockup_LaterStagesGetTheApprovedDesignInWords(t *testing.T) {
+	var (
+		task  atomic.Value
+		tools atomic.Value
+		read  atomic.Value
+	)
+
+	script := withScreen(dialogScript(), true)
+	script["mockup"] = showing(photoRevision())
+	script["slicing"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		task.Store(in.Task)
+		tools.Store(toolNames(in))
+
+		if reader := toolNamed(t, in, "read_artifact"); reader != nil {
+			res, err := reader.Execute(ctx, map[string]any{"stage": "mockup"})
+			if err != nil {
+				return stage.Output{}, err
+			}
+
+			read.Store(res.Text)
+		}
+
+		return done("# Slices", oneSlice()), nil
+	}
+
+	c, _, _, _, _ := newMockup(t, script)
+	drive(t, c, "BP1")
+	takeOffer(t, c)
+	useMockup(t, c, map[string]string{"preview": "on", "order": "name"})
+
+	got, _ := task.Load().(string)
+	assert.Contains(t, got, photoRevision().Notes)
+	assert.Contains(t, got, photoRevision().Suggestions[1].Title)
+	assert.Contains(t, got, "Old name", "the chosen label, not the default")
+	assert.NotContains(t, got, photoRevision().Source, "the source stays out of the task")
+	assert.Contains(t, tools.Load(), "read_artifact")
+
+	whole, _ := read.Load().(string)
+	assert.Contains(t, whole, "IMG_0001.jpg", "read_artifact returns the source")
+}
+
+func TestMockup_ASkippedMockupGivesLaterStagesNothing(t *testing.T) {
+	var (
+		task  atomic.Value
+		tools atomic.Value
+	)
+
+	script := withScreen(dialogScript(), true)
+	script["mockup"] = showing(photoRevision())
+	script["slicing"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		task.Store(in.Task)
+		tools.Store(toolNames(in))
+
+		return done("# Slices", oneSlice()), nil
+	}
+
+	c, _, _, _, _ := newMockup(t, script)
+	drive(t, c, "BP1")
+	takeOffer(t, c)
+	skipMockup(t, c)
+
+	got, _ := task.Load().(string)
+	require.NotEmpty(t, got, "slicing ran after the skip")
+	assert.NotContains(t, got, photoRevision().Notes)
+
+	for _, s := range photoRevision().Suggestions {
+		assert.NotContains(t, got, s.Title)
+	}
+
+	assert.NotContains(t, got, photoRevision().Source)
+	assert.NotContains(t, tools.Load(), "read_artifact")
+}

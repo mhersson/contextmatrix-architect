@@ -285,6 +285,24 @@ func readsDigests(steps []pipelineStep, pieces []piece, st pipelineStep) bool {
 	})
 }
 
+// readsArtifacts reports whether st's run is offered read_artifact: its task
+// holds a digest, or describes the approved mockup, whose source only that
+// tool returns.
+func (c *Controller) readsArtifacts(ctx context.Context, id string, steps []pipelineStep, pieces []piece, st pipelineStep) (bool, error) {
+	if readsDigests(steps, pieces, st) {
+		return true, nil
+	}
+
+	for _, in := range consumedSteps(steps, st) {
+		shown, err := c.mockupShown(ctx, id, in)
+		if err != nil || shown {
+			return shown, err
+		}
+	}
+
+	return false, nil
+}
+
 // writeDigest gives a step another slice's artifact as its digest, with the
 // read_artifact call that returns the whole.
 func writeDigest(b *strings.Builder, in pipelineStep, art store.Artifact, d digest) error {
@@ -351,9 +369,22 @@ func (r artifactReader) Execute(ctx context.Context, args map[string]any) (tools
 	var readable []string
 
 	for _, in := range consumedSteps(steps, r.st) {
-		if !in.Collapsed {
-			readable = append(readable, in.ID)
+		if in.Collapsed {
+			continue
 		}
+
+		if in.Stage.ID == r.c.opts.Pack.MockupStage() {
+			shown, err := r.c.mockupShown(ctx, r.id, in)
+			if err != nil {
+				return tools.Result{}, fmt.Errorf("read_artifact: %w", err)
+			}
+
+			if !shown {
+				continue
+			}
+		}
+
+		readable = append(readable, in.ID)
 	}
 
 	if !slices.Contains(readable, key) {

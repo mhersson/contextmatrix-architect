@@ -652,3 +652,69 @@ func statesScreen(art store.Artifact) bool {
 
 	return len(art.Data) > 0 && json.Unmarshal(art.Data, &d) == nil && d.Screen
 }
+
+// mockupShown reports whether in is the mockup step with an approved
+// mockup: a skip, a declined offer and a need without a screen leave later
+// stages nothing of one.
+func (c *Controller) mockupShown(ctx context.Context, id string, in pipelineStep) (bool, error) {
+	if in.Collapsed || in.Stage.ID != c.opts.Pack.MockupStage() {
+		return false, nil
+	}
+
+	res, err := c.mockupResult(ctx, id)
+
+	return res.Outcome == mockupUsed, err
+}
+
+// writeMockupInput gives a step that consumes the mockup the approved design
+// in words: the notes, the screens and each suggestion with the value the
+// person chose. The source stays out; read_artifact returns it.
+func (c *Controller) writeMockupInput(ctx context.Context, b *strings.Builder, id string, in pipelineStep) error {
+	if in.Collapsed {
+		return nil
+	}
+
+	res, err := c.mockupResult(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if res.Outcome != mockupUsed {
+		return nil
+	}
+
+	var d mockupData
+	if err := json.Unmarshal(res.Art.Data, &d); err != nil {
+		return fmt.Errorf("blueprint: decode mockup revision %d: %w", res.Revision, err)
+	}
+
+	fmt.Fprintf(b, "## %s\n\nRevision %d of the mockup, as the person approved it. read_artifact with stage %q returns its HTML source.\n\n%s\n\n",
+		in.ID, res.Revision, in.Stage.ID, res.Art.Body)
+
+	if len(d.Screens) > 0 {
+		b.WriteString("Screens:\n")
+
+		for _, s := range d.Screens {
+			fmt.Fprintf(b, "- %s: %s\n", s.ID, s.Title)
+		}
+
+		b.WriteString("\n")
+	}
+
+	if len(d.Suggestions) > 0 {
+		b.WriteString("Chosen:\n")
+
+		for _, s := range d.Suggestions {
+			v, ok := res.Chosen[s.ID]
+			if !ok {
+				v = d.Settings[s.ID]
+			}
+
+			fmt.Fprintf(b, "- %s: %s (%s)\n", s.Title, s.Label(v), s.Why)
+		}
+
+		b.WriteString("\n")
+	}
+
+	return nil
+}

@@ -1052,11 +1052,11 @@ func (c *Controller) writeInputs(ctx context.Context, b *strings.Builder, bp sto
 
 // writeInput gives st the latest artifact of in, a step it consumes: whole,
 // or as a digest (digested) when its shape has one; a collapsed shared
-// stage is named, since it has none. A collapsed mockup is not: a need
-// without a screen says nothing of one.
+// stage is named, since it has none. The mockup is described, never given
+// whole (writeMockupInput).
 func (c *Controller) writeInput(ctx context.Context, b *strings.Builder, id string, st, in pipelineStep, sliced bool, what string) error {
-	if in.Collapsed && in.Stage.ID == c.opts.Pack.MockupStage() {
-		return nil
+	if in.Stage.ID == c.opts.Pack.MockupStage() {
+		return c.writeMockupInput(ctx, b, id, in)
 	}
 
 	if in.Collapsed {

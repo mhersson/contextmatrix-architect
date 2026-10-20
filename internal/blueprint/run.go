@@ -566,7 +566,12 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		return stage.Input{}, stageChecks{}, nil, err
 	}
 
-	if readsDigests(steps, pieces, st) {
+	reads, err := c.readsArtifacts(ctx, bp.ID, steps, pieces, st)
+	if err != nil {
+		return stage.Input{}, stageChecks{}, nil, err
+	}
+
+	if reads {
 		in.Tools = append(in.Tools, artifactReader{c: c, id: bp.ID, st: st})
 	}
 
