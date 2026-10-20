@@ -358,7 +358,7 @@ designer (SD), senior developer (DEV), tester (TST), reviewer (REV).
 | 2  | Mockup           | DES     | the need          | a live mockup with suggestions and the chosen settings, reading the UI code; skipped without a screen; offered first in default mode | no        | -        |
 | 3  | Slicing          | PO      | need, mockup      | slices in order, the thinnest working one first and riskier ones before polish, each delivering standalone value; one slice is fine; reads the code | yes; folds into 5's gate when there is one slice | SD       |
 | 4  | Shared decisions | SD      | need, mockup, slices | the decisions every slice shares: tooling, conventions, platform, cross-slice contracts, cross-cutting qualities; asks a question for each decision with real alternatives; reads the code; collapses, unrun, with one slice | yes       | DEV      |
-| 5  | Solution design  | SD      | need, mockup, slices, shared decisions, earlier slices | once per slice: projects involved, decisions with rejected options and their basis, cross-project contracts, how the slice builds the mockup's screens; asks a question for each decision with real alternatives; reads the code | yes       | DEV      |
+| 5  | Solution design  | SD      | need, mockup, slices, shared decisions, earlier slices | once per slice: projects involved, decisions with rejected options and their basis, contracts between the parts it builds (inside one project and across projects), how the slice builds the mockup's screens; asks a question for each decision with real alternatives; reads the code | yes       | DEV      |
 | 6  | Grounding        | DEV     | the slice's design | once per slice, per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        | -        |
 | 7  | Acceptance       | DEV     | the slice's design, grounding | once per slice: criteria checkable inside one repo; human and live checks split into manual steps | `auto` by default | TST      |
 | 8  | Decomposition    | DEV     | all above, earlier slices' cards | once per slice: draft cards with type and priority, `depends_on` per project, the mockup's screens each card builds, manual entries for human and live checks, the order, and the setup for a project without a verify command or instruction file; the last slice's draft gives the playbook title | no        | -        |
@@ -580,8 +580,8 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   classifying it. Intake's gate is `auto`: its reviewer's verdict decides it,
   and it waits for a human only when the third review does not pass, or after
   `gate intake human`.
-- A cross-project contract is copied into the cards on both sides of the
-  boundary.
+- A contract whose two sides land in different cards, inside one project or
+  across projects, is copied into both cards word for word.
 - Human-only and live-environment checks become manual playbook entries, never
   card criteria.
 - Mechanical checks per stage come from the pack: required sections, source

@@ -27,7 +27,8 @@ Rules:
   of what its criteria demand, and no other edge-case tests; the section
   stays.
 - No decision is left open; no optional or later scope.
-- A cross-project contract is written into the cards on both sides.
+- A contract whose two sides land in different cards, in one project or
+  across projects, is written into both cards word for word.
 - `depends_on` names draft ids within the same project only. Order across
   projects comes from the playbook order and manual entries.
 - `priority` is one of the priorities the project declares; `type` one of

@@ -60,8 +60,11 @@ which part, so the cards can say what not to build.
 
 Produce markdown with a `## <slice id>` section for each slice you design: the projects
 involved, each decision with the options it rejected, and the contracts
-between projects. Submit with a data object
-`{"slices": [{"id": "SL1", "projects": ["<name>"], "decisions": [{"id": "DEC1", "text": "<what is decided>", "chosen": "<the option>", "rejected": [{"option": "<an option>", "why": "<why not>"}], "basis": "<Q<n>, round<n>.A<k>, A<n>, S<n> or assumption>"}], "contracts": ["<a contract between projects, for both sides>"]}], "outcomes": [{"id": "O<n>", "text": "<one measurable sentence>", "quality": "<the quality>"}], "assumptions": ["<sentence>" or {"text": "<sentence>", "basis": "<Q<n> or round<n>.A<k>>"}]}`.
+between the parts it builds, inside one project as well as between projects:
+every interface one part uses and another provides, stated for both sides,
+such as a URL one part requests and another serves, or a file one part
+writes and another reads. Submit with a data object
+`{"slices": [{"id": "SL1", "projects": ["<name>"], "decisions": [{"id": "DEC1", "text": "<what is decided>", "chosen": "<the option>", "rejected": [{"option": "<an option>", "why": "<why not>"}], "basis": "<Q<n>, round<n>.A<k>, A<n>, S<n> or assumption>"}], "contracts": ["<a contract between two parts, for both sides>"]}], "outcomes": [{"id": "O<n>", "text": "<one measurable sentence>", "quality": "<the quality>"}], "assumptions": ["<sentence>" or {"text": "<sentence>", "basis": "<Q<n> or round<n>.A<k>>"}]}`.
 One `slices` entry per slice you design.
 Every answer you got and every assumption the user accepted for the slicing
 you design is the basis of a decision or a stated assumption; one from
