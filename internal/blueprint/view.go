@@ -84,8 +84,8 @@ type record struct {
 	flights  []flightView
 	// round is the open round's number and roundStage its stage; 0 and ""
 	// when none waits. mockup marks a mockup round, and unprompted one no
-	// prompt waits on: the auto responder steers it, or a designer run is
-	// writing its next revision or reply.
+	// prompt waits on: the auto responder steers it, a designer run is
+	// writing its next revision or reply, or a use or skip decided it.
 	round      int
 	roundStage string
 	mockup     bool
@@ -278,7 +278,7 @@ func (c *Controller) record(ctx context.Context, bp store.Blueprint) (record, er
 		rec.round, rec.roundStage = place.state.Number, place.state.Frame.Stage
 		_, writing := rec.flightOf(place.state.Frame.Stage)
 		rec.mockup = place.state.Mockup != nil
-		rec.unprompted = rec.mockup && (place.state.Frame.Responder || writing)
+		rec.unprompted = rec.mockup && (place.state.Frame.Responder || writing || place.state.Mockup.Action != "")
 	}
 
 	return rec, nil

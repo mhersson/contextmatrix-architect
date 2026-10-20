@@ -1510,3 +1510,31 @@ func TestLogEntry_AMockupRunNamesNoRound(t *testing.T) {
 	assert.NotEqual(t, content(sv, started(3, false)), content(sv, started(7, false)))
 	assert.Equal(t, content(sv, started(3, true)), content(sv, started(7, true)))
 }
+
+// A use or a skip of a mockup is a system row of its own: neither reads as a
+// gate's decision, and the revision and who chose tell two apart.
+func TestLogEntry_AMockupDecisionIsItsOwnRow(t *testing.T) {
+	content := func(decision, responder string, version int, mockup bool) string {
+		t.Helper()
+
+		p := map[string]any{"stage": "mockup", "decision": decision, "feedback": "", "responder": responder, "version": version, "message_id": "m1"}
+		if mockup {
+			p["mockup"] = true
+		}
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventDecided, BlueprintID: "S1", Payload: p})
+		require.True(t, ok)
+		assert.Equal(t, "system", entry.Type)
+		assert.Nil(t, entry.Marker)
+		assert.Nil(t, entry.Prompt)
+
+		return entry.Content
+	}
+
+	use, skip := content("approve", "human", 2, true), content("reject", "human", 2, true)
+	assert.NotEqual(t, content("approve", "human", 2, false), use, "a use is no gate's approval")
+	assert.NotEqual(t, content("reject", "human", 2, false), skip, "a skip runs nothing again")
+	assert.NotEqual(t, use, skip)
+	assert.NotEqual(t, use, content("approve", "human", 3, true), "the revision is named")
+	assert.NotEqual(t, use, content("approve", "auto", 2, true), "the responder's pick reads as its own")
+}

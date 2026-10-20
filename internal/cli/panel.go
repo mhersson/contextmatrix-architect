@@ -63,7 +63,16 @@ func waitsOnUser(e blueprint.Event) bool {
 		_, frame, ok := roundFrame(e.Payload)
 		chatPending := len(frame.Chat) > int(num(e.Payload["seen"]))
 
+		// A mockup asks no questions: it waits on the person until a use or
+		// skip decides it.
+		if m, isMockup := e.Payload["mockup"].(map[string]any); isMockup {
+			return ok && !frame.Closed && !frame.Responder && str(m["action"]) == "" && !chatPending
+		}
+
 		return ok && !frame.Closed && !frame.Responder && !blueprint.RoundAnswered(frame) && !chatPending
+	case blueprint.EventMockupOffer:
+		// A shown offer waits on its person; a decided one runs what follows.
+		return str(e.Payload["state"]) == "shown"
 	case blueprint.EventPolicy:
 		// CM arms its working indicator on every message; a gate reply that
 		// leaves nothing running must clear it.

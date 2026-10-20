@@ -780,12 +780,15 @@ const (
 	roundClose
 	// roundContinue: closed, so the stage continues from it.
 	roundContinue
+	// roundSettle: a closed mockup round, whose step settles (settleMockup).
+	roundSettle
 )
 
 // roundPlace is the round the pipeline stands at, what it waits for, and
 // whether the run after it failed or was aborted (stalled): that run waits
 // for the next message, as a failed stage does. An open handed-over round is
-// never stalled: the switch that handed it over is the go-ahead.
+// never stalled: the switch that handed it over is the go-ahead, as the use
+// or skip is for a decided mockup, whatever its chat run in flight then did.
 type roundPlace struct {
 	state   roundState
 	next    roundNext
@@ -837,15 +840,24 @@ func (c *Controller) roundAt(ctx context.Context, id string) (roundPlace, bool, 
 		return roundPlace{}, false, nil
 	}
 
+	decided := s.Mockup != nil && s.Mockup.Action != ""
+
 	place := roundPlace{state: s}
-	place.stalled = (s.HandedOver == nil || s.Frame.Closed) &&
+	place.stalled = !decided && (s.HandedOver == nil || s.Frame.Closed) &&
 		(last.Status == store.RunFailed || (last.Status == store.RunCanceled && last.Reason != reasonSessionEnded))
 
+	// A mockup round never reaches the handed-over round's responder.
 	switch {
+	case s.Mockup != nil && s.Frame.Closed:
+		place.next = roundSettle
 	case s.Frame.Closed:
 		place.next = roundContinue
 	case s.complete():
 		place.next = roundClose
+	case s.Mockup != nil && s.chatPending():
+		place.next = roundChat
+	case s.Mockup != nil:
+		place.next = roundWait
 	case s.HandedOver != nil:
 		place.next = roundRespond
 	case s.chatPending():

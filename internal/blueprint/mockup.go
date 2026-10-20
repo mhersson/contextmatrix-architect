@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
@@ -58,6 +59,23 @@ func (d mockupData) fields() map[string]any {
 // person; it stays the same across the round's revisions.
 func mockupPromptID(n int) string { return fmt.Sprintf("mockup:%d", n) }
 
+// How a mockup was decided, as its settle run's reason records it.
+const (
+	mockupUsed    = "used"
+	mockupSkipped = "skipped"
+)
+
+// reasonStaleRevision is the reason of the error a use or a skip that names
+// a revision other than the newest gets, and reasonEmptyChat that of a chat
+// with no text; nothing is stored.
+const (
+	reasonStaleRevision = "stale_revision"
+	reasonEmptyChat     = "empty_chat"
+)
+
+// changeChosen: the person's use or skip, stored on the mockup round.
+const changeChosen = "chosen"
+
 // carriedSettings is what a revision with suggestions sugs opens with: for
 // each suggestion its value in last while sugs still takes it, else its
 // default.
@@ -74,6 +92,365 @@ func carriedSettings(sugs []stage.MockupSuggestion, last map[string]string) map[
 	}
 
 	return out
+}
+
+// cleanSettings is given as far as sugs takes it: each suggestion keeps its
+// given value while valid and takes fallback's (its default when fallback
+// has none valid) otherwise. dropped counts the given entries left out, an
+// id sugs lacks or a value its suggestion does not take.
+func cleanSettings(sugs []stage.MockupSuggestion, given, fallback map[string]string) (map[string]string, int) {
+	out := carriedSettings(sugs, fallback)
+	dropped := 0
+
+	for id, v := range given {
+		i := slices.IndexFunc(sugs, func(s stage.MockupSuggestion) bool { return s.ID == id })
+		if i < 0 || !sugs[i].Accepts(v) {
+			dropped++
+
+			continue
+		}
+
+		out[id] = v
+	}
+
+	return out, dropped
+}
+
+// Mockup takes the person's reply to the mockup waiting for them: a use or a
+// skip of the newest revision, stored on the mockup round, which then closes
+// and settles, or chat about it, which a designer's chat run answers. A use
+// keeps its settings as far as the revision takes them; an id it leaves out
+// takes the revision's opening value. A reply for a mockup that does not
+// wait for the person, or a use or skip of an older revision, stores
+// nothing and says so; so does chat with no text. Like a round reply it
+// works while a chat run is in flight, so a use wins over the revision that
+// run is writing.
+func (c *Controller) Mockup(ctx context.Context, id string, mr protocol.MockupReply, content, msgID string) error {
+	switch mr.Action {
+	case protocol.MockupUse, protocol.MockupSkip, protocol.MockupChat:
+	default:
+		return fmt.Errorf("blueprint: mockup reply: unknown action %q", mr.Action)
+	}
+
+	c.mu.Lock()
+	sess, ok := c.sessions[id]
+	c.mu.Unlock()
+
+	if !ok {
+		return ErrNotFound
+	}
+
+	lock := c.roundLock(id)
+	lock.Lock()
+
+	r, runCtx, err := c.storeMockup(ctx, sess, id, mr, strings.TrimSpace(content), msgID)
+
+	lock.Unlock()
+
+	if r != nil {
+		c.settleOn(runCtx, r, id)
+	}
+
+	return err
+}
+
+// storeMockup stores mr on the mockup round waiting for the person and
+// pokes, or reports why it stores nothing. The caller holds id's round lock
+// and settles the slot poke claimed, if any, once it has released the lock.
+// A chat run in flight does not make the mockup stale: what it then shows is
+// refused once a use or skip is stored.
+func (c *Controller) storeMockup(ctx context.Context, sess *session, id string, mr protocol.MockupReply, content, msgID string) (*run, context.Context, error) {
+	place, found, err := c.roundAt(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	s := place.state
+	if !found || s.Mockup == nil || s.Frame.Closed || s.Frame.Responder || s.Mockup.Action != "" || mr.PromptID != mockupPromptID(s.Number) {
+		c.staleReply(ctx, sess, id, mr.PromptID, msgID)
+
+		return nil, nil, nil
+	}
+
+	next := s.clone()
+	next.MessageID, next.Dropped = msgID, 0
+
+	switch mr.Action {
+	case protocol.MockupChat:
+		if content == "" {
+			sess.audit.event(ctx, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{
+				"reason": reasonEmptyChat, "prompt_id": mr.PromptID, "message_id": msgID, "during_run": c.running(id),
+				"message": "That message has no text; nothing was stored.",
+			}})
+
+			return nil, nil, nil
+		}
+
+		next.Frame.Chat = append(next.Frame.Chat, protocol.RoundChat{From: "user", Text: content})
+		next.Change = changeChat
+
+		if mr.Settings != nil {
+			next.Mockup.Settings, next.Dropped = cleanSettings(s.Mockup.Suggestions, mr.Settings, s.Mockup.Settings)
+		}
+	default:
+		if mr.Revision != s.Mockup.Revision {
+			c.staleRevision(ctx, sess, id, mr, msgID, s.Mockup.Revision)
+
+			return nil, nil, nil
+		}
+
+		next.Change = changeChosen
+		next.Mockup.Action, next.Mockup.By, next.Mockup.MessageID = mr.Action, store.ResponderHuman, msgID
+
+		if mr.Action == protocol.MockupUse {
+			next.Mockup.Chosen, next.Dropped = cleanSettings(s.Mockup.Suggestions, mr.Settings, s.Mockup.Opening)
+		}
+	}
+
+	c.putRound(ctx, sess.audit, id, 0, next)
+
+	r, runCtx := c.poke(id)
+
+	return r, runCtx, nil
+}
+
+// staleRevision reports a use or skip of revision mr.Revision while newest is
+// the one shown; the mockup stays open.
+func (c *Controller) staleRevision(ctx context.Context, sess *session, id string, mr protocol.MockupReply, msgID string, newest int) {
+	sess.audit.event(ctx, Event{Kind: EventError, BlueprintID: id, Payload: map[string]any{
+		"reason": reasonStaleRevision, "prompt_id": mr.PromptID, "message_id": msgID, "revision": newest, "during_run": c.running(id),
+		"message": fmt.Sprintf("That reply is for revision %d, but revision %d is the newest; nothing was stored. Look at revision %d, then use or skip it.", mr.Revision, newest, newest),
+	}})
+}
+
+// closeMockup records a decided mockup round: on a use, one questions row
+// per suggestion of the revision used, its title the question, its labels
+// the options (Off and On for a switch), its why the context and the chosen
+// label the answer, numbered after every question so far; then the closed
+// snapshot. A skip writes no rows. Rows a close cut short already wrote are
+// kept, and the rest follow them.
+func (c *Controller) closeMockup(ctx context.Context, au audit, bp store.Blueprint, s roundState) (roundState, error) {
+	m := s.Mockup
+
+	if m.Action == protocol.MockupUse {
+		written, err := c.opts.Store.ListQuestions(ctx, bp.ID)
+		if err != nil {
+			return roundState{}, fmt.Errorf("blueprint: close the mockup: %w", err)
+		}
+
+		// The round's rows are written in suggestion order, so those that
+		// exist are the first ones.
+		have := 0
+
+		for _, q := range written {
+			if q.Stage == s.Frame.Stage && q.RunID == s.PostedBy {
+				have++
+			}
+		}
+
+		number, err := c.nextQuestionNumber(ctx, bp.ID)
+		if err != nil {
+			return roundState{}, fmt.Errorf("blueprint: close the mockup: %w", err)
+		}
+
+		for _, sug := range m.Suggestions[min(have, len(m.Suggestions)):] {
+			if err := c.opts.Store.AddQuestion(ctx, store.Question{
+				BlueprintID: bp.ID, RunID: s.PostedBy, Stage: s.Frame.Stage, Number: number,
+				Text: au.text(sug.Title), Options: au.texts(suggestionLabels(sug)), Context: au.text(sug.Why),
+				Answer: au.text(sug.Label(m.Chosen[sug.ID])), Responder: m.By,
+				Assumption: m.By == store.ResponderAuto, MessageID: m.MessageID, AnsweredAt: c.opts.Now().UTC(),
+			}); err != nil {
+				return roundState{}, fmt.Errorf("blueprint: close the mockup: record Q%d: %w", number, err)
+			}
+
+			number++
+		}
+	}
+
+	closed := s.clone()
+	closed.Change, closed.MessageID, closed.Dropped, closed.Frame.Closed = changeClosed, "", 0, true
+	c.putRound(ctx, au, bp.ID, 0, closed)
+
+	return closed, nil
+}
+
+// suggestionLabels are the values of sug as a person reads them.
+func suggestionLabels(sug stage.MockupSuggestion) []string {
+	if sug.Kind == stage.MockupSwitch {
+		return []string{sug.Label("off"), sug.Label("on")}
+	}
+
+	out := make([]string, 0, len(sug.Options))
+	for _, o := range sug.Options {
+		out = append(out, o.Label)
+	}
+
+	return out
+}
+
+// settleMockup ends the mockup step on the closed mockup round the pipeline
+// stands at: an approve (use) or reject (skip) gates row on the revision,
+// by whoever decided, with the reply's message id, then the step's settle
+// run, a stage run with no model and no cost that ends done with reason
+// used or skipped, so the step is done by the rule every stage follows.
+// Each part is written once, so a reopen finishes what a restart cut short.
+// The caller holds the run slot.
+func (c *Controller) settleMockup(ctx context.Context, r *run, sess *session, bp store.Blueprint) stageEnd {
+	bg, au, id := context.WithoutCancel(ctx), sess.audit, bp.ID
+
+	place, found, err := c.roundAt(bg, id)
+
+	switch {
+	case err != nil:
+		c.fail(bg, au, id, 0, err.Error())
+
+		return stageStopped
+	case !found || place.state.Mockup == nil || !place.state.Frame.Closed || place.state.Mockup.Action == "":
+		c.fail(bg, au, id, 0, "no decided mockup to settle")
+
+		return stageStopped
+	}
+
+	s, m := place.state, place.state.Mockup
+	stageID := s.Frame.Stage
+
+	decision, reason := store.GateApprove, mockupUsed
+	if m.Action == protocol.MockupSkip {
+		decision, reason = store.GateReject, mockupSkipped
+	}
+
+	have, err := c.gateDecision(bg, id, stageID, m.Revision)
+	if err != nil {
+		c.fail(bg, au, id, 0, err.Error())
+
+		return stageStopped
+	}
+
+	if have == "" && !c.decideWith(bg, au, id, stageID, m.Revision, decision, "", m.By, m.MessageID, map[string]any{"mockup": true}) {
+		return stageStopped
+	}
+
+	c.mu.Lock()
+	r.stage = stageID
+	c.mu.Unlock()
+
+	// Under the round's attempt and builder round, so a settle run a crash cut
+	// short leaves the round in place for the reopen to settle.
+	runID, err := c.opts.Store.StartRun(bg, store.Run{
+		BlueprintID: id, Stage: stageID, Kind: store.RunKindStage, Attempt: s.Attempt, Round: s.BuilderRound,
+		Status: store.RunRunning, StartedAt: c.opts.Now().UTC(),
+	})
+	if err != nil {
+		c.fail(bg, au, id, 0, "start run failed: "+err.Error())
+
+		return stageStopped
+	}
+
+	c.endRun(bg, runID, store.RunDone, reason, store.RunUsage{})
+	c.setState(bg, id, StateIdle)
+	au.event(bg, Event{Kind: EventStageEnded, BlueprintID: id, RunID: runID, Payload: map[string]any{
+		"stage": stageID, "kind": store.RunKindStage, "status": store.RunDone, "cost_usd": 0.0, "priced": true, "mockup": true, "reason": reason,
+	}})
+
+	return stageStored
+}
+
+// mockupResult is how the blueprint's mockup was decided: its newest closed
+// mockup round's outcome (mockupUsed or mockupSkipped), the revision it
+// decided, the chosen settings of a use, and that revision's artifact.
+type mockupResult struct {
+	Outcome  string
+	Revision int
+	Chosen   map[string]string
+	Art      store.Artifact
+}
+
+// mockupResult reads blueprint id's mockup result; the zero result when no
+// mockup round closed decided.
+func (c *Controller) mockupResult(ctx context.Context, id string) (mockupResult, error) {
+	rounds, err := c.rounds(ctx, id)
+	if err != nil {
+		return mockupResult{}, err
+	}
+
+	for _, s := range slices.Backward(rounds) {
+		if s.Mockup == nil || !s.Frame.Closed || s.Mockup.Action == "" {
+			continue
+		}
+
+		art, err := c.opts.Store.GetArtifact(ctx, id, s.Frame.Stage, s.Mockup.Revision)
+		if err != nil {
+			return mockupResult{}, fmt.Errorf("blueprint: read mockup revision %d: %w", s.Mockup.Revision, err)
+		}
+
+		outcome := mockupUsed
+		if s.Mockup.Action == protocol.MockupSkip {
+			outcome = mockupSkipped
+		}
+
+		return mockupResult{Outcome: outcome, Revision: s.Mockup.Revision, Chosen: s.Mockup.Chosen, Art: art}, nil
+	}
+
+	return mockupResult{}, nil
+}
+
+// withChosen is the data of mockup artifact a with the settings "Use this
+// design" chose added, when an approve row names its version; else a's data
+// as stored. The settings are read from the closed round, never stored on
+// the artifact, which is append-only.
+func (c *Controller) withChosen(ctx context.Context, id string, a store.Artifact) (json.RawMessage, error) {
+	decision, err := c.gateDecision(ctx, id, a.Stage, a.Version)
+	if err != nil || decision != store.GateApprove {
+		return a.Data, err
+	}
+
+	res, err := c.mockupResult(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if res.Outcome != mockupUsed || res.Revision != a.Version {
+		return a.Data, nil
+	}
+
+	var d mockupData
+	if err := json.Unmarshal(a.Data, &d); err != nil {
+		return nil, fmt.Errorf("blueprint: decode mockup revision %d: %w", a.Version, err)
+	}
+
+	d.Chosen = res.Chosen
+
+	raw, err := json.Marshal(d)
+	if err != nil {
+		return nil, fmt.Errorf("blueprint: encode mockup revision %d: %w", a.Version, err)
+	}
+
+	return raw, nil
+}
+
+// writeMockupLook tells a chat run which revision of mockup round s the
+// person is looking at and with which settings, in words; without the run's
+// conversation also that revision's notes and its suggestions.
+func writeMockupLook(b *strings.Builder, s roundState, notes string, full bool) {
+	m := s.Mockup
+
+	if full {
+		fmt.Fprintf(b, "## Revision %d, which you showed\n\n%s\n\nIts suggestions:\n\n", m.Revision, notes)
+
+		for _, sug := range m.Suggestions {
+			fmt.Fprintf(b, "- %s (%s): %s Takes %s.\n", sug.Title, sug.ID, sug.Why, strings.Join(suggestionLabels(sug), ", "))
+		}
+
+		b.WriteString("\n")
+	}
+
+	fmt.Fprintf(b, "## What the person is looking at\n\nRevision %d, set to:\n\n", m.Revision)
+
+	for _, sug := range m.Suggestions {
+		fmt.Fprintf(b, "- %s: %s\n", sug.Title, sug.Label(m.Settings[sug.ID]))
+	}
+
+	b.WriteString("\n")
 }
 
 // Show stores revision m of the mockup as the stage's next artifact

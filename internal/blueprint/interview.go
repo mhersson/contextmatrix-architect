@@ -390,6 +390,10 @@ func (iv *interviewer) Answer(ctx context.Context, a stage.ChatAnswer) (string, 
 
 	c, bg := iv.c, context.WithoutCancel(ctx)
 
+	if slices.Contains(iv.st.Checks, pack.CheckMockup) && (len(a.Questions) > 0 || len(a.Assumptions) > 0) {
+		return "", errors.New("a mockup takes no questions; reply, or show a revision")
+	}
+
 	if err := iv.takesAssumptions(a.Assumptions); err != nil {
 		return "", err
 	}

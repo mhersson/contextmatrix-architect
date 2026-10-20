@@ -37,7 +37,8 @@ type boardCard struct {
 }
 
 // Artifact is one version of an artifact on blueprint id's sheet: a pack
-// stage's, with the problems its checks accepted it with; the sign-off of a
+// stage's, with the problems its checks accepted it with, and for the
+// mockup's version "Use this design" took its chosen settings; the sign-off of a
 // version shown or recorded as approved automatically, its data the
 // sign-off's payload, with the reason a person approved it over a critical
 // finding; or the board (emission, version 1) once the cards exist. The need
@@ -79,8 +80,16 @@ func (c *Controller) Artifact(ctx context.Context, id, stageID, slice string, ve
 		return protocol.BlueprintArtifact{}, fmt.Errorf("blueprint: artifact: %w", err)
 	}
 
+	data := a.Data
+
+	if stageID == c.opts.Pack.MockupStage() {
+		if data, err = c.withChosen(ctx, id, a); err != nil {
+			return protocol.BlueprintArtifact{}, fmt.Errorf("blueprint: artifact: %w", err)
+		}
+	}
+
 	return protocol.BlueprintArtifact{
-		Stage: stageID, Slice: slice, Version: a.Version, Body: a.Body, Data: a.Data, CheckProblems: problemsOf(a),
+		Stage: stageID, Slice: slice, Version: a.Version, Body: a.Body, Data: data, CheckProblems: problemsOf(a),
 	}, nil
 }
 

@@ -23,6 +23,7 @@ type Controller interface {
 	Start(ctx context.Context, in blueprint.StartInput) error
 	Message(ctx context.Context, id, text, msgID string) error
 	Reply(ctx context.Context, id string, rr protocol.RoundReply, msgID string) error
+	Mockup(ctx context.Context, id string, mr protocol.MockupReply, content, msgID string) error
 	Abort(ctx context.Context, id, msgID string) error
 	Export(ctx context.Context, id, msgID string) error
 	SetPolicy(ctx context.Context, id, stageID, policy, msgID string) error

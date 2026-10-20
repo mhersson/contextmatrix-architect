@@ -97,6 +97,8 @@ func (c *Controller) launchStep(ctx context.Context, r *run, sess *session, bp s
 			switch {
 			case step.handover:
 				end = c.respondHandedOver(ctx, r, sess, bp)
+			case step.settle:
+				end = c.settleMockup(ctx, r, sess, bp)
 			case step.critique:
 				end = c.critique(ctx, r, sess, bp, stageID)
 			default:

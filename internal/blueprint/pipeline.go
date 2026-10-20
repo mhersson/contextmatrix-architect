@@ -651,7 +651,8 @@ func (c *Controller) stoppedAt(ctx context.Context, bp store.Blueprint) (stopPoi
 // a cap stop of stageID, and the cap it stopped under. A run of stageID
 // since says no, and so does a run of another stage, which places the
 // pipeline past an older stop, or an error that names no stage, a failure.
-// A stale reply's error stops nothing and is passed over.
+// A stale reply's error, or a stale mockup revision's or a blank mockup
+// chat's, stops nothing and is passed over.
 func (c *Controller) stoppedByCap(ctx context.Context, id, stageID string) (bool, float64, error) {
 	var events []store.Event
 
@@ -677,7 +678,7 @@ func (c *Controller) stoppedByCap(ctx context.Context, id, stageID string) (bool
 			return false, 0, fmt.Errorf("blueprint: read event %d: %w", e.ID, err)
 		}
 
-		if e.Kind == EventError && p.Reason == reasonStaleReply {
+		if e.Kind == EventError && (p.Reason == reasonStaleReply || p.Reason == reasonStaleRevision || p.Reason == reasonEmptyChat) {
 			continue
 		}
 

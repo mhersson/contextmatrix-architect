@@ -139,7 +139,9 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   (`MessagePayload.Round`); the reply's content is only a readable summary,
   never parsed as a command. A reply carries every answer the panel holds
   and replaces per question, and a reply for a round that takes no answers
-  stores nothing and says so.
+  stores nothing and says so. The mockup waiting for the person takes its
+  own reply (`MessagePayload.Mockup`; see Mockups), whose content is
+  likewise never parsed as a command.
   Round 1 of each attempt of a stage run is a stage divider
   (`LogEntry.Marker` of kind `stage`, a system entry), and a stored
   artifact is a sheet reference (kind `artifact`, a text entry) to that
@@ -300,10 +302,10 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | Table         | Holds                                                                                                                        |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price and context window as CM sent them, and whether it runs in plain language |
-| stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets |
+| stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets; a mockup's settle run has no model and costs nothing (see Mockups) |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, whether it passed, its summary when it gave one, its findings ledger with ids, severities, statuses and the reviewer's notes, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
-| questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes, or at the responder's answer under auto, or at the answer for one asked alone before rounds; an assumption a human accepted on a tab is recorded on its round, not here |
-| gates         | append-only, one row per decision at a stage's gate or the sign-off: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded; a fold at version 0 records a stage that collapsed), feedback, responder (human, auto), decided at |
+| questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes, or at the responder's answer under auto, or at the answer for one asked alone before rounds, or, one per suggestion, when a mockup closes on a use; an assumption a human accepted on a tab is recorded on its round, not here |
+| gates         | append-only, one row per decision at a stage's gate or the sign-off, and at the mockup step its use (approve) or skip (reject) of a revision: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded; a fold at version 0 records a stage that collapsed), feedback, responder (human, auto), decided at |
 | transcripts   | append-only: run, full message history as JSON, redacted, each web search result list replaced by its query and result count, and each `read_artifact` result by its first line |
 | events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning; every change of the blueprint's state is a `state` row, stored and never sent to the panel; every web search and page read is a `research` event (the query and result count, the URL and source tag, or the rule that refused it), and a session that runs a research stage without research says so once in a `research_off` event; a round is its `round` snapshots, the newest per round number winning |
 | sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage; a page `web_fetch` read is a `url` source versioned by the sha256 of its text, its title on its `research` event |
@@ -648,6 +650,10 @@ The mockup step collapses once the screen stage has stored an artifact that does
 The operator's existing-UI rule: where a UI exists, the mockup keeps to its look unless intake says `redesign: true`; a stored intake without the flag reads as no re-design.
 
 **Revisions.** With the code tools its stage names, the designer reads the UI code and design material in every target project's checkout. Its run shows revisions instead of submitting: `show_mockup` is offered in place of `ask_questions` and `submit_artifact` (beside `answer_chat` in a chat run), and a revision it accepts ends the run asked. A revision is the screen people will use imitated in one self-contained HTML document (a phone or tablet app, a desktop window, a full-screen terminal interface, a web page; HTML is the medium only), the designer's notes, the 1 to 8 screens the document shows and at most 12 suggestions. Each revision is stored as the next artifact version of stage `mockup`, version v being revision v: the body is the notes, the data `revision`, `screens`, `suggestions`, `settings` (what the revision opens with) and `source`. Its `artifact` event names the stage, version, persona and revision, never the body or the source; the live stream sends an `artifact_stored` frame for it, the transcript a sheet reference noted "Revision <v>", and the stage drafts nothing. Inside the architect a mockup is a round with no questions, carrying the revision's state: the first revision posts it under the next round number with the notes as the designer's chat entry, and each revision a chat run shows updates that same round, its notes following the chat entries the run was given. Its snapshots never reach the transcript as a round prompt: one that adds the designer's notes or reply is a text row, and any other adds no row; a designer run's start and end rows name the mockup and the revision shown, never the round. The round is the auto responder's when the stage's policy is `auto` as the revision is shown (read under the round lock, so a mode switch's handover is never undone), and the person's otherwise. While it waits for the person, the view's open prompt is `mockup:<n>` of kind `mockup`, the same across the revisions. There is none while the auto responder steers, when the step waits, or while a designer run writes the next revision or a reply, when the step is running. `show_mockup` is refused as a tool error when a first run finds a mockup already waiting, and when a chat run's round is closed, gone or already decided.
+
+**Replies.** The person answers the mockup waiting for them with a mockup reply (`MessagePayload.Mockup`); one whose `action` is not `use`, `skip` or `chat` is refused at the endpoint with 400 `invalid_field`, before deduplication. Its `prompt_id` must be the open `mockup:<n>`, else it is refused as a stale round reply is (an `error` event with reason `stale_reply`, nothing stored). `use` and `skip` must name the newest revision; one that names another is refused with an `error` event of reason `stale_revision` that names the newest, nothing is stored and the prompt stays open. A use keeps each setting the revision takes and gives an id it leaves out the revision's opening value; an id the revision lacks and a value its suggestion does not take are dropped, and the snapshot counts the drops. A skip ignores the settings. Either is stored on the mockup round with who decided and the reply's message id, and the open prompt goes. A chat run in flight does not make the reply stale, and cannot undo it: the revision that run then shows is refused, and its `answer_chat` still replies. `chat` carries the person's text in `Content` (blank stores nothing and says so, with an `error` event of reason `empty_chat`) and, when sent, the settings they look at, recorded as the round's last known settings as far as the revision takes them; a plain message while the mockup waits is chat too, with the settings unknown, so the last known ones stay. The designer's chat run is told the revision the person looks at and those settings in words, and without its stored conversation also that revision's notes and suggestions. It replies with `answer_chat`, which takes no questions or assumptions on a mockup, or shows the next revision, whose settings carry over from the last known ones.
+
+**The close and the settle.** Once no chat run is in flight, a decided mockup closes. A use writes one questions row per suggestion of the revision used, numbered after every question so far: the title is the question, the labels the options (`Off` and `On` for a switch), the why the context and the chosen label the answer, with who decided as the responder. A skip writes none. The closed snapshot follows, then the settle: an `approve` (use) or `reject` (skip) gates row on the revision, with who decided and the reply's message id, announced by a `decided` event with `mockup: true` (a system row), and a stage run of the step with no model and cost 0 that ends `done` with reason `used` or `skipped`. The step is then done by the rule every stage follows and what follows it runs. Each part is written once, so a reopen after a restart between them finishes the close or the settle and writes no row twice. On the sheet, the version a use took reads `approved` and every other `superseded`; after a skip the newest reads `rejected` and the older ones `superseded`; `decided_by` is who decided (`you` for the person). The artifact read of the version a use took adds `chosen`, the settings it chose, read from the closed round: artifacts are append-only, so nothing is stored twice.
 
 **Suggestions and settings.** A suggestion has an id, a title of at most 48 characters, a kind, a why and a default. Suggestion and screen ids match `^[a-z][a-z0-9_]{0,31}$`, each unique in its list, and keep their meaning across revisions. A `switch` has no options and is `on` or `off`, off unless its default says otherwise; a `choice` has 2 to 4 options, each a value (`^[a-z0-9_-]{1,32}$`, unique) and a label, and its default is one of them, the first unless given. A revision's `settings` carry over by id from the round's last known settings: each suggestion keeps the value it had while the revision still takes it, and takes its default otherwise, so the first revision opens at the defaults.
 
@@ -1195,7 +1201,8 @@ stream into it as log entries. The binary, `contextmatrix-architect`, has one
 server command, `serve`, plus the `config defaults` and `config validate`
 helpers.
 
-Replies the server understands, besides a round's structured answers:
+Replies the server understands, besides a round's structured answers and
+the mockup reply (see Mockups):
 
 | Reply                         | Effect                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
@@ -1293,7 +1300,8 @@ Replies the server understands, besides a round's structured answers:
   repo, branch and directory; the bundle is committed there at each gate or at
   sign-off. Off by default.
 - A message that arrives after the need, while no human's round waits
-  (then it is chat about the round), and that decides no open gate is a
+  (then it is chat about the round, the mockup waiting for the person
+  included), and that decides no open gate is a
   note: it is logged and given to every model run that starts later, in
   arrival order. A note never reaches a run already in
   flight, and a note at an open gate or the mockup offer leaves it open. A note that is only
@@ -1318,7 +1326,7 @@ frames on the session's chat stream.
   waiting, done, failed, folded, skipped, stopped or not_reached; a
   collapsed shared stage is skipped, and the mockup step waits while its
   offer is open and while a revision waits for the person or the
-  responder), attempt, a loop stage's round of its
+  responder, and is done once a use or skip settles it), attempt, a loop stage's round of its
   maximum, latest version and cost. The view also carries the run in flight
   (stage, kind, persona, model, start, and the turns, tool calls and tokens
   its harness lines have counted), the open prompt (`round:<n>` of kind
@@ -1326,7 +1334,7 @@ frames on the session's chat stream.
   gate, `gate:signoff:v<n>`, `mockup:offer` of kind `gate` while the mockup
   offer waits, `mockup:<n>` of kind `mockup` while a revision waits for the
   person, not while the auto responder steers it or a designer run writes
-  the next one, or `emission:v<n>` for a stopped emission or run start), and
+  the next one, nor once a use or skip decided it, or `emission:v<n>` for a stopped emission or run start), and
   the cost: the ledger plus the runs in flight, the
   blueprint and per-run caps, and whether every run was priced.
   While a round waits, its stage's step is waiting and no run is in
@@ -1339,7 +1347,7 @@ frames on the session's chat stream.
   aborted run of its stage once an abort stops the responder.
   Every artifact version is listed with its
   status (current, reviewing, at_gate, approved, rejected, superseded,
-  folded), who decided
+  folded; a mockup's revisions as Mockups says), who decided
   its gate (you, or automatically: a stage gate the auto policy approved on
   its reviewer's verdict, or a sign-off an emitting mode approved) and when,
   and its reviewer's verdict: the score, the threshold, whether it passed
@@ -1390,7 +1398,8 @@ frames on the session's chat stream.
   skipped.
 - **Artifacts.** `Artifact` returns one version's body, data and the
   problems its checks accepted it with; a per-slice stage's is asked for
-  with its slice. The sign-off is a pseudo-artifact
+  with its slice. The mockup's version a use took carries `chosen` in its
+  data, added from the closed round (see Mockups). The sign-off is a pseudo-artifact
   per version recorded, its data the sign-off's payload. An emitting mode
   that approves a clean sign-off on its own records what it approved (a
   `signoff_auto` event after the approval, never shown in the transcript),
@@ -1479,7 +1488,7 @@ frames on the session's chat stream.
 
 - Go 1.27, `contextmatrix-harness` v0.26.0 (loop, llm client, jailed read
   tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.9.0
-  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.34.0
+  (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.35.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
@@ -1574,6 +1583,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Pin protocol v0.32.0; panel: step statuses `stopped` (the failed ink, "Stopped the pipeline") and `not_reached` (its own quiet tone, "Not reached", never clickable); on an `ended` view the current step is the stopped one and the where line reads "Stopped: <end_reason>"; a feedback box labelled by its action's `ask`; Outcomes tables on the need, shared decisions and design sheets; an Outcomes column and an Edge cases table per slice on the acceptance sheet; an "Across the blueprint" table on the readiness and sign-off sheets, and the sign-off's override reason; `A<n>` and `O<n>` basis chips | quality checks |
 | `poc` on the project config, switched only by a human in Project Settings and returned in `list_projects`' project config, omitted when false | POC projects |
 | Pin protocol v0.34.0; the new-session dialog has a plain-language toggle, and CM stores the flag on the session row and sends it as `ArchitectStart.PlainLanguage` on every start; panel: the pane header shows that a blueprint runs in plain language, from `view.plain_language` once a view has loaded; a round entry's `detail`, a prompt's `detail` and the view's `end_detail` fold under their plain text; on a plain-language blueprint a responder round renders folded into its summary card; the sign-off sheet shows `plain_summary` first (what will be built, what you can do with it, the consequences you accepted, a changed one marked "changed since you accepted it"), an entry's `consequence` under its technical text with a "consequence accepted by you, round <n>" marker from `consequence_accepted`, and a superseded answer's row muted with a "superseded by Q<m>" chip from `superseded_by` | plain language |
+| Pin protocol v0.35.0 (`MessagePayload.Mockup`, `MockupReply`); panel: the mockup sheet while `mockup:<n>` is open, the source sealed in CM's mockup frame (no access to CM or the session; network blocked by policy; see CM's trust model) with `window.mockupSettings` set before its first script and a `mockup:settings` event on every flip, the suggestions as switches and choices that flip it with no message, a chat box that sends `chat` with the settings shown, "Use this design" sending `use` with every setting of the revision shown, and "Skip mockups" sending `skip`; a card's fenced `mockup` block shown sealed the same way behind "Show mockup"; `create_card` and `update_card`'s lint skipping a mockup block's content by the shared grammar | mockups |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

@@ -38,6 +38,32 @@ func newTestHub(t *testing.T) (*logbridge.Hub, <-chan protocol.LogEntry) {
 	return hub, ch
 }
 
+// The chat entries of a mockup round: the designer's notes and a person's
+// message.
+var (
+	designerEntry = map[string]any{"from": "designer", "text": "A list the household shares."}
+	userEntry     = map[string]any{"from": "user", "text": "Group by aisle?"}
+)
+
+// mockupSnapshot is a mockup round's snapshot whose run has seen seen of
+// chat, with extra mockup state, put to the responder or closed.
+func mockupSnapshot(seen int, extra map[string]any, responder, closed bool, chat ...map[string]any) map[string]any {
+	entries := make([]any, 0, len(chat))
+	for _, m := range chat {
+		entries = append(entries, m)
+	}
+
+	m := map[string]any{"revision": 1.0, "suggestions": []any{}, "opening": map[string]any{}, "settings": map[string]any{}}
+	for k, v := range extra {
+		m[k] = v
+	}
+
+	return map[string]any{
+		"round": 3.0, "seen": float64(seen), "mockup": m,
+		"frame": map[string]any{"stage": "mockup", "questions": []any{}, "chat": entries, "responder": responder, "closed": closed},
+	}
+}
+
 func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -121,6 +147,14 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		{"a closed round, its stage goes on", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{"closed": true}}, false},
 		{"a round the responder answers", blueprint.EventRound, map[string]any{"round": 1.0, "frame": map[string]any{"responder": true}}, false},
 		{"a run that asked, its round decides", blueprint.EventStageEnded, map[string]any{"status": "asked", "kind": "stage"}, false},
+		{"a mockup waiting for the person", blueprint.EventRound, mockupSnapshot(1, nil, false, false, designerEntry), true},
+		{"a mockup with chat a designer run answers", blueprint.EventRound, mockupSnapshot(1, nil, false, false, designerEntry, userEntry), false},
+		{"a mockup the person used, its close and settle follow", blueprint.EventRound, mockupSnapshot(1, map[string]any{"action": "use"}, false, false, designerEntry), false},
+		{"a mockup the responder steers", blueprint.EventRound, mockupSnapshot(1, nil, true, false, designerEntry), false},
+		{"a closed mockup, its settle follows", blueprint.EventRound, mockupSnapshot(1, map[string]any{"action": "use"}, false, true, designerEntry), false},
+		{"the mockup offer waits", blueprint.EventMockupOffer, map[string]any{"stage": "mockup", "state": "shown"}, true},
+		{"the mockup offer taken, the designer runs", blueprint.EventMockupOffer, map[string]any{"stage": "mockup", "state": "accepted"}, false},
+		{"the mockup offer declined, what follows runs", blueprint.EventMockupOffer, map[string]any{"stage": "mockup", "state": "declined"}, false},
 	}
 
 	for _, tc := range cases {

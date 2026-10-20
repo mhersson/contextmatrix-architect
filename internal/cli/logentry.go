@@ -1188,10 +1188,22 @@ func problemsList(v any) string {
 }
 
 // decidedText renders a decision at a stage's gate, a fold into a later
-// gate, or a decision at the sign-off; a decision without a stage is the
-// sign-off's. sliced names a step's slice.
+// gate, a mockup's use or skip, or a decision at the sign-off; a decision
+// without a stage is the sign-off's. sliced names a step's slice.
 func decidedText(p map[string]any, sliced bool) string {
 	reject, auto := str(p["decision"]) == "reject", str(p["responder"]) == "auto"
+
+	// A mockup's use or skip, which settles its step; no gate decided it.
+	if p["mockup"] == true {
+		switch {
+		case reject:
+			return fmt.Sprintf("Mockup skipped at revision %.0f: the architect goes on without one.", num(p["version"]))
+		case auto:
+			return fmt.Sprintf("The auto responder chose revision %.0f of the mockup; the architect designs the rest from it.", num(p["version"]))
+		default:
+			return fmt.Sprintf("You chose revision %.0f of the mockup; the architect designs the rest from it.", num(p["version"]))
+		}
+	}
 
 	if stage := str(p["stage"]); stage != "" && stage != "signoff" {
 		switch {
