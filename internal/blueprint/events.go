@@ -83,8 +83,10 @@ const (
 	// EventGatePlan lists, once the first stage has completed, who answers
 	// each stage's questions and decides its gate.
 	EventGatePlan = "gate_plan"
-	// EventReport is the pipeline's end: the final artifact and whether the
-	// cards are ready.
+	// EventReport is the pipeline's end: the final artifact, whether the
+	// cards are ready and the findings that say why not, and whether the
+	// sign-off follows, as it does over the card findings readiness's last
+	// round left open.
 	EventReport = "report"
 	// EventCardCreated records one card emission created, with CM's lint
 	// warnings; EventPlaybookCreated the playbook.
@@ -103,8 +105,9 @@ const (
 	// EventWatchState stores the snapshot the watch last reported, so a
 	// watch that restarts posts only what changed; the panel never shows it.
 	EventWatchState = "watch_state"
-	// EventSignOff shows the ready cards, the preflight result and how to
-	// decide; the blueprint waits for approve or reject.
+	// EventSignOff shows the cards, the card findings readiness's last round
+	// left open (not_ready, empty when every card passed), the preflight
+	// result and how to decide; the blueprint waits for approve or reject.
 	EventSignOff = "signoff"
 	// EventSignOffAuto records the sign-off an emitting mode approved on its
 	// own, with the payload a shown sign-off carries less its replies and its

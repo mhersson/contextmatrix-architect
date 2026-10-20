@@ -2686,6 +2686,9 @@ func TestPlain_AnEndedPipelineFoldsItsTechnicalReason(t *testing.T) {
 		script["readiness"] = returns("# Not ready", readiness(false))
 
 		c, _, _, _, _ := newPipeline(t, script)
+		// Readiness's spent rounds end only a pack with no stage that checks cards.
+		withoutCardsCheck(c.opts.Pack)
+
 		in := startInput("BP1")
 		in.PlainLanguage = plain
 		driveIn(t, c, in)

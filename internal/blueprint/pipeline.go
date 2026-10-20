@@ -25,7 +25,10 @@ const maxContractRounds = 3
 // the stage that completed (gate, with stage and art the artifact that
 // waits), or the pipeline's end with the artifact it ended on. critique
 // marks a gate whose artifact still needs its reviewer, or a builder round
-// after a verdict that does not settle it.
+// after a verdict that does not settle it. On an end, ready means it stands
+// at the sign-off, which only a pack with a stage that checks cards has;
+// findings are what stopped an end that is not ready or, on a ready end, the
+// card findings a loop stage's last round left open.
 // fold, on an outcome that passes a stage, is the fold the caller records.
 type outcome struct {
 	stage    string
@@ -57,9 +60,11 @@ type outcome struct {
 // the pipeline or re-runs its target, cards accepted with findings end it,
 // and otherwise the next step of the blueprint's pipeline follows. A loop
 // stage's verdict that sends cards back runs the earliest slice holding a
-// failing card, and every later slice's after it (the chain). A ready
-// verdict the sign-off rejected runs the step a typed rejection named, with
-// everything after it, or else the chain from the first slice.
+// failing card, and every later slice's after it (the chain). Its last
+// round's verdict goes to the sign-off with the cards it did not pass, and
+// ends the pipeline on a pack with no stage that checks cards. A verdict the
+// sign-off rejected runs the step a typed rejection named, with everything
+// after it, or else the chain from the first slice.
 func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed string) (outcome, error) {
 	steps, _, err := c.steps(ctx, bp.ID)
 	if err != nil {
@@ -113,7 +118,9 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 			}
 
 			switch {
-			case ready && rejected:
+			case rejected:
+				// A rejection of the sign-off re-runs the cards whatever the
+				// verdict found; a verdict at the cap reaches the sign-off too.
 				target, err := c.signoffTarget(ctx, bp.ID, steps)
 				if err != nil {
 					return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
@@ -126,6 +133,8 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 				return outcome{stage: targets[0].ID, chain: true}, nil
 			case ready:
 				return outcome{end: true, ready: true, art: art, round: art.Version - base}, nil
+			case art.Version-base >= st.MaxRounds && c.cardsStage() != "":
+				return outcome{end: true, ready: true, findings: findings, art: art, round: art.Version - base}, nil
 			case art.Version-base >= st.MaxRounds:
 				return outcome{end: true, findings: findings, art: art, round: art.Version - base}, nil
 			default:
@@ -767,13 +776,14 @@ func (c *Controller) advance(ctx context.Context, sess *session, bp store.Bluepr
 
 // report ends the pipeline: the panel gets the artifact it ended on and the
 // verdict, and the blueprint goes idle. rounds is the round the pipeline ended
-// on, 0 when none applies. signoff tells the panel that the sign-off of ready
-// cards follows on the held run slot.
+// on, 0 when none applies. ready is false while findings are open, also when
+// the sign-off follows over them. signoff tells the panel that the sign-off
+// follows on the held run slot.
 func (c *Controller) report(ctx context.Context, sess *session, bp store.Blueprint, out outcome) {
 	c.setState(ctx, bp.ID, StateIdle)
 
 	sess.audit.event(ctx, Event{Kind: EventReport, BlueprintID: bp.ID, Payload: map[string]any{
-		"stage": out.art.Stage, "body": out.art.Body, "ready": out.ready, "rounds": out.round, "findings": out.findings,
+		"stage": out.art.Stage, "body": out.art.Body, "ready": out.ready && len(out.findings) == 0, "rounds": out.round, "findings": out.findings,
 		"signoff": out.ready && c.cardsStage() != "",
 	}})
 }

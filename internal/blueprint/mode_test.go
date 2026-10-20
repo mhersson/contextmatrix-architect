@@ -269,6 +269,9 @@ func TestSetMode_RefusedAfterThePipelineEnded(t *testing.T) {
 	script["readiness"] = returns("# Not ready", readiness(false))
 
 	c, st, _, rec, _ := newPipeline(t, script)
+	// Readiness's spent rounds end only a pack with no stage that checks cards.
+	withoutCardsCheck(c.opts.Pack)
+
 	ctx := context.Background()
 
 	drive(t, c, "BP1")

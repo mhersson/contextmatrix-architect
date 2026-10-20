@@ -468,9 +468,9 @@ func (rec record) failed() bool {
 }
 
 // ended reports a pipeline that stopped before the sign-off: slicing that
-// holds no slices, cards the contract stopped, or readiness's rounds spent.
-// It is read from the record, so a blueprint that ended before the view
-// said so reads ended too.
+// holds no slices, cards the contract stopped, or, on a pack with no stage
+// that checks cards, readiness's rounds spent. It is read from the record,
+// so a blueprint that ended before the view said so reads ended too.
 func (rec record) ended() bool { return rec.pos.end && !rec.pos.ready }
 
 // state is the view's lifecycle state: ended for an ended pipeline, whose
@@ -768,7 +768,7 @@ func (rec record) signoffStep() protocol.PipelineStep {
 
 // emissionStep is the board: done once the cards exist, running while they
 // are created, waiting when an approved emission stopped, not reached when the
-// pipeline ended without ready cards.
+// pipeline ended before the sign-off.
 func (rec record) emissionStep() protocol.PipelineStep {
 	step := protocol.PipelineStep{Stage: emissionStage, Status: stepPending}
 

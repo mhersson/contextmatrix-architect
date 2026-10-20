@@ -776,20 +776,37 @@ func stringsOf(v any) []string {
 // the blueprint, the entries in playbook order, the playbook and the
 // preflight result) and the reply line that decides it, which starts with
 // its separator. sliced names a step's slice, and lists the typed
-// rejections.
+// rejections. Cards readiness still found not ready (not_ready, absent on a
+// sign-off stored before it existed) change the header in every mode and
+// are listed ahead of the cross findings; a critical finding keeps its own
+// reply.
 func signoffText(p map[string]any, sliced bool) (body, reply string) {
 	var b strings.Builder
 
 	cross := anyMaps(p["cross"])
 	critical := slices.ContainsFunc(cross, func(f map[string]any) bool { return str(f["severity"]) == "critical" })
 
+	open := stringsOf(p["not_ready"])
+
 	switch auto, _ := p["auto_stopped"].(bool); {
+	case len(open) > 0:
+		b.WriteString("**Sign-off needed.** Readiness still found cards not ready after its last round, so a human decides in every mode.\n\n")
 	case auto && critical:
 		b.WriteString("**Sign-off needed.** This mode emits on its own, but readiness found a critical problem across the blueprint.\n\n")
 	case auto:
 		b.WriteString("**Sign-off needed.** This mode emits on its own, but preflight found something for a human.\n\n")
 	default:
 		b.WriteString("**Sign-off.** Readiness passed the cards.\n\n")
+	}
+
+	if len(open) > 0 {
+		b.WriteString("Readiness still finds these cards not ready:\n")
+
+		for _, s := range open {
+			b.WriteString("- " + s + "\n")
+		}
+
+		b.WriteString("\n")
 	}
 
 	if len(cross) > 0 {
@@ -906,8 +923,11 @@ func signoffText(p map[string]any, sliced bool) (body, reply string) {
 	body = strings.TrimSuffix(b.String(), "\n")
 	reply = "\n\nReply `approve` to emit the cards"
 
-	if critical {
+	switch {
+	case critical:
 		reply = "\n\nReply `approve <reason>` to emit the cards over the critical findings"
+	case len(open) > 0:
+		reply = "\n\nReply `approve <reason>` to emit the cards over the open findings"
 	}
 
 	if len(warnings) > 0 {
@@ -1163,7 +1183,7 @@ func gatePlanText(p map[string]any) string {
 
 	switch str(p["signoff"]) {
 	case "auto":
-		b.WriteString("\n- sign-off: auto when preflight finds nothing for a human")
+		b.WriteString("\n- sign-off: auto unless something needs a person (preflight, a critical finding or cards not ready)")
 	case "human":
 		b.WriteString("\n- sign-off: human")
 	}
@@ -1311,7 +1331,7 @@ func decidedText(p map[string]any, sliced bool) string {
 
 	switch {
 	case str(p["override_reason"]) != "":
-		return "Approved over the critical findings: " + str(p["override_reason"]) + ". Emission starts."
+		return "Approved over open findings: " + str(p["override_reason"]) + ". Emission starts."
 	case reject && str(p["reruns"]) != "":
 		return fmt.Sprintf("Rejected. %s runs again with your feedback, and everything after it.", pack.StageName(str(p["reruns"]), sliced))
 	case reject:
@@ -1439,8 +1459,8 @@ func actionsPrompt(id, text string, v any, plain bool, plainText string, signoff
 // plainLabel words a gate's choice plainly. It changes the label and the
 // question asked for feedback only, never the reply or whether feedback is
 // taken. A sign-off's approve is worded so only when it takes a reason, the
-// override over a critical finding; a reject that is not the plain one
-// (a folded gate's, a typed step) keeps its label.
+// override over a critical finding or over open card findings; a reject that
+// is not the plain one (a folded gate's, a typed step) keeps its label.
 func plainLabel(a protocol.LogAction, signoff bool) protocol.LogAction {
 	switch {
 	case a.Reply == "approve" && (!signoff || a.Feedback):
@@ -1483,16 +1503,20 @@ func plainGateText(p map[string]any, sliced bool) string {
 	return "The architect could not settle " + name + " on its own. A technical helper can read why below. Continue anyway, or ask it to try again with a note."
 }
 
-// plainSignoffText is what a person reads of the sign-off: a critical finding
-// across the blueprint is the one moment the architect is stuck, setup steps
-// are named whenever the sign-off carries any, and notices say the work
-// settles some setup itself.
+// plainSignoffText is what a person reads of the sign-off: cards readiness
+// did not pass, or a critical finding across the blueprint, are the moments
+// the architect is stuck (the open cards win), setup steps are named
+// whenever the sign-off carries any, and notices say the work settles some
+// setup itself.
 func plainSignoffText(p map[string]any) string {
 	var text string
 
-	if slices.ContainsFunc(anyMaps(p["cross"]), func(f map[string]any) bool { return str(f["severity"]) == "critical" }) {
+	switch {
+	case len(stringsOf(p["not_ready"])) > 0:
+		text = "The architect could not settle every piece of the work on its own. A technical helper can read what is open below. Continue anyway and say why, or ask it to try again."
+	case slices.ContainsFunc(anyMaps(p["cross"]), func(f map[string]any) bool { return str(f["severity"]) == "critical" }):
 		text = "The architect found a problem across the plan that it could not settle on its own. A technical helper can read it below. Continue anyway and say why, or ask it to try again."
-	} else {
+	default:
 		text = "Your plan is ready: the summary on the sheet says what will be built and what you will be able to do with it. Approve to create the work, or choose Try again to change it."
 	}
 

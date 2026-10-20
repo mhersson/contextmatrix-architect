@@ -1178,6 +1178,7 @@ func TestLogEntryFor_ASignoffShowsItsCrossFindingsAndTheReason(t *testing.T) {
 	}})
 	require.True(t, ok)
 	assert.Contains(t, entry.Content, "the release check covers it")
+	assert.Contains(t, entry.Content, "Approved over open findings: the release check covers it")
 }
 
 func TestLogEntryFor_TheModesApprovalOfAShownSignoffClosesItsPrompt(t *testing.T) {
@@ -1756,4 +1757,65 @@ func TestLogEntry_AModeSwitchHandingOverTheMockupNamesNoRound(t *testing.T) {
 	assert.Equal(t, content(3, true), content(7, true))
 	assert.NotEqual(t, content(3, true), content(3, false))
 	assert.NotEqual(t, content(0, false), content(3, true), "the hand-over is said")
+}
+
+func TestLogEntryFor_ASignoffNamesTheCardsReadinessDidNotPass(t *testing.T) {
+	payload := func(extra map[string]any) map[string]any {
+		p := map[string]any{
+			"version": 3, "cards": []any{}, "order": []any{},
+			"cross": []any{map[string]any{"id": "X1", "severity": "major", "text": "Two cards disagree."}},
+			"actions": []any{
+				map[string]any{"label": "Approve over open findings", "reply": "approve", "feedback": true, "ask": "Why approve over the cards readiness did not pass?"},
+				map[string]any{"label": "Reject", "reply": "reject", "feedback": true},
+			},
+		}
+		maps.Copy(p, extra)
+
+		return p
+	}
+	open := []any{"D3: Solution does not say the settings UI is dropped."}
+
+	t.Run("the open cards come ahead of the cross findings", func(t *testing.T) {
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: payload(map[string]any{"not_ready": open})})
+		require.True(t, ok)
+		assert.Contains(t, entry.Content, "**Sign-off needed.** Readiness still found cards not ready after its last round, so a human decides in every mode.")
+		assert.NotContains(t, entry.Content, "Readiness passed the cards.")
+		assert.Contains(t, entry.Content, "Readiness still finds these cards not ready:\n- D3: Solution does not say the settings UI is dropped.")
+		assert.Less(t, strings.Index(entry.Content, "D3: Solution"), strings.Index(entry.Content, "Across the blueprint"))
+		assert.Contains(t, entry.Content, "Reply `approve <reason>` to emit the cards over the open findings")
+	})
+
+	t.Run("the header wins in an auto mode", func(t *testing.T) {
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: payload(map[string]any{"not_ready": open, "auto_stopped": true})})
+		require.True(t, ok)
+		assert.Contains(t, entry.Content, "so a human decides in every mode.")
+		assert.NotContains(t, entry.Content, "preflight found something")
+	})
+
+	t.Run("a critical finding keeps its reply", func(t *testing.T) {
+		cross := []any{map[string]any{"id": "X2", "severity": "critical", "text": "No criterion proves O1."}}
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: payload(map[string]any{"not_ready": open, "cross": cross})})
+		require.True(t, ok)
+		assert.Contains(t, entry.Content, "over the critical findings")
+		assert.NotContains(t, entry.Content, "over the open findings")
+		assert.Contains(t, entry.Content, "so a human decides in every mode.")
+	})
+
+	t.Run("a plain sign-off says the architect could not settle it", func(t *testing.T) {
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Plain: true, Payload: payload(map[string]any{"not_ready": open})})
+		require.True(t, ok)
+		require.NotNil(t, entry.Prompt)
+		assert.Contains(t, entry.Prompt.Text, "The architect could not settle every piece of the work on its own. A technical helper can read what is open below. Continue anyway and say why, or ask it to try again.")
+		assert.NotContains(t, entry.Prompt.Text, "Your plan is ready")
+		assert.Equal(t, "Continue anyway", entry.Prompt.Actions[0].Label)
+	})
+
+	t.Run("a payload without not_ready reads as before", func(t *testing.T) {
+		for _, p := range []map[string]any{payload(nil), payload(map[string]any{"not_ready": []any{}})} {
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: p})
+			require.True(t, ok)
+			assert.Contains(t, entry.Content, "**Sign-off.** Readiness passed the cards.")
+			assert.NotContains(t, entry.Content, "not ready")
+		}
+	})
 }
