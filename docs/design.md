@@ -1644,6 +1644,7 @@ internal/cm          MCP client: the project list, the stage read tools, and the
 internal/outcomes    outcomes stage and lessons
 internal/export      markdown rendering into the state directory
 internal/config
+internal/buildinfo   build version, commit and time (ldflags) and the embedded merge history
 internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, resume and continue commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
 ```
 

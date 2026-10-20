@@ -24,6 +24,7 @@ specification and must stay true at HEAD.
 
 - `cmd/contextmatrix-architect` - entrypoint; `serve` is the only server command.
 - `internal/cli` - cobra commands: serve, config defaults, config validate.
+- `internal/buildinfo` - the build's version, commit and build time, stamped by ldflags, and the merge history embedded at build.
 - `internal/config` - koanf config: file, then `CONTEXTMATRIX_ARCHITECT_*` env.
 - `internal/webhook` - CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, mode, resume and continue commands and the round and mockup replies that `internal/blueprint` recognises; serves the blueprint view, artifacts and live stream.
 - `internal/export` - renders a blueprint's stored record as a markdown bundle in the state directory.
