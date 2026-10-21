@@ -54,6 +54,9 @@ source):
   `mockup`, such as `"mockup": ["<screen id>"]`; a card that builds no
   screen names none. Name only screens the approved mockup shows, and none
   when no mockup was approved.
+- Every element of a screen that changes or answers on its own (a live
+  status, a counter, a list that refreshes, a control a person uses) has a
+  card whose Solution and criteria build that behaviour, not only its look.
 - Every card of a slice in which any card names a screen carries the whole
   mockup, which the architect adds when it emits the cards, so the work
   behind a screen (the data it shows, the service it calls) sees the target
