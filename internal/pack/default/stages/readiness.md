@@ -7,9 +7,9 @@ repository and this card finish it on the first attempt? Judge one
 deliverable, no open decision, no optional scope, a planner split of two
 subtasks or fewer. The architect checked every `where` path against the
 checkout before you judge: one without `new` exists, and one marked `new`
-does not exist yet and is created by this card or one before it. Whether a
-path exists, or should be listed or marked new, is never a finding, in any
-round: the same `where` gets the same judgement every time.
+does not exist yet. Whether a path exists, or whether a file a card creates
+should be listed or marked new, is never a finding, in any round: the same
+`where` gets the same judgement every time.
 
 A finding is only what would make an agent with only this repository and
 this card fail or build the wrong thing. A point the agent can settle on its

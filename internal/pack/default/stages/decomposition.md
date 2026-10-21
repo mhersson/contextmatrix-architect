@@ -20,9 +20,10 @@ Rules:
 
 - Title starts with an imperative verb. Type `bug` only for a real defect;
   only a `bug` card's title opens with a bug verb such as fix or repair.
-- Every path and symbol under Where exists in the checkout; cite its source tag.
-  A file the card creates, or that a card before it creates, is listed in
-  `where` with `"new": true`, in any repository; it must not exist yet.
+- Every path and symbol under Where not marked new exists in the checkout;
+  cite its source tag. A file the card creates, or that a card before it
+  creates, is listed in `where` with `"new": true`, in any repository; it
+  must not exist yet.
 - Criteria are numbered and each is checkable inside this repository.
 - A card of a project the task names as POC, a proof of concept, writes
   Tests expected as the tests of the main behaviour the card delivers and
@@ -54,9 +55,10 @@ source):
   `mockup`, such as `"mockup": ["<screen id>"]`; a card that builds no
   screen names none. Name only screens the approved mockup shows, and none
   when no mockup was approved.
-- Every element of a screen that changes or answers on its own (a live
-  status, a counter, a list that refreshes, a control a person uses) has a
-  card whose Solution and criteria build that behaviour, not only its look.
+- Every element of a screen that the decisions keep and that changes or
+  answers on its own (a live status, a counter, a list that refreshes, a
+  control a person uses) has a card whose Solution and criteria build that
+  behaviour, not only its look.
 - Every card of a slice in which any card names a screen carries the whole
   mockup, which the architect adds when it emits the cards, so the work
   behind a screen (the data it shows, the service it calls) sees the target

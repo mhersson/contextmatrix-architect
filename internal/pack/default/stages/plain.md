@@ -3,7 +3,8 @@
 This blueprint runs in plain language: the person driving it is not
 assumed to be technical. Only what they are shown changes. Your technical
 questions, decisions, assumptions and artifacts are recorded and used exactly
-as always.
+as always, except the texts the person is shown, which are worded for them
+as below.
 
 ## Stages
 
