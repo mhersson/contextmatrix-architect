@@ -64,6 +64,17 @@ pack: ""
 # Listen port. Default: 9095. Env: CONTEXTMATRIX_ARCHITECT_PORT
 port: 9095
 
+# Reasoning effort every stage run sends on every request: low, medium, high,
+# xhigh or max. Default: empty (send none). A run never switches it, so a resumed
+# conversation keeps its prompt cache.
+# On an openrouter endpoint it is sent as reasoning.effort and the model must
+# list the effort; on an openai endpoint as the top-level reasoning_effort, and
+# the gateway decides what it becomes for the model behind it.
+# Empty sends none and leaves the model its own default: the setting for a
+# model that does not reason and whose endpoint refuses the field.
+# Env: CONTEXTMATRIX_ARCHITECT_REASONING_EFFORT
+reasoning_effort: ""
+
 # Directory holding architect.db. Must be writable. Also holds exports/ and
 # workspaces/. Empty (the default) means $XDG_STATE_HOME/contextmatrix-architect,
 # else ~/.local/state/contextmatrix-architect, on every OS. The image sets

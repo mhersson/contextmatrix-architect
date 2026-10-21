@@ -120,7 +120,7 @@ const optionSchema = `{"type":"object","properties":{
 	"summary":{"type":"string","description":"one line on what choosing it means"},
 	"pros":{"type":"array","items":{"type":"string"}},
 	"cons":{"type":"array","items":{"type":"string"}},
-	"sources":{"type":"array","items":{"type":"string"},"description":"the source tags (S<n>) of tool results this option rests on"}},
+	"sources":{"type":"array","items":{"type":"string"},"description":"the bare source tags (S<n>, no path) of tool results this option rests on"}},
 	"required":["title"]}`
 
 // questionSchema is a question of ask_questions or, with revise, of
@@ -201,7 +201,7 @@ func (answerChatTool) Terminal() bool { return true }
 func (t answerChatTool) Schema() llm.Tool {
 	return llm.Tool{Type: "function", Function: llm.ToolFunction{
 		Name: AnswerChatName,
-		Description: "Reply in the open round's chat. Revise a question (give its number) or add one when the person's point changes the round; " +
+		Description: "Reply in the open round's chat; only a run given the person's chat about the round may call it. Revise a question (give its number) or add one when the person's point changes the round; " +
 			"a question whose options you change loses its answer, and the others keep theirs. " +
 			"Where your stage records assumptions, give assumptions to replace the round's assumptions tab with every assumption you still hold; " +
 			"one whose text is unchanged keeps its decision. Your run ends with the reply.",

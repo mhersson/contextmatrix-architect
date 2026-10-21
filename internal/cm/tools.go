@@ -47,8 +47,13 @@ func (c *Client) ReadTools(ctx context.Context, allow []string, tag string) ([]t
 			return nil, fmt.Errorf("cm: schema of %s: %w", t.Name, err)
 		}
 
+		description := t.Description
+		if t.Name == "list_cards" {
+			description += " Without a state, done and not_planned cards are left out and counted in closed_omitted; pass a state to list them."
+		}
+
 		out = append(out, &readTool{
-			client: c, name: t.Name, description: t.Description,
+			client: c, name: t.Name, description: description,
 			params: params, types: schemaPropTypes(t.InputSchema), images: images, tag: tag,
 		})
 	}
@@ -163,7 +168,69 @@ func (t *readTool) Execute(ctx context.Context, args map[string]any) (tools.Resu
 		return tools.Result{}, scrubbedError{err}
 	}
 
+	if state, _ := call["state"].(string); t.name == "list_cards" && state == "" {
+		text = openCards(text)
+	}
+
 	return tools.Result{Text: "[" + t.tag + "] " + stripURLUserinfo(text)}, nil
+}
+
+// closedStates are CM's terminal card states.
+var closedStates = []string{"done", "not_planned"}
+
+// openCards drops the closed cards from a list_cards reply and counts them in
+// closed_omitted. Grounding and readiness look for open cards, and a long
+// board's history would fill the 128 KiB result cap and cut open cards out of
+// the middle. A reply of any other shape, or with nothing closed, is returned
+// as it is.
+func openCards(text string) string {
+	var reply map[string]json.RawMessage
+	if json.Unmarshal([]byte(text), &reply) != nil {
+		return text
+	}
+
+	var cards []json.RawMessage
+	if json.Unmarshal(reply["cards"], &cards) != nil {
+		return text
+	}
+
+	kept := []json.RawMessage{}
+
+	for _, raw := range cards {
+		var card struct {
+			State string `json:"state"`
+		}
+
+		if json.Unmarshal(raw, &card) == nil && slices.Contains(closedStates, card.State) {
+			continue
+		}
+
+		kept = append(kept, raw)
+	}
+
+	if len(kept) == len(cards) {
+		return text
+	}
+
+	keptJSON, err := json.Marshal(kept)
+	if err != nil {
+		return text
+	}
+
+	dropped, err := json.Marshal(len(cards) - len(kept))
+	if err != nil {
+		return text
+	}
+
+	reply["cards"] = keptJSON
+	reply["closed_omitted"] = dropped
+
+	out, err := json.Marshal(reply)
+	if err != nil {
+		return text
+	}
+
+	return string(out)
 }
 
 // urlUserinfo matches a url's scheme and userinfo: everything from "://" to

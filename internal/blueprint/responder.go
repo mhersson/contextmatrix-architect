@@ -26,10 +26,7 @@ type answer struct {
 	Consequence string `json:"consequence"`
 }
 
-var (
-	evidenceTags = regexp.MustCompile(`\[\s*(S\d+(?:\s*,\s*S\d+)*)\s*\]`)
-	leadingTags  = regexp.MustCompile(`^\s*\[\s*(S\d+(?:\s*,\s*S\d+)*)\s*\]`)
-)
+var leadingTags = regexp.MustCompile(`^\s*\[\s*(S\d+(?:\s*,\s*S\d+)*)\s*\]`)
 
 // citesToolResult reports whether evidence cites a source tag that the
 // leading bracket of a tool message carries. Tags in other roles' text or
@@ -49,9 +46,10 @@ func citesToolResult(evidence string, msgs []llm.Message) bool {
 		}
 	}
 
-	for _, cited := range evidenceTags.FindAllStringSubmatch(evidence, -1) {
-		for tag := range strings.SplitSeq(cited[1], ",") {
-			if returned[strings.TrimSpace(tag)] {
+	// A citation may carry the place it points at, as [S3 internal/x.go:42].
+	for _, cited := range citation.FindAllString(evidence, -1) {
+		for _, m := range sourceTag.FindAllStringSubmatch(cited, -1) {
+			if returned["S"+m[1]] {
 				return true
 			}
 		}

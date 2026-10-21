@@ -13,9 +13,10 @@ import (
 )
 
 // FinalField marks the model_response event of a reply a run ends on: one
-// that calls submit_artifact, or calls no tool, which ends the harness run
-// or makes it force the submit. The record keeps the reply; the artifact,
-// review or answer it restates has its own row in the transcript.
+// that calls submit_artifact in a run whose mode takes it, or calls no tool,
+// which ends the harness run or makes it force the terminal call. The record
+// keeps the reply; the artifact, review or answer it restates has its own
+// row in the transcript.
 const FinalField = "final"
 
 // replyWatch is the run's client, noting whether its newest reply ends the
@@ -25,7 +26,10 @@ const FinalField = "final"
 type replyWatch struct {
 	llm.LLM
 
-	final atomic.Bool
+	// submits says the run's mode takes submit_artifact; it is set before
+	// the run starts and never changes.
+	submits bool
+	final   atomic.Bool
 }
 
 func (w *replyWatch) Send(ctx context.Context, req llm.Request) (llm.Response, error) {
@@ -46,7 +50,7 @@ func (w *replyWatch) note(resp llm.Response) {
 	final := len(resp.ToolCalls) == 0
 
 	for _, tc := range resp.ToolCalls {
-		if tc.Function.Name == submitArtifactName {
+		if w.submits && tc.Function.Name == submitArtifactName {
 			final = true
 		}
 	}

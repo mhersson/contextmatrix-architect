@@ -56,8 +56,9 @@ type Input struct {
 	// tool.
 	Interviewer Interviewer
 	// Chat makes the run answer the chat about the open round: answer_chat,
-	// which needs the Interviewer and ends it, is its built-in tool, with
-	// show_mockup beside it for a Designer.
+	// which needs the Interviewer and ends it, is the built-in it takes, with
+	// show_mockup beside it for a Designer. It never changes the tools
+	// offered: see builtinTools.
 	Chat bool
 	// Designer shows a mockup stage's revisions: show_mockup takes the place
 	// of ask_questions and submit_artifact. nil offers no show_mockup.
@@ -83,7 +84,8 @@ type Input struct {
 	// frames at most every draftInterval, the whole body when the submit
 	// arrives, a refused frame when a check refuses it, and a void frame
 	// when the harness abandons the turn that wrote it. nil drafts
-	// nothing; reviewer and responder runs leave it nil.
+	// nothing; reviewer and responder runs leave it nil, and a chat run
+	// drafts nothing either.
 	Draft func(DraftFrame)
 }
 
@@ -109,6 +111,10 @@ type Transient interface {
 type Runner struct {
 	NewLLM func(protocol.LLMEndpoint) llm.LLM
 
+	// Effort is sent on every request of every run, so a conversation keeps
+	// one effort and its prompt cache; "" sends none.
+	Effort string
+
 	// draftNow and draftEvery replace the clock and the frame spacing in
 	// tests; the zero values mean time.Now and draftInterval.
 	draftNow   func() time.Time
@@ -116,8 +122,8 @@ type Runner struct {
 }
 
 // NewRunner returns a Runner that talks to the provisioned endpoint.
-func NewRunner() *Runner {
-	return &Runner{NewLLM: ClientFor}
+func NewRunner(effort string) *Runner {
+	return &Runner{NewLLM: ClientFor, Effort: effort}
 }
 
 // Run executes one stage and returns its artifact. On every return its
@@ -197,7 +203,9 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 
 	var drafts *draftExtractor
 
-	if in.Draft != nil {
+	// A chat run's submit_artifact is refused: its body never reaches the
+	// live view.
+	if in.Draft != nil && !in.Chat {
 		now, every := r.draftNow, r.draftEvery
 		if now == nil {
 			now = time.Now
@@ -226,29 +234,11 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 	}
 
 	mark := &terminalMark{}
-
-	var builtins []tools.Tool
-
-	switch {
-	case in.Chat:
-		builtins = append(builtins, answerChatTool{iv: in.Interviewer, mark: mark, plain: in.PlainLanguage})
-
-		if in.Designer != nil {
-			builtins = append(builtins, showMockupTool{d: in.Designer, mark: mark})
-		}
-	case in.Designer != nil:
-		builtins = append(builtins, showMockupTool{d: in.Designer, mark: mark})
-	default:
-		if in.Interviewer != nil {
-			builtins = append(builtins, askQuestionsTool{iv: in.Interviewer, mark: mark, plain: in.PlainLanguage})
-		}
-
-		builtins = append(builtins, submitArtifactTool{validate: in.Validate, drafts: drafts, mark: mark})
-	}
+	builtins := builtinTools(in, mark, drafts)
 
 	reg := tools.NewRegistry(append(builtins, in.Tools...)...)
 
-	watch := &replyWatch{LLM: r.NewLLM(in.Endpoint)}
+	watch := &replyWatch{LLM: r.NewLLM(in.Endpoint), submits: !in.Chat && in.Designer == nil}
 
 	sink := in.Events
 	if sink == nil {
@@ -273,6 +263,15 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 		ToolOutputMaxBytes: ToolOutputMaxBytes,
 		ContextWindow:      window,
 		Compaction:         &harness.Compaction{Threshold: compactionThreshold, KeepRecentTurns: keepRecentMessages},
+	}
+
+	if r.Effort != "" {
+		reasoning, err := llm.Reasoning{Effort: &r.Effort}.Raw()
+		if err != nil {
+			return Output{}, fmt.Errorf("stage %s: reasoning: %w", in.Stage, err)
+		}
+
+		cfg.Reasoning = reasoning
 	}
 
 	if drafts != nil {
