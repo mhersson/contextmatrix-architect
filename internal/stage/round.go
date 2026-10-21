@@ -120,7 +120,7 @@ const optionSchema = `{"type":"object","properties":{
 	"summary":{"type":"string","description":"one line on what choosing it means"},
 	"pros":{"type":"array","items":{"type":"string"}},
 	"cons":{"type":"array","items":{"type":"string"}},
-	"sources":{"type":"array","items":{"type":"string"},"description":"the source tags (S<n>) of tool results this option rests on"}},
+	"sources":{"type":"array","items":{"type":"string"},"description":"the bare source tags (S<n>, no path) of tool results this option rests on"}},
 	"required":["title"]}`
 
 // questionSchema is a question of ask_questions or, with revise, of

@@ -523,7 +523,13 @@ func TestCitesToolResult(t *testing.T) {
 		{"[S7]", false},
 		{"[S40]", true},
 		{"[S4]", false},
+		{"[S3 internal/x.go:42]", true},
+		{"[S1 a.go:3, S4]", true},
+		{"[S9 internal/x.go:42]", false},
+		{"[S4 a.go:3, S5 b.go:4]", false},
+		{"[S4] and [S40 c.go:1]", true},
 		{"S1 without brackets", false},
+		{"[internal/s1.go:3]", false},
 		{"", false},
 	}
 

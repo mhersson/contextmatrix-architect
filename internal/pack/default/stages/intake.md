@@ -14,10 +14,11 @@ Produce the need as markdown with these sections:
 
 Rules:
 
-- Read the code before you ask (repo_info, read, grep, glob). A fact the
-  code settles, such as what already exists, the conventions in use or a
-  choice already made, goes in as a finding with its source tag S<n> and is
-  never a question. Ask only what neither the code nor the need settles.
+- Read the code before you ask (repo_info, read, grep, glob). A fact the code
+  settles, such as what already exists, the conventions in use or a choice
+  already made, goes in as a finding cited `[S<n> path:line]`, so a later run
+  opens the place instead of searching for it, and is never a question. Ask only
+  what neither the code nor the need settles.
 - Ask about what changes the cards and only the user can answer: who it is
   for, what is in and out of scope, what "done" is measured by. Never ask
   what you can read or decide.

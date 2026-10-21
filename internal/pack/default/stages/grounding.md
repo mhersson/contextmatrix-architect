@@ -9,8 +9,8 @@ no slice, verify the design of every slice.
 For every target project the design touches, verify in the code what it
 assumes:
 
-- the files, functions, types and patterns the design names, with the path
-  and the symbol as they exist;
+- the files, functions, types and patterns the design names, with the path, the
+  line and the symbol as they exist;
 - how the project builds and tests: the verify command the project declares
   in ContextMatrix (repo_info), and when it declares none, the commands the
   repository documents (README, Makefile, CI);
@@ -26,7 +26,9 @@ A missing verify command, a missing instruction file or an empty repository
 setup as work. Record it under `### Verify command`.
 
 Use read, grep and glob on the checkout and repo_info for the project facts.
-Every claim carries the source tag of the tool result it came from.
+Cite every claim `[S<n> path:line]`: the source tag of the tool result it came
+from and the line grep or the read's range shows; `[S<n> path]` for a whole
+file, `[S<n>]` for repo_info and the cm_ tools.
 
 Use the cm_ tools to find open cards in the target projects that already
 cover part of the need, and list them in each project's section under
