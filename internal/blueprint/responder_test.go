@@ -252,7 +252,11 @@ func TestResponder_SpendsFromTheAskingRunsCap(t *testing.T) {
 		return askingIntake(got)(ctx, in)
 	}
 	// 0.5 + 0.4 USD at testPrice: over what the asking run has left.
-	script["intake.responder"] = func(context.Context, stage.Input) (stage.Output, error) {
+	var runCap float64
+
+	script["intake.responder"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		runCap = runCapOf(t, in)
+
 		out := done("# Answer", map[string]any{"answer": "helm", "reasoning": "r", "grounded": true})
 		out.Result = harness.Result{Completed: true, Reason: "done", PromptTokens: 500_000, CompletionTokens: 40_000}
 
@@ -272,7 +276,7 @@ func TestResponder_SpendsFromTheAskingRunsCap(t *testing.T) {
 
 	responders := inputsOf(runner, "intake.responder")
 	require.Len(t, responders, 1)
-	assert.InDelta(t, 0.5, responders[0].MaxCostUSD, 1e-9, "what the asking run's 2 USD cap has left after its 1.5")
+	assert.InDelta(t, 0.5, runCap, 1e-9, "what the asking run's 2 USD cap has left after its 1.5")
 
 	require.ErrorIs(t, <-got, context.Canceled, "the responder's cost passed the asking run's cap")
 

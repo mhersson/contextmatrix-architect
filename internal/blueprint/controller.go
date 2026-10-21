@@ -247,7 +247,9 @@ type Controller struct {
 	// modeLocks serialize each blueprint's mode switches with its sign-off
 	// approvals, so a switch lands before an approval or is refused after it.
 	modeLocks map[string]*sync.Mutex
-	closing   bool
+	// caps are each blueprint's live cost cap, which its runs in flight read.
+	caps    map[string]*liveCap
+	closing bool
 }
 
 // New builds a Controller.
@@ -267,7 +269,7 @@ func New(opts Options) *Controller {
 	c := &Controller{
 		opts: opts, sessions: map[string]*session{}, runs: map[string]*run{}, watches: map[string]*watcher{},
 		flights: map[string][]*flight{}, roundLocks: map[string]*sync.Mutex{},
-		modeLocks: map[string]*sync.Mutex{},
+		modeLocks: map[string]*sync.Mutex{}, caps: map[string]*liveCap{},
 	}
 	c.live = newLiveHub(c.View, opts.Logger)
 
@@ -742,29 +744,29 @@ const minRunFloorUSD = 0.10
 // capBlueprint is a cap stop's "cap" in its error event payload.
 const capBlueprint = "blueprint"
 
-// runBudget is what the blueprint cap allows a run: the cap it must stay
-// under (0 means none), or refused, why it may not start. bound says capUSD
-// is what the blueprint cap has left, being below the per-run cap or there
-// being none, so the run reaching it is a cap stop. blueprintCapUSD is the
-// blueprint cap it was read under.
+// runBudget is what the blueprint cap says of a run about to start: refused,
+// why it may not, else baseUSD, the ledger's spend when it was allowed,
+// which the run's limit takes off the blueprint cap in force.
 type runBudget struct {
-	capUSD          float64
-	bound           bool
-	refused         *capStop
-	blueprintCapUSD float64
+	refused *capStop
+	baseUSD float64
 }
 
 // capStop is a stage the blueprint cost cap stopped: a run of it refused, or
 // cut short at what the blueprint had left. floor is set when what is left
 // is below the floor the next run needs; unpriced is the refusal of a model
 // without a price, which keeps its own text. sliced says the blueprint has
-// two or more slices, so the stop's text names the step's slice.
+// two or more slices, so the stop's text names the step's slice. lifted
+// says the cap stored once the run ended is not the one it was cut under
+// and is off or leaves a rerun its floor; nowUSD is that cap (0: off).
 type capStop struct {
 	stage         string
 	capUSD, spent float64
 	floor         float64
 	unpriced      string
 	sliced        bool
+	lifted        bool
+	nowUSD        float64
 }
 
 // Error is the stop's message, which says how to go on.
@@ -773,7 +775,16 @@ func (s *capStop) Error() string {
 		return s.unpriced
 	}
 
-	return "The " + s.shortfall() + "; " + pack.StageName(s.stage, s.sliced) + " stopped. Raise the cap by clicking the cost in the header (or reply `cap <usd>`) and it continues."
+	stopped := "The " + s.shortfall() + "; " + pack.StageName(s.stage, s.sliced) + " stopped."
+
+	switch {
+	case !s.lifted:
+		return stopped + " Raise the cap by clicking the cost in the header (or reply `cap <usd>`) and it continues."
+	case s.nowUSD == 0:
+		return stopped + " The cap is now off: reply `continue` and it goes on."
+	default:
+		return stopped + fmt.Sprintf(" The cap is now $%.2f: reply `continue` and it goes on.", s.nowUSD)
+	}
 }
 
 // reason is why a responder the blueprint cap refused did not run: the
@@ -837,29 +848,32 @@ func capStopOf(e store.Event) (string, bool) {
 	return p.Stage, true
 }
 
-// runCap is what the blueprint cap allows a run of kind on stageID on model
-// m: the configured per-run cap, or what is left of the blueprint cap when
-// that is smaller. It refuses a capped blueprint whose run would be
-// unpriced, since the cap could not bind, a spent cap, and less left than
-// the run's floor. It reports nothing.
+// runCap is what the blueprint cap says of a run of kind on stageID on
+// model m: the ledger's spend as it starts, which its limit takes off the
+// blueprint cap in force, or a refusal. It refuses a capped blueprint whose
+// run would be unpriced, since the cap could not bind, a spent cap, and
+// less left than the run's floor. It seeds the blueprint's live cap from
+// the store and reports nothing.
 func (c *Controller) runCap(ctx context.Context, bp store.Blueprint, kind, stageID string, m runModel) (runBudget, error) {
 	// The stored cap, not bp's: a chain of runs holds bp from its start, and
-	// a cap command applies from the next run.
+	// a cap command changes the stored one.
 	cur, err := c.opts.Store.GetBlueprint(ctx, bp.ID)
 	if err != nil {
 		return runBudget{}, fmt.Errorf("cost lookup failed: %w", err)
 	}
 
-	capUSD := cur.CostCapUSD
-	b := runBudget{capUSD: c.opts.MaxRunCostUSD, blueprintCapUSD: capUSD}
-
-	if capUSD <= 0 {
-		return b, nil
-	}
-
 	spent, err := c.opts.Store.BlueprintCost(ctx, bp.ID)
 	if err != nil {
 		return runBudget{}, fmt.Errorf("cost lookup failed: %w", err)
+	}
+
+	c.capOf(bp.ID).seed(cur.CostCapUSD)
+
+	capUSD := cur.CostCapUSD
+	b := runBudget{baseUSD: spent}
+
+	if capUSD <= 0 {
+		return b, nil
 	}
 
 	stop := &capStop{stage: stageID, capUSD: capUSD, spent: spent, sliced: c.sliced(ctx, bp.ID)}
@@ -873,7 +887,6 @@ func (c *Controller) runCap(ctx context.Context, bp store.Blueprint, kind, stage
 		return runBudget{refused: stop}, nil
 	}
 
-	left := capUSD - spent
 	if leftCents(capUSD, spent) <= 0 {
 		return runBudget{refused: stop}, nil
 	}
@@ -887,12 +900,6 @@ func (c *Controller) runCap(ctx context.Context, bp store.Blueprint, kind, stage
 		stop.floor = floor
 
 		return runBudget{refused: stop}, nil
-	}
-
-	// A run cap of zero means no per-run cap; the blueprint cap alone
-	// bounds the run by what is left of it.
-	if b.capUSD <= 0 || left < b.capUSD {
-		b.capUSD, b.bound = left, true
 	}
 
 	return b, nil
@@ -941,9 +948,14 @@ func sameStage(a, b string) bool {
 }
 
 // capStopAfter is the cap stop of a run of kind on stageID cut short at what
-// the blueprint cap capUSD it started under had left, as the ledger stands
-// once the run has ended.
+// the blueprint cap capUSD it was cut under had left, as the ledger and the
+// stored cap stand once the run has ended.
 func (c *Controller) capStopAfter(ctx context.Context, id string, capUSD float64, kind, stageID string) (*capStop, error) {
+	cur, err := c.opts.Store.GetBlueprint(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("cost lookup failed: %w", err)
+	}
+
 	spent, err := c.opts.Store.BlueprintCost(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("cost lookup failed: %w", err)
@@ -957,13 +969,32 @@ func (c *Controller) capStopAfter(ctx context.Context, id string, capUSD float64
 		}
 	}
 
+	// A cap raised after the cut and before the run ended, or removed, may
+	// already let a rerun start.
+	if now := cur.CostCapUSD; now != capUSD {
+		fits := now <= 0
+
+		if !fits {
+			floor, err := c.runFloor(ctx, id, kind, stageID)
+			if err != nil {
+				return nil, err
+			}
+
+			fits = leftCents(now, spent) >= floorCents(floor)
+		}
+
+		if fits {
+			stop.lifted, stop.nowUSD = true, max(now, 0)
+		}
+	}
+
 	return stop, nil
 }
 
 // capAllows reports whether a stage run of stageID on model m may start
-// under the blueprint's cost cap, and what it is allowed (see runCap). A
-// refusal is a cap stop reported to the panel, with refused merged into its
-// event payload, and leaves the blueprint idle.
+// under the blueprint's cost cap, and the ledger's spend its limit counts
+// from (see runCap). A refusal is a cap stop reported to the panel, with
+// refused merged into its event payload, and leaves the blueprint idle.
 func (c *Controller) capAllows(ctx context.Context, au audit, bp store.Blueprint, stageID string, m runModel, refused map[string]any) (runBudget, bool) {
 	b, err := c.runCap(ctx, bp, store.RunKindStage, stageID, m)
 	if err != nil {

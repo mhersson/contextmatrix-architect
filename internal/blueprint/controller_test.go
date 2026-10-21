@@ -1024,7 +1024,7 @@ func TestRunCapZero_DisablesThePerRunCap(t *testing.T) {
 			}
 
 			require.Equal(t, 1, runner.calls(), "the run starts")
-			assert.InDelta(t, tt.wantRunCap, runner.input(0).MaxCostUSD, 1e-9)
+			assert.InDelta(t, tt.wantRunCap, runCapOf(t, runner.input(0)), 1e-9)
 			assert.False(t, rec.has(EventError))
 		})
 	}
@@ -1092,7 +1092,7 @@ func TestMessage_CostCap(t *testing.T) {
 			}
 
 			require.Equal(t, 1, runner.calls())
-			assert.InDelta(t, tt.wantRunCap, runner.input(0).MaxCostUSD, 1e-9, "the run cap is what is left of the blueprint cap")
+			assert.InDelta(t, tt.wantRunCap, runCapOf(t, runner.input(0)), 1e-9, "the run cap is what is left of the blueprint cap")
 			assert.False(t, rec.has(EventError))
 		})
 	}
@@ -1219,7 +1219,7 @@ func TestRun_LessThanTheFloorLeftIsACapStop(t *testing.T) {
 
 			if tt.wantRun {
 				require.Equal(t, 1, runner.calls())
-				assert.InDelta(t, tt.wantRunCap, runner.input(0).MaxCostUSD, 1e-9)
+				assert.InDelta(t, tt.wantRunCap, runCapOf(t, runner.input(0)), 1e-9)
 				assert.Empty(t, capStops(t, st))
 
 				return
@@ -1339,6 +1339,35 @@ func TestRun_AMaxCostStopIsACapStopWhenTheBlueprintCapBinds(t *testing.T) {
 			assert.Equal(t, []string{"intake"}, capStops(t, st))
 			assert.InDelta(t, tt.capUSD, ev.Payload["cap_usd"], 1e-9)
 			assert.InDelta(t, 1.1, ev.Payload["blueprint_spent_usd"], 1e-9, "the ledger with the stopped run")
+		})
+	}
+}
+
+func TestCapStopAfter_SaysWhenTheStoredCapLiftsTheStop(t *testing.T) {
+	tests := []struct {
+		name   string
+		stored float64
+		lifted bool
+		nowUSD float64
+	}{
+		{name: "the cap it was cut under is still stored", stored: 1.5},
+		{name: "a raise above the spend", stored: 4, lifted: true, nowUSD: 4},
+		{name: "the cap removed", stored: 0, lifted: true},
+		// The floor is the median of the done intake stage runs, 1.60; 0.05 left is below it.
+		{name: "a raise that leaves less than the rerun's floor", stored: 1.65},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, _, _ := newController(t, artifactRun("# Need"))
+			ctx := context.Background()
+			require.NoError(t, c.Start(ctx, cappedInput(tt.stored)))
+			ranBefore(t, st, store.RunKindStage, "intake", store.RunDone, 1.6)
+
+			stop, err := c.capStopAfter(ctx, "BP1", 1.5, store.RunKindStage, "intake")
+			require.NoError(t, err)
+			assert.Equal(t, tt.lifted, stop.lifted)
+			assert.InDelta(t, tt.nowUSD, stop.nowUSD, 1e-9)
 		})
 	}
 }
