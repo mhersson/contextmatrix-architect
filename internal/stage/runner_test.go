@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -60,6 +62,94 @@ func baseInput(events *bytes.Buffer) Input {
 		Task: "containerise this project", Model: "test/model",
 		Endpoint:   protocol.LLMEndpoint{Type: "openrouter", APIKey: "sk-secret-value-123456"},
 		MaxCostUSD: 1, MaxTurns: 5, Events: events, Secrets: []string{"sk-secret-value-123456"},
+	}
+}
+
+// wireBodies runs in against an httptest endpoint of the given type with a
+// runner sending effort, and returns every request body in order. The server
+// answers text only, so the runner sends its forced follow-up as well. The
+// run's own error is ignored.
+func wireBodies(t *testing.T, endpointType, effort string, in Input) []map[string]json.RawMessage {
+	t.Helper()
+
+	var (
+		mu     sync.Mutex
+		bodies []map[string]json.RawMessage
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+
+			return
+		}
+
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+
+			return
+		}
+
+		mu.Lock()
+
+		bodies = append(bodies, body)
+
+		mu.Unlock()
+
+		if string(body["stream"]) == "true" {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`)
+	}))
+	defer srv.Close()
+
+	in.Endpoint = protocol.LLMEndpoint{Type: endpointType, BaseURL: srv.URL + "/v1", APIKey: "k"}
+
+	_, _ = NewRunner(effort).Run(context.Background(), in)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	return append([]map[string]json.RawMessage(nil), bodies...)
+}
+
+func TestRun_EffortOnTheWire(t *testing.T) {
+	tests := []struct {
+		endpoint, effort         string
+		reasoning, reasoningTier string // "" means the key is absent
+	}{
+		{"openrouter", "xhigh", `{"effort":"xhigh"}`, ""},
+		{"openai", "xhigh", "", `"xhigh"`},
+		{"openrouter", "", "", ""},
+		{"openai", "", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.endpoint+"/"+tt.effort, func(t *testing.T) {
+			bodies := wireBodies(t, tt.endpoint, tt.effort, baseInput(&bytes.Buffer{}))
+			require.GreaterOrEqual(t, len(bodies), 2, "the forced follow-up was sent too")
+
+			for i, b := range bodies {
+				if tt.reasoning == "" {
+					assert.NotContains(t, b, "reasoning", "request %d", i)
+				} else {
+					assert.JSONEq(t, tt.reasoning, string(b["reasoning"]), "request %d", i)
+				}
+
+				if tt.reasoningTier == "" {
+					assert.NotContains(t, b, "reasoning_effort", "request %d", i)
+				} else {
+					assert.JSONEq(t, tt.reasoningTier, string(b["reasoning_effort"]), "request %d", i)
+				}
+			}
+		})
 	}
 }
 

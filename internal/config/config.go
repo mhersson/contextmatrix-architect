@@ -57,6 +57,10 @@ type Config struct {
 	ReplayCacheSize       int
 	MessageDedupTTL       time.Duration
 	MessageDedupCacheSize int
+
+	// ReasoningEffort is the effort every run sends on every request; "" sends
+	// none and leaves the model its own default.
+	ReasoningEffort string
 }
 
 // raw is the koanf wire shape; second-granularity durations are ints here and
@@ -78,6 +82,7 @@ type raw struct {
 	MessageDedupCacheSize  int               `koanf:"message_dedup_cache_size"`
 	WorkspaceMaxAgeDays    int               `koanf:"workspace_max_age_days"`
 	WatchIntervalSeconds   int               `koanf:"watch_interval_seconds"`
+	ReasoningEffort        string            `koanf:"reasoning_effort"`
 }
 
 func defaults() raw {
@@ -94,6 +99,7 @@ func defaults() raw {
 		MessageDedupCacheSize:  1000,
 		WorkspaceMaxAgeDays:    7,
 		WatchIntervalSeconds:   60,
+		ReasoningEffort:        "",
 	}
 }
 
@@ -115,6 +121,7 @@ func (r raw) toConfig() *Config {
 		MessageDedupCacheSize: r.MessageDedupCacheSize,
 		WorkspaceMaxAgeDays:   r.WorkspaceMaxAgeDays,
 		WatchInterval:         time.Duration(r.WatchIntervalSeconds) * time.Second,
+		ReasoningEffort:       r.ReasoningEffort,
 	}
 }
 
@@ -257,6 +264,12 @@ func (c *Config) Validate() error {
 
 	if c.WatchInterval < time.Second {
 		return errors.New("watch_interval_seconds must be at least 1")
+	}
+
+	switch c.ReasoningEffort {
+	case "", "low", "medium", "high", "xhigh", "max":
+	default:
+		return fmt.Errorf("reasoning_effort must be low|medium|high|xhigh|max, or empty to send none, got %q", c.ReasoningEffort)
 	}
 
 	if suffix, ok := strings.CutPrefix(c.CallerIdentity, "human:"); !ok || strings.TrimSpace(suffix) == "" {

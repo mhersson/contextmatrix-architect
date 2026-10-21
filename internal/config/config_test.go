@@ -64,7 +64,7 @@ func TestValidate(t *testing.T) {
 	valid := func() *Config {
 		return &Config{
 			ContextMatrixURL: "http://cm:8080", APIKey: strings.Repeat("k", 32), CallerIdentity: "human:architect", Port: 9095,
-			LogLevel: "info", StateDir: "/tmp/x", MaxRunCostUSD: 5, MaxTurns: 80, WorkspaceMaxAgeDays: 7, WatchInterval: time.Minute,
+			LogLevel: "info", StateDir: "/tmp/x", MaxRunCostUSD: 5, MaxTurns: 80, WorkspaceMaxAgeDays: 7, WatchInterval: time.Minute, ReasoningEffort: "high",
 		}
 	}
 
@@ -83,6 +83,13 @@ func TestValidate(t *testing.T) {
 		{"zero workspace age", func(c *Config) { c.WorkspaceMaxAgeDays = 0 }, "workspace_max_age_days"},
 		{"zero watch interval", func(c *Config) { c.WatchInterval = 0 }, "watch_interval_seconds"},
 		{"bad level", func(c *Config) { c.LogLevel = "loud" }, "log_level"},
+		{"empty effort sends none", func(c *Config) { c.ReasoningEffort = "" }, ""},
+		{"low effort", func(c *Config) { c.ReasoningEffort = "low" }, ""},
+		{"xhigh effort", func(c *Config) { c.ReasoningEffort = "xhigh" }, ""},
+		{"max effort", func(c *Config) { c.ReasoningEffort = "max" }, ""},
+		{"none is refused, empty sends none", func(c *Config) { c.ReasoningEffort = "none" }, "reasoning_effort"},
+		{"an unknown effort", func(c *Config) { c.ReasoningEffort = "minimal" }, "reasoning_effort"},
+		{"effort in upper case", func(c *Config) { c.ReasoningEffort = "Medium" }, "reasoning_effort"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -100,6 +107,18 @@ func TestValidate(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.want)
 		})
 	}
+}
+
+func TestLoad_ReasoningEffort(t *testing.T) {
+	cfg, err := Load("")
+	require.NoError(t, err)
+	assert.Empty(t, cfg.ReasoningEffort, "default sends none")
+
+	t.Setenv("CONTEXTMATRIX_ARCHITECT_REASONING_EFFORT", "medium")
+
+	cfg, err = Load("")
+	require.NoError(t, err)
+	assert.Equal(t, "medium", cfg.ReasoningEffort, "env wins over the default")
 }
 
 func TestDefaultsYAMLRoundTrips(t *testing.T) {

@@ -1601,13 +1601,21 @@ frames on the session's chat stream.
 - Server config file plus `CONTEXTMATRIX_ARCHITECT_*` env overrides: CM base
   URL, backend HMAC key, listen address, state directory, pack, the caller
   identity for ContextMatrix writes (default human:architect), the watch
-  interval, per-project export opt-ins (slice 4), and optional per-persona
-  model overrides (slugs only).
+  interval, per-project export opt-ins (slice 4), optional per-persona model
+  overrides (slugs only), and the reasoning effort.
   Secrets reach only their client and never a log, error, artifact or store
   row.
 - Models: the start payload's model is the default for every persona; config
   may override per persona. Priors-based selection through
-  `contextmatrix-protocol`'s `selection` package comes later.
+  `contextmatrix-protocol`'s `selection` package comes later. Every run sends
+  one reasoning effort on every request, `reasoning_effort` from config
+  (`low`, `medium`, `high`, `xhigh` or `max`; the default, empty, sends none
+  and leaves the model its own default), so a resumed conversation keeps its
+  prompt cache; the harness's compaction call sends none. The OpenRouter
+  endpoint gets it as `reasoning.effort`, which the model must list; an
+  `openai` endpoint gets the top-level `reasoning_effort`, which its gateway
+  maps to the model behind it, and empty is the setting for a model there that
+  does not reason.
 - Tool results are capped at 128 KiB per call before the model sees them,
   head and tail kept, as in the chat backend.
 - Cost: every run's token buckets are priced at the model price CM sends in

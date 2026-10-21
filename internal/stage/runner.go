@@ -109,6 +109,10 @@ type Transient interface {
 type Runner struct {
 	NewLLM func(protocol.LLMEndpoint) llm.LLM
 
+	// Effort is sent on every request of every run, so a conversation keeps
+	// one effort and its prompt cache; "" sends none.
+	Effort string
+
 	// draftNow and draftEvery replace the clock and the frame spacing in
 	// tests; the zero values mean time.Now and draftInterval.
 	draftNow   func() time.Time
@@ -116,8 +120,8 @@ type Runner struct {
 }
 
 // NewRunner returns a Runner that talks to the provisioned endpoint.
-func NewRunner() *Runner {
-	return &Runner{NewLLM: ClientFor}
+func NewRunner(effort string) *Runner {
+	return &Runner{NewLLM: ClientFor, Effort: effort}
 }
 
 // Run executes one stage and returns its artifact. On every return its
@@ -273,6 +277,15 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 		ToolOutputMaxBytes: ToolOutputMaxBytes,
 		ContextWindow:      window,
 		Compaction:         &harness.Compaction{Threshold: compactionThreshold, KeepRecentTurns: keepRecentMessages},
+	}
+
+	if r.Effort != "" {
+		reasoning, err := llm.Reasoning{Effort: &r.Effort}.Raw()
+		if err != nil {
+			return Output{}, fmt.Errorf("stage %s: reasoning: %w", in.Stage, err)
+		}
+
+		cfg.Reasoning = reasoning
 	}
 
 	if drafts != nil {
