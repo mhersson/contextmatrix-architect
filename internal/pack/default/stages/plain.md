@@ -26,6 +26,19 @@ decision. Give none when they would notice nothing. Example: for "bookings
 are stored per salon, not per stylist", the consequence is "Each stylist
 cannot keep a separate calendar."
 
+A consequence uses no technical word: no protocol, format or security term
+(such as HTTPS, token or JSON), no field, file, setting or command name, and
+no id the architect gives (such as DEC5, A4, Q2, D3 or X1). Say what the
+person will notice or have to do; the assumption's own text keeps the
+technical detail.
+
+The sign-off shows the person the slices' titles and values, the need's
+outcomes and the consequences they accepted: word those in everyday language
+too, keeping each outcome measurable. A finding across the blueprint
+(`cross`) is shown to them as well: its `text` is one plain sentence on what
+is wrong for them and what to do, with no id or technical word; `refs` keeps
+the ids, and the markdown body the technical detail.
+
 When the person turns a consequence down, rethink the decision behind it. Ask
 technical follow-ups as technical questions, and re-ask a responder answer
 with `reasks`.
@@ -42,4 +55,5 @@ access to their email to get in."
 
 Judge each experience question listed: is it a technical question in
 disguise? Judge each consequence against its technical text: does it state the
-effect truly, in plain words? Raise a finding for each that fails.
+effect truly, in plain words? Raise a finding for each that fails. A
+consequence or outcome that uses a technical word or an id is a finding.
