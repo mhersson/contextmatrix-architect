@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -304,4 +305,83 @@ func TestStageReads_IsAFreshCopyOfTheAllowlist(t *testing.T) {
 	reads[0] = "create_card"
 
 	assert.Equal(t, "list_projects", StageReads()[0], "a caller cannot widen the allowlist")
+}
+
+func newListCardsServer(t *testing.T, reply string) *toolsServer {
+	t.Helper()
+
+	ts := &toolsServer{args: map[string][]map[string]any{}}
+	server := mcp.NewServer(&mcp.Implementation{Name: "cm-test", Version: "0"}, nil)
+	server.AddTool(&mcp.Tool{
+		Name: "list_cards", Description: "list_cards description",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"project":{"type":"string"},"state":{"type":"string"},"agent_id":{"type":"string"}},"required":["project"]}`),
+	}, func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		ts.record("list_cards", req.Params.Arguments)
+
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: reply}}}, nil
+	})
+
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+	ts.Server = httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+
+	return ts
+}
+
+func listCards(t *testing.T, reply string, args map[string]any) string {
+	t.Helper()
+
+	srv := newListCardsServer(t, reply)
+
+	c, err := Connect(context.Background(), srv.URL, "")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+
+	got, err := c.ReadTools(context.Background(), StageReads(), "S3")
+	require.NoError(t, err)
+
+	for _, tool := range got {
+		if tool.Name() != "cm_list_cards" {
+			continue
+		}
+
+		res, err := tool.Execute(context.Background(), args)
+		require.NoError(t, err)
+
+		return strings.TrimPrefix(res.Text, "[S3] ")
+	}
+
+	t.Fatal("cm_list_cards not offered")
+
+	return ""
+}
+
+const fourCards = `{"cards":[{"id":"A-1","state":"todo"},{"id":"A-2","state":"done"},` +
+	`{"id":"A-3","state":"in_progress","title":"Keep me whole"},{"id":"A-4","state":"not_planned"}]}`
+
+func TestReadTools_ListCardsWithoutAStateKeepsOpenCards(t *testing.T) {
+	var got struct {
+		Cards  []map[string]any `json:"cards"`
+		Closed int              `json:"closed_omitted"`
+	}
+
+	require.NoError(t, json.Unmarshal([]byte(listCards(t, fourCards, map[string]any{"project": "alpha"})), &got))
+	require.Len(t, got.Cards, 2)
+	assert.Equal(t, "A-1", got.Cards[0]["id"])
+	assert.Equal(t, map[string]any{"id": "A-3", "state": "in_progress", "title": "Keep me whole"}, got.Cards[1], "a kept card is CM's, whole")
+	assert.Equal(t, 2, got.Closed)
+
+	allClosed := `{"cards":[{"id":"A-2","state":"done"}]}`
+	assert.JSONEq(t, `{"cards":[],"closed_omitted":1}`, listCards(t, allClosed, map[string]any{"project": "alpha", "state": ""}))
+}
+
+func TestReadTools_ListCardsFilterOnlyWithoutAState(t *testing.T) {
+	assert.JSONEq(t, fourCards, listCards(t, fourCards, map[string]any{"project": "alpha", "state": "done"}), "a state is CM's to filter")
+
+	for _, reply := range []string{"no cards here", `{"projects":[]}`, `{"cards":"none"}`} {
+		assert.Equal(t, reply, listCards(t, reply, map[string]any{"project": "alpha"}), "an unexpected shape passes through")
+	}
+
+	open := `{"cards":[{"id":"A-1","state":"todo"}]}`
+	assert.Equal(t, open, listCards(t, open, map[string]any{"project": "alpha"}), "nothing left out, CM's reply as it is")
 }
