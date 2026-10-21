@@ -59,9 +59,10 @@ Report each in `cross`, `{"id": "X1", "severity": "critical", "major" or
 "minor", "text": "<one sentence a person can act on>", "refs": ["<the ids
 it names, such as DEC2, AC4, D3, A5, O1, SL2>"]}`: critical when building
 as planned would deliver the wrong thing or break what the need promises,
-major when someone would have to guess, minor otherwise. These never send
-cards back. When nothing disagrees across the blueprint, `cross` is an
-empty list or left out; never invent a finding.
+or when a decision, criterion, assumption or card still contradicts the
+sign-off feedback in the task, major when someone would have to guess,
+minor otherwise. These never send cards back. When nothing disagrees across
+the blueprint, `cross` is an empty list or left out; never invent a finding.
 
 Produce markdown with one `## <card id>: <title>` section per card holding
 `ready` or the findings that block it. Submit with a data object

@@ -20,15 +20,15 @@ import (
 // the artifact the pipeline ended ready on, by version.
 const signoffStage = "signoff"
 
-const signoffHint = "Reply approve to emit the cards, or reject <feedback> to re-run the cards with your feedback."
+const signoffHint = "Reply approve to emit the cards, or reject <feedback> to re-run the blueprint with your feedback."
 
 // signoffCriticalHint is signoffHint over a critical finding, where approve
 // takes a reason.
-const signoffCriticalHint = "Reply approve <reason> to emit the cards over the critical findings, or reject <feedback> to re-run the cards with your feedback."
+const signoffCriticalHint = "Reply approve <reason> to emit the cards over the critical findings, or reject <feedback> to re-run the blueprint with your feedback."
 
 // signoffOpenHint is signoffHint over the card findings readiness's last
 // round left open, where approve takes a reason.
-const signoffOpenHint = "Reply approve <reason> to emit the cards over the open findings, or reject <feedback> to re-run the cards with your feedback."
+const signoffOpenHint = "Reply approve <reason> to emit the cards over the open findings, or reject <feedback> to re-run the blueprint with your feedback."
 
 // emitsOnItsOwn reports whether a mode approves the sign-off itself.
 func emitsOnItsOwn(mode string) bool {
@@ -380,30 +380,46 @@ func typedNoteHint(text string, typed, listed []gateAction) string {
 // blueprint can run again; typed are the replies text may name.
 func typedHint(typed []gateAction) string {
 	if len(typed) == 0 {
-		return "Reply reject <feedback> to re-run the cards."
+		return "Reply reject <feedback> to re-run the blueprint."
 	}
 
-	return "That names no step of this blueprint. Reply reject <feedback> to re-run the cards, or " +
+	return "That names no step of this blueprint. Reply reject <feedback> to re-run the blueprint, or " +
 		strings.Join(quotedReplies(typed), ", ") + " to run that step and everything after it again."
 }
 
-// signoffTarget is the step a typed sign-off rejection runs again: the first
+// signoffTarget is the step a sign-off rejection runs again: the first
 // typed target whose latest version's latest decision is a rejection, which
-// only that reply records while the sign-off waits; "" for a plain
-// rejection. Each target stores a new version before the next sign-off, so
-// one stands at a time; should two, the earliest in the pipeline wins, and
-// its re-run runs the later one again too.
+// only rejectStep records while the sign-off waits; "" for a rejection that
+// named none, as a plain one does without a step that checks decisions.
+// Each target stores a new version before the next sign-off, so one stands
+// at a time; should two, the earliest in the pipeline wins, and its re-run
+// runs the later one again too.
 func (c *Controller) signoffTarget(ctx context.Context, id string, steps []pipelineStep) (string, error) {
 	return c.rejectedTarget(ctx, id, typedRejects(steps))
 }
 
-// rejectStep rejects the sign-off for a typed target: the sign-off's
-// rejection first, naming what runs again, then a rejection of the
-// target's latest version, which gives its re-run the feedback and tells a
-// reopen what runs, then the later gated steps' versions superseded. A
-// crash between the two rejections leaves a plain one, which re-runs every
-// slice's cards with the feedback. The target runs again, with everything
-// after it. The caller holds the run slot.
+// signoffRestart is the step a plain sign-off rejection runs again: the
+// first typed target that checks decisions, the shared decisions when they
+// ran, else the first slice's design. "" when steps hold none, as on a
+// record from before slices, where the rejection re-runs the cards.
+func signoffRestart(steps []pipelineStep) string {
+	for _, a := range typedRejects(steps) {
+		if i := stepIndex(steps, a.Target); i >= 0 && slices.Contains(steps[i].Checks, pack.CheckDecisions) {
+			return a.Target
+		}
+	}
+
+	return ""
+}
+
+// rejectStep rejects the sign-off for a target, typed or a plain
+// rejection's restart (signoffRestart): the sign-off's rejection first,
+// naming what runs again, then a rejection of the target's latest version,
+// which gives its re-run the feedback and tells a reopen what runs, then
+// the later gated steps' versions superseded. A crash between the two
+// rejections leaves a plain one, which re-runs every slice's cards with the
+// feedback. The target runs again, with everything after it. The caller
+// holds the run slot.
 func (c *Controller) rejectStep(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, out outcome, target, feedback, msgID string) error {
 	au := sess.audit
 
@@ -430,9 +446,11 @@ func (c *Controller) rejectStep(ctx, runCtx context.Context, r *run, sess *sessi
 
 // atReadyEnd handles a message after the pipeline ended ready, matching it to
 // the sign-off's replies as a stage's gate does. Undecided:
-// approve emits, reject with feedback re-runs the loop's target stage, from
-// its first slice's step. reject slicing <feedback>, reject SL<n> <feedback>
-// and reject <shared stage> <feedback> run that step and everything after it
+// approve emits, reject with feedback runs the blueprint again from its
+// first decisions (signoffRestart) as the typed rejection of that step does,
+// or, with no such step, re-runs the loop's target stage from its first
+// slice's step. reject slicing <feedback>, reject SL<n> <feedback> and
+// reject <shared stage> <feedback> run that step and everything after it
 // again; one that names no step of the blueprint is a note with a hint.
 // Approved with emission unfinished: approve resumes it, and other text is
 // a note with that hint, or without one when the record cannot be read.
@@ -515,6 +533,10 @@ func (c *Controller) atReadyEnd(ctx, runCtx context.Context, r *run, sess *sessi
 		case reject && c.namesAStep(text):
 			note.Payload["hint"] = typedNoteHint(text, typed, listed)
 		case reject:
+			if target := signoffRestart(steps); target != "" {
+				return c.rejectStep(ctx, runCtx, r, sess, bp, out, target, feedback, msgID)
+			}
+
 			if c.decide(ctx, sess.audit, bp.ID, signoffStage, out.art.Version, store.GateReject, feedback, store.ResponderHuman, msgID) {
 				c.launch(runCtx, r, sess, bp, loopTargets(steps, end.LoopsTo)[0].ID)
 

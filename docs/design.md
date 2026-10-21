@@ -452,15 +452,17 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   `cross`, findings between artifacts (decisions, contracts, cards and
   assumptions that disagree, a near-duplicate assumption, an outcome no
   criterion proves), each `X<n>` with a severity (critical, major or minor),
-  its text and the ids it names; they never loop. The `readiness` check
-  refuses a cards list of another shape (`readiness_shape`), an entry
-  without an id, a ready flag or findings that say why, a card judged twice,
-  or a ready card that carries a finding (`card_entry`), a card of the draft
-  left out (`card_unjudged`) or one no draft holds (`card_unknown`), and a
-  cross finding of another shape or with a bad id, severity, text or refs
-  (`cross_shape`, `cross_id`, `cross_severity`, `cross_text`, `cross_refs`);
-  bounded, never fatal. With two or more slices it reads each slice's
-  grounding as a digest of its project facts and verdicts.
+  its text and the ids it names; they never loop. A decision, criterion,
+  assumption or card that still contradicts the sign-off's feedback is
+  critical. The `readiness` check refuses a cards list of another shape
+  (`readiness_shape`), an entry without an id, a ready flag or findings that
+  say why, a card judged twice, or a ready card that carries a finding
+  (`card_entry`), a card of the draft left out (`card_unjudged`) or one no
+  draft holds (`card_unknown`), and a cross finding of another shape or with
+  a bad id, severity, text or refs (`cross_shape`, `cross_id`,
+  `cross_severity`, `cross_text`, `cross_refs`); bounded, never fatal. With
+  two or more slices it reads each slice's grounding as a digest of its
+  project facts and verdicts.
 - Solution design's submit is checked: it has slices, every slice of slicing
   among them, or a per-slice design's own slice alone (`slice_missing`,
   `slice_extra`); every decision has a chosen option, a rejected option and
@@ -1151,15 +1153,19 @@ emits (over a critical finding, or over cards readiness did not pass, it
 takes a reason, `approve <reason>`, which the button asks for: recorded as
 the approval's feedback and the decided event's `override_reason`, served in
 the sign-off's data and kept by the export; a bare `approve` is then a note
-asking for it), and `reject <feedback>` stores the feedback and re-runs
-decomposition, every slice's in slice order, and readiness with it, the
-three readiness rounds counted again from the rejection. `reject slicing
-<feedback>` runs slicing and everything after it again, `reject SL<n>
-<feedback>` slice n's design and everything after it, earlier slices
-staying, and `reject shared_decisions <feedback>` the shared decisions and
-every slice. Those are typed and never offered as buttons; the sign-off's
-text lists `reject slicing` always and the others with two or more slices;
-one that names no step of the blueprint is a note with a hint. `auto+emit`
+asking for it), and `reject <feedback>` stores the feedback and runs the
+blueprint again from its first decisions: the shared decisions when they
+ran, else the first slice's design, with everything after it, as the typed
+rejection of that step does. On a record whose steps have no such step, it
+re-runs decomposition, every slice's in slice order. Every stage that runs
+after a sign-off rejection is given its feedback, and the three readiness
+rounds count again from the rejection. `reject slicing <feedback>` runs
+slicing and everything after it again, `reject SL<n> <feedback>` slice n's
+design and everything after it, earlier slices staying, and `reject
+shared_decisions <feedback>` the shared decisions and every slice. Those are
+typed and never offered as buttons; the sign-off's text lists `reject
+slicing` always and the others with two or more slices; one that names no
+step of the blueprint is a note with a hint. `auto+emit`
 and `yolo` approve on their own when preflight runs and finds nothing
 blocking and no warning, never over a critical finding across the blueprint
 or over cards readiness did not pass, and stop for a human otherwise. The
@@ -1290,7 +1296,7 @@ the mockup reply (see Mockups):
 
 | Reply                         | Effect                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
-| `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At a slice's design gate, `reject slicing <feedback>` runs slicing and everything after it again, and `reject shared_decisions <feedback>` the shared decisions and every slice. At the sign-off, approve emits and resumes an emission that stopped, and reject re-runs decomposition, every slice's in slice order, with the feedback. `reject slicing <feedback>` runs slicing and everything after it again, `reject SL<n> <feedback>` that slice's design and every later slice, and `reject shared_decisions <feedback>` the shared decisions and every slice; the sign-off records its rejection first, then a rejection of the step that runs again, and the replaced versions superseded. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
+| `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At a slice's design gate, `reject slicing <feedback>` runs slicing and everything after it again, and `reject shared_decisions <feedback>` the shared decisions and every slice. At the sign-off, approve emits and resumes an emission that stopped, and reject runs the blueprint again from its first decisions, the shared decisions when they ran, else the first slice's design, with everything after it, as the typed rejection of that step does; on a record whose steps have no such step it re-runs decomposition, every slice's in slice order. Every stage that runs after a sign-off rejection is given its feedback. `reject slicing <feedback>` runs slicing and everything after it again, `reject SL<n> <feedback>` that slice's design and every later slice, and `reject shared_decisions <feedback>` the shared decisions and every slice; the sign-off records its rejection first, then a rejection of the step that runs again, and the replaced versions superseded. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
 | `show mockup`, `skip mockup`  | Answers the mockup offer (see Mockups): show runs the mockup step, skip goes on without it. Matched as a gate's replies are; any other text while the offer waits is a note and the offer stays open. |
 | `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round, gate or mockup offer keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
 | `cap <usd>`, `cap off`        | Sets the blueprint's cost cap (see below); CM sends it when the person clicks the cost in the sheet header. Exactly two words, the amount one plain decimal number, so an answer that starts with "cap" stays an answer. Works while a stage runs. |
@@ -1381,7 +1387,7 @@ the mockup reply (see Mockups):
   readiness's rounds on a pack with no stage that checks cards, is not
   re-run; the user starts a new blueprint with a better design. With such a
   stage, readiness's spent rounds go to the sign-off, whose reject re-runs
-  the cards.
+  the blueprint.
 - From slice 4, a project may opt into automatic export in config: a target
   repo, branch and directory; the bundle is committed there at each gate or at
   sign-off. Off by default.

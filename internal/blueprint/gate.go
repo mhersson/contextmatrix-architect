@@ -18,7 +18,7 @@ import (
 // gateAction is one reply a gate takes. Label and Reply are what the panel
 // offers, and a Feedback action needs text after its reply. Decision is what
 // the reply records; a stage gate's reject runs Target again, and the
-// sign-off's reject leaves the stage to re-run to the pack's loop. Ask labels
+// sign-off's plain reject leaves the step to re-run to atReadyEnd. Ask labels
 // the text box a Feedback action opens; empty leaves the panel's own label.
 // Recommended marks the reply the panel suggests.
 type gateAction struct {
@@ -42,10 +42,11 @@ func stageGateActions(stageID string) []gateAction {
 
 // signoffActions are the replies the sign-off takes: approve, which also
 // overrides the warnings it was shown with, and reject with feedback, which
-// re-runs the loop's target stage. Over a critical finding across the
-// blueprint, or over the card findings readiness's last round left open
-// (open), approve takes a reason, which it records; a critical finding's
-// wording wins when both apply.
+// runs the blueprint again from its first decisions (signoffRestart), or
+// the loop's target stage on a record with none. Over a critical finding
+// across the blueprint, or over the card findings readiness's last round
+// left open (open), approve takes a reason, which it records; a critical
+// finding's wording wins when both apply.
 func signoffActions(warnings, critical, open bool) []gateAction {
 	approve := gateAction{Label: "Approve", Reply: store.GateApprove, Decision: store.GateApprove}
 

@@ -3,6 +3,7 @@ package blueprint
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -140,21 +141,29 @@ func TestReadiness_TheRoundCapCountsPerBlueprint(t *testing.T) {
 	assert.Equal(t, 3, report.Payload["rounds"])
 }
 
-func TestSignoff_ARejectRerunsEverySlicesCards(t *testing.T) {
+func TestSignoff_ARejectRunsFromTheSharedDecisionsWithTwoSlices(t *testing.T) {
 	c, _, runner, rec := newSliced(t, slicedScript())
 	driveIn(t, c, autoStart("BP1"))
 	require.True(t, rec.has(EventSignOff))
 
+	before := len(stagesRun(runner))
+
 	require.NoError(t, c.Message(context.Background(), "BP1", "reject split the export card", "m2"))
 	c.Wait("BP1")
 
-	assert.Equal(t, []string{"decomposition@SL1", "decomposition@SL2", "readiness", "decomposition@SL1", "decomposition@SL2", "readiness"},
-		stepRuns(runner, "decomposition", "readiness"))
+	assert.Equal(t, []string{
+		"shared_decisions",
+		"solution_design@SL1", "grounding@SL1", "acceptance@SL1", "decomposition@SL1",
+		"solution_design@SL2", "grounding@SL2", "acceptance@SL2", "decomposition@SL2", "readiness",
+	}, stagesRun(runner)[before:], "the blueprint runs again from its first decisions")
 
-	cards := inputsOf(runner, "decomposition@SL2")
-	require.Len(t, cards, 2)
-	assert.Contains(t, cards[1].Task, "split the export card", "every slice's cards get the sign-off's feedback")
-	assert.Len(t, inputsOf(runner, "solution_design@SL2"), 1)
+	designs := inputsOf(runner, "solution_design@SL2")
+	require.Len(t, designs, 2)
+	assert.Contains(t, designs[1].Task, "split the export card", "every later stage gets the sign-off's feedback")
+
+	shared := inputsOf(runner, "shared_decisions")
+	require.Len(t, shared, 2)
+	assert.Equal(t, 1, strings.Count(shared[1].Task, "split the export card"), "the restarted stage gets the feedback once")
 	assert.Equal(t, 2, rec.count(EventSignOff), "the sign-off is shown again")
 }
 
@@ -162,14 +171,14 @@ func TestSignoff_AFailedFirstRunOfARejectResumesUnderItsKey(t *testing.T) {
 	var rejected, failed atomic.Bool
 
 	script := slicedScript()
-	cards := script["decomposition"]
-	script["decomposition"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		// The reject's first run, SL1's, fails once.
-		if rejected.Load() && sliceOf(in) == "SL1" && !failed.Swap(true) {
+	shared := script["shared_decisions"]
+	script["shared_decisions"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		// The reject's first run, the shared decisions', fails once.
+		if rejected.Load() && !failed.Swap(true) {
 			return stage.Output{}, errors.New("model unavailable")
 		}
 
-		return cards(ctx, in)
+		return shared(ctx, in)
 	}
 
 	c, st, runner, rec := newSliced(t, script)
@@ -178,10 +187,12 @@ func TestSignoff_AFailedFirstRunOfARejectResumesUnderItsKey(t *testing.T) {
 	driveIn(t, c, autoStart("BP1"))
 	require.True(t, rec.has(EventSignOff))
 
+	before := len(stagesRun(runner))
+
 	rejected.Store(true)
 	require.NoError(t, c.Message(ctx, "BP1", "reject split the export card", "m2"))
 	c.Wait("BP1")
-	require.Len(t, inputsOf(runner, "decomposition@SL1"), 2, "the reject's first run failed")
+	require.Len(t, inputsOf(runner, "shared_decisions"), 2, "the reject's first run failed")
 
 	// The verdict the sign-off rejected is still the latest done stage run:
 	// the resume reads the re-run from it.
@@ -189,9 +200,10 @@ func TestSignoff_AFailedFirstRunOfARejectResumesUnderItsKey(t *testing.T) {
 	c.Wait("BP1")
 
 	assert.Equal(t, []string{
-		"decomposition@SL1", "decomposition@SL2", "readiness",
-		"decomposition@SL1", "decomposition@SL1", "decomposition@SL2", "readiness",
-	}, stepRuns(runner, "decomposition", "readiness"))
+		"shared_decisions", "shared_decisions",
+		"solution_design@SL1", "grounding@SL1", "acceptance@SL1", "decomposition@SL1",
+		"solution_design@SL2", "grounding@SL2", "acceptance@SL2", "decomposition@SL2", "readiness",
+	}, stagesRun(runner)[before:])
 	assert.Equal(t, 2, rec.count(EventSignOff))
 
 	runs, err := st.ListRuns(ctx, "BP1")

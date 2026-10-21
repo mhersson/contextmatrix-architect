@@ -793,7 +793,7 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipe
 	writePOC(&b, poc)
 
 	if st.Gate {
-		if err := c.writeGateFeedback(ctx, &b, bp, st, attempt); err != nil {
+		if _, err := c.writeGateFeedback(ctx, &b, bp, st, attempt); err != nil {
 			return "", err
 		}
 	}
@@ -811,7 +811,7 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipe
 			return "", err
 		}
 
-		if err := c.writeGateFeedback(ctx, &b, bp, fst, built.Attempt); err != nil {
+		if _, err := c.writeGateFeedback(ctx, &b, bp, fst, built.Attempt); err != nil {
 			return "", err
 		}
 

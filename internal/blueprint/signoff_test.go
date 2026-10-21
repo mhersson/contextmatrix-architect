@@ -155,6 +155,7 @@ func TestSignoff_OtherTextIsANoteWithTheHint(t *testing.T) {
 	note, ok := rec.first(EventNote)
 	require.True(t, ok)
 	assert.Contains(t, note.Payload["hint"], "approve")
+	assert.Contains(t, note.Payload["hint"], "reject <feedback> to re-run the blueprint with your feedback", "a reject runs the blueprint again")
 	assert.Equal(t, signoffStage, note.Payload["stage"])
 }
 

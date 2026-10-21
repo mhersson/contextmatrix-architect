@@ -423,7 +423,7 @@ func TestLogEntryFor_SignoffSaysWhatPreflightFound(t *testing.T) {
 				assert.NotContains(t, entry.Content, s)
 			}
 
-			assert.Contains(t, entry.Content, "`reject <feedback>`")
+			assert.Contains(t, entry.Content, "`reject <feedback>` to re-run the blueprint with your feedback.")
 		})
 	}
 }

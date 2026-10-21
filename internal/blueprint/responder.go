@@ -240,7 +240,7 @@ func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st p
 	writePOC(&b, poc)
 
 	if st.Gate {
-		if err := c.writeGateFeedback(ctx, &b, bp, st, attempt); err != nil {
+		if _, err := c.writeGateFeedback(ctx, &b, bp, st, attempt); err != nil {
 			return "", err
 		}
 	}
