@@ -80,6 +80,12 @@ func TestCards_ASliceIsCheckedInsideTheEarlierSlicesCards(t *testing.T) {
 	gone := cardFor("D1", []any{"AC1"})
 	gone["where"] = []any{map[string]any{"path": "internal/gone.go", "symbol": "Gone"}}
 
+	created := cardFor("D1", []any{"AC1"})
+	created["where"] = []any{map[string]any{"path": "internal/created.go", "new": true}}
+
+	unmarked := cardFor("D1", []any{"AC1"})
+	unmarked["where"] = []any{map[string]any{"path": "internal/created.go"}}
+
 	// Without AGENTS.md in the checkout, SL1 names D1 as the card that writes it.
 	instructed := draftOf("", cardFor("D1", []any{"AC1"}))
 	instructed["setup"] = map[string]any{"alpha": map[string]any{"instruction_card": "D1"}}
@@ -112,6 +118,14 @@ func TestCards_ASliceIsCheckedInsideTheEarlierSlicesCards(t *testing.T) {
 		{
 			name: "an earlier slice needs no title, even with two cards",
 			key:  "decomposition@SL1", data: draftOf("", cardFor("D1", []any{"AC1"}), cardFor("D3", nil, "D1")),
+		},
+		{
+			name: "a card that creates a file the checkout lacks, marked new",
+			key:  "decomposition@SL1", data: draftOf("", created),
+		},
+		{
+			name: "the same file not marked new",
+			key:  "decomposition@SL1", data: draftOf("", unmarked), refused: true, names: "D1: where_exists:",
 		},
 		{
 			name: "SL1's stored cards have a finding of their own",

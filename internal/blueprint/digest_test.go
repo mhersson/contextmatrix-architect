@@ -130,6 +130,20 @@ func TestDigestOf(t *testing.T) {
 		assert.Less(t, len(raw), len(art.Data), "the card bodies stay out")
 	})
 
+	t.Run("cards keep which Where paths are new", func(t *testing.T) {
+		card := cardFor("D1", nil)
+		card["where"] = []any{
+			map[string]any{"path": "internal/x.go"},
+			map[string]any{"path": "internal/created.go", "new": true},
+		}
+
+		d, ok := digestOf([]string{pack.CheckCards}, storedAs(t, draftOf("Export the reports", card)))
+		require.True(t, ok)
+		require.Len(t, d.Cards, 1)
+		assert.Equal(t, []string{"internal/x.go", "internal/created.go"}, d.Cards[0].Where)
+		assert.Equal(t, []string{"internal/created.go"}, d.Cards[0].New)
+	})
+
 	for _, tt := range []struct {
 		name   string
 		checks []string

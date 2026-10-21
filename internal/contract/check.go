@@ -498,7 +498,9 @@ func reaches(deps map[string][]string, start []string, target string) bool {
 }
 
 // checkWhere verifies every path exists under root and every named symbol
-// occurs in its file. Paths escaping root are findings, never reads.
+// occurs in its file. A path marked new must not exist, and its symbol is
+// not checked, since the file is not there to read. Paths escaping root are
+// findings, never reads.
 func checkWhere(c Card, root string) []Finding {
 	var out []Finding
 
@@ -512,13 +514,21 @@ func checkWhere(c Card, root string) []Finding {
 
 		full := filepath.Join(root, clean)
 
+		if w.New {
+			if _, err := os.Stat(full); err == nil {
+				out = append(out, Finding{c.ID, "where_exists", fmt.Sprintf("path %q is marked new but exists at the recorded commit", w.Path)})
+			}
+
+			continue
+		}
+
 		data, err := os.ReadFile(full)
 		if err != nil {
 			if info, statErr := os.Stat(full); statErr == nil && info.IsDir() && w.Symbol == "" {
 				continue
 			}
 
-			out = append(out, Finding{c.ID, "where_exists", fmt.Sprintf("path %q does not exist at the recorded commit", w.Path)})
+			out = append(out, Finding{c.ID, "where_exists", fmt.Sprintf("path %q does not exist at the recorded commit; mark it \"new\" if a card creates it", w.Path)})
 
 			continue
 		}

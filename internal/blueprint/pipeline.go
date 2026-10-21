@@ -63,8 +63,9 @@ type outcome struct {
 // failing card, and every later slice's after it (the chain). Its last
 // round's verdict goes to the sign-off with the cards it did not pass, and
 // ends the pipeline on a pack with no stage that checks cards. A verdict the
-// sign-off rejected runs the step a typed rejection named, with everything
-// after it, or else the chain from the first slice.
+// sign-off rejected runs the step the rejection named, a typed one's or a
+// plain one's restart (signoffRestart), with everything after it, or else,
+// for a rejection that named none, the chain from the first slice.
 func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed string) (outcome, error) {
 	steps, _, err := c.steps(ctx, bp.ID)
 	if err != nil {
@@ -119,8 +120,9 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 
 			switch {
 			case rejected:
-				// A rejection of the sign-off re-runs the cards whatever the
-				// verdict found; a verdict at the cap reaches the sign-off too.
+				// A rejection of the sign-off re-runs its target, or the cards,
+				// whatever the verdict found; a verdict at the cap reaches the
+				// sign-off too.
 				target, err := c.signoffTarget(ctx, bp.ID, steps)
 				if err != nil {
 					return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
@@ -793,8 +795,9 @@ func (c *Controller) report(ctx context.Context, sess *session, bp store.Bluepri
 // order, a per-slice step's for its own slice, then each earlier slice's
 // after them; for a stage run again after a rejection at its gate, the
 // rejected artifact and every feedback; for a loop's target, its last
-// submit and the loop's findings; and for a run that shapes cards the target
-// projects that are proofs of concept (poc, from pocProjects).
+// submit and the loop's findings; after a sign-off rejection, its feedback
+// the gate feedback did not already give; and for a run that shapes cards
+// the target projects that are proofs of concept (poc, from pocProjects).
 func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pipelineStep, poc []string) (string, error) {
 	var b strings.Builder
 
@@ -813,13 +816,20 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pipelin
 	c.writeEdgeCases(&b, st)
 	writePOC(&b, poc)
 
+	var given []string
+
 	if st.Gate {
-		if err := c.writeGateFeedback(ctx, &b, bp, st, 0); err != nil {
+		var err error
+		if given, err = c.writeGateFeedback(ctx, &b, bp, st, 0); err != nil {
 			return "", err
 		}
 	}
 
 	if err := c.writeLoopFindings(ctx, &b, bp, st); err != nil {
+		return "", err
+	}
+
+	if err := c.writeSignoffFeedback(ctx, &b, bp.ID, given); err != nil {
 		return "", err
 	}
 
@@ -1113,40 +1123,66 @@ func (c *Controller) writeInput(ctx context.Context, b *strings.Builder, id stri
 
 // writeGateFeedback gives a run of st's attempt the artifact the attempt
 // started from and the feedback of every rejection, when that artifact was
-// rejected at the gate. Attempt 0 is a fresh one, which starts from the
-// latest artifact.
-func (c *Controller) writeGateFeedback(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pipelineStep, attempt int) error {
+// rejected at the gate, and returns the feedback it wrote; nil when it wrote
+// none. Attempt 0 is a fresh one, which starts from the latest artifact.
+func (c *Controller) writeGateFeedback(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pipelineStep, attempt int) ([]string, error) {
 	feedback, err := c.gateFeedback(ctx, bp.ID, st.ID)
 	if err != nil {
-		return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
+		return nil, fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
 	}
 
 	if len(feedback) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	rejected, found, err := c.startedFrom(ctx, bp.ID, st.ID, attempt)
 	if err != nil {
-		return fmt.Errorf("blueprint: task for %s: the rejected artifact: %w", st.ID, err)
+		return nil, fmt.Errorf("blueprint: task for %s: the rejected artifact: %w", st.ID, err)
 	}
 
 	if !found {
-		return nil
+		return nil, nil
 	}
 
 	// A later version approved at the gate was not rejected, and the
 	// feedback on earlier versions is already addressed in it.
 	decision, err := c.gateDecision(ctx, bp.ID, st.ID, rejected.Version)
 	if err != nil {
-		return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
+		return nil, fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
 	}
 
 	if decision != store.GateReject {
-		return nil
+		return nil, nil
 	}
 
 	writeArtifact(b, fmt.Sprintf("%s version %d, which was rejected at its gate", st.ID, rejected.Version), rejected)
 	b.WriteString("## Gate feedback\n\nEvery rejection at this stage's gate, oldest first; the new version must address all of it:\n\n")
+
+	for _, f := range feedback {
+		b.WriteString("- " + f + "\n")
+	}
+
+	b.WriteString("\n")
+
+	return feedback, nil
+}
+
+// writeSignoffFeedback gives a run the feedback of every rejection at the
+// sign-off, oldest first, less the entries the run's gate feedback already
+// gave (given): the step a rejection runs again has its feedback as a gate
+// rejection of its own. Nothing when none is left.
+func (c *Controller) writeSignoffFeedback(ctx context.Context, b *strings.Builder, id string, given []string) error {
+	feedback, err := c.gateFeedback(ctx, id, signoffStage)
+	if err != nil {
+		return fmt.Errorf("blueprint: the sign-off's feedback: %w", err)
+	}
+
+	feedback = slices.DeleteFunc(feedback, func(f string) bool { return slices.Contains(given, f) })
+	if len(feedback) == 0 {
+		return nil
+	}
+
+	b.WriteString("## Sign-off feedback\n\nA human rejected earlier cards at the sign-off with this feedback, oldest first; the blueprint must now honour all of it:\n\n")
 
 	for _, f := range feedback {
 		b.WriteString("- " + f + "\n")
@@ -1201,8 +1237,8 @@ func (c *Controller) startedFrom(ctx context.Context, id, stageID string, attemp
 	return store.Artifact{}, false, nil
 }
 
-// writeLoopFindings gives a stage a loop re-runs what it submitted last,
-// the loop stage's verdict on it and the sign-off's feedback.
+// writeLoopFindings gives a stage a loop re-runs what it submitted last
+// and the loop stage's verdict on it.
 func (c *Controller) writeLoopFindings(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pipelineStep) error {
 	for _, other := range c.opts.Pack.Stages {
 		if other.LoopsTo != st.Stage.ID {
@@ -1225,21 +1261,6 @@ func (c *Controller) writeLoopFindings(ctx context.Context, b *strings.Builder, 
 
 		writeArtifact(b, fmt.Sprintf("%s version %d, which %s judged", st.ID, judged.Version, other.ID), judged)
 		writeArtifact(b, fmt.Sprintf("%s findings (round %d)", other.ID, verdict.Version), verdict)
-
-		feedback, err := c.gateFeedback(ctx, bp.ID, signoffStage)
-		if err != nil {
-			return fmt.Errorf("blueprint: task for %s: %w", st.ID, err)
-		}
-
-		if len(feedback) > 0 {
-			b.WriteString("## Sign-off feedback\n\nA human rejected earlier cards with this feedback; address all of it:\n\n")
-
-			for _, f := range feedback {
-				b.WriteString("- " + f + "\n")
-			}
-
-			b.WriteString("\n")
-		}
 	}
 
 	return nil

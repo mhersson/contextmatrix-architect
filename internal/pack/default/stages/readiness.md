@@ -5,9 +5,11 @@ Input: every slice's cards, in slicing order, whole, with the need, the mockup w
 For every card, answer with the checkout open: could an agent with only this
 repository and this card finish it on the first attempt? Judge one
 deliverable, no open decision, no optional scope, a planner split of two
-subtasks or fewer, and that every path and symbol under Where exists. In an
-empty repository (repo_info marks it empty), Where names the files a card
-creates: judge that they are new, not that they exist.
+subtasks or fewer. The architect checked every `where` path against the
+checkout before you judge: one without `new` exists, and one marked `new`
+does not exist yet. Whether a path exists, or whether a file a card creates
+should be listed or marked new, is never a finding, in any round: the same
+`where` gets the same judgement every time.
 
 A finding is only what would make an agent with only this repository and
 this card fail or build the wrong thing. A point the agent can settle on its
@@ -57,9 +59,10 @@ Report each in `cross`, `{"id": "X1", "severity": "critical", "major" or
 "minor", "text": "<one sentence a person can act on>", "refs": ["<the ids
 it names, such as DEC2, AC4, D3, A5, O1, SL2>"]}`: critical when building
 as planned would deliver the wrong thing or break what the need promises,
-major when someone would have to guess, minor otherwise. These never send
-cards back. When nothing disagrees across the blueprint, `cross` is an
-empty list or left out; never invent a finding.
+or when a decision, criterion, assumption or card still contradicts the
+sign-off feedback in the task, major when someone would have to guess,
+minor otherwise. These never send cards back. When nothing disagrees across
+the blueprint, `cross` is an empty list or left out; never invent a finding.
 
 Produce markdown with one `## <card id>: <title>` section per card holding
 `ready` or the findings that block it. Submit with a data object

@@ -155,6 +155,7 @@ func TestSignoff_OtherTextIsANoteWithTheHint(t *testing.T) {
 	note, ok := rec.first(EventNote)
 	require.True(t, ok)
 	assert.Contains(t, note.Payload["hint"], "approve")
+	assert.Contains(t, note.Payload["hint"], "reject <feedback> to re-run the blueprint with your feedback", "a reject runs the blueprint again")
 	assert.Equal(t, signoffStage, note.Payload["stage"])
 }
 
@@ -1784,6 +1785,45 @@ func TestSignoff_RejectOverOpenFindingsRerunsWithFreshRounds(t *testing.T) {
 	assert.Equal(t, store.GateReject, gates[0].Decision)
 	assert.Equal(t, 3, gates[0].Version)
 	assert.Equal(t, string(StateWaiting), stateOf(t, st, "BP1"))
+}
+
+func TestSignoff_ARejectOverOpenFindingsRunsFromTheDecisions(t *testing.T) {
+	var readinessRuns atomic.Int32
+
+	script := slicedScript()
+	script["slicing"] = returns("# Slices", oneSlice())
+	script["readiness"] = func(context.Context, stage.Input) (stage.Output, error) {
+		if readinessRuns.Add(1) <= 3 {
+			return done("# Not ready", readiness(false)), nil
+		}
+
+		return done("# Ready", readiness(true)), nil
+	}
+
+	c, _, runner, rec := newSliced(t, script)
+	ctx := context.Background()
+
+	driveIn(t, c, autoStart("BP1"))
+
+	shown := rec.all(EventSignOff)
+	require.Len(t, shown, 1)
+	require.NotEmpty(t, shown[0].Payload["not_ready"], "the spent rounds go to the sign-off")
+
+	before := len(stagesRun(runner))
+
+	require.NoError(t, c.Message(ctx, "BP1", "reject split the card", "m2"))
+	c.Wait("BP1")
+
+	assert.Equal(t, []string{"solution_design@SL1", "grounding@SL1", "acceptance@SL1", "decomposition@SL1", "readiness"},
+		stagesRun(runner)[before:], "the blueprint runs again from the slice's design")
+
+	reports := rec.all(EventReport)
+	require.Len(t, reports, 2)
+	assert.Equal(t, 1, reports[1].Payload["rounds"], "the rounds count again from the rejection")
+
+	shown = rec.all(EventSignOff)
+	require.Len(t, shown, 2, "the ready end shows a second sign-off")
+	assert.Equal(t, []string{}, shown[1].Payload["not_ready"])
 }
 
 func TestReopen_SpentReadinessRoundsReopenAtTheSignoff(t *testing.T) {

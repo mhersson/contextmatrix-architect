@@ -227,9 +227,11 @@ func optionAnswer(q protocol.RoundQuestion, text string) protocol.RoundAnswer {
 // responderTask is what a responder is given: the target projects, the
 // need, the asking stage's inputs, the target projects that are proofs of
 // concept when the asking stage shapes cards, the gate feedback the asking
-// attempt addresses, the user's notes, every answer so far and the question
-// with its options and context, followed by concern, the consequence of an
-// earlier answer to it the person turned down, when there is one.
+// attempt addresses, after a sign-off rejection its feedback the gate
+// feedback did not already give, the user's notes, every answer so far and
+// the question with its options and context, followed by concern, the
+// consequence of an earlier answer to it the person turned down, when there
+// is one.
 func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st pipelineStep, attempt int, poc []string, q protocol.RoundQuestion, concern string) (string, error) {
 	var b strings.Builder
 
@@ -239,10 +241,17 @@ func (c *Controller) responderTask(ctx context.Context, bp store.Blueprint, st p
 
 	writePOC(&b, poc)
 
+	var given []string
+
 	if st.Gate {
-		if err := c.writeGateFeedback(ctx, &b, bp, st, attempt); err != nil {
+		var err error
+		if given, err = c.writeGateFeedback(ctx, &b, bp, st, attempt); err != nil {
 			return "", err
 		}
+	}
+
+	if err := c.writeSignoffFeedback(ctx, &b, bp.ID, given); err != nil {
+		return "", err
 	}
 
 	if err := c.writeNotes(ctx, &b, bp.ID); err != nil {

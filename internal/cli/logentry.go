@@ -934,7 +934,7 @@ func signoffText(p map[string]any, sliced bool) (body, reply string) {
 		reply += " (this also overrides the warnings)"
 	}
 
-	reply += ", or `reject <feedback>` to re-run decomposition with your feedback."
+	reply += ", or `reject <feedback>` to re-run the blueprint with your feedback."
 
 	// Below two slices only the typed replies that name no slice are
 	// listed: nothing slice-related shows.

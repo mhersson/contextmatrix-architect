@@ -37,7 +37,9 @@ Rules:
   summary, its pros and cons and the source tags it rests on, if any. Give
   the position of the option you recommend as recommended, never written
   into the option text. Never add an "other" option: the user can always
-  type their own answer.
+  type their own answer. Each option is one choice: never bundle into one
+  option capabilities a person could want apart; ask about each in its own
+  question, so no answer drops one unasked.
 - Your run ends on the round, and the answers arrive as your next message,
   numbered Q<n>. When an answer is vague, contradicts another or raises a
   new question, ask a follow-up round. Never ask again what an answer

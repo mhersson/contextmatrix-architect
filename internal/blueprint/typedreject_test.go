@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -214,6 +215,85 @@ func TestSignoff_ATypedRejectRetargets(t *testing.T) {
 			assert.Equal(t, tt.rows, rows[rowsBefore:rowsBefore+2], "the sign-off's rejection, then the design's")
 		})
 	}
+}
+
+func TestSignoff_ARejectRunsFromTheDesignWithOneSlice(t *testing.T) {
+	var designs atomic.Int32
+
+	script := slicedScript()
+	script["slicing"] = returns("# Slices", oneSlice())
+	script["readiness"] = returns("# Ready", readinessFor(true, "D1"))
+	script["solution_design"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		assumption := "Each item records who added it."
+		if designs.Add(1) == 1 {
+			assumption = "Each item records no author."
+		}
+
+		return done("# Design "+sliceOf(in), map[string]any{"assumptions": []any{assumption}}), nil
+	}
+
+	c, st, runner, rec := newSliced(t, script)
+	ctx := context.Background()
+
+	driveIn(t, c, autoStart("BP1"))
+	require.True(t, rec.has(EventSignOff))
+
+	before, rowsBefore := len(stagesRun(runner)), len(gateRows(t, st))
+
+	require.NoError(t, c.Message(ctx, "BP1", "reject record who added each item", "m2"))
+	c.Wait("BP1")
+
+	assert.Equal(t, []string{"solution_design@SL1", "grounding@SL1", "acceptance@SL1", "decomposition@SL1", "readiness"},
+		stagesRun(runner)[before:], "the blueprint runs again from the slice's design")
+
+	for _, key := range []string{"acceptance@SL1", "decomposition@SL1", "readiness"} {
+		runs := inputsOf(runner, key)
+		require.Len(t, runs, 2, key)
+		assert.Contains(t, runs[1].Task, "record who added each item", "%s gets the sign-off's feedback", key)
+	}
+
+	design := inputsOf(runner, "solution_design@SL1")
+	require.Len(t, design, 2)
+	assert.Equal(t, 1, strings.Count(design[1].Task, "record who added each item"), "the design gets the feedback once")
+
+	rows := gateRows(t, st)
+	require.GreaterOrEqual(t, len(rows), rowsBefore+3)
+	assert.Equal(t, []string{"signoff@1:reject", "solution_design@SL1@1:reject", "acceptance@SL1@1:superseded"},
+		rows[rowsBefore:rowsBefore+3], "the sign-off's rejection, the design's, then what the re-run replaces")
+
+	var reruns []any
+
+	for _, e := range rec.all(EventDecided) {
+		if e.Payload["stage"] == signoffStage {
+			reruns = append(reruns, e.Payload["reruns"])
+		}
+	}
+
+	assert.Equal(t, []any{"solution_design@SL1"}, reruns, "the sign-off's rejection names what runs again")
+
+	shown := rec.all(EventSignOff)
+	require.Len(t, shown, 2, "the sign-off is shown again")
+
+	var texts []any
+
+	for _, a := range anyList(shown[1].Payload["assumptions"]) {
+		texts = append(texts, a.(map[string]any)["text"])
+	}
+
+	assert.Contains(t, texts, "Each item records who added it.", "the new design's assumption is signed off")
+	assert.NotContains(t, texts, "Each item records no author.", "the rejected design's assumption is gone")
+
+	reports := rec.all(EventReport)
+	require.Len(t, reports, 2)
+	assert.Equal(t, 1, reports[1].Payload["rounds"], "the rounds count again from the rejection")
+
+	require.NoError(t, c.Message(ctx, "BP1", "reject also show who is here", "m3"))
+	c.Wait("BP1")
+
+	design = inputsOf(runner, "solution_design@SL1")
+	require.Len(t, design, 3)
+	assert.Equal(t, 1, strings.Count(design[2].Task, "record who added each item"), "every rejection's feedback, once")
+	assert.Equal(t, 1, strings.Count(design[2].Task, "also show who is here"), "every rejection's feedback, once")
 }
 
 // A reopen reads a typed rejection's target from the loop stage's verdict,
