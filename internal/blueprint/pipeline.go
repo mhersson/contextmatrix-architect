@@ -1182,7 +1182,7 @@ func (c *Controller) writeSignoffFeedback(ctx context.Context, b *strings.Builde
 		return nil
 	}
 
-	b.WriteString("## Sign-off feedback\n\nA human rejected earlier cards at the sign-off with this feedback; the blueprint must now honour all of it:\n\n")
+	b.WriteString("## Sign-off feedback\n\nA human rejected earlier cards at the sign-off with this feedback, oldest first; the blueprint must now honour all of it:\n\n")
 
 	for _, f := range feedback {
 		b.WriteString("- " + f + "\n")

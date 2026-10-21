@@ -246,11 +246,12 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   the stage has a gate that does not fold, the reviewer the pack declares
   for it then judges the accepted artifact, given its own persona, the
   stage's inputs, the questions the stage got answered, the assumptions so
-  far, the gate feedback its attempt addresses, the user's notes and the
-  artifact, never the builder's transcript, and the tool groups the pack
-  gives it: the code tools over the blueprint's checkouts, and with research
-  on `web_fetch` alone, behind the same leak guard, to open what the
-  artifact cites; it has no web search. It scores the artifact 1-5, sums up
+  far, the gate feedback its attempt addresses, once the sign-off was
+  rejected the sign-off's feedback, the user's notes and the artifact,
+  never the builder's transcript, and the tool groups the pack gives it:
+  the code tools over the blueprint's checkouts, and with research on
+  `web_fetch` alone, behind the same leak guard, to open what the artifact
+  cites; it has no web search. It scores the artifact 1-5, sums up
   what it read and checked, and keeps a findings ledger: each finding has an
   id stable within the stage attempt (R1, R2, ...) and a severity (critical,
   major or minor). A later round of the attempt is given every earlier
@@ -873,9 +874,10 @@ stage that asks (the product owner for intake questions, the system designer
 for design questions) and `stages/responder.md`. It gets the need, the
 asking stage's inputs, the target projects that are proofs of concept when
 the asking stage shapes cards, the gate feedback the asking attempt
-addresses, the user's notes, every answer so far, the person's concern when
-the question asks again an answer whose consequence they turned down (see
-Plain language), and that stage's read tools, never the asker's transcript,
+addresses, once the sign-off was rejected the sign-off's feedback, the
+user's notes, every answer so far, the person's concern when the question
+asks again an answer whose consequence they turned down (see Plain
+language), and that stage's read tools, never the asker's transcript,
 so the asker cannot answer itself conveniently. It returns the answer, its
 reasoning, whether it is grounded and its evidence and, on a plain-language
 blueprint, the plain consequence of an answer a person would notice. The
@@ -1158,11 +1160,12 @@ blueprint again from its first decisions: the shared decisions when they
 ran, else the first slice's design, with everything after it, as the typed
 rejection of that step does. On a record whose steps have no such step, it
 re-runs decomposition, every slice's in slice order. Every stage that runs
-after a sign-off rejection is given its feedback, and the three readiness
-rounds count again from the rejection. `reject slicing <feedback>` runs
-slicing and everything after it again, `reject SL<n> <feedback>` slice n's
-design and everything after it, earlier slices staying, and `reject
-shared_decisions <feedback>` the shared decisions and every slice. Those are
+after a sign-off rejection is given its feedback, and so are its reviewer
+and its auto responder, and the three readiness rounds count again from the
+rejection. `reject slicing <feedback>` runs slicing and everything after it
+again, `reject SL<n> <feedback>` slice n's design and everything after it,
+earlier slices staying, and `reject shared_decisions <feedback>` the shared
+decisions and every slice. Those are
 typed and never offered as buttons; the sign-off's text lists `reject
 slicing` always and the others with two or more slices; one that names no
 step of the blueprint is a note with a hint. `auto+emit`
@@ -1296,7 +1299,7 @@ the mockup reply (see Mockups):
 
 | Reply                         | Effect                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
-| `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At a slice's design gate, `reject slicing <feedback>` runs slicing and everything after it again, and `reject shared_decisions <feedback>` the shared decisions and every slice. At the sign-off, approve emits and resumes an emission that stopped, and reject runs the blueprint again from its first decisions, the shared decisions when they ran, else the first slice's design, with everything after it, as the typed rejection of that step does; on a record whose steps have no such step it re-runs decomposition, every slice's in slice order. Every stage that runs after a sign-off rejection is given its feedback. `reject slicing <feedback>` runs slicing and everything after it again, `reject SL<n> <feedback>` that slice's design and every later slice, and `reject shared_decisions <feedback>` the shared decisions and every slice; the sign-off records its rejection first, then a rejection of the step that runs again, and the replaced versions superseded. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
+| `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At a slice's design gate, `reject slicing <feedback>` runs slicing and everything after it again, and `reject shared_decisions <feedback>` the shared decisions and every slice. At the sign-off, approve emits and resumes an emission that stopped, and reject runs the blueprint again from its first decisions, the shared decisions when they ran, else the first slice's design, with everything after it, as the typed rejection of that step does; on a record whose steps have no such step it re-runs decomposition, every slice's in slice order. Every stage that runs after a sign-off rejection is given its feedback, and so are its reviewer and its auto responder. `reject slicing <feedback>` runs slicing and everything after it again, `reject SL<n> <feedback>` that slice's design and every later slice, and `reject shared_decisions <feedback>` the shared decisions and every slice; the sign-off records its rejection first, then a rejection of the step that runs again, and the replaced versions superseded. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
 | `show mockup`, `skip mockup`  | Answers the mockup offer (see Mockups): show runs the mockup step, skip goes on without it. Matched as a gate's replies are; any other text while the offer waits is a note and the offer stays open. |
 | `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round, gate or mockup offer keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
 | `cap <usd>`, `cap off`        | Sets the blueprint's cost cap (see below); CM sends it when the person clicks the cost in the sheet header. Exactly two words, the amount one plain decimal number, so an answer that starts with "cap" stays an answer. Works while a stage runs. |

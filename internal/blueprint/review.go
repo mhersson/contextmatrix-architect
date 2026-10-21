@@ -761,11 +761,12 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 // reviewTask is what a reviewer judges: the stage's inputs, the questions
 // it got answered, the assumptions, the target projects that are proofs of
 // concept when the stage shapes cards, the gate feedback the attempt
-// addresses, the artifacts folded into its gate, each with the gate feedback
-// its own attempt addresses, the artifact, whose data holds any problems it
-// was accepted with, the user's notes, and, from the attempt's second round,
-// every earlier finding with the builder's claim beside it, and the score
-// that passes.
+// addresses, after a sign-off rejection its feedback the gate feedback did
+// not already give, the artifacts folded into its gate, each with the gate
+// feedback its own attempt addresses, the artifact, whose data holds any
+// problems it was accepted with, the user's notes, and, from the attempt's
+// second round, every earlier finding with the builder's claim beside it,
+// and the score that passes.
 func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipelineStep, art store.Artifact, attempt int, prior findingList, poc []string) (string, error) {
 	var b strings.Builder
 
@@ -792,10 +793,17 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipe
 	c.writeEdgeCases(&b, st)
 	writePOC(&b, poc)
 
+	var given []string
+
 	if st.Gate {
-		if _, err := c.writeGateFeedback(ctx, &b, bp, st, attempt); err != nil {
+		var err error
+		if given, err = c.writeGateFeedback(ctx, &b, bp, st, attempt); err != nil {
 			return "", err
 		}
+	}
+
+	if err := c.writeSignoffFeedback(ctx, &b, bp.ID, given); err != nil {
+		return "", err
 	}
 
 	folded, err := c.folded(ctx, bp.ID, st.ID)
