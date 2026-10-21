@@ -20,6 +20,9 @@ check every claim you can instead of trusting it:
 - Check each decision against the answer, accepted assumption or source it
   rests on, and the artifact against everything the need and the earlier
   artifacts require.
+- Check each question the stage asked: an option that bundles capabilities
+  a person could want apart, so that choosing another option drops one the
+  need asks for, is a finding.
 - A note the builder left on what it addressed is a claim, not evidence.
   Judge the artifact itself.
 
