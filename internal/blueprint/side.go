@@ -153,13 +153,15 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 		return out, nil
 	}
 
-	if end := sink.capAtEnd(); endReason == "max_cost" && end.bound && stopsStage {
-		stop, err := c.capStopAfter(bg, bp.ID, end.blueprintUSD, s.kind, s.stage)
-		if err == nil {
-			return out, stop
-		}
+	if endReason == "max_cost" && stopsStage {
+		if end := sink.capAtEnd(); end.bound {
+			stop, err := c.capStopAfter(bg, bp.ID, end.blueprintUSD, s.kind, s.stage)
+			if err == nil {
+				return out, stop
+			}
 
-		c.opts.Logger.Error("blueprint: read the cap stop", "blueprint", bp.ID, "run", runID, "error", err)
+			c.opts.Logger.Error("blueprint: read the cap stop", "blueprint", bp.ID, "run", runID, "error", err)
+		}
 	}
 
 	return out, fmt.Errorf("blueprint: the %s run of %s: %w", s.kind, c.stepName(bg, bp.ID, s.stage), runErr)

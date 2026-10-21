@@ -4,7 +4,8 @@ import "sync"
 
 // liveCap is a blueprint's cost cap as its runs in flight read it: seeded
 // from the store, then moved only by a cap reply, so a run's sink reads the
-// cap in force at every usage line.
+// cap in force at every usage line. Seeded once per controller, it equals the
+// stored cap only while SetCap is the sole writer of that cap.
 type liveCap struct {
 	mu     sync.Mutex
 	usd    float64

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -810,9 +811,12 @@ func TestSetCap_ReachesTheRunInFlight(t *testing.T) {
 func TestSetCap_ARaiseReachesTheReviewInFlight(t *testing.T) {
 	started, held := make(chan struct{}), make(chan struct{})
 
+	// A review that ran again would fail the reviewer row check, not panic.
+	var once sync.Once
+
 	script := gatedScript()
 	script["shape.review"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
-		close(started)
+		once.Do(func() { close(started) })
 		<-held
 
 		assert.Zero(t, spendFifths(ctx, in, 6), "1.20 is under the raised cap")

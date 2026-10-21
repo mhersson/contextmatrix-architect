@@ -1632,12 +1632,13 @@ frames on the session's chat stream.
   per-run cap (off at zero), or, when smaller, the blueprint cap in force
   less what the blueprint had spent outside the run when it started, and
   under a blueprint cap a run needs its floor left to start (see Sessions).
-  The harness stops a run at the per-run cap on the reported cost, and the
-  controller stops it at its run cap on each model call's priced tokens or
-  reported cost, whichever is higher, so the run cap stops a run within one
-  model call of passing it. On a priced model a responder run spends from
-  the asking run's cap, and a capped blueprint whose model has no price does
-  not run. An unpriced model on an uncapped blueprint counts
+  The harness stops a run on the reported cost: a priced run at the per-run
+  cap, an unpriced one at its run cap as it stood when the run started. On a
+  priced model the controller also stops a run at its run cap on each model
+  call's priced tokens or reported cost, whichever is higher, so the run cap
+  stops it within one model call of passing it, and a responder run spends
+  from the asking run's cap. A capped blueprint whose model has no price
+  does not run. An unpriced model on an uncapped blueprint counts
   only the cost the endpoint reports, and max_turns still bounds every run.
   CM prices only the session model, so a run on a per-persona override is
   unpriced: a capped blueprint refuses it, an uncapped one counts the

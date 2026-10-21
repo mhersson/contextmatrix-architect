@@ -252,10 +252,14 @@ func TestResponder_SpendsFromTheAskingRunsCap(t *testing.T) {
 		return askingIntake(got)(ctx, in)
 	}
 	// 0.5 + 0.4 USD at testPrice: over what the asking run has left.
+	// Read inside the run, off the test goroutine, so no require: once the
+	// run ends its cost is charged to the asking run.
 	var runCap float64
 
 	script["intake.responder"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
-		runCap = runCapOf(t, in)
+		if s, ok := in.Events.(*harnessSink); ok {
+			runCap = s.limit.read().usd
+		}
 
 		out := done("# Answer", map[string]any{"answer": "helm", "reasoning": "r", "grounded": true})
 		out.Result = harness.Result{Completed: true, Reason: "done", PromptTokens: 500_000, CompletionTokens: 40_000}

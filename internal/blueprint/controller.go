@@ -961,31 +961,21 @@ func (c *Controller) capStopAfter(ctx context.Context, id string, capUSD float64
 		return nil, fmt.Errorf("cost lookup failed: %w", err)
 	}
 
+	floor, err := c.runFloor(ctx, id, kind, stageID)
+	if err != nil {
+		return nil, err
+	}
+
 	stop := &capStop{stage: stageID, capUSD: capUSD, spent: spent, sliced: c.sliced(ctx, id)}
 
 	if leftCents(capUSD, spent) > 0 {
-		if stop.floor, err = c.runFloor(ctx, id, kind, stageID); err != nil {
-			return nil, err
-		}
+		stop.floor = floor
 	}
 
 	// A cap raised after the cut and before the run ended, or removed, may
 	// already let a rerun start.
-	if now := cur.CostCapUSD; now != capUSD {
-		fits := now <= 0
-
-		if !fits {
-			floor, err := c.runFloor(ctx, id, kind, stageID)
-			if err != nil {
-				return nil, err
-			}
-
-			fits = leftCents(now, spent) >= floorCents(floor)
-		}
-
-		if fits {
-			stop.lifted, stop.nowUSD = true, max(now, 0)
-		}
+	if now := cur.CostCapUSD; now != capUSD && (now <= 0 || leftCents(now, spent) >= floorCents(floor)) {
+		stop.lifted, stop.nowUSD = true, max(now, 0)
 	}
 
 	return stop, nil

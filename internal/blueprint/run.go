@@ -303,7 +303,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	defer closeTools()
 
-	// runCtx is cancelled with errCostCap by the sink when the priced usage
+	// runCtx is cancelled with errCostCap by the sink when the run's cost
 	// passes the run cap; the harness's own cap only sees the wire cost.
 	runCtx, stop := context.WithCancelCause(ctx)
 	defer stop(nil)
@@ -957,8 +957,9 @@ func (s *harnessSink) left() (float64, bool) {
 	return now.usd - s.spent, true
 }
 
-// charge adds the cost of a run served on this run's behalf, and stops a
-// priced run once the cap in force is passed. A nil sink ignores it.
+// charge adds the cost of a run served on this run's behalf: the flight
+// counts it, and a priced sink, as account does, counts it and stops the run
+// once the cap in force is passed. A nil sink ignores it.
 func (s *harnessSink) charge(usd float64) {
 	if s == nil {
 		return
@@ -966,12 +967,11 @@ func (s *harnessSink) charge(usd float64) {
 
 	s.flight.charge(usd)
 
-	enforce := s.price != nil && s.stop != nil
-
-	var now capRead
-	if enforce {
-		now = s.limit.read()
+	if s.price == nil || s.stop == nil {
+		return
 	}
+
+	now := s.limit.read()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -979,10 +979,7 @@ func (s *harnessSink) charge(usd float64) {
 	// Counted uncapped too: a cap set later must see it.
 	s.spent += usd
 	s.charged += usd
-
-	if enforce {
-		s.cutAt(now)
-	}
+	s.cutAt(now)
 }
 
 // tally is what the sink has priced, and how much of it was charged for

@@ -145,6 +145,29 @@ func TestRunLimit_FollowsTheCell(t *testing.T) {
 	assertRead(t, capRead{usd: 2, capped: true}, l.read())
 }
 
+func TestRunLimit_TheHarnessGetsAFixedCap(t *testing.T) {
+	asking, _ := pricedSink(t, runLimit{perRunUSD: 2})
+	asking.charge(1.5)
+
+	tests := []struct {
+		name   string
+		limit  runLimit
+		priced bool
+		want   float64
+	}{
+		{name: "a priced run gets the per-run cap alone", limit: runLimit{perRunUSD: 2, blueprint: seededCap(1)}, priced: true, want: 2},
+		{name: "a priced run without a per-run cap gets none", limit: runLimit{blueprint: seededCap(1)}, priced: true, want: 0},
+		{name: "an unpriced run gets the limit as it stands", limit: runLimit{perRunUSD: 2, parent: asking}, want: 0.5},
+		{name: "an unpriced run under the per-run cap alone gets it", limit: runLimit{perRunUSD: 2}, want: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.InDelta(t, tt.want, tt.limit.fixedUSD(tt.priced), 1e-9)
+		})
+	}
+}
+
 func TestLiveCap_SeedsOnceAndSetsOnlyAWrittenCap(t *testing.T) {
 	l := &liveCap{}
 	l.seed(1)
@@ -225,4 +248,20 @@ func TestHarnessSink_AResponderFollowsTheAskingRunsRaisedCap(t *testing.T) {
 
 	feedFifths(child, 2)
 	require.NoError(t, ctx.Err())
+}
+
+func TestHarnessSink_AnUnpricedSinkCountsNoCharge(t *testing.T) {
+	_, stop := context.WithCancelCause(context.Background())
+
+	t.Cleanup(func() { stop(nil) })
+
+	f := &flight{}
+	s := &harnessSink{limit: runLimit{perRunUSD: 2}, stop: stop, flight: f}
+
+	s.charge(0.5)
+
+	spent, charged := s.tally()
+	assert.Zero(t, spent, "an unpriced run counts only its own reported cost")
+	assert.Zero(t, charged)
+	assert.InDelta(t, 0.5, f.view().charged, 1e-9, "the view still shows what its responders cost")
 }
