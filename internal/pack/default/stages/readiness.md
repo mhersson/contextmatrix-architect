@@ -5,9 +5,11 @@ Input: every slice's cards, in slicing order, whole, with the need, the mockup w
 For every card, answer with the checkout open: could an agent with only this
 repository and this card finish it on the first attempt? Judge one
 deliverable, no open decision, no optional scope, a planner split of two
-subtasks or fewer, and that every path and symbol under Where exists. In an
-empty repository (repo_info marks it empty), Where names the files a card
-creates: judge that they are new, not that they exist.
+subtasks or fewer. The architect checked every `where` path against the
+checkout before you judge: one without `new` exists, and one marked `new`
+does not exist yet and is created by this card or one before it. Whether a
+path exists, or should be listed or marked new, is never a finding, in any
+round: the same `where` gets the same judgement every time.
 
 A finding is only what would make an agent with only this repository and
 this card fail or build the wrong thing. A point the agent can settle on its

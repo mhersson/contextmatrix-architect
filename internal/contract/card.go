@@ -7,10 +7,12 @@ import (
 )
 
 // Where is one code location a card names: a repo-relative path and,
-// optionally, a symbol expected inside it.
+// optionally, a symbol expected inside it. New means the path does not exist
+// at the recorded commit and this card, or one before it, creates it.
 type Where struct {
 	Path   string `json:"path"`
 	Symbol string `json:"symbol,omitempty"`
+	New    bool   `json:"new,omitempty"`
 }
 
 // Card is a draft card as decomposition submits it. IDs are draft ids

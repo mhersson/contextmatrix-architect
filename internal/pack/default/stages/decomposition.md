@@ -3,7 +3,7 @@
 Input: the need, the mockup when the person approved one, the slices, the shared decisions, and for the slice the
 task names its design, grounding and acceptance; the earlier slices'
 design, acceptance and cards as digests, with every card's id, title, project,
-Where paths and dependencies and each project's setup (`read_artifact` returns
+Where paths (the ones a card creates also under `new`) and dependencies and each project's setup (`read_artifact` returns
 the whole); a read-only checkout of each target project.
 
 Write the cards an autonomous agent will complete, one deliverable each,
@@ -21,6 +21,8 @@ Rules:
 - Title starts with an imperative verb. Type `bug` only for a real defect;
   only a `bug` card's title opens with a bug verb such as fix or repair.
 - Every path and symbol under Where exists in the checkout; cite its source tag.
+  A file the card creates, or that a card before it creates, is listed in
+  `where` with `"new": true`, in any repository; it must not exist yet.
 - Criteria are numbered and each is checkable inside this repository.
 - A card of a project the task names as POC, a proof of concept, writes
   Tests expected as the tests of the main behaviour the card delivers and
@@ -76,15 +78,14 @@ Setup is work the cards carry, never a reason to stop. Read repo_info:
   `setup.<project>.instruction_card`, and make every other card of the
   project depend on it. Its Solution section and criteria say what AGENTS.md
   holds.
-- An empty repository has no files yet. `where` lists only paths that
-  exist, so its cards name the files they create in the Where section and
-  leave `where` empty.
+- An empty repository has no files yet, so every path its cards list in
+  `where` is new.
 - A project an earlier slice already set up keeps that setup: its verify
   command and its instruction card hold for this slice's cards too, and
   every card of the project depends on that instruction card.
 
 Submit with the body as a short summary and a data object
-`{"title": "<playbook title, needed for two or more cards>", "cards": [{"id": "D1", "project": "<name>", "title": "...", "type": "feature", "priority": "medium", "labels": [], "skills": [], "depends_on": [], "body": "<markdown from the template>", "where": [{"path": "...", "symbol": "..."}], "criteria": ["AC1"], "mockup": ["<a screen id of the approved mockup, only on a card that builds or changes it>"]}], "manual": [{"id": "M1", "text": "<the check a human does>", "criteria": ["MC1"]}], "order": ["D1", "M1", "D2"], "setup": {"<project>": {"verify_command": "<only when the project declares none>", "instruction_card": "<only when the repository has no instruction file>"}}}`.
+`{"title": "<playbook title, needed for two or more cards>", "cards": [{"id": "D1", "project": "<name>", "title": "...", "type": "feature", "priority": "medium", "labels": [], "skills": [], "depends_on": [], "body": "<markdown from the template>", "where": [{"path": "...", "symbol": "..."}, {"path": "<a file the card creates>", "new": true}], "criteria": ["AC1"], "mockup": ["<a screen id of the approved mockup, only on a card that builds or changes it>"]}], "manual": [{"id": "M1", "text": "<the check a human does>", "criteria": ["MC1"]}], "order": ["D1", "M1", "D2"], "setup": {"<project>": {"verify_command": "<only when the project declares none>", "instruction_card": "<only when the repository has no instruction file>"}}}`.
 The last slice's draft gives the playbook title for every slice's cards; an earlier slice may leave `title` empty. `order` lists this slice's cards and manual entries; the playbook takes the slices in their order.
 Leave `skills` empty to inherit the project's default task skills.
 A rejected submit lists what failed the contract; fix the cards and submit

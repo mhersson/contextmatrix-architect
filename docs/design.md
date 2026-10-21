@@ -406,7 +406,7 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   of its data, by the shape its stage's checks give it: a design's decisions
   (id, text, chosen), the outcomes it states at its top level and contracts;
   an acceptance's criteria and manual checks by id with their first line and
-  the outcome ids they cite; cards by id, title, project, type, Where paths,
+  the outcome ids they cite; cards by id, title, project, type, Where paths and those marked new,
   `depends_on` and criteria ids, with the draft's manual entries and setup.
   A stage without such a shape whose data holds the projects it verified
   (grounding) digests to those project facts and its verdicts. A
@@ -745,20 +745,23 @@ release.
 - `criteria` names the acceptance criteria the card carries. Every
   criterion of a slice is carried by exactly one card of its project, and
   every manual check of acceptance by a manual entry.
+- `where` lists the paths the card touches, each with an optional symbol. A
+  path the card or one before it creates is marked `new`, in any repository,
+  and must not exist at the recorded sha.
 - `mockup` names, by screen id, the screens of the used mockup the card
   builds or changes; a card that builds no screen names none, and with no
   used mockup no card names one (see Mockups).
 
 **Body** (plain `##` sections)
 
-| Section             | Content                                                                                                    |
-| ------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Context             | Why, written into the card. For a bug, the root-cause hypothesis and its evidence.                          |
-| Where               | Files, functions and types in this repo, verified at a sha. For wiring changes, every call site.            |
-| Solution            | The decided approach. Binding constraints are restated in the criteria, since nothing else reaches review. |
-| Acceptance criteria | Numbered. Each is a test or command checkable in the working tree.                                         |
-| Tests expected      | The test cases to write; for a POC project's card, the main behaviour and what its criteria demand only.   |
-| Out of scope        | Explicit non-goals.                                                                                        |
+| Section             | Content                                                                                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Context             | Why, written into the card. For a bug, the root-cause hypothesis and its evidence.                                                             |
+| Where               | Files, functions and types in this repo, verified at a sha, and the files the card creates, named as new. For wiring changes, every call site. |
+| Solution            | The decided approach. Binding constraints are restated in the criteria, since nothing else reaches review.                                     |
+| Acceptance criteria | Numbered. Each is a test or command checkable in the working tree.                                                                             |
+| Tests expected      | The test cases to write; for a POC project's card, the main behaviour and what its criteria demand only.                                       |
+| Out of scope        | Explicit non-goals.                                                                                                                            |
 
 Emission adds a `## Mockup` section after these on every card of a slice
 that builds a screen of the used mockup, before the `## Sources` section it
@@ -809,7 +812,7 @@ adds to a card that cites a source tag (see Emission).
 | No local paths, file URLs or another CM project's repository, as CM's self-containment lint finds them | mechanical (lists.yaml and list_projects) |
 | No defect phrase or bug title verb in a card that is not a bug; no criteria under a stripped heading | mechanical (lists.yaml) |
 | No phrase pointing at text the card does not carry, such as "as noted above" | mechanical (lists.yaml) |
-| Every path and symbol in Where exists at the recorded sha          | mechanical (code tool)     |
+| Every path and symbol in Where exists at the recorded sha; every path marked new does not | mechanical (code tool)     |
 | `depends_on` graph acyclic within each project                     | mechanical                 |
 | Every acceptance criterion maps to exactly one card of its project, every manual check to a manual entry | mechanical (acceptance's artifact) |
 | Target project declares a repo                                     | mechanical (`list_projects`) |

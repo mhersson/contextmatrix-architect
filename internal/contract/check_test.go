@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,6 +102,7 @@ func TestCheck_Findings(t *testing.T) {
 		{name: "maintenance verb without label", mutate: func(c *Card) { c.Title = "Bump the router dependency" }, want: "maintenance_label"},
 		{name: "unknown where path", mutate: func(c *Card) { c.Where = []Where{{Path: "internal/api/missing.go"}} }, want: "where_exists"},
 		{name: "unknown where symbol", mutate: func(c *Card) { c.Where = []Where{{Path: "internal/api/router.go", Symbol: "OldRouter"}} }, want: "where_exists"},
+		{name: "new path that exists", mutate: func(c *Card) { c.Where = []Where{{Path: "internal/api/router.go", New: true}} }, want: "where_exists"},
 		{name: "unknown project", mutate: func(c *Card) { c.Project = "zeta" }, want: "project"},
 	}
 
@@ -254,21 +256,31 @@ func TestCheck_WhereRejectsPathsOutsideRoot(t *testing.T) {
 	tests := []string{"../other-repo/x.go", "/etc/passwd"}
 
 	for _, path := range tests {
-		t.Run(path, func(t *testing.T) {
-			c := goodCard("D1")
-			c.Where = []Where{{Path: path}}
+		for _, isNew := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s new=%t", path, isNew), func(t *testing.T) {
+				c := goodCard("D1")
+				c.Where = []Where{{Path: path, New: isNew}}
 
-			findings := Check(Draft{Cards: []Card{c}}, testLists(), withRoot(t))
-			assert.Contains(t, checkNames(findings), "D1:where_exists")
-		})
+				findings := Check(Draft{Cards: []Card{c}}, testLists(), withRoot(t))
+				assert.Contains(t, checkNames(findings), "D1:where_exists")
+			})
+		}
 	}
+}
+
+func TestCheck_WhereAcceptsNewPaths(t *testing.T) {
+	c := goodCard("D1")
+	c.Where = []Where{{Path: "web/app.js", New: true}, {Path: "cmd/new/main.go", Symbol: "main", New: true}}
+
+	findings := Check(Draft{Cards: []Card{c}}, testLists(), withRoot(t))
+	assert.NotContains(t, checkNames(findings), "D1:where_exists")
 }
 
 func TestParseDraft(t *testing.T) {
 	data := map[string]any{
 		"cards": []any{map[string]any{
 			"id": "D1", "project": "alpha", "title": "Add x", "type": "feature",
-			"depends_on": []any{}, "body": "b", "where": []any{map[string]any{"path": "a.go", "symbol": "A"}},
+			"depends_on": []any{}, "body": "b", "where": []any{map[string]any{"path": "a.go", "symbol": "A"}, map[string]any{"path": "b.go", "new": true}},
 		}},
 		"order": []any{"D1"},
 	}
@@ -277,7 +289,7 @@ func TestParseDraft(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, d.Cards, 1)
 	assert.Equal(t, "alpha", d.Cards[0].Project)
-	assert.Equal(t, []Where{{Path: "a.go", Symbol: "A"}}, d.Cards[0].Where)
+	assert.Equal(t, []Where{{Path: "a.go", Symbol: "A"}, {Path: "b.go", New: true}}, d.Cards[0].Where)
 	assert.Equal(t, []string{"D1"}, d.Order)
 
 	_, err = ParseDraft(map[string]any{"cards": "nope"})

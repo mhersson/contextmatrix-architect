@@ -6,7 +6,7 @@ understands it. For a bug: the root-cause hypothesis and its evidence.
 ## Where
 
 The files, functions and types in this repository the change touches,
-verified at the recorded commit. For a wiring change, every call site.
+verified at the recorded commit, and the files it creates, named as new. For a wiring change, every call site.
 
 ## Solution
 

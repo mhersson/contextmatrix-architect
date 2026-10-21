@@ -62,6 +62,7 @@ type digestCard struct {
 	Project   string   `json:"project"`
 	Type      string   `json:"type"`
 	Where     []string `json:"where,omitempty"`
+	New       []string `json:"new,omitempty"`
 	DependsOn []string `json:"depends_on,omitempty"`
 	Criteria  []string `json:"criteria,omitempty"`
 }
@@ -178,6 +179,10 @@ func digestOf(checks []string, art store.Artifact) (digest, bool) {
 			dc := digestCard{ID: card.ID, Title: card.Title, Project: card.Project, Type: card.Type, DependsOn: card.DependsOn, Criteria: card.Criteria}
 			for _, w := range card.Where {
 				dc.Where = append(dc.Where, w.Path)
+
+				if w.New {
+					dc.New = append(dc.New, w.Path)
+				}
 			}
 
 			d.Cards = append(d.Cards, dc)
