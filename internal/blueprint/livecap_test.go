@@ -168,6 +168,24 @@ func TestRunLimit_TheHarnessGetsAFixedCap(t *testing.T) {
 	}
 }
 
+func TestRunLimit_KeptByAnUnpricedRunIsFixedAtStart(t *testing.T) {
+	asking, _ := pricedSink(t, runLimit{perRunUSD: 2})
+	asking.charge(1.5)
+
+	cell := seededCap(1)
+	limit := runLimit{perRunUSD: 2, blueprint: cell, parent: asking}
+
+	assert.Equal(t, limit, limit.kept(true), "a priced run keeps the live limit")
+
+	kept := limit.kept(false)
+	assert.InDelta(t, 0.5, kept.read().usd, 1e-9, "the asking run's remainder at start")
+	assert.Nil(t, kept.blueprint)
+	assert.Nil(t, kept.parent)
+
+	asking.charge(0.25)
+	assert.InDelta(t, 0.5, kept.read().usd, 1e-9, "it does not follow the asking run")
+}
+
 func TestLiveCap_SeedsOnceAndSetsOnlyAWrittenCap(t *testing.T) {
 	l := &liveCap{}
 	l.seed(1)

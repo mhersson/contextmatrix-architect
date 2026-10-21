@@ -106,6 +106,16 @@ func (l runLimit) fixedUSD(priced bool) float64 {
 	return l.read().usd
 }
 
+// kept is the limit a run keeps in flight. An unpriced run has no sink to
+// bind a change, so it keeps the cap its harness got at start.
+func (l runLimit) kept(priced bool) runLimit {
+	if priced {
+		return l
+	}
+
+	return runLimit{perRunUSD: l.fixedUSD(false)}
+}
+
 // capOf is blueprint id's live cap, created on first use.
 func (c *Controller) capOf(id string) *liveCap {
 	c.mu.Lock()

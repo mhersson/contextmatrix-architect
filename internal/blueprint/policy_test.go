@@ -1344,3 +1344,74 @@ func TestMessage_StillRetriesAFailedStageWithANote(t *testing.T) {
 	assert.Equal(t, "shape", note.Payload["retries"])
 	assert.False(t, rec.has(EventResume))
 }
+
+func TestView_TheRunCapFollowsACapChange(t *testing.T) {
+	tests := []struct {
+		name    string
+		priced  bool
+		capUSD  float64
+		replies []string
+		// wantRunCaps is the run cap the view shows at the start, then after each reply.
+		wantRunCaps []float64
+		wantCaps    []float64
+	}{
+		{
+			name: "a priced run follows each change", priced: true, capUSD: 1,
+			replies: []string{"1.5", "off"}, wantRunCaps: []float64{1, 1.5, 2}, wantCaps: []float64{1, 1.5, 0},
+		},
+		{
+			name: "an unpriced run keeps showing its per-run cap", capUSD: 0,
+			replies: []string{"1"}, wantRunCaps: []float64{2, 2}, wantCaps: []float64{0, 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			started, held := make(chan struct{}), make(chan struct{})
+
+			var once sync.Once
+
+			script := gatedScript()
+			script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+				once.Do(func() { close(started) })
+				<-held
+
+				return done("# Need", map[string]any{"slices": 1}), nil
+			}
+
+			c, _, _, _ := newGated(t, script)
+			release := closer(t, held)
+
+			ctx := context.Background()
+			start := startInput("BP1")
+			start.CostCapUSD = tt.capUSD
+
+			if tt.priced {
+				start.Price = testPrice()
+			}
+
+			require.NoError(t, c.Start(ctx, start))
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			signalled(t, started)
+
+			check := func(i int) {
+				t.Helper()
+
+				v, err := c.View(ctx, "BP1")
+				require.NoError(t, err)
+				assert.InDelta(t, tt.wantRunCaps[i], v.Cost.RunCapUSD, 1e-9)
+				assert.InDelta(t, tt.wantCaps[i], v.Cost.CapUSD, 1e-9)
+			}
+
+			check(0)
+
+			for i, reply := range tt.replies {
+				require.NoError(t, c.SetCap(ctx, "BP1", reply, fmt.Sprintf("r%d", i)))
+				check(i + 1)
+			}
+
+			release()
+			c.Wait("BP1")
+		})
+	}
+}

@@ -84,7 +84,7 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 
 	f := &flight{
 		runID: runID, stage: s.stage, kind: s.kind, persona: s.persona, model: m.name,
-		round: s.round, startedAt: c.opts.Now().UTC(), price: m.price, capUSD: lim.read().usd,
+		round: s.round, startedAt: c.opts.Now().UTC(), price: m.price, limit: lim.kept(m.price != nil),
 	}
 	defer c.fly(bp.ID, f)()
 

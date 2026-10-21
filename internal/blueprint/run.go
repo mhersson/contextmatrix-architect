@@ -222,7 +222,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	f := &flight{
 		runID: runID, stage: stageID, kind: store.RunKindStage, persona: st.Persona, model: m.name,
-		round: number, startedAt: c.opts.Now().UTC(), price: m.price, capUSD: lim.read().usd,
+		round: number, startedAt: c.opts.Now().UTC(), price: m.price, limit: lim.kept(m.price != nil),
 	}
 	defer c.fly(id, f)()
 

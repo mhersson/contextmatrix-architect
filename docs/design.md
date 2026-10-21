@@ -1440,7 +1440,9 @@ frames on the session's chat stream.
   person, not while the auto responder steers it or a designer run writes
   the next one, nor once a use or skip decided it, or `emission:v<n>` for a stopped emission or run start), and
   the cost: the ledger plus the runs in flight, the
-  blueprint and per-run caps, and whether every run was priced.
+  blueprint cap and the run cap in force of the run in flight (read afresh,
+  so a cap reply moves it at once; an unpriced run shows the cap its
+  harness got at start, the only one that binds it), and whether every run was priced.
   While a round waits, its stage's step is waiting and no run is in
   flight; while a chat run answers its chat, the step is running and the
   round stays the open prompt (a mockup's does not; see Mockups). A round
