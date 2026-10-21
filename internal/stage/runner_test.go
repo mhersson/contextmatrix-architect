@@ -588,6 +588,24 @@ func TestRun_WithoutADraftCallbackNothingIsDrafted(t *testing.T) {
 	assert.Equal(t, "# Need", out.Artifact.Body)
 }
 
+func TestRun_AChatRunDraftsNothing(t *testing.T) {
+	f := &streamingLLM{chunk: 3, fakeLLM: fakeLLM{responses: []llm.Response{
+		{ToolCalls: []llm.ToolCall{toolCall("c1", "submit_artifact", `{"body":"# Need\n\nk8s"}`)}, FinishReason: "tool_calls"},
+		{ToolCalls: []llm.ToolCall{toolCall("c2", "answer_chat", `{"reply":"Hi."}`)}, FinishReason: "tool_calls"},
+	}}}
+
+	var frames []DraftFrame
+
+	in := baseInput(&bytes.Buffer{})
+	in.Interviewer, in.Chat = &stubInterviewer{}, true
+	in.Draft = func(d DraftFrame) { frames = append(frames, d) }
+
+	out, err := (&Runner{NewLLM: func(protocol.LLMEndpoint) llm.LLM { return f }}).Run(context.Background(), in)
+	require.NoError(t, err)
+	assert.True(t, out.Asked)
+	assert.Empty(t, frames, "a chat run's refused submit never reaches the live view")
+}
+
 func TestRun_ACompactionDiscardVoidsTheDraft(t *testing.T) {
 	ask := func(id string) llm.Response {
 		return llm.Response{ToolCalls: []llm.ToolCall{toolCall(id, "echo", `{"text":"more"}`)}, FinishReason: "tool_calls"}
@@ -934,7 +952,7 @@ func TestRun_ADesignerGetsShowMockupInPlaceOfSubmit(t *testing.T) {
 		chat bool
 		want []string
 	}{
-		{"a first run", false, []string{ShowMockupName}},
+		{"a first run", false, []string{AnswerChatName, ShowMockupName}},
 		{"a chat run", true, []string{AnswerChatName, ShowMockupName}},
 	}
 

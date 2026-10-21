@@ -56,8 +56,9 @@ type Input struct {
 	// tool.
 	Interviewer Interviewer
 	// Chat makes the run answer the chat about the open round: answer_chat,
-	// which needs the Interviewer and ends it, is its built-in tool, with
-	// show_mockup beside it for a Designer.
+	// which needs the Interviewer and ends it, is the built-in it takes, with
+	// show_mockup beside it for a Designer. It never changes the tools
+	// offered: see builtinTools.
 	Chat bool
 	// Designer shows a mockup stage's revisions: show_mockup takes the place
 	// of ask_questions and submit_artifact. nil offers no show_mockup.
@@ -83,7 +84,8 @@ type Input struct {
 	// frames at most every draftInterval, the whole body when the submit
 	// arrives, a refused frame when a check refuses it, and a void frame
 	// when the harness abandons the turn that wrote it. nil drafts
-	// nothing; reviewer and responder runs leave it nil.
+	// nothing; reviewer and responder runs leave it nil, and a chat run
+	// drafts nothing either.
 	Draft func(DraftFrame)
 }
 
@@ -201,7 +203,9 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 
 	var drafts *draftExtractor
 
-	if in.Draft != nil {
+	// A chat run's submit_artifact is refused: its body never reaches the
+	// live view.
+	if in.Draft != nil && !in.Chat {
 		now, every := r.draftNow, r.draftEvery
 		if now == nil {
 			now = time.Now
@@ -230,29 +234,11 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 	}
 
 	mark := &terminalMark{}
-
-	var builtins []tools.Tool
-
-	switch {
-	case in.Chat:
-		builtins = append(builtins, answerChatTool{iv: in.Interviewer, mark: mark, plain: in.PlainLanguage})
-
-		if in.Designer != nil {
-			builtins = append(builtins, showMockupTool{d: in.Designer, mark: mark})
-		}
-	case in.Designer != nil:
-		builtins = append(builtins, showMockupTool{d: in.Designer, mark: mark})
-	default:
-		if in.Interviewer != nil {
-			builtins = append(builtins, askQuestionsTool{iv: in.Interviewer, mark: mark, plain: in.PlainLanguage})
-		}
-
-		builtins = append(builtins, submitArtifactTool{validate: in.Validate, drafts: drafts, mark: mark})
-	}
+	builtins := builtinTools(in, mark, drafts)
 
 	reg := tools.NewRegistry(append(builtins, in.Tools...)...)
 
-	watch := &replyWatch{LLM: r.NewLLM(in.Endpoint)}
+	watch := &replyWatch{LLM: r.NewLLM(in.Endpoint), submits: !in.Chat && in.Designer == nil}
 
 	sink := in.Events
 	if sink == nil {

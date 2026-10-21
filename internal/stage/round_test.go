@@ -315,7 +315,111 @@ func TestRun_AnInterviewerRefusalIsAToolError(t *testing.T) {
 	assert.Equal(t, "# Need", out.Artifact.Body)
 }
 
-func TestRun_ChatRunOffersOnlyAnswerChat(t *testing.T) {
+func TestRun_EveryRunOfAStageSendsTheSameTools(t *testing.T) {
+	kinds := []struct {
+		name     string
+		designer bool
+		want     []string
+	}{
+		{"stage", false, []string{"ask_questions", "answer_chat", "submit_artifact", "echo"}},
+		{"mockup stage", true, []string{"answer_chat", "show_mockup", "echo"}},
+	}
+
+	for _, endpoint := range []string{"openrouter", "openai"} {
+		for _, k := range kinds {
+			t.Run(endpoint+"/"+k.name, func(t *testing.T) {
+				var sent []string
+
+				for _, chat := range []bool{false, true} {
+					in := baseInput(&bytes.Buffer{})
+					in.Interviewer, in.Chat, in.Tools = &stubInterviewer{}, chat, []tools.Tool{echoTool{}}
+
+					if k.designer {
+						in.Designer = &fakeDesigner{}
+					}
+
+					bodies := wireBodies(t, endpoint, "high", in)
+					require.NotEmpty(t, bodies)
+
+					var offered []llm.Tool
+					require.NoError(t, json.Unmarshal(bodies[0]["tools"], &offered))
+					assert.Equal(t, k.want, toolNames(offered), "chat %v, in this order", chat)
+
+					sent = append(sent, string(bodies[0]["tools"]))
+				}
+
+				assert.Equal(t, sent[0], sent[1], "a chat run sends the same tools, byte for byte")
+			})
+		}
+	}
+}
+
+func lastToolMessage(t *testing.T, msgs []llm.Message) string {
+	t.Helper()
+
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "tool" {
+			return msgs[i].Content
+		}
+	}
+
+	require.Fail(t, "no tool message in the request")
+
+	return ""
+}
+
+func TestRun_TheToolARunsModeDoesNotTakeIsRefused(t *testing.T) {
+	answer := toolCall("c2", "answer_chat", `{"reply":"Kustomize still works."}`)
+
+	tests := []struct {
+		name     string
+		chat     bool
+		refused  llm.ToolCall
+		accepted llm.ToolCall
+		finals   []bool
+	}{
+		{"answer_chat outside a chat", false, toolCall("c1", "answer_chat", `{"reply":"Hi."}`), toolCall("c2", "submit_artifact", `{"body":"# Need"}`), []bool{false, true}},
+		{"ask_questions in a chat", true, toolCall("c1", "ask_questions", twoQuestions), answer, []bool{false, false}},
+		{"submit_artifact in a chat", true, toolCall("c1", "submit_artifact", `{"body":"# Need"}`), answer, []bool{false, false}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeLLM{responses: []llm.Response{
+				{ToolCalls: []llm.ToolCall{tt.refused}, FinishReason: "tool_calls"},
+				{ToolCalls: []llm.ToolCall{tt.accepted}, FinishReason: "tool_calls"},
+			}}
+			iv := &stubInterviewer{}
+
+			var events bytes.Buffer
+
+			in := baseInput(&events)
+			in.Interviewer, in.Chat = iv, tt.chat
+
+			out, err := runnerWith(f).Run(context.Background(), in)
+			require.NoError(t, err)
+			assert.Equal(t, 2, f.i, "the refused call did not end the run")
+
+			// The refusal is the mode's own, not the harness's unknown-tool error.
+			require.Len(t, f.requests, 2)
+			assert.Contains(t, lastToolMessage(t, f.requests[1].Messages), "end the run with")
+
+			assert.Equal(t, 1, out.Result.ToolCallFailures)
+			assert.Empty(t, iv.asked, "a refused ask_questions posts no round")
+			assert.Equal(t, tt.finals, finals(t, events.String()), "a refused submit is not the reply the run ends on")
+
+			if tt.chat {
+				assert.True(t, out.Asked)
+				assert.Len(t, iv.answers, 1)
+			} else {
+				assert.Empty(t, iv.answers, "a refused answer_chat replies nothing")
+				assert.Equal(t, "# Need", out.Artifact.Body)
+			}
+		})
+	}
+}
+
+func TestRun_AnswerChatCarriesQuestionRevisions(t *testing.T) {
 	f := &fakeLLM{responses: []llm.Response{{
 		ToolCalls: []llm.ToolCall{toolCall("c1", "answer_chat",
 			`{"reply":"Kustomize still works.","questions":[{"number":2,"title":"Logs","question":"Own logging stack?","options":[{"title":"Yes"}]}]}`)},
@@ -325,12 +429,10 @@ func TestRun_ChatRunOffersOnlyAnswerChat(t *testing.T) {
 
 	in := baseInput(&bytes.Buffer{})
 	in.Interviewer, in.Chat = iv, true
-	in.Tools = []tools.Tool{echoTool{}}
 
 	out, err := runnerWith(f).Run(context.Background(), in)
 	require.NoError(t, err)
 	assert.True(t, out.Asked)
-	assert.ElementsMatch(t, []string{"answer_chat", "echo"}, toolNames(f.requests[0].Tools))
 
 	require.Len(t, iv.answers, 1)
 	assert.Equal(t, "Kustomize still works.", iv.answers[0].Reply)
@@ -385,13 +487,15 @@ func TestRun_AChatRunNeedsAnInterviewer(t *testing.T) {
 
 func TestRun_TextOnlyStopOffersTheRoundTools(t *testing.T) {
 	tests := []struct {
-		name   string
-		chat   bool
-		choice string
-		tools  []string
+		name     string
+		chat     bool
+		designer bool
+		choice   string
+		tools    []string
 	}{
-		{"stage run", false, `"required"`, []string{"ask_questions", "submit_artifact"}},
-		{"chat run", true, `{"type":"function","function":{"name":"answer_chat"}}`, []string{"answer_chat"}},
+		{"stage run", false, false, `"required"`, []string{"ask_questions", "submit_artifact"}},
+		{"chat run", true, false, `{"type":"function","function":{"name":"answer_chat"}}`, []string{"answer_chat"}},
+		{"mockup run", false, true, `{"type":"function","function":{"name":"show_mockup"}}`, []string{"show_mockup"}},
 	}
 
 	for _, tt := range tests {
@@ -400,6 +504,10 @@ func TestRun_TextOnlyStopOffersTheRoundTools(t *testing.T) {
 
 			in := baseInput(&bytes.Buffer{})
 			in.Interviewer, in.Chat = &stubInterviewer{}, tt.chat
+
+			if tt.designer {
+				in.Designer = &fakeDesigner{}
+			}
 
 			_, _ = runnerWith(f).Run(context.Background(), in)
 			require.Len(t, f.requests, 2)
@@ -410,18 +518,27 @@ func TestRun_TextOnlyStopOffersTheRoundTools(t *testing.T) {
 }
 
 func TestRun_ToolSetFollowsTheInput(t *testing.T) {
+	showArgs, err := json.Marshal(mockupArgs(terminalSource))
+	require.NoError(t, err)
+
+	submit := toolCall("c1", "submit_artifact", `{"body":"x"}`)
+	show := toolCall("c1", "show_mockup", string(showArgs))
+
 	tests := []struct {
 		name  string
 		set   func(*Input)
 		tools []string
+		// call is the run's one tool call; submit_artifact unless the mode refuses it.
+		call llm.ToolCall
 	}{
-		{"no interviewer", func(*Input) {}, []string{"submit_artifact"}},
-		{"interviewer", func(in *Input) { in.Interviewer = &stubInterviewer{} }, []string{"ask_questions", "submit_artifact"}},
+		{"no interviewer", func(*Input) {}, []string{"submit_artifact"}, submit},
+		{"interviewer", func(in *Input) { in.Interviewer = &stubInterviewer{} }, []string{"ask_questions", "answer_chat", "submit_artifact"}, submit},
+		{"designer, no interviewer", func(in *Input) { in.Designer = &fakeDesigner{} }, []string{"show_mockup"}, show},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &fakeLLM{responses: []llm.Response{{ToolCalls: []llm.ToolCall{toolCall("c1", "submit_artifact", `{"body":"x"}`)}, FinishReason: "tool_calls"}}}
+			f := &fakeLLM{responses: []llm.Response{{ToolCalls: []llm.ToolCall{tt.call}, FinishReason: "tool_calls"}}}
 
 			in := baseInput(&bytes.Buffer{})
 			tt.set(&in)
