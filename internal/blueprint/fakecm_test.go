@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeCM is ContextMatrix for the controller. Created cards are numbered
@@ -29,6 +31,8 @@ type fakeCM struct {
 	runErr     error
 	list       []cm.PlaybookSummary
 	cardSeq    map[string][]cm.Card
+	ended      map[string]cm.EndedCard // by card id, as GetEndedCard serves it
+	failEnded  int                     // fail this many GetEndedCard calls
 	bookSeq    map[string][]cm.Playbook
 	seq        map[string]int
 	gets       int
@@ -43,6 +47,7 @@ func newFakeCM() *fakeCM {
 		warnings:   map[string][]string{},
 		failCreate: map[string]int{},
 		cardSeq:    map[string][]cm.Card{},
+		ended:      map[string]cm.EndedCard{},
 		bookSeq:    map[string][]cm.Playbook{},
 		seq:        map[string]int{},
 	}
@@ -115,6 +120,26 @@ func (f *fakeCM) GetCard(_ context.Context, _, id string) (cm.Card, error) {
 	}
 
 	return seq[0], nil
+}
+
+func (f *fakeCM) GetEndedCard(_ context.Context, _, id string) (cm.EndedCard, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.gets++
+
+	if f.failEnded > 0 {
+		f.failEnded--
+
+		return cm.EndedCard{}, errors.New("cm: get_card: remote unreachable")
+	}
+
+	card, ok := f.ended[id]
+	if !ok {
+		return cm.EndedCard{}, fmt.Errorf("cm: get_card: %s not found", id)
+	}
+
+	return card, nil
 }
 
 func (f *fakeCM) CreateCard(_ context.Context, in cm.CardInput) (cm.CreatedCard, error) {
@@ -285,6 +310,14 @@ func (f *fakeCM) setCards(id string, seq ...cm.Card) {
 	f.cardSeq[id] = seq
 }
 
+// setEnded replaces what the fake serves for a card read as it ended.
+func (f *fakeCM) setEnded(id string, card cm.EndedCard) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.ended[id] = card
+}
+
 func (f *fakeCM) setBooks(id string, seq ...cm.Playbook) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -319,4 +352,23 @@ func (f *fakeCM) cardRuns() []string {
 	defer f.mu.Unlock()
 
 	return append([]string(nil), f.runCards...)
+}
+
+func TestFakeCM_GetEndedCardServesWhatWasSetAndFailsOnRequest(t *testing.T) {
+	f := newFakeCM()
+	ctx := context.Background()
+
+	f.setEnded("ALPHA-001", cm.EndedCard{Card: cm.Card{ID: "ALPHA-001"}, Body: "why"})
+	f.failEnded = 1
+
+	_, err := f.GetEndedCard(ctx, "alpha", "ALPHA-001")
+	require.Error(t, err)
+
+	card, err := f.GetEndedCard(ctx, "alpha", "ALPHA-001")
+	require.NoError(t, err)
+	assert.Equal(t, "why", card.Body)
+
+	_, err = f.GetEndedCard(ctx, "alpha", "ALPHA-404")
+	require.Error(t, err)
+	assert.Equal(t, 3, f.getCount())
 }

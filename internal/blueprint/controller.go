@@ -120,6 +120,7 @@ type CMClient interface {
 	ListPlaybooks(ctx context.Context) ([]cm.PlaybookSummary, error)
 	GetPlaybook(ctx context.Context, id string) (cm.Playbook, error)
 	GetCard(ctx context.Context, project, id string) (cm.Card, error)
+	GetEndedCard(ctx context.Context, project, id string) (cm.EndedCard, error)
 	CreateCard(ctx context.Context, in cm.CardInput) (cm.CreatedCard, error)
 	CreatePlaybook(ctx context.Context, in cm.PlaybookInput) (string, error)
 	RunCard(ctx context.Context, project, id, agentID string) (cm.Card, error)

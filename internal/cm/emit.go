@@ -39,6 +39,28 @@ type Card struct {
 	ReviewAttempts int    `json:"review_attempts"`
 }
 
+// TokenUsage is the card's estimated spend as CM reports it.
+type TokenUsage struct {
+	EstimatedCostUSD float64 `json:"estimated_cost_usd"`
+}
+
+// ActivityEntry is one line of a card's activity log.
+type ActivityEntry struct {
+	Action  string `json:"action"`
+	Message string `json:"message"`
+}
+
+// EndedCard is a card as its run left it: the watch's fields and what a
+// retrospective judges.
+type EndedCard struct {
+	Card
+	Body           string          `json:"body"`
+	Subtasks       []string        `json:"subtasks"`
+	TokenUsage     *TokenUsage     `json:"token_usage"`
+	SubtaskCostUSD float64         `json:"subtask_cost_usd"`
+	ActivityLog    []ActivityEntry `json:"activity_log"`
+}
+
 // PlaybookEntryInput is one entry of a playbook being created.
 type PlaybookEntryInput struct {
 	Type    string `json:"type"`
@@ -145,6 +167,15 @@ func (c *Client) GetCard(ctx context.Context, project, id string) (Card, error) 
 
 	return out, c.callJSON(ctx, "get_card", map[string]any{
 		"project": project, "card_id": id, "include_activity_log": false, "include_images": false,
+	}, &out)
+}
+
+// GetEndedCard reads a card with its body, subtasks, costs and activity log.
+func (c *Client) GetEndedCard(ctx context.Context, project, id string) (EndedCard, error) {
+	var out EndedCard
+
+	return out, c.callJSON(ctx, "get_card", map[string]any{
+		"project": project, "card_id": id, "include_activity_log": true, "include_images": false,
 	}, &out)
 }
 

@@ -36,7 +36,7 @@ func newEmitServer(t *testing.T, withRunPlaybook bool) (*emitServer, string) {
 	replies := map[string]string{
 		"create_card":     `{"id":"ALPHA-007","title":"Add the thing","state":"todo","warnings":["reference to another project's repo"]}`,
 		"create_playbook": `{"id":"ship-the-thing","title":"Ship the thing","complete":0,"total":3}`,
-		"get_card":        `{"id":"ALPHA-007","project":"alpha","state":"in_progress","phase":"pr_gates","worker_status":"running","pr_url":"https://example.com/pr/1","review_attempts":1}`,
+		"get_card":        `{"id":"ALPHA-007","project":"alpha","state":"in_progress","phase":"pr_gates","worker_status":"running","pr_url":"https://example.com/pr/1","review_attempts":1,"body":"## Context\nwhy","subtasks":["ALPHA-008","ALPHA-009"],"token_usage":{"estimated_cost_usd":1.5},"subtask_cost_usd":0.25,"activity_log":[{"action":"parked","message":"needs a key"}]}`,
 		"get_playbook":    `{"id":"ship-the-thing","runnable":true,"run":{"status":"waiting","entry":"e2","reason":"awaiting check-off"},"repos":[{"project":"alpha","compare_url":"https://example.com/compare"}],"complete":1,"total":3,"entries":[{"id":"e1","type":"card","project":"alpha","card":"ALPHA-007","card_state":"done","complete":true},{"id":"e2","type":"manual","text":"check staging","complete":false}]}`,
 		"list_playbooks":  `{"playbooks":[{"id":"other","title":"Other","runnable":true}]}`,
 		"run_card":        `{"id":"ALPHA-007","project":"alpha","state":"todo","worker_status":"queued"}`,
@@ -143,6 +143,27 @@ func TestGetCardAndPlaybook_DecodeTheWatchFields(t *testing.T) {
 	list, err := c.ListPlaybooks(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, []PlaybookSummary{{ID: "other", Title: "Other", Runnable: true}}, list)
+}
+
+func TestGetEndedCard_ReadsTheBodyAndTheRunSignals(t *testing.T) {
+	es, url := newEmitServer(t, true)
+	c := connectTo(t, url)
+
+	card, err := c.GetEndedCard(context.Background(), "alpha", "ALPHA-007")
+	require.NoError(t, err)
+	assert.Equal(t, "ALPHA-007", card.ID)
+	assert.Equal(t, 1, card.ReviewAttempts)
+	assert.Equal(t, "## Context\nwhy", card.Body)
+	assert.Equal(t, []string{"ALPHA-008", "ALPHA-009"}, card.Subtasks)
+	require.NotNil(t, card.TokenUsage)
+	assert.InDelta(t, 1.5, card.TokenUsage.EstimatedCostUSD, 1e-9)
+	assert.InDelta(t, 0.25, card.SubtaskCostUSD, 1e-9)
+	assert.Equal(t, []ActivityEntry{{Action: "parked", Message: "needs a key"}}, card.ActivityLog)
+
+	sent := es.calls("get_card")
+	require.Len(t, sent, 1)
+	assert.Equal(t, true, sent[0]["include_activity_log"])
+	assert.Equal(t, false, sent[0]["include_images"])
 }
 
 func TestRunCardAndRunPlaybook(t *testing.T) {
