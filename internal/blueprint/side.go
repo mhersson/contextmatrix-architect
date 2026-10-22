@@ -103,7 +103,7 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 	defer stop(nil)
 
 	in := s.in
-	in.Model, in.Endpoint, in.MaxCostUSD, in.MaxTurns, in.ContextWindow = m.name, sess.endpoint, lim.fixedUSD(m.price != nil), c.opts.MaxTurns, m.window
+	in.Model, in.Endpoint, in.MaxCostUSD, in.MaxTurns, in.ContextWindow = m.name, sess.endpoint, f.limit.fixedUSD(m.price != nil), c.opts.MaxTurns, m.window
 	in.Secrets = sess.secrets()
 	sink := &harnessSink{
 		audit: au, id: bp.ID, runID: runID, canceled: runCtx.Done(),

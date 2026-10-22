@@ -1372,6 +1372,22 @@ func TestCapStopAfter_SaysWhenTheStoredCapLiftsTheStop(t *testing.T) {
 	}
 }
 
+func TestCapStopAfter_ACutWhoseOwnCapStillLeavesTheFloorIsLifted(t *testing.T) {
+	c, st, _, _ := newController(t, artifactRun("# Need"))
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, cappedInput(1.5)))
+	// The sink counts each line at its higher cost, the ledger the run's
+	// totals, so the ledger can stand below the cap the sink cut at. No done
+	// intake run leaves the floor at its 0.10 minimum.
+	ranBefore(t, st, store.RunKindStage, "intake", store.RunFailed, 1.35)
+
+	stop, err := c.capStopAfter(ctx, "BP1", 1.5, store.RunKindStage, "intake")
+	require.NoError(t, err)
+	assert.True(t, stop.lifted, "0.15 left covers a rerun's 0.10 floor")
+	assert.InDelta(t, 1.5, stop.nowUSD, 1e-9)
+	assert.Zero(t, stop.floor, "what is left is not below the floor")
+}
+
 func TestRun_CostIsPricedFromTokensWhenTheEndpointReportsNone(t *testing.T) {
 	c, st, _, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
 		out := artifactOutput("# Need", in)

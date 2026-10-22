@@ -757,8 +757,8 @@ type runBudget struct {
 // is below the floor the next run needs; unpriced is the refusal of a model
 // without a price, which keeps its own text. sliced says the blueprint has
 // two or more slices, so the stop's text names the step's slice. lifted
-// says the cap stored once the run ended is not the one it was cut under
-// and is off or leaves a rerun its floor; nowUSD is that cap (0: off).
+// says the cap stored once the run ended is off or leaves a rerun its
+// floor; nowUSD is that cap (0: off).
 type capStop struct {
 	stage         string
 	capUSD, spent float64
@@ -968,13 +968,14 @@ func (c *Controller) capStopAfter(ctx context.Context, id string, capUSD float64
 
 	stop := &capStop{stage: stageID, capUSD: capUSD, spent: spent, sliced: c.sliced(ctx, id)}
 
-	if leftCents(capUSD, spent) > 0 {
+	if left := leftCents(capUSD, spent); left > 0 && left < floorCents(floor) {
 		stop.floor = floor
 	}
 
-	// A cap raised after the cut and before the run ended, or removed, may
-	// already let a rerun start.
-	if now := cur.CostCapUSD; now != capUSD && (now <= 0 || leftCents(now, spent) >= floorCents(floor)) {
+	// The stored cap may already let a rerun start: raised or removed since
+	// the cut, or the cut cap itself, as the ledger counts a run's totals and
+	// can stand below the per-line sum the sink cut at.
+	if now := cur.CostCapUSD; now <= 0 || leftCents(now, spent) >= floorCents(floor) {
 		stop.lifted, stop.nowUSD = true, max(now, 0)
 	}
 

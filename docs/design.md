@@ -1324,11 +1324,12 @@ the mockup reply (see Mockups):
   up ($2.14 spent); Readiness stopped. Raise the cap by clicking the cost in
   the header (or reply `cap <usd>`) and it continues.", below the floor that
   the cap leaves less than the next run needs; a model without a price keeps
-  its own refusal. When the stored cap has since been raised so a rerun can
-  start, or removed, the message says the cap now in force and to reply
-  `continue` instead of asking for a raise ("... Readiness stopped. The cap
-  is now $4.00: reply `continue` and it goes on."). A stage run's `max_cost`
-  error carries its run cap in force (`run_cap_usd`). A run that reaches the
+  its own refusal. When the cap stored once the run has ended is off or
+  still leaves a rerun its floor, raised since or not, the message says the
+  cap now in force and to reply `continue` instead of asking for a raise
+  ("... Readiness stopped. The cap is now $4.00: reply `continue` and it
+  goes on."). A stage run's `max_cost` error carries its run cap in force
+  (`run_cap_usd`). A run that reaches the
   per-run cap is an ordinary failed run, and a responder below its floor is
   refused inside the asking run, which decides the question itself.
 - The cap is set when the blueprint is created and changed only by the `cap`
