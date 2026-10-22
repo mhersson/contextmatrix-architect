@@ -85,6 +85,7 @@ func TestChat_AMessageWhileARoundWaitsIsAnsweredInItsChat(t *testing.T) {
 	chat := runner.input(1)
 	assert.True(t, chat.Chat)
 	assert.NotNil(t, chat.History)
+	assert.Equal(t, "session/model", chat.HistoryModel, "with the model that wrote it")
 	assert.Contains(t, chat.Task, "Why Kustomize?")
 
 	s := latestRound(t, c, "BP1", 1)

@@ -481,6 +481,8 @@ func TestReview_ALowScoreResumesTheBuilderWithTheFindings(t *testing.T) {
 	shapes := inputsOf(runner, "shape")
 	require.Len(t, shapes, 2)
 	assert.NotEmpty(t, shapes[1].History, "the builder's conversation resumes")
+	assert.Equal(t, shapes[0].Model, shapes[1].HistoryModel, "with the model that wrote it")
+	assert.NotEmpty(t, shapes[1].HistoryModel)
 	assert.Contains(t, shapes[1].Task, "finding 1", "with the findings")
 
 	runs, err := st.ListRuns(ctx, "BP1")

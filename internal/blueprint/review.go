@@ -611,9 +611,9 @@ func statusWord(status string) string {
 	return strings.ReplaceAll(status, "_", " ")
 }
 
-// runHistory is the conversation of run runID without its system message;
-// nil when the run stored no transcript, with the model the run ran on ("" when
-// unreadable). A transcript that cannot be read is logged, and the caller
+// runHistory is the conversation of run runID without its system message
+// and the model the run ran on; nil and "" when the run stored no
+// transcript, "" for the model when it cannot be read. A transcript that cannot be read is logged, and the caller
 // starts over.
 func (c *Controller) runHistory(ctx context.Context, id string, runID int64) ([]llm.Message, string) {
 	raw, err := c.opts.Store.GetTranscript(ctx, runID)
@@ -637,8 +637,6 @@ func (c *Controller) runHistory(ctx context.Context, id string, runID int64) ([]
 	model, err := c.opts.Store.RunModel(ctx, runID)
 	if err != nil {
 		c.opts.Logger.Warn("blueprint: read the run's model; its reasoning is not sent again", "blueprint", id, "run", runID, "error", err)
-
-		model = ""
 	}
 
 	return stage.WithoutSystem(history), model
