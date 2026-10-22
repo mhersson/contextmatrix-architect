@@ -247,24 +247,30 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   for it then judges the accepted artifact, given its own persona, the
   stage's inputs, the questions the stage got answered, the assumptions so
   far, the gate feedback its attempt addresses, once the sign-off was
-  rejected the sign-off's feedback, the user's notes and the artifact,
-  never the builder's transcript, and the tool groups the pack gives it:
-  the code tools over the blueprint's checkouts, and with research on
-  `web_fetch` alone, behind the same leak guard, to open what the artifact
-  cites; it has no web search. It scores the artifact 1-5, sums up
-  what it read and checked, and keeps a findings ledger: each finding has an
-  id stable within the stage attempt (R1, R2, ...) and a severity (critical,
-  major or minor). A later round of the attempt is given every earlier
-  finding, with the claim the builder's addressed list makes beside it, and
-  gives each a verdict against the version it judges, `fixed` or
-  `still_open`, whatever the claim says; its new findings take the ids after
-  the attempt's highest. A verdict passes at or above the pack's threshold
-  with no critical finding open or still open, so an open critical finding
-  fails it whatever the score, and a score below the threshold must leave a
-  finding open. The verdict and its ledger are stored as an artifact of the
-  pseudo-stage `<stage>.review`. A verdict that does not pass, or leaves a
-  critical or major finding open or still open, sends the unresolved
-  findings, minors included, with the notes, answers and accepted
+  rejected the sign-off's feedback, the user's notes and the artifact, never
+  the builder's transcript, and the tool groups the pack gives it: the code
+  tools over the blueprint's checkouts, and with research on `web_fetch`
+  alone, behind the same leak guard, to open what the artifact cites; it has
+  no web search. It scores the artifact 1-5, sums up what it read and
+  checked, and keeps a findings ledger: each finding has an id stable within
+  the stage attempt (R1, R2, ...) and a severity (critical, major or minor).
+  A later round of the attempt is given every earlier finding, with the
+  claim the builder's addressed list makes beside it, and gives each a
+  verdict against the version it judges, `fixed` or `still_open`, whatever
+  the claim says; a finding the builder declined as out of scope is `fixed`
+  when it asked for a part nothing traces to, and `still_open` otherwise. A
+  reviewer reports a part that traces to nothing, including an accepted
+  assumption that adds work the need does not ask for, as a major finding to
+  remove it, and never asks for one; doing the asked-for work correctly and
+  securely is the work itself, so a security hole or a wrong result on input
+  the need's users will give is a defect; its new findings take the ids
+  after the attempt's highest. A verdict passes at or above the pack's
+  threshold with no critical finding open or still open, so an open critical
+  finding fails it whatever the score, and a score below the threshold must
+  leave a finding open. The verdict and its ledger are stored as an artifact
+  of the pseudo-stage `<stage>.review`. A verdict that does not pass, or
+  leaves a critical or major finding open or still open, sends the
+  unresolved findings, minors included, with the notes, answers and accepted
   assumptions the builder's conversation has not seen, to that conversation,
   resumed from its stored transcript for another round of the same attempt,
   and the revision is reviewed again: no version reaches a gate unreviewed.
@@ -274,10 +280,10 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   and one that does not pass waits for a human regardless of policy. Each
   reviewer round is a harness run with its own cap, and so is each builder
   round; the cost ledger sums them. The round is given its findings by id,
-  and its submit may list the ones it addressed in its data as `addressed:
-  [{finding, note}]`; an id the round was not given is refused like any
-  check problem, and the third failing submit is accepted with its problems
-  kept.
+  and its submit may list the ones it addressed in its data as
+  `addressed: [{finding, note}]`; an id the round was not given is refused
+  like any check problem, and the third failing submit is accepted with its
+  problems kept.
 - **A gate waits between runs.** The controller holds the stage's artifact and
   asks the client. Nothing runs meanwhile.
 - **A human rejection starts a new attempt**: a fresh run with the previous
@@ -512,16 +518,18 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   each slice sweeps the pack's edge cases (lists.yaml `edge_cases`, matched
   case-insensitively after trimming; but see POC projects, below), one entry
   per case, settled by the slice's own criteria or manual checks or recorded
-  not applicable with a reason; and the last slice's acceptance, or one for
-  the whole blueprint, leaves no outcome uncited (`criterion_outcomes`,
-  `sweep_missing`, `sweep_unknown`, `sweep_duplicate`, `sweep_settled`,
-  `sweep_poc`, `outcome_uncovered`). The traces are read apart from the
-  criteria, so a malformed one is never `shape`. A blueprint whose earlier
-  steps state no outcome, as one stored before outcomes, needs no outcome
-  traces. The acceptance task and its tester's task list the edge cases, and
-  the tester checks the sweep and the traces. At decomposition, acceptance
-  data that does not decode (`criteria_unreadable`) or defines no criterion
-  (`criteria_empty`) is a contract finding, not a stalled run.
+  not applicable with a reason (a case the design adds no handling for is
+  not applicable, and gets no criterion); and the last slice's acceptance,
+  or one for the whole blueprint, leaves no outcome uncited
+  (`criterion_outcomes`, `sweep_missing`, `sweep_unknown`,
+  `sweep_duplicate`, `sweep_settled`, `sweep_poc`, `outcome_uncovered`). The
+  traces are read apart from the criteria, so a malformed one is never
+  `shape`. A blueprint whose earlier steps state no outcome, as one stored
+  before outcomes, needs no outcome traces. The acceptance task and its
+  tester's task list the edge cases, and the tester checks the sweep and the
+  traces. At decomposition, acceptance data that does not decode
+  (`criteria_unreadable`) or defines no criterion (`criteria_empty`) is a
+  contract finding, not a stalled run.
 - A target project ContextMatrix flags as a proof of concept (POC; `poc` in
   the project config `list_projects` returns, absent reads false) changes
   what its cards demand, never the design. A run that writes or judges what

@@ -15,19 +15,30 @@ A check that inspects output states it in the form the design specifies (its
 JSON encoding, indentation, field order), or checks only the content; never a
 byte-exact form the design does not fix.
 
+Each criterion proves a behaviour that the need, a decision or a contract of the
+design states. Write none that proves handling the design does not decide, and
+none that needs a hook that only a test uses. Write none that only re-runs the
+project's build or verify command, since every card runs it already. Write none
+that only checks documentation, unless the need asks for the documentation
+itself: documentation goes with the change it describes.
+
 Each criterion names the outcomes it proves by the ids the need and the
 designs give them, `"outcomes": ["O1"]`; a manual check may name outcomes
 too. Across the slices every outcome is proved by some criterion or manual
 check, and the last slice's acceptance closes any gap.
 
-Then sweep the slice for the edge cases the task lists. Think of what
-people actually meet: an empty search, a file half written when the
-process dies, a user without the role, two saves of one record at once, an
-old client against the new server, the largest upload accepted. For each
-case either name this slice's criteria or manual checks that settle it,
-`{"condition": "<the case as listed>", "settled_by": ["AC4", "MC2"]}`, adding
-a criterion when none does, or say in one sentence why it cannot happen
-here, `{"condition": "<the case>", "not_applicable": "<why>"}`.
+Then sweep the slice for the edge cases the task lists. Think of what people
+actually meet: an empty search, a file half written when the process dies, a
+user without the role, two saves of one record at once, an old client against
+the new server, the largest upload accepted. For each case either name this
+slice's criteria or manual checks that settle it,
+`{"condition": "<the case as listed>", "settled_by": ["AC4", "MC2"]}`, or say in
+one sentence why the slice needs none,
+`{"condition": "<the case>", "not_applicable": "<why>"}`. A case needs none when
+it cannot happen here, or when the design adds no handling for it because the
+need and the decisions ask for none, and the behaviour the code already has
+stands. Add a criterion only when the design decides how the slice handles the
+case and no criterion proves it yet.
 
 The task may name POC projects: proofs of concept, whose cards are
 judged on whether the code does what the slice promises, not on
