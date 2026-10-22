@@ -1747,7 +1747,7 @@ internal/store       SQLite: schema, append-only tables, queries
 internal/code        workspace checkout and repo_info
 internal/research    web_search and web_fetch, the leak guard, the public-only fetcher, the search provider
 internal/cm          MCP client: the project list, the stage read tools, and the card, playbook and run calls emission makes
-internal/outcomes    outcomes stage and lessons
+internal/retro       the retrospective's struggle rules, findings, task and lesson questions
 internal/export      markdown rendering into the state directory
 internal/config
 internal/buildinfo   build version, commit and time (ldflags) and the embedded merge history
