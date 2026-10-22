@@ -73,6 +73,9 @@ type Input struct {
 	Secrets []string
 	// History seeds the conversation for a critique round; nil starts fresh.
 	History []llm.Message
+	// HistoryModel is the model that ran History. Reasoning in History goes
+	// back only to that model; "" counts as another model.
+	HistoryModel string
 	// Tools are offered to the model next to the built-in tools;
 	// the code stages pass CodeTools.
 	Tools []tools.Tool
@@ -114,6 +117,10 @@ type Runner struct {
 	// Effort is sent on every request of every run, so a conversation keeps
 	// one effort and its prompt cache; "" sends none.
 	Effort string
+
+	// Replay sends each reply's reasoning back with every later request of
+	// its conversation, a resumed one included.
+	Replay bool
 
 	// draftNow and draftEvery replace the clock and the frame spacing in
 	// tests; the zero values mean time.Now and draftInterval.
@@ -229,7 +236,24 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 
 	system := in.Persona + "\n\n" + in.Instructions
 
-	if err := preflight(system, in.Task, in.History, window); err != nil {
+	replay := r.Replay
+
+	// Reasoning goes back only to the model that wrote it, and only on a
+	// run that replays.
+	history := in.History
+	if !replay || in.HistoryModel != in.Model {
+		history = withoutReasoning(history)
+	}
+
+	// Replayed reasoning is optional: a resume it would not fit goes on
+	// without it rather than being refused.
+	err := preflight(system, in.Task, history, window)
+	if err != nil && hasReasoning(history) {
+		history = withoutReasoning(history)
+		err = preflight(system, in.Task, history, window)
+	}
+
+	if err != nil {
 		return Output{Result: harness.Result{Reason: ReasonTooBig}}, fmt.Errorf("stage %s: %w", in.Stage, err)
 	}
 
@@ -259,7 +283,8 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 		MaxTurns:           in.MaxTurns,
 		MaxCostUSD:         in.MaxCostUSD,
 		RedactToolOutput:   redact.New(in.Secrets).Apply,
-		History:            in.History,
+		History:            history,
+		ReplayReasoning:    replay,
 		ToolOutputMaxBytes: ToolOutputMaxBytes,
 		ContextWindow:      window,
 		Compaction:         &harness.Compaction{Threshold: compactionThreshold, KeepRecentTurns: keepRecentMessages},

@@ -1653,9 +1653,11 @@ frames on the session's chat stream.
   reaches 85% of it the harness summarizes the older turns, keeps the last
   six messages and goes on. A run whose system prompt, task and newest
   history messages (what compaction cannot summarize) are estimated, at 2.5
-  bytes a token, to reach that 85%, or whose whole opening prompt is
+  bytes a token and a reply's reasoning details at 4, to reach that 85%, or whose whole opening prompt is
   estimated to reach the window itself (the first call carries all of it
-  before compaction can act), is refused before any model call. A model
+  before compaction can act), is refused before any model call. A resumed
+  conversation that fits only without its earlier reasoning goes on without
+  it. A model
   whose real window is smaller than CM says fails on the provider's error
   first. A refused run fails like any failed run, its row ending `too_big`
   at no cost, and its error names the biggest inputs of its task by step

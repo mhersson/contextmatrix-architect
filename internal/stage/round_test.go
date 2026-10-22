@@ -338,7 +338,7 @@ func TestRun_EveryRunOfAStageSendsTheSameTools(t *testing.T) {
 						in.Designer = &fakeDesigner{}
 					}
 
-					bodies := wireBodies(t, endpoint, "high", in)
+					bodies := wireBodies(t, endpoint, &Runner{NewLLM: ClientFor, Effort: "high"}, in)
 					require.NotEmpty(t, bodies)
 
 					var offered []llm.Tool
