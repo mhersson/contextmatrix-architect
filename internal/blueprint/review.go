@@ -613,8 +613,8 @@ func statusWord(status string) string {
 
 // runHistory is the conversation of run runID without its system message
 // and the model the run ran on; nil and "" when the run stored no
-// transcript, "" for the model when it cannot be read. A transcript that cannot be read is logged, and the caller
-// starts over.
+// transcript, "" for the model when it cannot be read. A transcript that
+// cannot be read is logged, and the caller starts over.
 func (c *Controller) runHistory(ctx context.Context, id string, runID int64) ([]llm.Message, string) {
 	raw, err := c.opts.Store.GetTranscript(ctx, runID)
 
