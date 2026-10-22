@@ -67,9 +67,9 @@ func baseInput(events *bytes.Buffer) Input {
 }
 
 // wireBodies runs in through r against an httptest endpoint of the given type
-// (r is built with NewLLM: ClientFor), and returns every request body in order. The server
-// answers text only, so the runner sends its forced follow-up as well. The
-// run's own error is ignored.
+// (r is built with NewLLM: ClientFor), and returns every request body in
+// order. The server makes no tool call, so the runner sends its forced
+// follow-up as well. The run's own error is ignored.
 func wireBodies(t *testing.T, endpointType string, r *Runner, in Input) []map[string]json.RawMessage {
 	t.Helper()
 
@@ -1083,6 +1083,27 @@ func TestRun_AResumeWhoseReasoningCannotFitGoesOnWithoutIt(t *testing.T) {
 	assert.NotEqual(t, ReasonTooBig, out.Result.Reason)
 	require.NotEmpty(t, f.requests, "the run went on")
 	assert.Empty(t, assistantDetails(f.requests[0].Messages))
+}
+
+func TestRun_APromptTooBigEvenWithoutReasoningIsStillRefused(t *testing.T) {
+	big := json.RawMessage(`[{"type":"reasoning.text","text":"` + strings.Repeat("r", 4_000) + `"}]`)
+
+	in := baseInput(&bytes.Buffer{})
+	in.ContextWindow = 1_000
+	in.Task = strings.Repeat("t", 3_000)
+	in.History = []llm.Message{{Role: "user", Content: "the need"}, {Role: "assistant", Content: "asked", ReasoningDetails: big}}
+	in.HistoryModel = in.Model
+
+	f := &fakeLLM{}
+	r := runnerWith(f)
+	r.Replay = true
+
+	out, err := r.Run(context.Background(), in)
+
+	var tooBig *TooBigError
+	require.ErrorAs(t, err, &tooBig)
+	assert.Equal(t, ReasonTooBig, out.Result.Reason)
+	assert.Empty(t, f.requests, "nothing was sent")
 }
 
 func TestRun_ReplayOnTheWire(t *testing.T) {
