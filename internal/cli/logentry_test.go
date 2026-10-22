@@ -239,6 +239,15 @@ func TestLogEntryFor(t *testing.T) {
 		{"a retrospective's reply", blueprint.Event{Kind: blueprint.EventRetroReply, BlueprintID: "S1", Payload: map[string]any{
 			"reason": "no_struggle", "message": "None of the 3 emitted cards struggled.", "message_id": "m1", "during_run": false,
 		}}, "system", []string{"None of the 3 emitted cards struggled."}, false},
+		{"a list of lessons", blueprint.Event{Kind: blueprint.EventLessonList, BlueprintID: "S1", Payload: map[string]any{
+			"lessons": []any{map[string]any{
+				"lesson": 1, "blueprint": "S1", "state": "active", "scope": "project", "project": "alpha",
+				"text": "Name where the key comes from", "rationale": "cards parked", "evidence": []any{"ALPHA-001"}, "decided_by": "human",
+			}}, "message_id": "m1", "during_run": false,
+		}}, "text", []string{"L1", "alpha", "ALPHA-001", "Name where the key comes from"}, false},
+		{"an empty list of lessons", blueprint.Event{Kind: blueprint.EventLessonList, BlueprintID: "S1", Payload: map[string]any{
+			"lessons": []any{}, "message_id": "m1", "during_run": false,
+		}}, "text", []string{}, false},
 		{"a retrospective's findings", blueprint.Event{Kind: blueprint.EventRetroReport, BlueprintID: "S1", Payload: map[string]any{
 			"run": 7, "read": 4, "struggled": 2, "cards": []any{
 				map[string]any{

@@ -172,6 +172,8 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 			err = s.ctl.Resume(ctx, p.SessionID, p.MessageID)
 		case blueprint.CommandRetrospective:
 			err = s.ctl.Retrospective(ctx, p.SessionID, p.MessageID)
+		case blueprint.CommandLessons:
+			err = s.ctl.Lessons(ctx, p.SessionID, p.MessageID)
 		default:
 			err = s.ctl.Message(ctx, p.SessionID, p.Content, p.MessageID)
 		}

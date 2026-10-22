@@ -149,6 +149,11 @@ const (
 	// scope is a project's, the merged lists' error when an approval was
 	// refused, and the answering reply's message id.
 	EventLessonDecided = "lesson_decided"
+	// EventLessonList is the reply to a lessons reply: every lesson of every
+	// blueprint with its state, scope, project, text, rationale, evidence card
+	// ids and decider, the reply's message id and whether a run goes on
+	// working after it.
+	EventLessonList = "lesson_list"
 	// EventEnded records that CM ended the session; the blueprint persists.
 	EventEnded = "session_ended"
 	// EventHarness wraps one raw harness JSONL line; the payload is the line.

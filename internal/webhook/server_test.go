@@ -41,6 +41,7 @@ type stubController struct {
 	modes     []string
 	resumes   []string
 	retros    []string
+	lessons   []string
 	ends      []string
 	startErr  error
 	msgErr    error
@@ -159,6 +160,16 @@ func (s *stubController) Retrospective(ctx context.Context, id, msgID string) er
 	defer s.mu.Unlock()
 
 	s.retros = append(s.retros, id+"|"+msgID)
+	s.ctxErrs = append(s.ctxErrs, ctx.Err())
+
+	return nil
+}
+
+func (s *stubController) Lessons(ctx context.Context, id, msgID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.lessons = append(s.lessons, id+"|"+msgID)
 	s.ctxErrs = append(s.ctxErrs, ctx.Err())
 
 	return nil
@@ -698,6 +709,7 @@ func TestMessage_CommandsAreRouted(t *testing.T) {
 		wantModes    []string
 		wantResumes  []string
 		wantRetros   []string
+		wantLessons  []string
 		wantMessages int
 	}{
 		{text: "abort", wantAborts: 1},
@@ -716,6 +728,8 @@ func TestMessage_CommandsAreRouted(t *testing.T) {
 		{text: "continue with the plan", wantMessages: 1},
 		{text: "retrospective", wantRetros: []string{"BP1|m-retrospective"}},
 		{text: "retrospective of the sprint", wantMessages: 1},
+		{text: "lessons", wantLessons: []string{"BP1|m-lessons"}},
+		{text: "lessons learned", wantMessages: 1},
 		{text: "please abort this", wantMessages: 1},
 		{text: "gate it behind a flag", wantMessages: 1},
 		{text: "the design", wantMessages: 1},
@@ -738,6 +752,7 @@ func TestMessage_CommandsAreRouted(t *testing.T) {
 			assert.Equal(t, tt.wantModes, ctl.modes)
 			assert.Equal(t, tt.wantResumes, ctl.resumes)
 			assert.Equal(t, tt.wantRetros, ctl.retros)
+			assert.Equal(t, tt.wantLessons, ctl.lessons)
 			assert.Len(t, ctl.messages, tt.wantMessages)
 		})
 	}

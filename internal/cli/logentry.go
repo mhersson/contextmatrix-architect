@@ -221,6 +221,9 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventRetroReply:
 		entry.Type = "system"
 		entry.Content = str(p["message"])
+	case blueprint.EventLessonList:
+		entry.Type = "text"
+		entry.Content = lessonListText(p)
 	case blueprint.EventRetroReport:
 		entry.Type = "text"
 		entry.Content = retroReportText(p)
@@ -1215,6 +1218,38 @@ func lessonDecidedText(p map[string]any) string {
 	default:
 		return fmt.Sprintf("Lesson %s is approved for project %s: %s", tag, str(p["project"]), str(p["text"]))
 	}
+}
+
+// lessonListText renders a lessons reply: one line per lesson with its state,
+// scope, text, rationale and evidence card ids, or that there are none yet.
+func lessonListText(p map[string]any) string {
+	lessons := anyMaps(p["lessons"])
+	if len(lessons) == 0 {
+		return "There are no lessons yet."
+	}
+
+	var b strings.Builder
+
+	b.WriteString("**Lessons**")
+
+	for _, l := range lessons {
+		scope := "whole pack"
+		if str(l["scope"]) == store.ScopeProject {
+			scope = "project " + str(l["project"])
+		}
+
+		fmt.Fprintf(&b, "\n- L%.0f (%s, %s): %s", num(l["lesson"]), str(l["state"]), scope, str(l["text"]))
+
+		if why := str(l["rationale"]); why != "" {
+			fmt.Fprintf(&b, " Why: %s", why)
+		}
+
+		if ev := stringsOf(l["evidence"]); len(ev) > 0 {
+			fmt.Fprintf(&b, " Evidence: %s.", strings.Join(ev, ", "))
+		}
+	}
+
+	return b.String()
 }
 
 // whyWords says in words why a struggled card of a findings message

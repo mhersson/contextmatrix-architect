@@ -25,6 +25,7 @@ const (
 	CommandMode          = "mode"
 	CommandResume        = "resume"
 	CommandRetrospective = "retrospective"
+	CommandLessons       = "lessons"
 )
 
 // commandContinue is CommandResume's synonym; ParseCommand returns
@@ -44,7 +45,7 @@ var capAmount = regexp.MustCompile(`^-?(\d+(\.\d+)?|\.\d+)$`)
 var errNoResponder = errors.New("nobody answers this stage's questions under its auto policy; decide yourself and, where this stage records assumptions, record the decision as one")
 
 // ParseCommand recognises a reply that is a command rather than text for
-// the blueprint: abort, export, retrospective and resume (or its synonym
+// the blueprint: abort, export, retrospective, lessons and resume (or its synonym
 // continue) are the whole message, a gate reply is exactly gate, a stage and
 // human or auto, a cap reply is exactly cap and an amount or off, and a mode
 // reply exactly mode and one of the modes, so an answer that starts with one
@@ -54,7 +55,7 @@ func ParseCommand(text string) (string, []string) {
 	fields := strings.Fields(strings.ToLower(text))
 
 	switch {
-	case len(fields) == 1 && (fields[0] == CommandAbort || fields[0] == CommandExport || fields[0] == CommandRetrospective):
+	case len(fields) == 1 && (fields[0] == CommandAbort || fields[0] == CommandExport || fields[0] == CommandRetrospective || fields[0] == CommandLessons):
 		return fields[0], nil
 	case len(fields) == 1 && (fields[0] == CommandResume || fields[0] == commandContinue):
 		return CommandResume, nil

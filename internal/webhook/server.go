@@ -31,6 +31,7 @@ type Controller interface {
 	SetMode(ctx context.Context, id, mode, msgID string) error
 	Resume(ctx context.Context, id, msgID string) error
 	Retrospective(ctx context.Context, id, msgID string) error
+	Lessons(ctx context.Context, id, msgID string) error
 	End(ctx context.Context, id string) error
 
 	// View, Artifact and Subscribe serve CM's blueprint pane; the blueprint

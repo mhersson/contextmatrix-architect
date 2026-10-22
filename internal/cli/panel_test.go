@@ -115,6 +115,8 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		{"export while a stage runs", blueprint.EventExported, map[string]any{"during_run": true}, false},
 		{"a retrospective reply on an idle blueprint", blueprint.EventRetroReply, map[string]any{"reason": "not_emitted", "during_run": false}, true},
 		{"a retrospective reply while a run works", blueprint.EventRetroReply, map[string]any{"reason": "running", "during_run": true}, false},
+		{"a lesson list on an idle blueprint", blueprint.EventLessonList, map[string]any{"lessons": []any{}, "during_run": false}, true},
+		{"a lesson list while a run works", blueprint.EventLessonList, map[string]any{"lessons": []any{}, "during_run": true}, false},
 		{"a retrospective's findings", blueprint.EventRetroReport, map[string]any{"cards": []any{}}, true},
 		{"a lesson decided", blueprint.EventLessonDecided, map[string]any{"lesson": 2, "state": "active"}, true},
 		{"created", blueprint.EventCreated, nil, false},

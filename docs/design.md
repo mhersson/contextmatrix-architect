@@ -90,7 +90,7 @@ context window; never use film references.
 CM chat panel (the only client)
      |  internal/webhook (backendkit webhookcore + logbridge:
      |  session start, /message, /logs SSE, end-session, the blueprint view, artifacts and live SSE)
-     |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, cap <usd>|off, mode <m>, resume|continue, retrospective, lesson round answers
+     |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, cap <usd>|off, mode <m>, resume|continue, retrospective, lessons, lesson round answers
      |  events out: stage progress, tool calls, questions, gates, cost
 controller (internal/blueprint)     blueprint state machine, gates, responder policy, cost cap
      |
@@ -1365,6 +1365,10 @@ It never runs on its own.
   `lesson_decided` event. A decision sets the state from `proposed` only, so
   it applies once; answers take no run slot. Nothing a model proposes takes
   effect without this approval.
+- **`lessons`**: lesson ids `L<n>` count across the store and are never
+  reused, and `lessons` lists every lesson in every state, with its scope,
+  rationale and evidence card ids; it needs only the session and takes no run
+  slot.
 - Reading the cards needs no CM change: the architect knows its card ids
   and reads them with `get_card` only. A CM card-creator field comes later,
   to compare architect cards with human-written ones across the whole board.
@@ -1392,7 +1396,7 @@ the mockup reply (see Mockups):
 | `resume`, `continue`          | Runs the stopped stage again once, as a retry message would but storing no note (see below); a stage the cap stopped runs too and meets the cap again. The whole message, case ignored, so an answer that starts with either word stays an answer. While a run is in flight, or where nothing is stopped (an open gate, the mockup offer, a round waiting for answers, the sign-off, an ended pipeline, no need yet), nothing starts and the panel says so. Each reply is a `resume` event with the stage it runs again, or with `nothing` and the stage `running`, if any. |
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, the mockup version a use took carrying its `chosen` as the sheet shows it, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
 | `retrospective`               | Judges the emitted cards that struggled and proposes lessons (see Learning). The whole message, case ignored. |
-| `lessons`                     | Lists lessons and their state.                                          |
+| `lessons`                     | Lists every lesson of every blueprint with its state, scope, rationale and evidence card ids. Works in any state and while a run is in flight. |
 | `abort`                       | Ends the open run; the blueprint stays and can be reopened, and an open round stays open. |
 
 - Under a blueprint cost cap a run starts only with its floor left: the
@@ -1467,7 +1471,9 @@ the mockup reply (see Mockups):
   unanswered is answered first. A continuation that the
   session's end or a restart cut short runs again on reopen from the same
   stored conversation, and a round that
-  closed but never continued continues; a close cut short finishes, and no
+  closed but never continued continues; a close cut short finishes (not a lesson round's: a crash between its
+  answers snapshot and its closed snapshot is not finished, and lessons whose
+  decisions a crash cut short stay proposed), and no
   answer is recorded twice. An abort ends a run in flight, never a round. A
   round the pipeline went past without its answers, as when the run that
   posted it never recorded its end, is collapsed in the panel (a lesson
@@ -1797,7 +1803,7 @@ internal/retro       the retrospective's struggle rules, findings, task and less
 internal/export      markdown rendering into the state directory
 internal/config
 internal/buildinfo   build version, commit and time (ldflags) and the embedded merge history
-internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, mode, resume, continue and retrospective commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
+internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, mode, resume, continue, retrospective and lessons commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
 ```
 
 ## Changes needed in CM
