@@ -112,7 +112,7 @@ stage runner (internal/stage)       one harness.Run per round: persona + stage p
      |
 store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions, gates,
                                     transcripts, events, sources, ledger, emissions,
-                                    outcomes, lessons
+                                    lessons, blueprint lessons
 ```
 
 - **The controller has one interface.** Commands in, events out, behind one
@@ -319,8 +319,8 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage; a page `web_fetch` read is a `url` source versioned by the sha256 of its text, its title on its `research` event |
 | ledger        | per-run cost rows summed per blueprint                                                                                        |
 | emissions     | append-only: blueprint, kind (card, playbook, run), the draft card id, project, CM id, created at; one row per blueprint, kind and draft id |
-| outcomes      | per emitted card: final state, review attempts, parked reason, cost, finding text, proposed lesson                            |
-| lessons       | text, rationale, evidence card ids, scope (pack or project), state (`proposed`, `active`, `rejected`), decided by             |
+| lessons       | id (`L<n>`, across the whole store, never reused), the blueprint and retro run that proposed it, state (`proposed`, `active`, `rejected`, `retired`), scope (`pack` or `project`) and the evidence card's project, text, rationale, evidence card ids, an overlay of list additions (JSON, never edited), decided at and by; mutable, not append-only, every state change also an event |
+| blueprint_lessons | blueprint, lesson; a blueprint's lesson set, rows only inserted; nothing writes it yet |
 
 Every `stage` column, and every event payload's `stage`, holds a step key:
 the stage id for a whole-blueprint stage, `<stage>@SL<n>` for a per-slice

@@ -8,7 +8,7 @@ import (
 
 // schemaVersion stamps PRAGMA user_version. Bump it when the schema changes;
 // a newer database is refused.
-const schemaVersion = 6
+const schemaVersion = 7
 
 func ensureSchema(ctx context.Context, db *sql.DB) error {
 	var current int
@@ -126,6 +126,26 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 			message_id   TEXT NOT NULL DEFAULT '',
 			answered_at  INTEGER NOT NULL,
 			UNIQUE(blueprint_id, number)
+		)`,
+		`CREATE TABLE IF NOT EXISTS lessons (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			blueprint_id TEXT NOT NULL,
+			run_id       INTEGER NOT NULL,
+			state        TEXT NOT NULL,
+			scope        TEXT NOT NULL,
+			project      TEXT NOT NULL DEFAULT '',
+			text         TEXT NOT NULL,
+			rationale    TEXT NOT NULL DEFAULT '',
+			evidence     TEXT NOT NULL DEFAULT '[]',
+			overlay      TEXT NOT NULL DEFAULT '{}',
+			created_at   INTEGER NOT NULL,
+			decided_at   INTEGER,
+			decided_by   TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS blueprint_lessons (
+			blueprint_id TEXT NOT NULL,
+			lesson_id    INTEGER NOT NULL,
+			UNIQUE(blueprint_id, lesson_id)
 		)`,
 	}
 

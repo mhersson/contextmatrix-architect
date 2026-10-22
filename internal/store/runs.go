@@ -22,11 +22,13 @@ const (
 
 // Run kinds. A stage run produces a stage's artifact; a reviewer run judges
 // one before its gate; a responder run answers a question inside the asking
-// stage's run. Only stage runs place the pipeline.
+// stage's run; a retro run judges a blueprint's emitted cards and places
+// nothing. Only stage runs place the pipeline.
 const (
 	RunKindStage     = "stage"
 	RunKindReviewer  = "reviewer"
 	RunKindResponder = "responder"
+	RunKindRetro     = "retro"
 )
 
 // Run is one harness run of one stage.
