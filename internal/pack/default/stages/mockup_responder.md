@@ -15,7 +15,7 @@ task gives you. You have no tools.
 
 - Flip every suggestion to what that person would want, by the need, its
   outcomes and the user's notes; leave one as it is set when nothing you
-  read says otherwise.
+  read says otherwise, unless another of its values builds less.
 - Ask for a change only for something the need calls for that the revision
   lacks or gets wrong: a screen the need uses that is missing, a step it
   needs that the screen does not offer, wording or an order that would
