@@ -31,8 +31,12 @@ const (
 	retroTooBig         = "round_too_big"
 )
 
-// retroCanceled is the reply to a pass an abort or the session's end cut short.
-const retroCanceled = "The retrospective was canceled before it finished; nothing is stored. Reply `retrospective` to run it again."
+const (
+	// retroCanceled is the reply to a pass an abort or the session's end cut short.
+	retroCanceled = "The retrospective was canceled before it finished; nothing is stored. Reply `retrospective` to run it again."
+	// retroRestarted is the reply, after the restart, to a pass a restart cut short.
+	retroRestarted = "A restart cut the retrospective short; nothing is stored. Reply `retrospective` to run it again."
+)
 
 // Retrospective starts a pass over the blueprint's emitted cards on its run
 // slot (see retroPass). It refuses with a retro_reply, starting nothing,
@@ -133,7 +137,8 @@ func (c *Controller) Retrospective(ctx context.Context, id, msgID string) error 
 // proposed and posts the findings message, then the lesson round when there
 // are lessons. A pass that does not complete stores nothing and says why.
 // Either way the state is then settled (see settleAfterPass), unless
-// Shutdown cut the pass short, which writes nothing.
+// Shutdown cut the pass short, which writes nothing, as the store may be
+// closing; the restart says so (see retroInterrupted).
 func (c *Controller) retroPass(runCtx context.Context, r *run, sess *session, bp store.Blueprint, msgID string) {
 	defer c.release(bp.ID, r)
 
@@ -377,6 +382,14 @@ func (c *Controller) retroBusy(ctx context.Context, id, running string) string {
 	default:
 		return c.stepName(ctx, id, running) + " is running; reply `retrospective` once it ends."
 	}
+}
+
+// retroInterrupted tells, on the restart that marks its retro run
+// interrupted, that a restart cut a pass short, and settles the state the
+// pass left running.
+func (c *Controller) retroInterrupted(ctx context.Context, au audit, id string) {
+	c.retroReply(ctx, au, id, retroStopped, "", retroRestarted, false)
+	c.settleAfterPass(ctx, id)
 }
 
 // settleAfterPass sets the state a pass leaves: done when the watch has

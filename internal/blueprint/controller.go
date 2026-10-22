@@ -448,19 +448,26 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 // left running sat inside its stage's run, which alone is re-run, or answered
 // a handed-over round, whose resume answers what is left; it is never re-run
 // itself. A builder round is not returned: the critique runs that round
-// again, in its attempt. Empty means no stage is re-run. The caller holds the
-// run slot.
-func (c *Controller) interruptedStage(ctx context.Context, bp store.Blueprint) (string, error) {
+// again, in its attempt. A retro run is never re-run; marking it says the
+// pass was cut short (see retroInterrupted). Empty means no stage is re-run.
+// The caller holds the run slot.
+func (c *Controller) interruptedStage(ctx context.Context, au audit, bp store.Blueprint) (string, error) {
 	left, err := c.leftRunning(ctx, bp.ID)
 	if err != nil || len(left) == 0 {
 		return "", err
 	}
 
-	var latest store.Run
+	var (
+		latest store.Run
+		pass   bool
+	)
 
 	for _, r := range left {
-		if r.Kind == store.RunKindStage {
+		switch r.Kind {
+		case store.RunKindStage:
 			latest = r
+		case store.RunKindRetro:
+			pass = true
 		}
 	}
 
@@ -491,6 +498,11 @@ func (c *Controller) interruptedStage(ctx context.Context, bp store.Blueprint) (
 		if err := c.opts.Store.EndRun(ctx, r.ID, store.RunInterrupted, "process restarted", store.RunUsage{}, c.opts.Now().UTC()); err != nil {
 			return "", fmt.Errorf("blueprint: mark interrupted: %w", err)
 		}
+	}
+
+	// Said once: a later restart finds the retro run interrupted, not running.
+	if pass {
+		c.retroInterrupted(ctx, au, bp.ID)
 	}
 
 	if noNeed {

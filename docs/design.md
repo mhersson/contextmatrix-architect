@@ -1343,12 +1343,14 @@ It never runs on its own.
   the card's fault; it is the pass's record of every finding. Each lesson is
   stored `proposed`.
 - **A pass that does not complete** (a card that cannot be read, a run
-  error, a cap refusal or stop, an abort) stores nothing and says why; the
-  blueprint never fails. A cap refusal says to raise the cap and reply
-  `retrospective` again, since `cap` and `continue` resume no pass. The
-  state turns `running` when the retro run starts (reading the cards leaves
-  it as it was) and, once the pass ends, is `done` when the watch has ended,
-  else `emitted`.
+  error, a cap refusal or stop, an abort, a restart) stores nothing and says
+  why; the blueprint never fails. A restart says so after the restart, once,
+  as it marks the retro run interrupted, and runs no pass again. A cap
+  refusal says to raise the cap and reply `retrospective` again, since `cap`
+  and `continue` resume no pass. The state turns `running` when the retro
+  run starts (reading the cards leaves it as it was) and, once the pass ends
+  or the restart has said so, is `done` when the watch has ended, else
+  `emitted`.
 - **The lesson round**: when a pass has lessons, one question round follows
   the findings message, one question per lesson (no question cap; the
   round's 96 KiB frame bounds it), numbered after every question of the

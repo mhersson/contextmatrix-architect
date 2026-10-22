@@ -365,7 +365,7 @@ func rerunsOnReopen(r store.Run) bool {
 // position the record does not yield is reported, not returned: the session
 // still attaches. The caller holds the run slot.
 func (c *Controller) resumePoint(ctx context.Context, au audit, bp store.Blueprint) (outcome, error) {
-	interrupted, err := c.interruptedStage(ctx, bp)
+	interrupted, err := c.interruptedStage(ctx, au, bp)
 	if err != nil {
 		return outcome{}, err
 	}

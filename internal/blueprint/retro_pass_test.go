@@ -268,6 +268,12 @@ func TestRetrospective_JudgesEveryStruggledCardAndReportsEachFinding(t *testing.
 	assert.Nil(t, second.Lesson)
 	assert.Equal(t, []string{"review_attempts"}, second.Why)
 
+	require.Len(t, roundEvents(t, st), 1)
+
+	round := newestSnapshot(t, c)
+	require.Len(t, round.Frame.Questions, 1, "only the finding with a lesson is asked about")
+	assert.Equal(t, map[int]int64{round.Frame.Questions[0].Number: ls[0].ID}, round.Lessons)
+
 	assert.Empty(t, replies(rec), "a pass that completes says so in its report")
 	assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
 	assert.False(t, holdsSlot(c, "BP1"))
@@ -570,6 +576,54 @@ func TestRetrospective_AbortCancelsThePass(t *testing.T) {
 	runs := retroRuns(t, st)
 	require.Len(t, runs, 1)
 	assert.Equal(t, store.RunCanceled, runs[0].Status)
+	assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
+}
+
+func TestRetrospective_ARestartDuringThePassSaysSoOnceAndSettles(t *testing.T) {
+	entered := make(chan struct{}, 1)
+
+	script := twoCardScript()
+	script[RetroStage] = func(ctx context.Context, _ stage.Input) (stage.Output, error) {
+		signal(entered)
+		<-ctx.Done()
+
+		return stage.Output{}, ctx.Err()
+	}
+
+	c, st, _, rec, fake := emitted(t, script)
+	fake.setEnded("ALPHA-001", parked("ALPHA-001", cardBody("needs a key"), "no key"))
+	fake.setEnded("ALPHA-002", finished("ALPHA-002", cardBody("Wire the parser"), 0))
+
+	ctx := context.Background()
+
+	require.NoError(t, c.Retrospective(ctx, "BP1", "m-retro"))
+	receive(t, entered, "the retro run")
+	require.NoError(t, c.Shutdown(ctx))
+
+	assert.Empty(t, replies(rec), "the pass Shutdown cut short writes nothing")
+	require.Equal(t, string(StateRunning), stateOf(t, st, "BP1"))
+
+	c2, runner2, rec2 := restart(t, st, nil, script, fake.connect, startInput("BP1"))
+	c2.Wait("BP1")
+
+	got := replies(rec2)
+	require.Len(t, got, 1)
+	assert.Equal(t, retroStopped, got[0]["reason"])
+	assert.Equal(t, false, got[0]["during_run"])
+	assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
+	assert.Empty(t, inputsOf(runner2, RetroStage), "a restart runs no pass again")
+	assert.Empty(t, lessons(t, st))
+
+	runs := retroRuns(t, st)
+	require.Len(t, runs, 1)
+	assert.Equal(t, store.RunInterrupted, runs[0].Status)
+
+	require.NoError(t, c2.Shutdown(ctx))
+
+	c3, _, rec3 := restart(t, st, nil, script, fake.connect, startInput("BP1"))
+	c3.Wait("BP1")
+
+	assert.Empty(t, replies(rec3), "a later restart says it no more")
 	assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
 }
 
