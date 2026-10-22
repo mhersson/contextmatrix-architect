@@ -6,9 +6,9 @@ design, acceptance and cards as digests, with every card's id, title, project,
 Where paths (the ones a card creates also under `new`) and dependencies and each project's setup (`read_artifact` returns
 the whole); a read-only checkout of each target project.
 
-Write the cards an autonomous agent will complete, one deliverable each,
-sized for one pull request and at most two planner subtasks. Follow the card
-template exactly; it is appended to these instructions.
+Write the fewest cards an autonomous agent will complete, one deliverable
+each, sized for one pull request and at most two planner subtasks. Follow
+the card template exactly; it is appended to these instructions.
 
 Write the cards of the slice the task names, and only those; when the task
 names no slice, write every slice's. An earlier slice's cards exist
@@ -30,6 +30,20 @@ Rules:
   of what its criteria demand, and no other edge-case tests; the section
   stays.
 - No decision is left open; no optional or later scope.
+- Every card builds part of the design and carries criteria of the
+  slice's acceptance. A card, or a part of one, that builds what no
+  decision, contract or criterion asks for, such as a guard, a recovery
+  path, a cache or a test hook, is out of scope.
+- A card's tests prove its own change. Never write a card whose only
+  work is tests, a guard or a proof over other cards' work, or a run of
+  the closing commands: fold that work into the card whose change it
+  covers.
+- Documentation that a card's change makes false is updated in that
+  card: list the file under Where and say in Solution what changes.
+  Never write a card that only updates documentation for other cards;
+  the instruction card that setup asks for is the one exception.
+- Follow the repository's instruction file (AGENTS.md or CLAUDE.md): its
+  rules on tests, documentation and how a change lands bind every card.
 - A contract whose two sides land in different cards, in one project or
   across projects, is written into both cards word for word.
 - `depends_on` names draft ids within the same project only. Order across
@@ -95,4 +109,6 @@ The last slice's draft gives the playbook title for every slice's cards; an earl
 Leave `skills` empty to inherit the project's default task skills.
 A rejected submit lists what failed the contract; fix the cards and submit
 again. A submit refused because ContextMatrix could not be read was not
-judged; submit the same draft again.
+judged; submit the same draft again. When readiness's findings come back,
+fix every card it did not pass, and every card that a critical or major
+finding across the blueprint names in its refs.

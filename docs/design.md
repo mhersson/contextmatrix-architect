@@ -247,24 +247,30 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   for it then judges the accepted artifact, given its own persona, the
   stage's inputs, the questions the stage got answered, the assumptions so
   far, the gate feedback its attempt addresses, once the sign-off was
-  rejected the sign-off's feedback, the user's notes and the artifact,
-  never the builder's transcript, and the tool groups the pack gives it:
-  the code tools over the blueprint's checkouts, and with research on
-  `web_fetch` alone, behind the same leak guard, to open what the artifact
-  cites; it has no web search. It scores the artifact 1-5, sums up
-  what it read and checked, and keeps a findings ledger: each finding has an
-  id stable within the stage attempt (R1, R2, ...) and a severity (critical,
-  major or minor). A later round of the attempt is given every earlier
-  finding, with the claim the builder's addressed list makes beside it, and
-  gives each a verdict against the version it judges, `fixed` or
-  `still_open`, whatever the claim says; its new findings take the ids after
-  the attempt's highest. A verdict passes at or above the pack's threshold
-  with no critical finding open or still open, so an open critical finding
-  fails it whatever the score, and a score below the threshold must leave a
-  finding open. The verdict and its ledger are stored as an artifact of the
-  pseudo-stage `<stage>.review`. A verdict that does not pass, or leaves a
-  critical or major finding open or still open, sends the unresolved
-  findings, minors included, with the notes, answers and accepted
+  rejected the sign-off's feedback, the user's notes and the artifact, never
+  the builder's transcript, and the tool groups the pack gives it: the code
+  tools over the blueprint's checkouts, and with research on `web_fetch`
+  alone, behind the same leak guard, to open what the artifact cites; it has
+  no web search. It scores the artifact 1-5, sums up what it read and
+  checked, and keeps a findings ledger: each finding has an id stable within
+  the stage attempt (R1, R2, ...) and a severity (critical, major or minor).
+  A later round of the attempt is given every earlier finding, with the
+  claim the builder's addressed list makes beside it, and gives each a
+  verdict against the version it judges, `fixed` or `still_open`, whatever
+  the claim says; a finding the builder declined as out of scope is `fixed`
+  when it asked for a part nothing traces to, and `still_open` otherwise. A
+  reviewer reports a part that traces to nothing, including an accepted
+  assumption that adds work the need does not ask for, as a major finding to
+  remove it, and never asks for one; doing the asked-for work correctly and
+  securely is the work itself, so a security hole or a wrong result on input
+  the need's users will give is a defect; its new findings take the ids
+  after the attempt's highest. A verdict passes at or above the pack's
+  threshold with no critical finding open or still open, so an open critical
+  finding fails it whatever the score, and a score below the threshold must
+  leave a finding open. The verdict and its ledger are stored as an artifact
+  of the pseudo-stage `<stage>.review`. A verdict that does not pass, or
+  leaves a critical or major finding open or still open, sends the
+  unresolved findings, minors included, with the notes, answers and accepted
   assumptions the builder's conversation has not seen, to that conversation,
   resumed from its stored transcript for another round of the same attempt,
   and the revision is reviewed again: no version reaches a gate unreviewed.
@@ -274,10 +280,10 @@ store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions
   and one that does not pass waits for a human regardless of policy. Each
   reviewer round is a harness run with its own cap, and so is each builder
   round; the cost ledger sums them. The round is given its findings by id,
-  and its submit may list the ones it addressed in its data as `addressed:
-  [{finding, note}]`; an id the round was not given is refused like any
-  check problem, and the third failing submit is accepted with its problems
-  kept.
+  and its submit may list the ones it addressed in its data as
+  `addressed: [{finding, note}]`; an id the round was not given is refused
+  like any check problem, and the third failing submit is accepted with its
+  problems kept.
 - **A gate waits between runs.** The controller holds the stage's artifact and
   asks the client. Nothing runs meanwhile.
 - **A human rejection starts a new attempt**: a fresh run with the previous
@@ -382,6 +388,24 @@ Every stage is a model run, except a shared stage that collapses with one slice,
 - Every stage that interviews (intake, slicing, shared decisions and solution
   design) reads the code, so it states what the code answers as a finding and
   asks only what neither the code nor the need settles.
+- Every stage of the default pack plans only what the need and the person's
+  decisions ask for. Each part an artifact adds (a decision, a contract, an
+  outcome, a criterion, a card) traces to a need item, an answered question,
+  an accepted assumption, gate feedback, or a defect it prevents in code that
+  exists. Where the need is silent, the code's present behaviour stands, and
+  new code takes the plainest behaviour that works. An assumption never adds
+  work, and a quality question recommends its least-work option beyond a
+  working whole. A builder round acts on its findings as the stage's
+  instructions say. It revises for a finding the trace calls for. It declines
+  one that would add a part nothing asks for, noting it `out of scope`, and
+  removes where removing or adding would both meet a finding. A need for a
+  thing asks for one that works: what it needs to build, start, be reached and
+  do its job end to end for the people who use it, with the data it exists to
+  keep still there when they come back, is the work itself. The scope rule
+  cuts what goes beyond that working whole, never the whole. Doing the
+  asked-for work correctly and securely is the work itself, not an addition: a
+  security hole, or a wrong result on input the need's users will give, is a
+  defect.
 - The first stage with the code tools, intake in the default pack, ends -
   for a per-slice stage, its SL1 step ends - by telling the session what
   each target project lacks for an agent run: a verify command in CM (read
@@ -452,10 +476,18 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   Readiness also judges the blueprint as a whole and reports, in its data's
   `cross`, findings between artifacts (decisions, contracts, cards and
   assumptions that disagree, a near-duplicate assumption, an outcome no
-  criterion proves), each `X<n>` with a severity (critical, major or minor),
-  its text and the ids it names; they never loop. A decision, criterion,
-  assumption or card that still contradicts the sign-off's feedback is
-  critical. The `readiness` check refuses a cards list of another shape
+  criterion proves, a change no card handles that breaks what the code does
+  today, a part that traces to nothing, an assumption that adds work the
+  need does not ask for), each `X<n>` with a severity (critical, major or
+  minor), its text and the ids it names, the cards among them being those
+  whose change fixes it. A critical or major finding sends back the cards it
+  names. The loop counts each such card as not passed, whatever its own
+  entry says. When its entry passed it, its finding reads
+  `<card>: X<n> (<severity>): <text>`, and it reaches the sign-off that way
+  after the last round. A minor finding sends nothing back. A decision,
+  criterion, assumption or card that still contradicts the sign-off's
+  feedback, or a change that breaks what the code does today, is critical.
+  The `readiness` check refuses a cards list of another shape
   (`readiness_shape`), an entry without an id, a ready flag or findings that
   say why, a card judged twice, or a ready card that carries a finding
   (`card_entry`), a card of the draft left out (`card_unjudged`) or one no
@@ -479,18 +511,18 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   list, held to the same rules for each decision.
 - Intake states every measurable outcome of the need in its data's
   `outcomes`, each `{id: O<n>, text, quality}`: one measurable sentence,
-  and, for a quality the user answered (performance, security,
-  operability, data loss, compatibility, or another), the quality's name.
-  Intake and every design ask about the qualities that matter for the need
-  as researched questions. The shared decisions and each slice's design may
-  add outcomes, at the top level of their data, for qualities only they can
-  state; ids run on across the blueprint. The `outcomes` check refuses an
-  entry of another shape (`outcome_shape`), an id that is not `O<n>`,
-  repeats one or is not after the highest an earlier step holds
-  (`outcome_id`), an outcome without its sentence (`outcome_text`), and an
-  intake that states none (`no_outcomes`); bounded like the other checks,
-  never fatal. Earlier means the steps before it in pipeline order, so a
-  re-run's own earlier version never counts.
+  and, for a quality the user answered (performance, security, operability,
+  data loss, compatibility, or another), the quality's name. Intake and
+  every design ask about the qualities that matter for the need as
+  researched questions. The shared decisions and each slice's design may
+  add outcomes, at the top level of their data, for qualities the user's
+  answers settle and only they can state; ids run on across the blueprint.
+  The `outcomes` check refuses an entry of another shape (`outcome_shape`),
+  an id that is not `O<n>`, repeats one or is not after the highest an
+  earlier step holds (`outcome_id`), an outcome without its sentence
+  (`outcome_text`), and an intake that states none (`no_outcomes`); bounded
+  like the other checks, never fatal. Earlier means the steps before it in
+  pipeline order, so a re-run's own earlier version never counts.
 - Acceptance's submit is checked: it has slices, every slice of slicing
   among them, or a per-slice acceptance's own slice alone, and each with at
   least one criterion; every criterion has an id of its own, never one an
@@ -500,16 +532,18 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   each slice sweeps the pack's edge cases (lists.yaml `edge_cases`, matched
   case-insensitively after trimming; but see POC projects, below), one entry
   per case, settled by the slice's own criteria or manual checks or recorded
-  not applicable with a reason; and the last slice's acceptance, or one for
-  the whole blueprint, leaves no outcome uncited (`criterion_outcomes`,
-  `sweep_missing`, `sweep_unknown`, `sweep_duplicate`, `sweep_settled`,
-  `sweep_poc`, `outcome_uncovered`). The traces are read apart from the
-  criteria, so a malformed one is never `shape`. A blueprint whose earlier
-  steps state no outcome, as one stored before outcomes, needs no outcome
-  traces. The acceptance task and its tester's task list the edge cases, and
-  the tester checks the sweep and the traces. At decomposition, acceptance
-  data that does not decode (`criteria_unreadable`) or defines no criterion
-  (`criteria_empty`) is a contract finding, not a stalled run.
+  not applicable with a reason (a case the design adds no handling for is
+  not applicable, and gets no criterion); and the last slice's acceptance,
+  or one for the whole blueprint, leaves no outcome uncited
+  (`criterion_outcomes`, `sweep_missing`, `sweep_unknown`,
+  `sweep_duplicate`, `sweep_settled`, `sweep_poc`, `outcome_uncovered`). The
+  traces are read apart from the criteria, so a malformed one is never
+  `shape`. A blueprint whose earlier steps state no outcome, as one stored
+  before outcomes, needs no outcome traces. The acceptance task and its
+  tester's task list the edge cases, and the tester checks the sweep and the
+  traces. At decomposition, acceptance data that does not decode
+  (`criteria_unreadable`) or defines no criterion (`criteria_empty`) is a
+  contract finding, not a stalled run.
 - A target project ContextMatrix flags as a proof of concept (POC; `poc` in
   the project config `list_projects` returns, absent reads false) changes
   what its cards demand, never the design. A run that writes or judges what
@@ -588,6 +622,10 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   `gate intake human`.
 - A contract whose two sides land in different cards, inside one project or
   across projects, is copied into both cards word for word.
+- Documentation a card's change makes false is updated in that card. No card's
+  only work is documentation, tests, a guard or a proof over other cards' work,
+  or the closing commands, except the instruction card setup asks for. The
+  repository's instruction file binds every card.
 - Human-only and live-environment checks become manual playbook entries, never
   card criteria.
 - Mechanical checks per stage come from the pack: required sections, source
@@ -825,6 +863,7 @@ adds to a card that cites a source tag (see Emission).
 | A card's mockup screens exist in the approved mockup               | mechanical                 |
 | No mockup block in a draft card's body                             | mechanical                 |
 | One deliverable, no open decisions, no optional scope              | model-judged               |
+| Builds only what the blueprint asks for; no card whose only work is documentation, tests, a guard or a proof over other cards' work, or the closing commands, except the instruction card setup asks for | model-judged |
 | Estimated planner split of two subtasks or fewer                   | model-judged               |
 | "Could an agent with only this repo finish this card?"; a point the agent can settle on its own is no finding | model-judged, adversarial  |
 | No card duplicates an open card of its project                     | model-judged (cm tools)    |

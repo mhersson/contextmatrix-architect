@@ -69,6 +69,10 @@ func TestFailingCards(t *testing.T) {
 
 	_, failing = cardVerdicts(store.Artifact{Data: []byte(`{"cards":[]}`)}, []string{"D1"})
 	assert.Empty(t, failing, "a verdict that judged no card fails none")
+
+	art = store.Artifact{Data: []byte(`{"cards":[{"id":"D1","ready":true},{"id":"D2","ready":true}],"cross":[{"id":"X1","severity":"critical","text":"a","refs":["D1"]},{"id":"X2","severity":"major","text":"b","refs":["D1"]}]}`)}
+	_, failing = cardVerdicts(art, []string{"D1", "D2"})
+	assert.Equal(t, []string{"D1"}, failing, "a card two findings across the blueprint name fails once")
 }
 
 func TestReadiness_JudgesEverySlicesCards(t *testing.T) {

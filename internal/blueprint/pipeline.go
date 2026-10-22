@@ -1670,7 +1670,10 @@ func cardIDs(a store.Artifact) []string {
 // cardVerdicts reads a loop stage's per-card verdicts against the draft it
 // judged: each finding, and the cards it did not pass (a finding, not
 // ready, or not judged). A verdict that judged no card is one finding and
-// fails no card. The verdict is ready only when it has no finding.
+// fails no card. The verdict is ready only when it has no finding. A card
+// judged ready that a critical or major finding across the blueprint names in
+// its refs is not passed either: the loop never passes a card under
+// readiness's own finding.
 func cardVerdicts(a store.Artifact, draft []string) (findings, failing []string) {
 	var data struct {
 		Cards []struct {
@@ -1685,11 +1688,14 @@ func cardVerdicts(a store.Artifact, draft []string) (findings, failing []string)
 	}
 
 	judged := map[string]bool{}
+	passed := map[string]bool{}
 
 	for _, card := range data.Cards {
 		judged[card.ID] = true
 
 		if card.Ready && len(card.Findings) == 0 {
+			passed[card.ID] = true
+
 			continue
 		}
 
@@ -1701,6 +1707,24 @@ func cardVerdicts(a store.Artifact, draft []string) (findings, failing []string)
 
 		if len(card.Findings) == 0 {
 			findings = append(findings, card.ID+": not ready")
+		}
+	}
+
+	for _, f := range crossOf(a) {
+		if f.Severity != severityCritical && f.Severity != severityMajor {
+			continue
+		}
+
+		for _, ref := range f.Refs {
+			if !passed[ref] {
+				continue
+			}
+
+			findings = append(findings, ref+": "+f.ID+" ("+f.Severity+"): "+f.Text)
+
+			if !slices.Contains(failing, ref) {
+				failing = append(failing, ref)
+			}
 		}
 	}
 

@@ -15,19 +15,30 @@ A check that inspects output states it in the form the design specifies (its
 JSON encoding, indentation, field order), or checks only the content; never a
 byte-exact form the design does not fix.
 
+Each criterion proves a behaviour that the need, a decision or a contract of the
+design states. Write none that proves handling the design does not decide, and
+none that needs a hook that only a test uses. Write none that only re-runs the
+project's build or verify command, since every card runs it already. Write none
+that only checks documentation, unless the need asks for the documentation
+itself: documentation goes with the change it describes.
+
 Each criterion names the outcomes it proves by the ids the need and the
 designs give them, `"outcomes": ["O1"]`; a manual check may name outcomes
 too. Across the slices every outcome is proved by some criterion or manual
 check, and the last slice's acceptance closes any gap.
 
-Then sweep the slice for the edge cases the task lists. Think of what
-people actually meet: an empty search, a file half written when the
-process dies, a user without the role, two saves of one record at once, an
-old client against the new server, the largest upload accepted. For each
-case either name this slice's criteria or manual checks that settle it,
-`{"condition": "<the case as listed>", "settled_by": ["AC4", "MC2"]}`, adding
-a criterion when none does, or say in one sentence why it cannot happen
-here, `{"condition": "<the case>", "not_applicable": "<why>"}`.
+Then sweep the slice for the edge cases the task lists. Think of what people
+actually meet: an empty search, a file half written when the process dies, a
+user without the role, two saves of one record at once, an old client against
+the new server, the largest upload accepted. For each case either name this
+slice's criteria or manual checks that settle it,
+`{"condition": "<the case as listed>", "settled_by": ["AC4", "MC2"]}`, or say in
+one sentence why the slice needs none,
+`{"condition": "<the case>", "not_applicable": "<why>"}`. A case needs none when
+it cannot happen here, or when the design adds no handling for it because the
+need and the decisions ask for none, and the behaviour the code already has
+stands. Add a criterion only when the design decides how the slice handles the
+case and no criterion proves it yet.
 
 The task may name POC projects: proofs of concept, whose cards are
 judged on whether the code does what the slice promises, not on
@@ -45,8 +56,14 @@ criteria and manual checks. Submit with a data object
 `{"slices": [{"id": "SL1", "criteria": [{"id": "AC1", "project": "<name>", "text": "<the test or command and what passes>", "outcomes": ["O1"]}], "manual": [{"id": "MC1", "text": "<the check a human makes>", "outcomes": ["O2"]}], "sweep": [{"condition": "<an edge case>", "settled_by": ["AC1"]}, {"condition": "<an edge case>", "not_applicable": "<why>"}]}]}`.
 Ids run on across slices: AC1, AC2, ... and MC1, MC2, ..., each after the highest an earlier slice's acceptance holds.
 
-When a reviewer's findings come back to you, each with an id such as R2,
-revise for them and add `"addressed": [{"finding": "<its id>", "note": "<one sentence on what you changed>"}]`
-to the data, one entry per finding you addressed. Leave out a finding you
-did not address; never claim one you did not. The reviewer checks your
-revision itself, not your notes.
+When a reviewer's findings come back to you, each with an id such as R2, add
+`"addressed": [{"finding": "<its id>", "note": "<one sentence>"}]` to the data,
+one entry per finding you act on. Revise for a finding that the need, the
+answers, the accepted assumptions, gate feedback or a defect in code that exists
+calls for, and say in its note what you changed. A finding that asks you to add
+what none of them asks for, such as a recovery path, a cache, a guard, a limit,
+a test hook or an outcome, is out of scope: change nothing for it, and note
+`out of scope: <what it would add>`. A finding that asks you to remove such a
+part is in scope. Where a finding can be met by removing or by adding, remove. A
+minor finding changes wording, never what is built. Never claim a finding you
+did not address. The reviewer checks your revision itself, not your notes.

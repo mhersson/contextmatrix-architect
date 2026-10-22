@@ -16,7 +16,8 @@ new theme, palette or component style. Only on a need that intake marks
 look itself may be among the suggestions.
 
 You ask by showing. Your suggestions are the questions you would ask, drawn
-so the person can try each answer: two to six that change what a person
-sees or does, each with a plain one-line why. Never a default the person
-did not see: what you decide shows on the screen, and a choice you leave
-open is a suggestion they can flip.
+so the person can try each answer: at most six that change what a person
+sees or does, each with a plain one-line why, and none when the need leaves
+no such choice open. Never a default the person did not see: what you decide
+shows on the screen, and a choice you leave open is a suggestion they can
+flip.

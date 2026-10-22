@@ -570,6 +570,36 @@ func TestVerdictOf(t *testing.T) {
 		{name: "ready with findings is not ready", art: verdict(map[string]any{"id": "D1", "ready": true, "findings": []any{"path does not exist"}}), draft: []string{"D1"}, want: []string{"D1: path does not exist"}},
 		{name: "no cards judged", art: verdict(), draft: []string{"D1"}, want: []string{"the stage reported no cards"}},
 		{name: "no data", art: store.Artifact{}, draft: []string{"D1"}, want: []string{"the stage reported no cards"}},
+		{
+			name:  "a major finding across the blueprint names a ready card",
+			art:   store.Artifact{Data: []byte(`{"cards":[{"id":"D1","ready":true},{"id":"D2","ready":true}],"cross":[{"id":"X1","severity":"major","text":"error events without a stage break the cap resume","refs":["D2","DEC5"]}]}`)},
+			draft: []string{"D1", "D2"}, want: []string{"D2: X1 (major): error events without a stage break the cap resume"},
+		},
+		{
+			name:  "a critical one in any case",
+			art:   store.Artifact{Data: []byte(`{"cards":[{"id":"D1","ready":true}],"cross":[{"id":"X1","severity":"Critical","text":"wrong thing","refs":["D1"]}]}`)},
+			draft: []string{"D1"}, want: []string{"D1: X1 (critical): wrong thing"},
+		},
+		{
+			name:  "a minor one sends nothing back",
+			art:   store.Artifact{Data: []byte(`{"cards":[{"id":"D1","ready":true}],"cross":[{"id":"X1","severity":"minor","text":"reword A3","refs":["D1","A3"]}]}`)},
+			draft: []string{"D1"}, wantReady: true,
+		},
+		{
+			name:  "a card not ready keeps its own findings only",
+			art:   store.Artifact{Data: []byte(`{"cards":[{"id":"D1","ready":false,"findings":["vague"]}],"cross":[{"id":"X1","severity":"major","text":"seam","refs":["D1"]}]}`)},
+			draft: []string{"D1"}, want: []string{"D1: vague"},
+		},
+		{
+			name:  "refs that name no judged card",
+			art:   store.Artifact{Data: []byte(`{"cards":[{"id":"D1","ready":true}],"cross":[{"id":"X1","severity":"major","text":"DEC2 traces to nothing","refs":["DEC2","D9","AC4"]}]}`)},
+			draft: []string{"D1"}, wantReady: true,
+		},
+		{
+			name:  "two findings name one card",
+			art:   store.Artifact{Data: []byte(`{"cards":[{"id":"D1","ready":true}],"cross":[{"id":"X2","severity":"major","text":"b","refs":["D1"]},{"id":"X1","severity":"critical","text":"a","refs":["D1"]}]}`)},
+			draft: []string{"D1"}, want: []string{"D1: X1 (critical): a", "D1: X2 (major): b"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -600,6 +630,46 @@ func TestPipeline_ReadinessPassesOnTheSecondRound(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, true, report.Payload["ready"])
 	assert.Equal(t, 2, report.Payload["rounds"])
+}
+
+func TestPipeline_AFindingAcrossTheBlueprintSendsTheCardsItNamesBack(t *testing.T) {
+	tests := []struct {
+		name       string
+		severity   string
+		wantCalls  int
+		wantRounds int
+	}{
+		{name: "major", severity: "major", wantCalls: 6, wantRounds: 2},
+		{name: "minor", severity: "minor", wantCalls: 4, wantRounds: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var readinessRuns int
+
+			script := happyScript()
+			script["readiness"] = func(context.Context, stage.Input) (stage.Output, error) {
+				readinessRuns++
+
+				verdict := readiness(true)
+				if readinessRuns == 1 {
+					verdict["cross"] = []any{map[string]any{"id": "X1", "severity": tt.severity, "text": "D1 breaks the cap resume", "refs": []any{"D1"}}}
+				}
+
+				return done("# Readiness", verdict), nil
+			}
+
+			c, _, runner, rec, _ := newPipeline(t, script)
+			drive(t, c, "BP1")
+
+			assert.Equal(t, tt.wantCalls, runner.calls())
+
+			report, ok := rec.first(EventReport)
+			require.True(t, ok)
+			assert.Equal(t, true, report.Payload["ready"])
+			assert.Equal(t, tt.wantRounds, report.Payload["rounds"])
+		})
+	}
 }
 
 // keepSubmitting models a model that submits the same draft until the

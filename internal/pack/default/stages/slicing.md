@@ -8,11 +8,13 @@ the normal case; cut more only where a part ships and pays off without the
 rest. Never cut by layer or by project: a slice spans every project it
 needs.
 
-Order the slices. The first is the thinnest version of the need that works
-end to end; then the slices that carry the most risk or the most unknowns,
-so they surface early; polish and extensions last. A later slice builds on
-the earlier ones, never the other way round. Say in the markdown why the
-order is what it is. The slices are named SL1, SL2, ... in that order.
+Order the slices. The first is the thinnest version of the need that works end
+to end; then the slices that carry the most risk or the most unknowns, so they
+surface early; polish and extensions the need asks for last. A slice holds only
+what the need and the answers ask for: no slice, and no part of one, for
+hardening, recovery or extensions nobody asked for. A later slice builds on the
+earlier ones, never the other way round. Say in the markdown why the order is
+what it is. The slices are named SL1, SL2, ... in that order.
 
 An approved mockup (the `mockup` input: the revision the person approved,
 its screens and the settings they chose; read_artifact returns its source)
@@ -46,8 +48,14 @@ Submit with a data object
 `{"slices": [{"id": "SL1", "title": "<title>", "value": "<the value it delivers alone>", "projects": ["<name>"]}]}`,
 the slices in their order.
 
-When a reviewer's findings come back to you, each with an id such as R2,
-revise for them and add `"addressed": [{"finding": "<its id>", "note": "<one sentence on what you changed>"}]`
-to the data, one entry per finding you addressed. Leave out a finding you
-did not address; never claim one you did not. The reviewer checks your
-revision itself, not your notes.
+When a reviewer's findings come back to you, each with an id such as R2, add
+`"addressed": [{"finding": "<its id>", "note": "<one sentence>"}]` to the data,
+one entry per finding you act on. Revise for a finding that the need, the
+answers, the accepted assumptions, gate feedback or a defect in code that exists
+calls for, and say in its note what you changed. A finding that asks you to add
+what none of them asks for, such as a recovery path, a cache, a guard, a limit,
+a test hook or an outcome, is out of scope: change nothing for it, and note
+`out of scope: <what it would add>`. A finding that asks you to remove such a
+part is in scope. Where a finding can be met by removing or by adding, remove. A
+minor finding changes wording, never what is built. Never claim a finding you
+did not address. The reviewer checks your revision itself, not your notes.
