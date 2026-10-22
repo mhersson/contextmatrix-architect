@@ -608,6 +608,10 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   `gate intake human`.
 - A contract whose two sides land in different cards, inside one project or
   across projects, is copied into both cards word for word.
+- Documentation a card's change makes false is updated in that card. No card's
+  only work is documentation, tests, a guard or a proof over other cards' work,
+  or the closing commands, except the instruction card setup asks for. The
+  repository's instruction file binds every card.
 - Human-only and live-environment checks become manual playbook entries, never
   card criteria.
 - Mechanical checks per stage come from the pack: required sections, source
