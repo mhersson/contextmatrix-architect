@@ -797,13 +797,23 @@ func (s *capStop) reason() string {
 	return "the " + s.shortfall()
 }
 
+// shortfall is what the cap did. A run cut short can leave money: the ledger
+// counts its totals, below the per-line sum the sink cut at.
 func (s *capStop) shortfall() string {
-	if s.floor == 0 {
+	switch {
+	case s.floor > 0:
+		return fmt.Sprintf("blueprint's $%.2f cap leaves $%.2f ($%.2f spent), less than the $%.2f the next run needs",
+			s.capUSD, float64(leftCents(s.capUSD, s.spent))/100, s.spent, float64(floorCents(s.floor))/100)
+	case s.usedUp():
 		return fmt.Sprintf("blueprint's $%.2f cap is used up ($%.2f spent)", s.capUSD, s.spent)
+	default:
+		return fmt.Sprintf("blueprint's $%.2f cap cut the run short ($%.2f spent)", s.capUSD, s.spent)
 	}
+}
 
-	return fmt.Sprintf("blueprint's $%.2f cap leaves $%.2f ($%.2f spent), less than the $%.2f the next run needs",
-		s.capUSD, float64(leftCents(s.capUSD, s.spent))/100, s.spent, float64(floorCents(s.floor))/100)
+// usedUp reports whether the cap has no whole cent left.
+func (s *capStop) usedUp() bool {
+	return leftCents(s.capUSD, s.spent) <= 0
 }
 
 // centsEpsilon absorbs float error in dollar sums, so an exact-cent

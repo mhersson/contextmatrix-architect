@@ -1323,8 +1323,9 @@ the mockup reply (see Mockups):
   and says how to go on, for a spent cap "The blueprint's $2.00 cap is used
   up ($2.14 spent); Readiness stopped. Raise the cap by clicking the cost in
   the header (or reply `cap <usd>`) and it continues.", below the floor that
-  the cap leaves less than the next run needs; a model without a price keeps
-  its own refusal. When the cap stored once the run has ended is off or
+  the cap leaves less than the next run needs, and for a run cut short with
+  money left on the ledger that the cap cut the run short; a model without a
+  price keeps its own refusal. When the cap stored once the run has ended is off or
   still leaves a rerun its floor, raised since or not, the message says the
   cap now in force and to reply `continue` instead of asking for a raise
   ("... Readiness stopped. The cap is now $4.00: reply `continue` and it

@@ -1386,6 +1386,28 @@ func TestCapStopAfter_ACutWhoseOwnCapStillLeavesTheFloorIsLifted(t *testing.T) {
 	assert.True(t, stop.lifted, "0.15 left covers a rerun's 0.10 floor")
 	assert.InDelta(t, 1.5, stop.nowUSD, 1e-9)
 	assert.Zero(t, stop.floor, "what is left is not below the floor")
+	assert.False(t, stop.usedUp(), "money is left, so the cap is not used up")
+}
+
+func TestCapStop_IsUsedUpOnlyWithNoWholeCentLeft(t *testing.T) {
+	tests := []struct {
+		name          string
+		capUSD, spent float64
+		want          bool
+	}{
+		{name: "a spent cap", capUSD: 1, spent: 1.2, want: true},
+		{name: "exactly at the cap", capUSD: 1, spent: 1, want: true},
+		{name: "under a cent left is at the cap in whole cents", capUSD: 1, spent: 0.999, want: true},
+		{name: "a cut whose ledger stands below the cap", capUSD: 1.5, spent: 1.35},
+		{name: "one whole cent left", capUSD: 1, spent: 0.99},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &capStop{stage: "intake", capUSD: tt.capUSD, spent: tt.spent}
+			assert.Equal(t, tt.want, s.usedUp())
+		})
+	}
 }
 
 func TestRun_CostIsPricedFromTokensWhenTheEndpointReportsNone(t *testing.T) {
