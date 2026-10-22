@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mhersson/contextmatrix-architect/internal/blueprint"
+	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
 func TestLogEntryFor_AnAbortNamesContinueOnlyWhenItCutAStage(t *testing.T) {
@@ -23,6 +24,7 @@ func TestLogEntryFor_AnAbortNamesContinueOnlyWhenItCutAStage(t *testing.T) {
 		{"a stage's run", "solution_design", true},
 		{"nothing in flight", "", false},
 		{"the sign-off's emission or run start", "signoff", false},
+		{"a retrospective's pass", blueprint.RetroStage, false},
 	}
 
 	for _, tc := range cases {
@@ -234,6 +236,24 @@ func TestLogEntryFor(t *testing.T) {
 			"text": "keep the API stable", "stage": "intake", "during_run": true,
 		}}, "system", []string{"Noted"}, false},
 		{"note with a hint", blueprint.Event{Kind: blueprint.EventNote, BlueprintID: "S1", Payload: map[string]any{"text": "hm", "hint": "Reply approve or reject."}}, "system", []string{"Reply approve or reject."}, false},
+		{"a retrospective's reply", blueprint.Event{Kind: blueprint.EventRetroReply, BlueprintID: "S1", Payload: map[string]any{
+			"reason": "no_struggle", "message": "None of the 3 emitted cards struggled.", "message_id": "m1", "during_run": false,
+		}}, "system", []string{"None of the 3 emitted cards struggled."}, false},
+		{"a retrospective's findings", blueprint.Event{Kind: blueprint.EventRetroReport, BlueprintID: "S1", Payload: map[string]any{
+			"run": 7, "read": 4, "struggled": 2, "cards": []any{
+				map[string]any{
+					"card": "ALPHA-001", "project": "alpha", "title": "Add the parser", "state": "in_progress", "worker": "parked",
+					"review_attempts": 0, "cost_usd": 0.4, "subtasks": 2, "reason": "no key", "why": []any{"parked"},
+					"rule": "Where", "evidence": "needs a key", "at_fault": true,
+					"lesson": map[string]any{"id": 3, "text": "Name where the key comes from", "scope": "project", "project": "alpha"},
+				},
+				map[string]any{
+					"card": "ALPHA-002", "project": "alpha", "title": "Wire the parser", "state": "done", "worker": "",
+					"review_attempts": 2, "cost_usd": 0.1, "subtasks": 1, "reason": "", "why": []any{"review_attempts"},
+					"rule": "Acceptance criteria", "evidence": "go test passes", "at_fault": false,
+				},
+			},
+		}}, "text", []string{"ALPHA-001", "ALPHA-002", "needs a key", "go test passes", "L3"}, false},
 		{"a review started", blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "shape", "kind": "reviewer", "persona": "reviewer",
 		}}, "system", []string{"Review of Shape"}, false},
@@ -824,6 +844,7 @@ func TestLogEntryFor_Markers(t *testing.T) {
 		},
 		{"a builder round's start is no divider", ev(blueprint.EventStageStarted, map[string]any{"stage": "solution_design", "kind": "stage", "persona": "system_designer", "round": 2}), "system", nil, "Solution design"},
 		{"a review's start is no divider", ev(blueprint.EventStageStarted, map[string]any{"stage": "solution_design", "kind": "reviewer", "persona": "senior_developer", "round": 1}), "system", nil, "Review of Solution design"},
+		{"a retrospective's start is no divider", ev(blueprint.EventStageStarted, map[string]any{"stage": blueprint.RetroStage, "kind": store.RunKindRetro, "persona": "reviewer", "round": 1}), "system", nil, ""},
 		{
 			"a first version is drawn by its persona",
 			ev(blueprint.EventArtifact, map[string]any{"stage": "solution_design", "version": 1, "body": "# Design", "persona": "system_designer", "round": 1, "revised_for": 0}),

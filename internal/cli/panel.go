@@ -125,6 +125,16 @@ func waitsOnUser(e blueprint.Event) bool {
 		kind, _ := e.Payload["kind"].(string)
 
 		return status != store.RunDone && status != store.RunAsked && kind != store.RunKindResponder
+	case blueprint.EventRetroReport:
+		// A pass's findings end it.
+		return true
+	case blueprint.EventRetroReply:
+		// CM arms its working indicator on every message; a retrospective
+		// reply that leaves nothing running, or a pass that stopped, must
+		// clear it.
+		duringRun, _ := e.Payload["during_run"].(bool)
+
+		return !duringRun
 	case blueprint.EventExported:
 		// CM arms its working indicator on every message, so an export that
 		// leaves nothing running must clear it.

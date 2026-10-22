@@ -10,8 +10,6 @@ import (
 	"testing"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // fakeCM is ContextMatrix for the controller. Created cards are numbered
@@ -33,6 +31,7 @@ type fakeCM struct {
 	cardSeq    map[string][]cm.Card
 	ended      map[string]cm.EndedCard // by card id, as GetEndedCard serves it
 	failEnded  int                     // fail this many GetEndedCard calls
+	endedGets  int
 	bookSeq    map[string][]cm.Playbook
 	seq        map[string]int
 	gets       int
@@ -127,6 +126,7 @@ func (f *fakeCM) GetEndedCard(_ context.Context, _, id string) (cm.EndedCard, er
 	defer f.mu.Unlock()
 
 	f.gets++
+	f.endedGets++
 
 	if f.failEnded > 0 {
 		f.failEnded--
@@ -332,6 +332,14 @@ func (f *fakeCM) getCount() int {
 	return f.gets
 }
 
+// endedReads is how many GetEndedCard calls were made.
+func (f *fakeCM) endedReads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.endedGets
+}
+
 func (f *fakeCM) closeCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -352,23 +360,4 @@ func (f *fakeCM) cardRuns() []string {
 	defer f.mu.Unlock()
 
 	return append([]string(nil), f.runCards...)
-}
-
-func TestFakeCM_GetEndedCardServesWhatWasSetAndFailsOnRequest(t *testing.T) {
-	f := newFakeCM()
-	ctx := context.Background()
-
-	f.setEnded("ALPHA-001", cm.EndedCard{Card: cm.Card{ID: "ALPHA-001"}, Body: "why"})
-	f.failEnded = 1
-
-	_, err := f.GetEndedCard(ctx, "alpha", "ALPHA-001")
-	require.Error(t, err)
-
-	card, err := f.GetEndedCard(ctx, "alpha", "ALPHA-001")
-	require.NoError(t, err)
-	assert.Equal(t, "why", card.Body)
-
-	_, err = f.GetEndedCard(ctx, "alpha", "ALPHA-404")
-	require.Error(t, err)
-	assert.Equal(t, 3, f.getCount())
 }
