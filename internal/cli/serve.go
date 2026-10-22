@@ -235,7 +235,7 @@ func runServe(ctx context.Context, cfg *config.Config) error {
 	slog.SetDefault(logger)
 	warnMissingSearchTools(logger, exec.LookPath)
 
-	srv, cleanup, err := buildServer(ctx, cfg, logger, stage.NewRunner(cfg.ReasoningEffort), buildinfo.Info())
+	srv, cleanup, err := buildServer(ctx, cfg, logger, stage.NewRunner(cfg.ReasoningEffort, cfg.ReplayReasoning), buildinfo.Info())
 	if err != nil {
 		return err
 	}

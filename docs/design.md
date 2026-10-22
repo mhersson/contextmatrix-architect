@@ -67,7 +67,7 @@ Settled during design. Each has its reason so it is not re-litigated.
 | CM's chat panel is the only client                        | The architect implements CM's chat-backend protocol as a third backend kind, so CM's existing panel is where the need is stated, questions and gates are answered, and side operations (export, outcomes, lessons) are requested by reply. Same look and feel, session list, auth and browser for free. No UI, no CLI beyond `contextmatrix-architect serve` and the `config defaults` and `config validate` helpers contextmatrix-setup drives, no client API. |
 | One controller process                                    | `contextmatrix-architect serve` alone owns the store, the workspaces and the harness runs, and every session originates in CM. One record, one place code is checked out, no laptop copy of anything. |
 | Provisioned by CM, like the agent and chat backends      | Every blueprint is a CM session. The start payload delivers the LLM endpoint, the MCP key, the model, a git-credentials token and, when research is on, the search provider and its key. The architect's own config holds no secret but the backend HMAC key, and there is no CM-less mode. |
-| Questions in stored rounds; a stage resumes its stored conversation | A big need takes a long interview, answered in one sitting or in batches over days. Posting a round ends the run, so nothing waits in memory and End, a reopen or a restart loses nothing; once every question has an answer and every assumption a decision the stage resumes the conversation that asked, with the answers as its next message, so the model reads the calls it made and what they returned; its earlier reasoning is never sent again. Every run of a stage, a chat run included, is offered the same tools, so the prompt cache is warm when the answer comes before the cache expires, on either endpoint. |
+| Questions in stored rounds; a stage resumes its stored conversation | A big need takes a long interview, answered in one sitting or in batches over days. Posting a round ends the run, so nothing waits in memory and End, a reopen or a restart loses nothing; once every question has an answer and every assumption a decision the stage resumes the conversation that asked, with the answers as its next message, so the model reads the calls it made and what they returned and, with reasoning replay on, the reasoning behind them when the same model resumes it. Every run of a stage, a chat run included, is offered the same tools, so the prompt cache is warm when the answer comes before the cache expires, on either endpoint. |
 | SQLite is the record; markdown is a rendering             | One store for artifacts, gates, transcripts, audit and cost. Committing per-stage markdown into code repos bloats them fast; an opt-in automatic export serves teams that review in pull requests. |
 | Everything is logged                                      | Every run's full transcript (less web search result lists and `read_artifact` results, whose artifacts the record holds) and an append-only event log. The append-only tables are never updated or deleted. The export is a complete audit record, less the web search result lists the next row keeps out. |
 | Search result lists are never stored                      | The search provider's terms forbid storing or caching results beyond transient use, and no storage rights are bought. The model sees a list in the run that searched; transcripts, events and exports keep the query and the result count. The pages `web_fetch` reads are the recorded sources, so a claim cites a page the architect read itself. A deliberate, permanent exception, with no switch to record lists. |
@@ -1615,7 +1615,7 @@ frames on the session's chat stream.
   URL, backend HMAC key, listen address, state directory, pack, the caller
   identity for ContextMatrix writes (default human:architect), the watch
   interval, per-project export opt-ins (slice 4), optional per-persona model
-  overrides (slugs only), and the reasoning effort.
+  overrides (slugs only), the reasoning effort, and reasoning replay.
   Secrets reach only their client and never a log, error, artifact or store
   row.
 - Models: the start payload's model is the default for every persona; config
@@ -1628,7 +1628,15 @@ frames on the session's chat stream.
   endpoint gets it as `reasoning.effort`, which the model must list; an
   `openai` endpoint gets the top-level `reasoning_effort`, which its gateway
   maps to the model behind it, and empty is the setting for a model there that
-  does not reason.
+  does not reason. Reasoning replay (`replay_reasoning`, on by default) sends
+  each reply's reasoning details back with every later request of its run, on
+  both endpoint types, so the model continues from its own thinking. A resumed
+  conversation sends its stored reasoning again only to the model that wrote
+  it: another model, after a reopen on a new session model or under a
+  per-persona override, gets the conversation without it. Replayed reasoning
+  bills as input, written to the cache once and read on every later request;
+  compaction's summary drops the reasoning of the turns it replaces, and the
+  six messages it keeps keep theirs.
 - Tool results are capped at 128 KiB per call before the model sees them,
   head and tail kept, as in the chat backend.
 - Cost: every run's token buckets are priced at the model price CM sends in

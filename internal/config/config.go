@@ -61,6 +61,10 @@ type Config struct {
 	// ReasoningEffort is the effort every run sends on every request; "" sends
 	// none and leaves the model its own default.
 	ReasoningEffort string
+
+	// ReplayReasoning sends each reply's reasoning back with every later request
+	// of its conversation, resumes included.
+	ReplayReasoning bool
 }
 
 // raw is the koanf wire shape; second-granularity durations are ints here and
@@ -83,6 +87,7 @@ type raw struct {
 	WorkspaceMaxAgeDays    int               `koanf:"workspace_max_age_days"`
 	WatchIntervalSeconds   int               `koanf:"watch_interval_seconds"`
 	ReasoningEffort        string            `koanf:"reasoning_effort"`
+	ReplayReasoning        bool              `koanf:"replay_reasoning"`
 }
 
 func defaults() raw {
@@ -100,6 +105,7 @@ func defaults() raw {
 		WorkspaceMaxAgeDays:    7,
 		WatchIntervalSeconds:   60,
 		ReasoningEffort:        "",
+		ReplayReasoning:        true,
 	}
 }
 
@@ -122,6 +128,7 @@ func (r raw) toConfig() *Config {
 		WorkspaceMaxAgeDays:   r.WorkspaceMaxAgeDays,
 		WatchInterval:         time.Duration(r.WatchIntervalSeconds) * time.Second,
 		ReasoningEffort:       r.ReasoningEffort,
+		ReplayReasoning:       r.ReplayReasoning,
 	}
 }
 

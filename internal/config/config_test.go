@@ -172,6 +172,25 @@ func TestDefaultsYAMLListsEveryKey(t *testing.T) {
 	assert.ElementsMatch(t, slices.Collect(maps.Keys(want)), slices.Collect(maps.Keys(got)))
 	assert.IsType(t, map[string]any{}, got["models"])
 	assert.Empty(t, got["models"])
+	assert.Equal(t, true, got["replay_reasoning"])
+}
+
+func TestLoad_ReplayReasoning(t *testing.T) {
+	cfg, err := Load("")
+	require.NoError(t, err)
+	assert.True(t, cfg.ReplayReasoning, "on by default")
+
+	p := writeFile(t, "replay_reasoning: false\n")
+
+	cfg, err = Load(p)
+	require.NoError(t, err)
+	assert.False(t, cfg.ReplayReasoning)
+
+	t.Setenv("CONTEXTMATRIX_ARCHITECT_REPLAY_REASONING", "true")
+
+	cfg, err = Load(p)
+	require.NoError(t, err)
+	assert.True(t, cfg.ReplayReasoning, "env wins over the file")
 }
 
 func TestLoad_StateDirResolution(t *testing.T) {

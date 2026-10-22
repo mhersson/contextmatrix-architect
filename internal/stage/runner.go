@@ -129,8 +129,8 @@ type Runner struct {
 }
 
 // NewRunner returns a Runner that talks to the provisioned endpoint.
-func NewRunner(effort string) *Runner {
-	return &Runner{NewLLM: ClientFor, Effort: effort}
+func NewRunner(effort string, replay bool) *Runner {
+	return &Runner{NewLLM: ClientFor, Effort: effort, Replay: replay}
 }
 
 // Run executes one stage and returns its artifact. On every return its

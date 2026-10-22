@@ -1087,7 +1087,7 @@ func TestRun_ReplayOnTheWire(t *testing.T) {
 	for _, endpoint := range []string{"openrouter", "openai"} {
 		for _, replay := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/replay=%t", endpoint, replay), func(t *testing.T) {
-				bodies := wireBodies(t, endpoint, &Runner{NewLLM: ClientFor, Replay: replay}, baseInput(&bytes.Buffer{}))
+				bodies := wireBodies(t, endpoint, NewRunner("", replay), baseInput(&bytes.Buffer{}))
 				require.GreaterOrEqual(t, len(bodies), 2, "the forced follow-up was sent too")
 
 				var msgs []map[string]json.RawMessage
