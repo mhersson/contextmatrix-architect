@@ -429,3 +429,29 @@ func TestStart_CollapsesARoundThePipelineLeft(t *testing.T) {
 	assert.Equal(t, store.RunInterrupted, runs[0].Status)
 	assert.Equal(t, 2, runs[1].Attempt, "a fresh attempt")
 }
+
+func TestStart_AContinuationNamesTheModelThatWroteItsConversation(t *testing.T) {
+	for _, model := range []string{"session/model", "other/model"} {
+		t.Run(model, func(t *testing.T) {
+			c, st, runner, _ := newController(t, artifactRun("# Need"))
+			ctx := context.Background()
+			bp := seeded(t, st)
+			au := c.newAudit()
+
+			poster := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", asking)
+			c.putRound(ctx, au, "BP1", poster, twoQuestionRound(1, 1, poster))
+
+			_, err := c.closeRound(ctx, au, bp, answered(1, poster))
+			require.NoError(t, err)
+
+			in := startInput("BP1")
+			in.Model = model
+			require.NoError(t, c.Start(ctx, in))
+			c.Wait("BP1")
+
+			require.Equal(t, 1, runner.calls())
+			assert.Equal(t, model, runner.input(0).Model)
+			assert.Equal(t, "session/model", runner.input(0).HistoryModel, "the runner drops reasoning another model wrote")
+		})
+	}
+}

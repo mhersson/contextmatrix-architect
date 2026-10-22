@@ -819,3 +819,18 @@ func TestOpen_MigratesV5(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, got.PlainLanguage)
 }
+
+func TestRunModel(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+
+	id, err := s.StartRun(ctx, Run{BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1, Status: RunRunning, Model: "anthropic/claude-sonnet-5.5", StartedAt: time.Now().UTC()})
+	require.NoError(t, err)
+
+	got, err := s.RunModel(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, "anthropic/claude-sonnet-5.5", got)
+
+	_, err = s.RunModel(ctx, id+1)
+	assert.ErrorIs(t, err, ErrNotFound)
+}

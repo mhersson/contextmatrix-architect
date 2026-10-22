@@ -323,7 +323,7 @@ func (c *Controller) storeChat(ctx context.Context, sess *session, id, text, msg
 // and without the conversation that revision's notes and suggestions too.
 func (c *Controller) chatSegment(ctx context.Context, bp store.Blueprint, s roundState) (*round, error) {
 	rd := &round{attempt: s.Attempt, number: s.BuilderRound, segment: SegmentChat, qround: s.Number, seen: len(s.Frame.Chat)}
-	rd.history = c.runHistory(ctx, bp.ID, s.RunID)
+	rd.history, rd.model = c.runHistory(ctx, bp.ID, s.RunID)
 
 	if s.Mockup != nil {
 		return c.mockupChatSegment(ctx, bp, s, rd)

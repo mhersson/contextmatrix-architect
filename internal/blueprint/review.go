@@ -30,8 +30,10 @@ const maxReviewRounds = 3
 type round struct {
 	attempt, number int
 	history         []llm.Message
-	task            string
-	findings        []string
+	// model ran history; empty when unknown.
+	model    string
+	task     string
+	findings []string
 	// segment marks a run that goes on from a question round: SegmentAnswers
 	// resumes it with the answers, SegmentChat answers its chat; qround is the
 	// round. Empty for a stage run or a builder round.
@@ -552,7 +554,8 @@ func (c *Controller) builderRound(ctx context.Context, bp store.Blueprint, st pi
 		ids = append(ids, f.ID)
 	}
 
-	rd := &round{attempt: built.Attempt, number: built.Round + 1, history: c.builtHistory(ctx, bp.ID, built), findings: ids}
+	rd := &round{attempt: built.Attempt, number: built.Round + 1, findings: ids}
+	rd.history, rd.model = c.runHistory(ctx, bp.ID, built.ID)
 
 	if len(rd.history) == 0 {
 		rd.history = nil
@@ -608,34 +611,37 @@ func statusWord(status string) string {
 	return strings.ReplaceAll(status, "_", " ")
 }
 
-// builtHistory is the conversation of the run that built the artifact.
-func (c *Controller) builtHistory(ctx context.Context, id string, built store.Run) []llm.Message {
-	return c.runHistory(ctx, id, built.ID)
-}
-
 // runHistory is the conversation of run runID without its system message;
-// nil when the run stored no transcript. A transcript that cannot be read is
-// logged, and the caller starts over.
-func (c *Controller) runHistory(ctx context.Context, id string, runID int64) []llm.Message {
+// nil when the run stored no transcript, with the model the run ran on ("" when
+// unreadable). A transcript that cannot be read is logged, and the caller
+// starts over.
+func (c *Controller) runHistory(ctx context.Context, id string, runID int64) ([]llm.Message, string) {
 	raw, err := c.opts.Store.GetTranscript(ctx, runID)
 
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		return nil
+		return nil, ""
 	case err != nil:
 		c.opts.Logger.Warn("blueprint: read the run's transcript; the caller starts over", "blueprint", id, "run", runID, "error", err)
 
-		return nil
+		return nil, ""
 	}
 
 	var history []llm.Message
 	if err := json.Unmarshal(raw, &history); err != nil {
 		c.opts.Logger.Warn("blueprint: decode the run's transcript; the caller starts over", "blueprint", id, "run", runID, "error", err)
 
-		return nil
+		return nil, ""
 	}
 
-	return stage.WithoutSystem(history)
+	model, err := c.opts.Store.RunModel(ctx, runID)
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: read the run's model; its reasoning is not sent again", "blueprint", id, "run", runID, "error", err)
+
+		model = ""
+	}
+
+	return stage.WithoutSystem(history), model
 }
 
 // writeNewNotes gives a round that resumes runID's conversation the notes

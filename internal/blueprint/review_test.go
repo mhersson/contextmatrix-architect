@@ -1868,3 +1868,24 @@ func TestReview_AStoredPassWithMinorsOpensItsGateOnReopen(t *testing.T) {
 		assert.Zero(t, f.SentTo)
 	}
 }
+
+func TestRunHistory_CarriesItsModelAndReasoning(t *testing.T) {
+	c, st, _ := newRoundController(t)
+	ctx := context.Background()
+
+	details := json.RawMessage(`[{"type":"reasoning.text","text":"weigh it","signature":"c2ln","index":0}]`)
+	run := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", []llm.Message{
+		{Role: "system", Content: "persona"},
+		{Role: "user", Content: "the need"},
+		{Role: "assistant", Content: "asked", ReasoningDetails: details},
+	})
+
+	history, model := c.runHistory(ctx, "BP1", run)
+	require.Len(t, history, 2, "without its system message")
+	assert.JSONEq(t, string(details), string(history[1].ReasoningDetails))
+	assert.Equal(t, "session/model", model)
+
+	none, model := c.runHistory(ctx, "BP1", postedRun(t, st, "BP1", 1, 2, store.RunFailed, "error", nil))
+	assert.Nil(t, none, "no transcript")
+	assert.Empty(t, model)
+}

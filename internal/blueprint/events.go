@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"slices"
 	"time"
 
+	"github.com/mhersson/contextmatrix-harness/llm"
 	"github.com/mhersson/contextmatrix-harness/redact"
 
 	"github.com/mhersson/contextmatrix-architect/internal/store"
@@ -259,9 +262,25 @@ func (a audit) artifact(ctx context.Context, id, stageID, body string, data map[
 	return version, nil
 }
 
-// transcript stores a run's message history.
-func (a audit) transcript(ctx context.Context, runID int64, messages any) error {
-	b, err := json.Marshal(messages)
+// transcript stores a run's message history. A resume sends reasoning details
+// back and the provider refuses a changed block but not a missing one, so a
+// message whose details masking would change loses them whole.
+func (a audit) transcript(ctx context.Context, runID int64, messages []llm.Message) error {
+	kept, cloned := messages, false
+
+	for i, m := range messages {
+		if len(m.ReasoningDetails) == 0 || !a.changes(m.ReasoningDetails) {
+			continue
+		}
+
+		if !cloned {
+			kept, cloned = slices.Clone(messages), true
+		}
+
+		kept[i].ReasoningDetails = nil
+	}
+
+	b, err := json.Marshal(kept)
 	if err != nil {
 		return fmt.Errorf("blueprint: encode transcript: %w", err)
 	}
@@ -316,6 +335,20 @@ func (a audit) mask(v any) any {
 	default:
 		return v
 	}
+}
+
+// changes reports whether masking changes any string or key in raw; a
+// document it cannot decode counts as changed.
+func (a audit) changes(raw json.RawMessage) bool {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return true
+	}
+
+	return !reflect.DeepEqual(v, a.mask(v))
 }
 
 // maskJSON masks every string in a JSON document. Decoding first catches a
