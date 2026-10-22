@@ -1606,8 +1606,8 @@ frames on the session's chat stream.
 
 ## Runtime
 
-- Go 1.27, `contextmatrix-harness` v0.27.0 (loop, llm client, jailed read
-  tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.11.0
+- Go 1.27, `contextmatrix-harness` v0.28.0 (loop, llm client, jailed read
+  tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.12.0
   (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.36.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
@@ -1630,11 +1630,17 @@ frames on the session's chat stream.
   maps to the model behind it, and empty is the setting for a model there that
   does not reason. Reasoning replay (`replay_reasoning`, on by default) sends
   each reply's reasoning details back with every later request of its run, on
-  both endpoint types, so the model continues from its own thinking. A resumed
-  conversation sends its stored reasoning again only to the model that wrote
-  it: another model, after a reopen on a new session model or under a
-  per-persona override, gets the conversation without it. Replayed reasoning
-  bills as input, written to the cache once and read on every later request;
+  both endpoint types, so the model continues from its own thinking; on the
+  OpenRouter endpoint the harness pins the run's later requests to the
+  provider that served its reasoning, since another cannot validate it, and an
+  `openai` endpoint has no provider routing to pin. A resumed conversation
+  sends its stored reasoning again only to the model that wrote it: another
+  model, after a reopen on a new session model or under a per-persona
+  override, gets the conversation without it. A request an endpoint refuses
+  with a 400 while it carries reasoning is sent once more without it,
+  unpinned; with an endpoint that always refuses the field,
+  `replay_reasoning: false` turns replay off. Replayed reasoning bills as
+  input, written to the cache once and read on every later request;
   compaction's summary drops the reasoning of the turns it replaces, and the
   six messages it keeps keep theirs.
 - Tool results are capped at 128 KiB per call before the model sees them,
