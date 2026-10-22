@@ -1338,8 +1338,22 @@ It never runs on its own.
   error, a cap refusal or stop, an abort) stores nothing and says why; the
   blueprint never fails. A cap refusal says to raise the cap and reply
   `retrospective` again, since `cap` and `continue` resume no pass. The
-  state is `running` during a pass and afterwards `done` when the watch has
-  ended, else `emitted`.
+  state turns `running` when the retro run starts (reading the cards leaves
+  it as it was) and, once the pass ends, is `done` when the watch has ended,
+  else `emitted`.
+- **The lesson round**: when a pass has lessons, one question round follows
+  the findings message, one question per lesson (no question cap; the
+  round's 96 KiB frame bounds it), numbered after every question of the
+  blueprint, titled `L<n> <card>`, the lesson as its text, the rationale,
+  rule, evidence and list additions as its why, and exactly the options
+  approve for the card's project, approve for the whole pack and reject, the
+  proposed scope recommended. Its frame's stage is `retrospective`; it is
+  found only by its own lookup, so a reopen neither collapses it nor shows it
+  again (the panel finds it in the transcript), a mode switch never hands it
+  to the auto responder, chat about it is a note, and the view shows it as no
+  open prompt. A round past the frame limit is not posted (`round_too_big`)
+  and its lessons stay proposed. A `retrospective` while it is open says so
+  (`round_open`) and starts nothing.
 - Reading the cards needs no CM change: the architect knows its card ids
   and reads them with `get_card` only. A CM card-creator field comes later,
   to compare architect cards with human-written ones across the whole board.
@@ -1437,14 +1451,16 @@ the mockup reply (see Mockups):
   its earlier runs got and who gave each; a reopen that comes while that run
   still winds down waits for it first. A round outlives End, a restart and
   days away: its stored answers stay, a reopen shows it again with them, and
-  it waits; a chat message that a chat run cut short by the session's end
-  or a restart left unanswered is answered first. A continuation that the
+  it waits; a lesson round is not shown again, as Learning says; a chat
+  message that a chat run cut short by the session's end or a restart left
+  unanswered is answered first. A continuation that the
   session's end or a restart cut short runs again on reopen from the same
   stored conversation, and a round that
   closed but never continued continues; a close cut short finishes, and no
   answer is recorded twice. An abort ends a run in flight, never a round. A
   round the pipeline went past without its answers, as when the run that
-  posted it never recorded its end, is collapsed in the panel, and its stage
+  posted it never recorded its end, is collapsed in the panel (a lesson
+  round never is), and its stage
   runs again as any stage cut short does. An aborted stage waits for the
   next message or `continue`, as below.
 - After a later stage fails or is aborted, the next message is logged as a
@@ -1515,7 +1531,8 @@ frames on the session's chat stream.
   see Mockups), and its
   stage's step reads as an auto round's would at the same point: running, or
   revising in a builder round, while the responder answers, and as after an
-  aborted run of its stage once an abort stops the responder.
+  aborted run of its stage once an abort stops the responder. An open
+  lesson round is no open prompt (see Learning).
   Every artifact version is listed with its
   status (current, reviewing, at_gate, approved, rejected, superseded,
   folded; a mockup's revisions as Mockups says), who decided

@@ -99,8 +99,10 @@ type roundState struct {
 	Reasks map[int]int `json:"reasks,omitempty"`
 	// Mockup makes the round a mockup step's: no questions, the revision it
 	// shows in its place. It never reaches the wire as a round.
-	Mockup *mockupState      `json:"mockup,omitempty"`
-	Frame  protocol.LogRound `json:"frame"`
+	Mockup *mockupState `json:"mockup,omitempty"`
+	// Lessons maps a lesson round's question numbers to their lesson ids.
+	Lessons map[int]int64     `json:"lessons,omitempty"`
+	Frame   protocol.LogRound `json:"frame"`
 }
 
 // tabText is the technical text of a tab entry: its Detail on a plain

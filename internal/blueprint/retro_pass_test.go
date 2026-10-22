@@ -571,3 +571,28 @@ func TestRetrospective_AbortCancelsThePass(t *testing.T) {
 	assert.Equal(t, store.RunCanceled, runs[0].Status)
 	assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
 }
+
+func TestRetrospective_AnAbortBeforeThePassStartsNamesIt(t *testing.T) {
+	c, st, _, rec, _ := emitted(t, twoCardScript())
+	ctx := context.Background()
+
+	// Held, the round lock keeps the reply between its claim and the pass.
+	lock := c.roundLock("BP1")
+	lock.Lock()
+
+	done := make(chan error, 1)
+
+	go func() { done <- c.Retrospective(ctx, "BP1", "m-retro") }()
+
+	require.Eventually(t, func() bool { return holdsSlot(c, "BP1") }, 5*time.Second, time.Millisecond)
+	require.NoError(t, c.Abort(ctx, "BP1", "m-abort"))
+	lock.Unlock()
+	require.NoError(t, <-done)
+	c.Wait("BP1")
+
+	aborted, ok := rec.first(EventAborted)
+	require.True(t, ok)
+	assert.Equal(t, RetroStage, aborted.Payload["stage"])
+	assert.Equal(t, []string{retroStopped}, reasonsOf(rec))
+	assert.Empty(t, retroRuns(t, st))
+}

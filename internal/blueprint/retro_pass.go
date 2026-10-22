@@ -27,6 +27,8 @@ const (
 	retroUnread         = "unread"
 	retroStopped        = "stopped"
 	retroCapped         = "cap"
+	retroRoundOpen      = "round_open"
+	retroTooBig         = "round_too_big"
 )
 
 // retroCanceled is the reply to a pass an abort or the session's end cut short.
@@ -63,6 +65,9 @@ func (c *Controller) Retrospective(ctx context.Context, id, msgID string) error 
 	}
 
 	r, runCtx, _ := c.claimLocked(id)
+	// Named with the claim, so an abort or a reply before the pass starts
+	// names the retrospective.
+	r.stage = RetroStage
 	c.mu.Unlock()
 
 	bp, err := c.opts.Store.GetBlueprint(ctx, id)
@@ -97,6 +102,26 @@ func (c *Controller) Retrospective(ctx context.Context, id, msgID string) error 
 		return nil
 	}
 
+	// No round-lock holder waits for the run slot, so taking the lock while
+	// holding the slot cannot deadlock.
+	lock := c.roundLock(id)
+	lock.Lock()
+	open, isOpen, err := c.lessonRoundAt(ctx, id)
+	lock.Unlock()
+
+	switch {
+	case err != nil:
+		c.release(id, r)
+
+		return fmt.Errorf("blueprint: retrospective: %w", err)
+	case isOpen:
+		c.retroReply(ctx, sess.audit, id, retroRoundOpen, msgID,
+			fmt.Sprintf("Round %d still asks about the last retrospective's lessons; answer it, then reply `retrospective` again.", open.Number), false)
+		c.release(id, r)
+
+		return nil
+	}
+
 	go c.retroPass(runCtx, r, sess, bp, msgID)
 
 	return nil
@@ -105,20 +130,15 @@ func (c *Controller) Retrospective(ctx context.Context, id, msgID string) error 
 // retroPass judges the emitted cards that struggled, on the run slot r its
 // caller claimed: it reads every emitted card once, has one retro run write
 // a finding per struggled card, stores each at-fault finding's lesson as
-// proposed and posts the findings message. A pass that does not complete
-// stores nothing and says why. Either way the state is then settled (see
-// settleAfterPass), unless Shutdown cut the pass short, which writes nothing.
+// proposed and posts the findings message, then the lesson round when there
+// are lessons. A pass that does not complete stores nothing and says why.
+// Either way the state is then settled (see settleAfterPass), unless
+// Shutdown cut the pass short, which writes nothing.
 func (c *Controller) retroPass(runCtx context.Context, r *run, sess *session, bp store.Blueprint, msgID string) {
 	defer c.release(bp.ID, r)
 
 	bg := context.WithoutCancel(runCtx)
 	au := sess.audit
-
-	// Set for the whole pass, so an abort or a reply while the cards are
-	// read names the retrospective.
-	c.mu.Lock()
-	r.stage = RetroStage
-	c.mu.Unlock()
 
 	stop := func(reason, message string) {
 		if c.shuttingDown(r) {
@@ -220,7 +240,27 @@ func (c *Controller) retroPass(runCtx context.Context, r *run, sess *session, bp
 		Payload: retroReport(runID, len(signals), struggled, findings, proposed),
 	})
 
+	if len(proposed) > 0 {
+		c.postLessons(bg, au, bp.ID, msgID, runID, attempt, proposed, findings)
+	}
+
 	c.settleAfterPass(bg, bp.ID)
+}
+
+// postLessons posts the lesson round, or says why it is not posted; the
+// lessons then stay proposed.
+func (c *Controller) postLessons(ctx context.Context, au audit, id, msgID string, runID int64, attempt int, lessons []store.Lesson, findings []retro.Finding) {
+	err := c.postLessonRound(ctx, au, id, runID, attempt, lessons, findings)
+
+	switch {
+	case err == nil:
+	case errors.Is(err, errLessonRoundTooBig):
+		c.retroReply(ctx, au, id, retroTooBig, msgID, fmt.Sprintf(
+			"The lessons are too long to ask in one round, which holds at most %d KiB, so no lesson round is posted and they stay proposed.", maxRoundBytes>>10), false)
+	default:
+		c.retroReply(ctx, au, id, retroStopped, msgID, fmt.Sprintf(
+			"The lesson round could not be posted: %s. The lessons stay proposed.", err), false)
+	}
 }
 
 // readEmitted reads every emitted card once, as its run left it, in emission
