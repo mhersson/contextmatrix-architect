@@ -187,7 +187,7 @@ func TestLogEntryFor(t *testing.T) {
 		{"watch ended with a reported cost", blueprint.Event{Kind: blueprint.EventWatchEnded, BlueprintID: "S1", Payload: map[string]any{
 			"playbook": "", "cards": []any{}, "cost_usd": 0.42, "priced": false,
 		}}, "text", []string{"0.42 USD, as the endpoint reported it"}, false},
-		{"retro stop offered", blueprint.Event{Kind: blueprint.EventRetroStopOffered, BlueprintID: "S1", Payload: map[string]any{"line": "ALPHA-002 (worker parked) did not run through."}}, "system", []string{"ALPHA-002 (worker parked)"}, false},
+		{"retro stop offered", blueprint.Event{Kind: blueprint.EventRetroStopOffered, BlueprintID: "S1", Payload: map[string]any{"line": "ALPHA-002 (worker parked) stopped."}}, "system", []string{"ALPHA-002 (worker parked)"}, false},
 		{"signoff", blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: map[string]any{
 			"cards":    []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add the thing", "type": "feature", "priority": "medium"}},
 			"order":    []any{"D1"},

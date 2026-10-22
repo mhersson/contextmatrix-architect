@@ -2,10 +2,7 @@ package blueprint
 
 import (
 	"context"
-	"errors"
 	"fmt"
-
-	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
 // Lessons lists every lesson of every blueprint in id order. It needs only an
@@ -20,10 +17,6 @@ func (c *Controller) Lessons(ctx context.Context, id, msgID string) error {
 	}
 
 	lessons, err := c.opts.Store.ListLessons(ctx)
-	if errors.Is(err, store.ErrNotFound) {
-		return ErrNotFound
-	}
-
 	if err != nil {
 		return fmt.Errorf("blueprint: list lessons: %w", err)
 	}

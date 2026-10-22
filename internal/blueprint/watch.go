@@ -149,7 +149,7 @@ func (c *Controller) offerRetro(ctx context.Context, sess *session, id string, s
 		parts = append(parts, fmt.Sprintf("%s (%s)", cv.ID, why))
 	}
 
-	line := fmt.Sprintf("%s did not run through. Reply `retrospective` to learn from the cards that struggled.", strings.Join(parts, ", "))
+	line := fmt.Sprintf("%s stopped. Reply `retrospective` to learn from the cards that struggled.", strings.Join(parts, ", "))
 	sess.audit.event(ctx, Event{Kind: EventRetroStopOffered, BlueprintID: id, Payload: map[string]any{"line": line}})
 
 	return true
