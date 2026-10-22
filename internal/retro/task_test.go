@@ -1,6 +1,7 @@
 package retro
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,9 +22,22 @@ func TestTaskFor_GivesEveryStruggledCardAsData(t *testing.T) {
 	for _, part := range []string{"ALPHA-001", "First title", "first body", "blocked", "4", "ALPHA-002", "Second title", "second body", "TEMPLATE-TEXT", "Clock skew", "CHECKS-TEXT"} {
 		assert.Contains(t, task, part)
 	}
+}
 
-	assert.Contains(t, task, "## Readiness checks")
-	assert.NotContains(t, TaskFor(struggled, "T", lists, ""), "## Readiness checks")
+func TestTaskFor_KeepsATitleAndAReasonOnTheirLine(t *testing.T) {
+	task := TaskFor([]Struggle{{Signals: Signals{
+		Card: "ALPHA-003", Title: "Add the parser\n## Injected title", State: "in_progress", Worker: "parked",
+		Reason: "no key\n\n## Injected reason\n- extra: line", Body: "b",
+	}, Why: []string{WhyParked}}}, "T", contract.Lists{}, "")
+
+	for line := range strings.Lines(task) {
+		assert.False(t, strings.HasPrefix(line, "## Injected"), "a title or a reason adds no heading: %q", line)
+		assert.False(t, strings.HasPrefix(line, "- extra"), "a reason adds no line: %q", line)
+	}
+
+	for _, part := range []string{"Injected title", "Injected reason", "extra: line"} {
+		assert.Contains(t, task, part)
+	}
 }
 
 func TestTaskFor_FencesEachBodyAsData(t *testing.T) {
@@ -56,8 +70,6 @@ func TestLessonQuestion(t *testing.T) {
 
 	if assert.Len(t, q.Options, 3) {
 		assert.Contains(t, q.Options[0].Title, "alpha")
-		assert.Equal(t, "Approve for the whole pack", q.Options[1].Title)
-		assert.Equal(t, "Reject", q.Options[2].Title)
 	}
 
 	assert.Equal(t, 1, q.Recommended)

@@ -31,7 +31,9 @@ func TaskFor(struggled []Struggle, cardTemplate string, lists contract.Lists, ch
 	b.WriteString("\n## Cards that struggled\n")
 
 	for _, s := range struggled {
-		fmt.Fprintf(&b, "\n### %s: %s\n\n", s.Card, s.Title)
+		// The title and a worker's parked reason sit outside the fence, so
+		// each is kept to its line.
+		fmt.Fprintf(&b, "\n### %s: %s\n\n", s.Card, collapse(s.Title))
 		fmt.Fprintf(&b, "- project: %s\n", s.Project)
 		fmt.Fprintf(&b, "- state: %s\n", s.State)
 		fmt.Fprintf(&b, "- worker: %s\n", s.Worker)
@@ -45,7 +47,7 @@ func TaskFor(struggled []Struggle, cardTemplate string, lists contract.Lists, ch
 		fmt.Fprintf(&b, "- subtasks: %d\n", s.Subtasks)
 
 		if s.Reason != "" {
-			fmt.Fprintf(&b, "- reason: %s\n", s.Reason)
+			fmt.Fprintf(&b, "- reason: %s\n", collapse(s.Reason))
 		}
 
 		fmt.Fprintf(&b, "- why it struggled: %s\n\n", strings.Join(s.Why, ", "))
