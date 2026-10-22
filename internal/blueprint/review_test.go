@@ -481,6 +481,8 @@ func TestReview_ALowScoreResumesTheBuilderWithTheFindings(t *testing.T) {
 	shapes := inputsOf(runner, "shape")
 	require.Len(t, shapes, 2)
 	assert.NotEmpty(t, shapes[1].History, "the builder's conversation resumes")
+	assert.Equal(t, shapes[0].Model, shapes[1].HistoryModel, "with the model that wrote it")
+	assert.NotEmpty(t, shapes[1].HistoryModel)
 	assert.Contains(t, shapes[1].Task, "finding 1", "with the findings")
 
 	runs, err := st.ListRuns(ctx, "BP1")
@@ -1867,4 +1869,25 @@ func TestReview_AStoredPassWithMinorsOpensItsGateOnReopen(t *testing.T) {
 	for _, f := range ref.Review.Findings {
 		assert.Zero(t, f.SentTo)
 	}
+}
+
+func TestRunHistory_CarriesItsModelAndReasoning(t *testing.T) {
+	c, st, _ := newRoundController(t)
+	ctx := context.Background()
+
+	details := json.RawMessage(`[{"type":"reasoning.text","text":"weigh it","signature":"c2ln","index":0}]`)
+	run := postedRun(t, st, "BP1", 1, 1, store.RunAsked, "round", []llm.Message{
+		{Role: "system", Content: "persona"},
+		{Role: "user", Content: "the need"},
+		{Role: "assistant", Content: "asked", ReasoningDetails: details},
+	})
+
+	history, model := c.runHistory(ctx, "BP1", run)
+	require.Len(t, history, 2, "without its system message")
+	assert.JSONEq(t, string(details), string(history[1].ReasoningDetails))
+	assert.Equal(t, "session/model", model)
+
+	none, model := c.runHistory(ctx, "BP1", postedRun(t, st, "BP1", 1, 2, store.RunFailed, "error", nil))
+	assert.Nil(t, none, "no transcript")
+	assert.Empty(t, model)
 }

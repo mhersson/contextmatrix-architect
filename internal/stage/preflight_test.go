@@ -3,6 +3,7 @@ package stage
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -75,6 +76,13 @@ func TestPreflight(t *testing.T) {
 		return out
 	}
 
+	// reasoned is an assistant reply carrying size bytes of reasoning details.
+	reasoned := func(size int) []llm.Message {
+		details := `[{"text":"` + strings.Repeat("r", size-13) + `"}]`
+
+		return []llm.Message{{Role: "assistant", Content: "ok", ReasoningDetails: json.RawMessage(details)}}
+	}
+
 	// A 30,000-token window has a compaction limit of 25,500 tokens (63,750
 	// bytes) and holds 75,000 bytes.
 	tests := []struct {
@@ -88,6 +96,10 @@ func TestPreflight(t *testing.T) {
 		{"a task at the limit is refused", strings.Repeat("x", 64_000), nil, true, 25_500},
 		{"a long history that fits the window runs: compaction summarizes all but its newest messages", "go on", messages(10, 7_000), false, 0},
 		{"a history over the window is refused: the first call carries all of it", "go on", messages(10, 10_000), true, 30_000},
+		// 4 bytes a token: 90,000 bytes are 22,500 tokens (at 2.5 they would
+		// be 36,000 and refused); 110,000 bytes are 27,500.
+		{"replayed reasoning counts at 4 bytes a token: under the limit runs", "go on", join(messages(2, 10), reasoned(90_000)), false, 0},
+		{"replayed reasoning counts at 4 bytes a token: at the limit is refused", "go on", join(messages(2, 10), reasoned(110_000)), true, 25_500},
 		{"a short history compaction cannot shrink counts whole", "go on", messages(4, 17_500), true, 25_500},
 		// The sixth-newest message (counting the task) is a tool result, so the
 		// boundary snaps back over it to the 70,000-byte tool call: the newest

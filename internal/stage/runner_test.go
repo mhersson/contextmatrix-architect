@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -65,11 +66,11 @@ func baseInput(events *bytes.Buffer) Input {
 	}
 }
 
-// wireBodies runs in against an httptest endpoint of the given type with a
-// runner sending effort, and returns every request body in order. The server
-// answers text only, so the runner sends its forced follow-up as well. The
-// run's own error is ignored.
-func wireBodies(t *testing.T, endpointType, effort string, in Input) []map[string]json.RawMessage {
+// wireBodies runs in through r against an httptest endpoint of the given type
+// (r is built with NewLLM: ClientFor), and returns every request body in
+// order. The server makes no tool call, so the runner sends its forced
+// follow-up as well. The run's own error is ignored.
+func wireBodies(t *testing.T, endpointType string, r *Runner, in Input) []map[string]json.RawMessage {
 	t.Helper()
 
 	var (
@@ -100,19 +101,19 @@ func wireBodies(t *testing.T, endpointType, effort string, in Input) []map[strin
 
 		if string(body["stream"]) == "true" {
 			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			_, _ = io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"done\",\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"think\",\"index\":0}]},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"done","reasoning_details":[{"type":"reasoning.text","text":"think","index":0}]},"finish_reason":"stop"}]}`)
 	}))
 	defer srv.Close()
 
 	in.Endpoint = protocol.LLMEndpoint{Type: endpointType, BaseURL: srv.URL + "/v1", APIKey: "k"}
 
-	_, _ = NewRunner(effort).Run(context.Background(), in)
+	_, _ = r.Run(context.Background(), in)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -133,7 +134,7 @@ func TestRun_EffortOnTheWire(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.endpoint+"/"+tt.effort, func(t *testing.T) {
-			bodies := wireBodies(t, tt.endpoint, tt.effort, baseInput(&bytes.Buffer{}))
+			bodies := wireBodies(t, tt.endpoint, &Runner{NewLLM: ClientFor, Effort: tt.effort}, baseInput(&bytes.Buffer{}))
 			require.GreaterOrEqual(t, len(bodies), 2, "the forced follow-up was sent too")
 
 			for i, b := range bodies {
@@ -972,5 +973,165 @@ func TestRun_ADesignerGetsShowMockupInPlaceOfSubmit(t *testing.T) {
 			require.NotEmpty(t, f.requests)
 			assert.ElementsMatch(t, tt.want, offered(f.requests[0]))
 		})
+	}
+}
+
+// replayed is one reasoning block as a provider returns it.
+var replayed = json.RawMessage(`[{"type":"reasoning.text","text":"weigh the options","signature":"c2ln","index":0}]`)
+
+// assistantDetails is the reasoning of the first assistant message in msgs.
+func assistantDetails(msgs []llm.Message) json.RawMessage {
+	for _, m := range msgs {
+		if m.Role == "assistant" {
+			return m.ReasoningDetails
+		}
+	}
+
+	return nil
+}
+
+func TestRun_ReplaysReasoningOnlyWhereItIsOn(t *testing.T) {
+	tests := []struct {
+		name   string
+		replay bool
+		want   bool
+	}{
+		{"on", true, true},
+		{"off", false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeLLM{responses: []llm.Response{{Content: "thinking aloud", FinishReason: "stop", ReasoningDetails: replayed}}}
+			r := runnerWith(f)
+			r.Replay = tt.replay
+
+			_, _ = r.Run(context.Background(), baseInput(&bytes.Buffer{}))
+
+			require.GreaterOrEqual(t, len(f.requests), 2, "the forced follow-up resends the reply")
+
+			got := assistantDetails(f.requests[1].Messages)
+			if tt.want {
+				assert.Equal(t, replayed, got)
+			} else {
+				assert.Empty(t, got)
+			}
+		})
+	}
+}
+
+func TestRun_ResumedReasoningGoesBackOnlyToTheModelThatWroteIt(t *testing.T) {
+	tests := []struct {
+		name         string
+		model        string
+		historyModel string
+		replay       bool
+		want         bool
+	}{
+		{"the same model", "test/model", "test/model", true, true},
+		{"another model", "test/model", "other/model", true, false},
+		{"a model unknown", "test/model", "", true, false},
+		{"both models unknown", "", "", true, false},
+		{"replay off", "test/model", "test/model", false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			history := []llm.Message{{Role: "user", Content: "the need"}, {Role: "assistant", Content: "asked", ReasoningDetails: replayed}}
+
+			in := baseInput(&bytes.Buffer{})
+			in.Model, in.History, in.HistoryModel = tt.model, history, tt.historyModel
+
+			f := &fakeLLM{}
+			r := runnerWith(f)
+			r.Replay = tt.replay
+
+			_, _ = r.Run(context.Background(), in)
+
+			require.NotEmpty(t, f.requests)
+
+			got := assistantDetails(f.requests[0].Messages)
+			if tt.want {
+				assert.Equal(t, replayed, got)
+			} else {
+				assert.Empty(t, got)
+			}
+
+			assert.Equal(t, replayed, history[1].ReasoningDetails, "the caller's history is never changed")
+		})
+	}
+}
+
+func TestRun_AResumeWhoseReasoningCannotFitGoesOnWithoutIt(t *testing.T) {
+	// 4,000 bytes of details count about 1,000 tokens: over a 1,000-token
+	// window's 850-token limit with them, far under it without.
+	big := json.RawMessage(`[{"type":"reasoning.text","text":"` + strings.Repeat("r", 4_000) + `"}]`)
+
+	in := baseInput(&bytes.Buffer{})
+	in.ContextWindow = 1_000
+	in.History = []llm.Message{{Role: "user", Content: "the need"}, {Role: "assistant", Content: "asked", ReasoningDetails: big}}
+	in.HistoryModel = in.Model
+
+	f := &fakeLLM{}
+	r := runnerWith(f)
+	r.Replay = true
+
+	out, err := r.Run(context.Background(), in)
+
+	var tooBig *TooBigError
+	assert.NotErrorAs(t, err, &tooBig, "never refused for reasoning it can leave out")
+	assert.NotEqual(t, ReasonTooBig, out.Result.Reason)
+	require.NotEmpty(t, f.requests, "the run went on")
+	assert.Empty(t, assistantDetails(f.requests[0].Messages))
+}
+
+func TestRun_APromptTooBigEvenWithoutReasoningIsStillRefused(t *testing.T) {
+	big := json.RawMessage(`[{"type":"reasoning.text","text":"` + strings.Repeat("r", 4_000) + `"}]`)
+
+	in := baseInput(&bytes.Buffer{})
+	in.ContextWindow = 1_000
+	in.Task = strings.Repeat("t", 3_000)
+	in.History = []llm.Message{{Role: "user", Content: "the need"}, {Role: "assistant", Content: "asked", ReasoningDetails: big}}
+	in.HistoryModel = in.Model
+
+	f := &fakeLLM{}
+	r := runnerWith(f)
+	r.Replay = true
+
+	out, err := r.Run(context.Background(), in)
+
+	var tooBig *TooBigError
+	require.ErrorAs(t, err, &tooBig)
+	assert.Equal(t, ReasonTooBig, out.Result.Reason)
+	assert.Empty(t, f.requests, "nothing was sent")
+}
+
+func TestRun_ReplayOnTheWire(t *testing.T) {
+	for _, endpoint := range []string{"openrouter", "openai"} {
+		for _, replay := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/replay=%t", endpoint, replay), func(t *testing.T) {
+				bodies := wireBodies(t, endpoint, NewRunner("", replay), baseInput(&bytes.Buffer{}))
+				require.GreaterOrEqual(t, len(bodies), 2, "the forced follow-up was sent too")
+
+				var msgs []map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal(bodies[1]["messages"], &msgs))
+
+				var asst map[string]json.RawMessage
+
+				for _, m := range msgs {
+					if string(m["role"]) == `"assistant"` {
+						asst = m
+					}
+				}
+
+				require.NotNil(t, asst)
+
+				if replay {
+					assert.Contains(t, string(asst["reasoning_details"]), `"think"`, "both legs get the field")
+				} else {
+					assert.NotContains(t, asst, "reasoning_details", "off sends none")
+				}
+			})
+		}
 	}
 }

@@ -67,9 +67,9 @@ Settled during design. Each has its reason so it is not re-litigated.
 | CM's chat panel is the only client                        | The architect implements CM's chat-backend protocol as a third backend kind, so CM's existing panel is where the need is stated, questions and gates are answered, and side operations (export, outcomes, lessons) are requested by reply. Same look and feel, session list, auth and browser for free. No UI, no CLI beyond `contextmatrix-architect serve` and the `config defaults` and `config validate` helpers contextmatrix-setup drives, no client API. |
 | One controller process                                    | `contextmatrix-architect serve` alone owns the store, the workspaces and the harness runs, and every session originates in CM. One record, one place code is checked out, no laptop copy of anything. |
 | Provisioned by CM, like the agent and chat backends      | Every blueprint is a CM session. The start payload delivers the LLM endpoint, the MCP key, the model, a git-credentials token and, when research is on, the search provider and its key. The architect's own config holds no secret but the backend HMAC key, and there is no CM-less mode. |
-| Questions in stored rounds; a stage resumes its stored conversation | A big need takes a long interview, answered in one sitting or in batches over days. Posting a round ends the run, so nothing waits in memory and End, a reopen or a restart loses nothing; once every question has an answer and every assumption a decision the stage resumes the conversation that asked, with the answers as its next message, so the model reads the calls it made and what they returned; its earlier reasoning is never sent again. Every run of a stage, a chat run included, is offered the same tools, so the prompt cache is warm when the answer comes before the cache expires, on either endpoint. |
+| Questions in stored rounds; a stage resumes its stored conversation | A big need takes a long interview, answered in one sitting or in batches over days. Posting a round ends the run, so nothing waits in memory and End, a reopen or a restart loses nothing; once every question has an answer and every assumption a decision the stage resumes the conversation that asked, with the answers as its next message, so the model reads the calls it made and what they returned and, with reasoning replay on, the reasoning behind them when the same model resumes it. Every run of a stage, a chat run included, is offered the same tools, so the prompt cache is warm when the answer comes before the cache expires, on either endpoint. |
 | SQLite is the record; markdown is a rendering             | One store for artifacts, gates, transcripts, audit and cost. Committing per-stage markdown into code repos bloats them fast; an opt-in automatic export serves teams that review in pull requests. |
-| Everything is logged                                      | Every run's full transcript (less web search result lists and `read_artifact` results, whose artifacts the record holds) and an append-only event log. The append-only tables are never updated or deleted. The export is a complete audit record, less the web search result lists the next row keeps out. |
+| Everything is logged                                      | Every run's full transcript (less web search result lists and `read_artifact` results, whose artifacts the record holds, and reasoning details that redaction would change, dropped whole) and an append-only event log. The append-only tables are never updated or deleted. The export is a complete audit record, less the web search result lists the next row keeps out. |
 | Search result lists are never stored                      | The search provider's terms forbid storing or caching results beyond transient use, and no storage rights are bought. The model sees a list in the run that searched; transcripts, events and exports keep the query and the result count. The pages `web_fetch` reads are the recorded sources, so a claim cites a page the architect read itself. A deliberate, permanent exception, with no switch to record lists. |
 | A playbook for several cards, a bare card for one         | Manual entries are the only way to express human and live checks across cards. A one-card playbook would end in a merged PR on a playbook branch plus a second PR to main; a bare card ends in one PR to the default branch. The `emissions` table is the blueprint's handle in CM either way. |
 | Fixed stage list, repeated per slice; no composer; size is never estimated | Every stage earns its place for any need. Stages the pack marks per slice repeat once per slice, so slicing's count decides how much runs. A stage with nothing to do collapses: it is recorded but not run, as the shared decisions stage is for one slice. Gates fold and the playbook decision falls out of counts in the artifacts (slices, cards), so a need is never classified small or big up front. Evidence for skippable stages comes from Outcomes, which does not exist yet. |
@@ -308,7 +308,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, whether it passed, its summary when it gave one, its findings ledger with ids, severities, statuses and the reviewer's notes, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes, or at the responder's answer under auto, or at the answer for one asked alone before rounds, or, one per suggestion, when a mockup closes on a use; an assumption a human accepted on a tab is recorded on its round, not here |
 | gates         | append-only, one row per decision at a stage's gate or the sign-off, and at the mockup step its use (approve) or skip (reject) of a revision: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded; a fold at version 0 records a stage that collapsed), feedback, responder (human, auto), decided at |
-| transcripts   | append-only: run, full message history as JSON, redacted, each web search result list replaced by its query and result count, and each `read_artifact` result by its first line |
+| transcripts   | append-only: run, full message history as JSON, redacted, each web search result list replaced by its query and result count, and each `read_artifact` result by its first line, and each reply's reasoning details as the provider sent them, dropped from a message whose details redaction would change |
 | events        | append-only: time, blueprint, run, kind, payload; a blueprint's policy overrides are its `policy` events, the latest per stage winning; every change of the blueprint's state is a `state` row, stored and never sent to the panel; every web search and page read is a `research` event (the query and result count, the URL and source tag, or the rule that refused it), and a session that runs a research stage without research says so once in a `research_off` event; a round is its `round` snapshots, the newest per round number winning |
 | sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage; a page `web_fetch` read is a `url` source versioned by the sha256 of its text, its title on its `research` event |
 | ledger        | per-run cost rows summed per blueprint                                                                                        |
@@ -1606,8 +1606,8 @@ frames on the session's chat stream.
 
 ## Runtime
 
-- Go 1.27, `contextmatrix-harness` v0.26.0 (loop, llm client, jailed read
-  tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.10.0
+- Go 1.27, `contextmatrix-harness` v0.28.0 (loop, llm client, jailed read
+  tools, Skill tool, redact, events), `contextmatrix-backendkit` v0.12.0
   (`webhookcore`, `logbridge`, `metrics`) and `contextmatrix-protocol` v0.36.0
   for the CM-facing side, go-git v5.19.2 for mirrors and tree export, `modernc.org/sqlite`, the Go
   MCP SDK as a client, cobra and koanf as in the agent.
@@ -1615,7 +1615,7 @@ frames on the session's chat stream.
   URL, backend HMAC key, listen address, state directory, pack, the caller
   identity for ContextMatrix writes (default human:architect), the watch
   interval, per-project export opt-ins (slice 4), optional per-persona model
-  overrides (slugs only), and the reasoning effort.
+  overrides (slugs only), the reasoning effort, and reasoning replay.
   Secrets reach only their client and never a log, error, artifact or store
   row.
 - Models: the start payload's model is the default for every persona; config
@@ -1628,7 +1628,21 @@ frames on the session's chat stream.
   endpoint gets it as `reasoning.effort`, which the model must list; an
   `openai` endpoint gets the top-level `reasoning_effort`, which its gateway
   maps to the model behind it, and empty is the setting for a model there that
-  does not reason.
+  does not reason. Reasoning replay (`replay_reasoning`, on by default) sends
+  each reply's reasoning details back with every later request of its run, on
+  both endpoint types, so the model continues from its own thinking; on the
+  OpenRouter endpoint the harness pins the run's later requests to the
+  provider that served its reasoning, since another cannot validate it, and an
+  `openai` endpoint has no provider routing to pin. A resumed conversation
+  sends its stored reasoning again only to the model that wrote it: another
+  model, after a reopen on a new session model or under a per-persona
+  override, gets the conversation without it. A request an endpoint refuses
+  with a 400 while it carries reasoning is sent once more without it,
+  unpinned; with an endpoint that always refuses the field,
+  `replay_reasoning: false` turns replay off. Replayed reasoning bills as
+  input, written to the cache once and read on every later request;
+  compaction's summary drops the reasoning of the turns it replaces, and the
+  six messages it keeps keep theirs.
 - Tool results are capped at 128 KiB per call before the model sees them,
   head and tail kept, as in the chat backend.
 - Cost: every run's token buckets are priced at the model price CM sends in
@@ -1652,14 +1666,16 @@ frames on the session's chat stream.
   session start (128000 tokens when it does not know it), and once a prompt
   reaches 85% of it the harness summarizes the older turns, keeps the last
   six messages and goes on. A run whose system prompt, task and newest
-  history messages (what compaction cannot summarize) are estimated, at 2.5
-  bytes a token, to reach that 85%, or whose whole opening prompt is
-  estimated to reach the window itself (the first call carries all of it
-  before compaction can act), is refused before any model call. A model
-  whose real window is smaller than CM says fails on the provider's error
-  first. A refused run fails like any failed run, its row ending `too_big`
-  at no cost, and its error names the biggest inputs of its task by step
-  name; a run the harness stops on a full window says so in plain words.
+  history messages (what compaction cannot summarize) are estimated, at
+  2.5 bytes a token and a reply's reasoning details at 4, to reach that
+  85%, or whose whole opening prompt is estimated to reach the window
+  itself (the first call carries all of it before compaction can act), is
+  refused before any model call. A resumed conversation that fits only
+  without its earlier reasoning goes on without it. A model whose real
+  window is smaller than CM says fails on the provider's error first. A
+  refused run fails like any failed run, its row ending `too_big` at no
+  cost, and its error names the biggest inputs of its task by step name; a
+  run the harness stops on a full window says so in plain words.
   `continue` runs either again. The window is stored with the blueprint, and
   a reopen whose start carries none keeps it on the same model; a
   per-persona override runs on the fallback.

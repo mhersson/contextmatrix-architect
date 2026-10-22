@@ -890,7 +890,7 @@ func (c *Controller) roundAt(ctx context.Context, id string) (roundPlace, bool, 
 func (c *Controller) continuation(ctx context.Context, bp store.Blueprint, s roundState) (*round, error) {
 	rd := &round{attempt: s.Attempt, number: s.BuilderRound, findings: s.findingIDs(), segment: SegmentAnswers, qround: s.Number}
 
-	rd.history = c.runHistory(ctx, bp.ID, s.RunID)
+	rd.history, rd.model = c.runHistory(ctx, bp.ID, s.RunID)
 	if rd.history == nil {
 		if s.BuilderRound > 1 {
 			return nil, nil

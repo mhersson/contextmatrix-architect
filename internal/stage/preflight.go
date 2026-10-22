@@ -19,6 +19,12 @@ const (
 // token, tool schemas included, so 2.5 errs towards refusing.
 const bytesPerToken = 2.5
 
+// reasoningBytesPerToken estimates tokens from a reply's reasoning details.
+// Captured replies carried 4.7 to 10.6 bytes of details per billed reasoning
+// token (signed or encrypted blocks beside their summary text), so 4 errs
+// towards refusing.
+const reasoningBytesPerToken = 4
+
 // EstimateTokens is s's estimated size in tokens.
 func EstimateTokens(s string) int {
 	return int(float64(len(s)) / bytesPerToken)
@@ -60,8 +66,8 @@ func (e *ContextFullError) Error() string {
 
 func (e *ContextFullError) Unwrap() error { return ErrNoArtifact }
 
-// messageTokens is a message's estimated tokens: content and tool-call
-// arguments.
+// messageTokens is a message's estimated tokens: content, tool-call
+// arguments and replayed reasoning details.
 func messageTokens(m llm.Message) int {
 	n := EstimateTokens(m.Content)
 
@@ -69,7 +75,7 @@ func messageTokens(m llm.Message) int {
 		n += EstimateTokens(tc.Function.Arguments)
 	}
 
-	return n
+	return n + len(m.ReasoningDetails)/reasoningBytesPerToken
 }
 
 // tailStart is the index in seq (the history, then the task) from which

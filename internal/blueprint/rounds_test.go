@@ -35,7 +35,7 @@ func postedRun(t *testing.T, st *store.Store, id string, attempt, round int, sta
 	t.Helper()
 
 	ctx := context.Background()
-	runID, err := st.StartRun(ctx, store.Run{BlueprintID: id, Stage: "intake", Kind: store.RunKindStage, Attempt: attempt, Round: round, Status: store.RunRunning, StartedAt: time.Now().UTC()})
+	runID, err := st.StartRun(ctx, store.Run{BlueprintID: id, Stage: "intake", Kind: store.RunKindStage, Attempt: attempt, Round: round, Status: store.RunRunning, Model: "session/model", StartedAt: time.Now().UTC()})
 	require.NoError(t, err)
 
 	if status != store.RunRunning {

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -93,6 +94,22 @@ func (s *Store) EndRun(ctx context.Context, id int64, status, reason string, usa
 	}
 
 	return nil
+}
+
+// RunModel returns the model a run ran on.
+func (s *Store) RunModel(ctx context.Context, id int64) (string, error) {
+	var model string
+
+	err := s.db.QueryRowContext(ctx, `SELECT model FROM stage_runs WHERE id = ?`, id).Scan(&model)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("store: run %d model: %w", id, err)
+	}
+
+	return model, nil
 }
 
 // ListRuns returns a blueprint's runs oldest first.

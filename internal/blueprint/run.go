@@ -274,7 +274,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	if rd != nil {
 		if rd.history != nil {
-			in.Task, in.History = rd.task, rd.history
+			in.Task, in.History, in.HistoryModel = rd.task, rd.history, rd.model
 		} else {
 			in.Task += rd.task
 		}

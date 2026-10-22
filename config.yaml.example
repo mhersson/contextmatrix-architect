@@ -75,6 +75,16 @@ port: 9095
 # Env: CONTEXTMATRIX_ARCHITECT_REASONING_EFFORT
 reasoning_effort: ""
 
+# Reasoning replay: every run sends each reply's reasoning back with every later
+# request of its conversation, and a resumed conversation sends its stored
+# reasoning again to the model that wrote it, so the model continues from its
+# own thinking instead of working it out again. Replayed reasoning bills as
+# input (cached after its first request) and fills the window sooner. Both
+# endpoint types get it. Set false when an endpoint refuses reasoning_details.
+# Default: true.
+# Env: CONTEXTMATRIX_ARCHITECT_REPLAY_REASONING
+replay_reasoning: true
+
 # Directory holding architect.db. Must be writable. Also holds exports/ and
 # workspaces/. Empty (the default) means $XDG_STATE_HOME/contextmatrix-architect,
 # else ~/.local/state/contextmatrix-architect, on every OS. The image sets
