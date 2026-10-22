@@ -471,9 +471,15 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   `cross`, findings between artifacts (decisions, contracts, cards and
   assumptions that disagree, a near-duplicate assumption, an outcome no
   criterion proves), each `X<n>` with a severity (critical, major or minor),
-  its text and the ids it names; they never loop. A decision, criterion,
-  assumption or card that still contradicts the sign-off's feedback is
-  critical. The `readiness` check refuses a cards list of another shape
+  its text and the ids it names, the cards among them being those whose
+  change fixes it. A critical or major finding sends back the cards it
+  names. The loop counts each such card as not passed, whatever its own
+  entry says. When its entry passed it, its finding reads
+  `<card>: X<n> (<severity>): <text>`, and it reaches the sign-off that way
+  after the last round. A minor finding sends nothing back. A decision,
+  criterion, assumption or card that still contradicts the sign-off's
+  feedback, or a change that breaks what the code does today, is critical.
+  The `readiness` check refuses a cards list of another shape
   (`readiness_shape`), an entry without an id, a ready flag or findings that
   say why, a card judged twice, or a ready card that carries a finding
   (`card_entry`), a card of the draft left out (`card_unjudged`) or one no
@@ -849,6 +855,7 @@ adds to a card that cites a source tag (see Emission).
 | A card's mockup screens exist in the approved mockup               | mechanical                 |
 | No mockup block in a draft card's body                             | mechanical                 |
 | One deliverable, no open decisions, no optional scope              | model-judged               |
+| Builds only what the blueprint asks for; no card whose only work is documentation, tests, a guard or a proof over other cards' work | model-judged |
 | Estimated planner split of two subtasks or fewer                   | model-judged               |
 | "Could an agent with only this repo finish this card?"; a point the agent can settle on its own is no finding | model-judged, adversarial  |
 | No card duplicates an open card of its project                     | model-judged (cm tools)    |

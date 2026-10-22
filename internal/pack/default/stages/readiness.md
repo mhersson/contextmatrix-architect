@@ -5,15 +5,24 @@ Input: every slice's cards, in slicing order, whole, with the need, the mockup w
 For every card, answer with the checkout open: could an agent with only this
 repository and this card finish it on the first attempt? Judge one
 deliverable, no open decision, no optional scope, a planner split of two
-subtasks or fewer. The architect checked every `where` path against the
-checkout before you judge: one without `new` exists, and one marked `new`
-does not exist yet. Whether a path exists, or whether a file a card creates
-should be listed or marked new, is never a finding, in any round: the same
-`where` gets the same judgement every time.
+subtasks or fewer. Judge its scope too. A card, or a part of one, that
+builds what no decision, contract or criterion of its slice asks for, such
+as a guard, a recovery path, a cache or a test hook, is not ready. So is a
+card whose only work is documentation, tests or a guard over other cards'
+work, or a proof of what earlier cards deliver. The finding names what to
+drop, or the card the work belongs in. Doing the asked-for work correctly
+and securely is the work itself, not an addition: a security hole, or a
+wrong result on input the need's users will give, is a defect. The architect
+checked every `where` path against the checkout before you judge: one
+without `new` exists, and one marked `new` does not exist yet. Whether a
+path exists, or whether a file a card creates should be listed or marked
+new, is never a finding, in any round: the same `where` gets the same
+judgement every time.
 
 A finding is only what would make an agent with only this repository and
-this card fail or build the wrong thing. A point the agent can settle on its
-own, such as whether a file it touches is new, is no finding.
+this card fail or build the wrong thing, a change that breaks what the code
+does today, or scope the blueprint does not ask for. A point the agent can
+settle on its own, such as whether a file it touches is new, is no finding.
 
 A card of a project the task names as POC, a proof of concept, is judged on
 clarity and buildability, not hardening: Tests expected that covers the main
@@ -52,17 +61,26 @@ Then judge the blueprint as a whole, each artifact against the others:
 decisions, contracts, cards and assumptions that disagree; two assumptions
 that say one thing in different words; an outcome (O<n>) that no criterion
 or manual check proves; a contract, inside one project or between projects,
-that one side's cards keep and the other's do not. A card that does not
-deliver what its own criterion promises is that card's problem, in its
-`cards` entry; `cross` holds the problems between artifacts.
-Report each in `cross`, `{"id": "X1", "severity": "critical", "major" or
-"minor", "text": "<one sentence a person can act on>", "refs": ["<the ids
-it names, such as DEC2, AC4, D3, A5, O1, SL2>"]}`: critical when building
-as planned would deliver the wrong thing or break what the need promises,
-or when a decision, criterion, assumption or card still contradicts the
-sign-off feedback in the task, major when someone would have to guess,
-minor otherwise. These never send cards back. When nothing disagrees across
-the blueprint, `cross` is an empty list or left out; never invent a finding.
+that one side's cards keep and the other's do not; a change one card makes
+that breaks behaviour the code has today, which no card handles; a decision,
+outcome or criterion that traces to no need item, answered question,
+accepted assumption or gate feedback and prevents no defect in code that
+exists; an assumption that adds work the need does not ask for, accepted or
+not. A card that does not deliver what its own criterion promises is that
+card's problem, in its `cards` entry; `cross` holds the problems between
+artifacts. Report each in `cross`,
+`{"id": "X1", "severity": "critical", "major" or "minor", "text": "<one sentence a person can act on>", "refs": ["<the ids it names, such as DEC2, AC4, D3, A5, O1, SL2>"]}`:
+critical when building as planned would deliver the wrong thing, break what
+the need promises or break what the code does today, or when a decision,
+criterion, assumption or card still contradicts the sign-off feedback in the
+task, major when someone would have to guess or a part traces to nothing the
+blueprint asks for, minor otherwise. `refs` names the cards whose change
+fixes the finding, beside the other ids it names; a finding that only a
+change to a design or an assumption fixes names no card. A critical or major
+finding sends back the cards it names: judge each of them not ready, with
+the finding among its own. A minor finding sends nothing back. When nothing
+disagrees across the blueprint, `cross` is an empty list or left out; never
+invent a finding.
 
 Produce markdown with one `## <card id>: <title>` section per card holding
 `ready` or the findings that block it. Submit with a data object
