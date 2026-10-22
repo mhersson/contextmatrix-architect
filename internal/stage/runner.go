@@ -241,7 +241,7 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 	// Reasoning goes back only to the model that wrote it, and only on a
 	// run that replays.
 	history := in.History
-	if !replay || in.HistoryModel != in.Model {
+	if !replay || in.HistoryModel == "" || in.HistoryModel != in.Model {
 		history = withoutReasoning(history)
 	}
 

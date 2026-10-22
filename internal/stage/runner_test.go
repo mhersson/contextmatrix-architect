@@ -1023,14 +1023,16 @@ func TestRun_ReplaysReasoningOnlyWhereItIsOn(t *testing.T) {
 func TestRun_ResumedReasoningGoesBackOnlyToTheModelThatWroteIt(t *testing.T) {
 	tests := []struct {
 		name         string
+		model        string
 		historyModel string
 		replay       bool
 		want         bool
 	}{
-		{"the same model", "test/model", true, true},
-		{"another model", "other/model", true, false},
-		{"a model unknown", "", true, false},
-		{"replay off", "test/model", false, false},
+		{"the same model", "test/model", "test/model", true, true},
+		{"another model", "test/model", "other/model", true, false},
+		{"a model unknown", "test/model", "", true, false},
+		{"both models unknown", "", "", true, false},
+		{"replay off", "test/model", "test/model", false, false},
 	}
 
 	for _, tt := range tests {
@@ -1038,7 +1040,7 @@ func TestRun_ResumedReasoningGoesBackOnlyToTheModelThatWroteIt(t *testing.T) {
 			history := []llm.Message{{Role: "user", Content: "the need"}, {Role: "assistant", Content: "asked", ReasoningDetails: replayed}}
 
 			in := baseInput(&bytes.Buffer{})
-			in.History, in.HistoryModel = history, tt.historyModel
+			in.Model, in.History, in.HistoryModel = tt.model, history, tt.historyModel
 
 			f := &fakeLLM{}
 			r := runnerWith(f)
