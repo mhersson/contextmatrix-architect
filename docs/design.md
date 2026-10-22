@@ -470,9 +470,11 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   Readiness also judges the blueprint as a whole and reports, in its data's
   `cross`, findings between artifacts (decisions, contracts, cards and
   assumptions that disagree, a near-duplicate assumption, an outcome no
-  criterion proves), each `X<n>` with a severity (critical, major or minor),
-  its text and the ids it names, the cards among them being those whose
-  change fixes it. A critical or major finding sends back the cards it
+  criterion proves, a change no card handles that breaks what the code does
+  today, a part that traces to nothing, an assumption that adds work the
+  need does not ask for), each `X<n>` with a severity (critical, major or
+  minor), its text and the ids it names, the cards among them being those
+  whose change fixes it. A critical or major finding sends back the cards it
   names. The loop counts each such card as not passed, whatever its own
   entry says. When its entry passed it, its finding reads
   `<card>: X<n> (<severity>): <text>`, and it reaches the sign-off that way
@@ -503,18 +505,18 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   list, held to the same rules for each decision.
 - Intake states every measurable outcome of the need in its data's
   `outcomes`, each `{id: O<n>, text, quality}`: one measurable sentence,
-  and, for a quality the user answered (performance, security,
-  operability, data loss, compatibility, or another), the quality's name.
-  Intake and every design ask about the qualities that matter for the need
-  as researched questions. The shared decisions and each slice's design may
+  and, for a quality the user answered (performance, security, operability,
+  data loss, compatibility, or another), the quality's name. Intake and
+  every design ask about the qualities that matter for the need as
+  researched questions. The shared decisions and each slice's design may
   add outcomes, at the top level of their data, for qualities the user's
   answers settle and only they can state; ids run on across the blueprint.
   The `outcomes` check refuses an entry of another shape (`outcome_shape`),
   an id that is not `O<n>`, repeats one or is not after the highest an
   earlier step holds (`outcome_id`), an outcome without its sentence
   (`outcome_text`), and an intake that states none (`no_outcomes`); bounded
-  like the other checks, never fatal. Earlier means the steps before it in pipeline order, so a
-  re-run's own earlier version never counts.
+  like the other checks, never fatal. Earlier means the steps before it in
+  pipeline order, so a re-run's own earlier version never counts.
 - Acceptance's submit is checked: it has slices, every slice of slicing
   among them, or a per-slice acceptance's own slice alone, and each with at
   least one criterion; every criterion has an id of its own, never one an
@@ -855,7 +857,7 @@ adds to a card that cites a source tag (see Emission).
 | A card's mockup screens exist in the approved mockup               | mechanical                 |
 | No mockup block in a draft card's body                             | mechanical                 |
 | One deliverable, no open decisions, no optional scope              | model-judged               |
-| Builds only what the blueprint asks for; no card whose only work is documentation, tests, a guard or a proof over other cards' work | model-judged |
+| Builds only what the blueprint asks for; no card whose only work is documentation, tests, a guard or a proof over other cards' work, or the closing commands, except the instruction card setup asks for | model-judged |
 | Estimated planner split of two subtasks or fewer                   | model-judged               |
 | "Could an agent with only this repo finish this card?"; a point the agent can settle on its own is no finding | model-judged, adversarial  |
 | No card duplicates an open card of its project                     | model-judged (cm tools)    |

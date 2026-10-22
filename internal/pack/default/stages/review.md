@@ -55,12 +55,11 @@ a severity:
 
 From an attempt's second round on, give every earlier finding exactly one
 verdict against this version: fixed when the version itself resolves it,
-still_open when it does not, with a note saying what is still missing. A
-finding the builder declined as out of scope is fixed, noted
-`withdrawn: out of scope`, when it asked for a part nobody asked for, and
-still_open when the need, an answer, an accepted assumption or code that
-exists does call for it. Then add any new findings; never restate an earlier
-one as new.
+still_open when it does not, with a note saying what is still missing. A finding
+the builder declined as out of scope is fixed, noted `withdrawn: out of scope`,
+when it asked for a part nobody asked for, and still_open when the need, an
+answer, an accepted assumption, gate feedback or code that exists does call for
+it. Then add any new findings; never restate an earlier one as new.
 
 Score the artifact from 1 to 5. The task says which score passes; a
 critical finding left open fails the review whatever the score, and a score

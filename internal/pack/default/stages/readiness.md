@@ -8,16 +8,17 @@ deliverable, no open decision, no optional scope, a planner split of two
 subtasks or fewer. Judge its scope too. A card, or a part of one, that
 builds what no decision, contract or criterion of its slice asks for, such
 as a guard, a recovery path, a cache or a test hook, is not ready. So is a
-card whose only work is documentation, tests or a guard over other cards'
-work, or a proof of what earlier cards deliver. The finding names what to
-drop, or the card the work belongs in. Doing the asked-for work correctly
-and securely is the work itself, not an addition: a security hole, or a
-wrong result on input the need's users will give, is a defect. The architect
-checked every `where` path against the checkout before you judge: one
-without `new` exists, and one marked `new` does not exist yet. Whether a
-path exists, or whether a file a card creates should be listed or marked
-new, is never a finding, in any round: the same `where` gets the same
-judgement every time.
+card whose only work is documentation, tests or a guard over other
+cards' work, a proof of what earlier cards deliver, or a run of the
+closing commands; the instruction card that setup asks for is the one
+exception. The finding names what to drop, or the card the work belongs
+in. Doing the asked-for work correctly and securely is the work itself,
+not an addition: a security hole, or a wrong result on input the need's
+users will give, is a defect. The architect checked every `where` path
+against the checkout before you judge: one without `new` exists, and one
+marked `new` does not exist yet. Whether a path exists, or whether a
+file a card creates should be listed or marked new, is never a finding,
+in any round: the same `where` gets the same judgement every time.
 
 A finding is only what would make an agent with only this repository and
 this card fail or build the wrong thing, a change that breaks what the code

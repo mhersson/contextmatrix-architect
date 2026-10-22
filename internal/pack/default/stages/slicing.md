@@ -51,11 +51,11 @@ the slices in their order.
 When a reviewer's findings come back to you, each with an id such as R2, add
 `"addressed": [{"finding": "<its id>", "note": "<one sentence>"}]` to the data,
 one entry per finding you act on. Revise for a finding that the need, the
-answers, the accepted assumptions or a defect in code that exists calls for, and
-say in its note what you changed. A finding that asks you to add what none of
-them asks for, such as a recovery path, a cache, a guard, a limit, a test hook
-or an outcome, is out of scope: change nothing for it, and note `out of scope:
-<what it would add>`. A finding that asks you to remove such a part is in scope.
-Where a finding can be met by removing or by adding, remove. A minor finding
-changes wording, never what is built. Never claim a finding you did not address.
-The reviewer checks your revision itself, not your notes.
+answers, the accepted assumptions, gate feedback or a defect in code that exists
+calls for, and say in its note what you changed. A finding that asks you to add
+what none of them asks for, such as a recovery path, a cache, a guard, a limit,
+a test hook or an outcome, is out of scope: change nothing for it, and note
+`out of scope: <what it would add>`. A finding that asks you to remove such a
+part is in scope. Where a finding can be met by removing or by adding, remove. A
+minor finding changes wording, never what is built. Never claim a finding you
+did not address. The reviewer checks your revision itself, not your notes.
