@@ -667,7 +667,10 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
   gate to fold into, a loop stage takes no gate, and a pack with a reviewer
   carries `stages/review.md`. A reviewer's tool groups are `code` and
   `research` only, and `research` gives it `web_fetch` alone. No stage id
-  is `review` or `responder` or holds a dot, which names a stage's review.
+  is `review`, `responder`, `plain`, `mockup_responder` or `retrospective`, the
+  reserved instruction ids, or holds a dot, which names a stage's review.
+  `stages/retrospective.md` is optional; a pack that carries it carries
+  `personas/reviewer.md`, the persona its runs play (see Learning).
   Per-slice stages are contiguous, follow the stage that checks slices and
   neither fold nor loop; `earlier_slices` names per-slice stages only; a
   shared stage has a gate and sits between the stage that checks slices and
@@ -688,8 +691,10 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
 - A stage's responder policies, for its questions and its gate, come from
   the pack; the mode and the blueprint's `gate` replies override both (see
   Interaction).
-- A lesson that extends a list lands as a pack overlay stored in SQLite and
-  applied at load time, so a lesson never needs a code change.
+- A lesson that extends a list carries its additions as an overlay stored in
+  SQLite with the lesson; the pack's lists merged with overlays, pack entries
+  first and an edge case the merged lists already hold left out, are checked
+  by the loader's own list parser, so a lesson never needs a code change.
 - Pack prose is never tested. Tests check only that a pack parses and that
   every stage, persona and list reference resolves.
 

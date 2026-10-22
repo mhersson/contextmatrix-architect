@@ -76,7 +76,12 @@ const (
 	plainInstructions     = "plain"
 	// mockupResponderInstructions is what every mockup responder run reads.
 	mockupResponderInstructions = "mockup_responder"
+	// retrospectiveInstructions is what every retrospective run reads.
+	retrospectiveInstructions = "retrospective"
 )
+
+// RetroPersona is the persona a retrospective run plays.
+const RetroPersona = "reviewer"
 
 // stepSeparator joins a per-slice stage's id and its slice in a step key;
 // no stage id holds it.
@@ -191,6 +196,7 @@ type Pack struct {
 	responder    string
 	mockupResp   string
 	plain        string
+	retro        string
 }
 
 // LoadEmbedded loads the pack compiled into the binary.
@@ -352,6 +358,19 @@ func load(fsys fs.FS) (*Pack, error) {
 
 	p.plain = string(plain)
 
+	retro, err := optionalFile(fsys, path.Join("stages", retrospectiveInstructions+".md"), "", "")
+	if err != nil {
+		return nil, err
+	}
+
+	p.retro = string(retro)
+
+	if p.retro != "" {
+		if err := p.loadPersona(fsys, retrospectiveInstructions, RetroPersona); err != nil {
+			return nil, err
+		}
+	}
+
 	return p, nil
 }
 
@@ -434,7 +453,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 		return fmt.Errorf("pack: stage needs an id: %+v", s)
 	}
 
-	if s.ID == reviewInstructions || s.ID == responderInstructions || s.ID == plainInstructions || s.ID == mockupResponderInstructions {
+	if s.ID == reviewInstructions || s.ID == responderInstructions || s.ID == plainInstructions || s.ID == mockupResponderInstructions || s.ID == retrospectiveInstructions {
 		return fmt.Errorf("pack: stage id %q is reserved for the %s instructions", s.ID, s.ID)
 	}
 
@@ -723,6 +742,49 @@ func (p *Pack) Instructions(stageID string) string { return p.instructions[stage
 
 // Lists returns the data behind the mechanical checks.
 func (p *Pack) Lists() contract.Lists { return p.lists }
+
+// RetroInstructions returns what every retrospective run reads; empty when
+// the pack has none.
+func (p *Pack) RetroInstructions() string { return p.retro }
+
+// MergeLists returns the pack's lists with each overlay's additions after
+// the pack's entries, in the order given. An edge case already held, in
+// other case or spacing, is left out. The result is checked by the loader's
+// own list parser, whose error is returned unchanged.
+func (p *Pack) MergeLists(overlays []contract.Overlay) (contract.Lists, error) {
+	merged := p.lists
+	merged.EdgeCases = slices.Clone(p.lists.EdgeCases)
+	merged.DanglingReferences = slices.Clone(p.lists.DanglingReferences)
+	merged.ForbiddenReferences = slices.Clone(p.lists.ForbiddenReferences)
+
+	seen := map[string]bool{}
+	for _, e := range merged.EdgeCases {
+		seen[strings.ToLower(strings.TrimSpace(e))] = true
+	}
+
+	for _, o := range overlays {
+		merged.DanglingReferences = append(merged.DanglingReferences, o.DanglingReferences...)
+		merged.ForbiddenReferences = append(merged.ForbiddenReferences, o.ForbiddenReferences...)
+
+		for _, e := range o.EdgeCases {
+			k := strings.ToLower(strings.TrimSpace(e))
+			if seen[k] {
+				continue
+			}
+
+			seen[k] = true
+
+			merged.EdgeCases = append(merged.EdgeCases, e)
+		}
+	}
+
+	raw, err := yaml.Marshal(merged)
+	if err != nil {
+		return contract.Lists{}, fmt.Errorf("pack: encode merged lists: %w", err)
+	}
+
+	return parseLists(raw)
+}
 
 // CardTemplate returns the card body template handed to decomposition.
 func (p *Pack) CardTemplate() string { return p.card }
