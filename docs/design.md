@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slices 0 to 3 are implemented: slice 2 signs off ready cards, emits them and a playbook into CM, starts them in yolo mode and reports their run, and slice 3 adds the dialog stages (intake's questions, slicing, solution design, acceptance) with a responder policy per stage, the human and auto responders, reviewer runs with the critique loop, gates with slicing's folding into solution design, CM prompts, notes that reach later stages and assumptions with grounding's verdicts. A big need is worked piece by piece: slicing orders the slices, shared decisions settles what they share and collapses for one slice, design, grounding, acceptance and decomposition run once per slice, and readiness, one sign-off and one playbook cover every card. Outcomes, lessons and the export's commit to a repository are slice 4; the export writes the bundle under the state directory.
+Status: agreed design, 2026-10-15. Slices 0 to 3 are implemented: slice 2 signs off ready cards, emits them and a playbook into CM, starts them in yolo mode and reports their run, and slice 3 adds the dialog stages (intake's questions, slicing, solution design, acceptance) with a responder policy per stage, the human and auto responders, reviewer runs with the critique loop, gates with slicing's folding into solution design, CM prompts, notes that reach later stages and assumptions with grounding's verdicts. A big need is worked piece by piece: slicing orders the slices, shared decisions settles what they share and collapses for one slice, design, grounding, acceptance and decomposition run once per slice, and readiness, one sign-off and one playbook cover every card. The retrospective and lesson approval (slice 4) are built: a `retrospective` reply judges the emitted cards that struggled and the operator decides its lessons, which take effect on no blueprint yet. Applying them and the export's commit to a repository are still to come; the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -1299,7 +1299,10 @@ Then, in order:
    or not planned, or the playbook run completes or every entry is complete,
    with a closing summary: each card's state and pull request, the playbook
    and one compare link per repository, the architect's total cost, and
-   "Reply export for the bundle, or end the session." Then the blueprint's
+   "Reply export for the bundle, retrospective to learn from the cards that
+   struggled, or end the session." A card the watch first sees parked,
+   stalled or blocked brings the retrospective's offer, once (see Learning).
+   Then the blueprint's
    state is `done`. The summary is posted once: a restart between the two
    finds it stored and only sets the state, and a reopen of a `done`
    blueprint posts nothing. Ending the session stays with the user.
@@ -1313,6 +1316,10 @@ are set, and an appended epic-context section is not stripped.
 The retrospective closes the loop from emitted cards back to the contract.
 It never runs on its own.
 
+- **Offers**: the closing summary offers it, and the first time the watch
+  sees an emitted card parked, stalled or blocked it offers it once per
+  blueprint, remembered by its `retro_stop_offered` event across restarts and
+  reopens; an offer starts nothing.
 - **The pass**: a `retrospective` reply, once the cards are emitted (an
   `emitted` event, not the state). What it answers instead, each a
   `retro_reply`: a run in flight, nothing emitted, a pack without
@@ -1394,7 +1401,7 @@ the mockup reply (see Mockups):
 | `cap <usd>`, `cap off`        | Sets the blueprint's cost cap (see below); CM sends it when the person clicks the cost in the sheet header. Exactly two words, the amount one plain decimal number, so an answer that starts with "cap" stays an answer. Works while a stage runs, and binds the run in flight from its next model call. |
 | `mode default\|auto\|auto+emit\|yolo` | Switches the blueprint's mode; every later question, gate and the sign-off follow the new one, and the gate plan, once posted, is posted again. Into `auto+emit` or `yolo`, a sign-off waiting for a human runs again, preflight included, and approves itself unless a critical finding across the blueprint, cards readiness did not pass or preflight stops it. Into any mode but default, the round waiting for a human goes to the auto responder at once when its stage's policy is now `auto` (a `gate` reply still wins): it turns read-only, the answers and decisions already sent stay the human's, the responder answers each open question and every undecided assumption is accepted, and the stage then continues; a switch back to default after that leaves it with the responder, and `continue`, the next message or a reopen finishes one an abort or a restart cut short. Into any mode but default, a mockup offer waiting for a human is taken when the mockup stage's policy is now `auto`, and the step runs; a mockup waiting for the person goes to the auto responder as it stands, and the row names the mockup, never a round. Into default, a mockup the responder steers comes back to the person at once when nothing runs on it, as a running turn ends (storing no use it reached), else at its next revision or turn (see Mockups). Into `auto`, `auto+emit` or `yolo`, a stage gate shown only because its policy asked a human is approved when the policies are now `auto` (a `gate` reply still wins) and its reviewer's verdict passes, and the pipeline goes on; one shown because its verdict did not pass stays with its human, as it would in auto, and a switch back to default decides no gate. A round whose asking run read the policy before the switch and had not yet ended on it stays with its human too. Exactly two words, the mode one of the four, case ignored, so an answer that starts with "mode" stays an answer. Works while a stage runs. Refused, changing nothing, for the mode in effect, once emission has started (the sign-off approved) and after the pipeline ended. The stored mode survives a reopen: a later start's mode is ignored, as its cap is. Each reply is a `mode` event with the switch, or the refusal's reason (`unchanged`, `emission_started`, `ended`). |
 | `resume`, `continue`          | Runs the stopped stage again once, as a retry message would but storing no note (see below); a stage the cap stopped runs too and meets the cap again. The whole message, case ignored, so an answer that starts with either word stays an answer. While a run is in flight, or where nothing is stopped (an open gate, the mockup offer, a round waiting for answers, the sign-off, an ended pipeline, no need yet), nothing starts and the panel says so. Each reply is a `resume` event with the stage it runs again, or with `nothing` and the stage `running`, if any. |
-| `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, the mockup version a use took carrying its `chosen` as the sheet shows it, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
+| `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, the mockup version a use took carrying its `chosen` as the sheet shows it, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository is still to come. |
 | `retrospective`               | Judges the emitted cards that struggled and proposes lessons (see Learning). The whole message, case ignored. |
 | `lessons`                     | Lists every lesson of every blueprint with its state, scope, rationale and evidence card ids. Works in any state and while a run is in flight. |
 | `abort`                       | Ends the open run; the blueprint stays and can be reopened, and an open round stays open. |
@@ -1816,7 +1823,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Panel: a new-session dialog for blueprints with a multi-project picker, mode and cost cap | slice 0 |
 | The git-credentials endpoint treats an attached architect session as live | slice 1 |
 | CM re-sends the start to an architect session after the architect restarts: on a 404 `not_found` for a message (then re-sends the message once), and when the log stream ends | slice 2 |
-| Panel: question and gate prompts (`LogEntry.Prompt`, protocol v0.24.0, with their own text, kind and recommended option from v0.25.0) rendered as buttons; the gate plan stays text, and lesson prompts reuse the same shape | slice 3 (lessons slice 4) |
+| Panel: question and gate prompts (`LogEntry.Prompt`, protocol v0.24.0, with their own text, kind and recommended option from v0.25.0) rendered as buttons; the gate plan stays text, and lesson prompts reuse the same shape | slice 3; the lesson round reuses the round prompt |
 | Panel: the blueprint pane (scale bar, sheet, transcript markers), read through CM proxies of the architect's signed view and artifact endpoints, with its live stream relayed on the session's chat stream (protocol v0.26.0) | blueprint UI |
 | A research setting (`off` or `search`, off by default) with the search provider and its key in CM's configuration, sent as `ArchitectStart.Research` (protocol v0.27.0) | research |
 | Panel: clicking the cost in the sheet header asks for a new cap and sends `cap <usd>` or `cap off` as a chat message hidden from the transcript | cost cap |
@@ -1860,7 +1867,8 @@ Ordered so a real card comes out as early as possible.
 3. **Dialog stages.** Intake, slicing, solution design, acceptance; `human`
    and `auto` responders; gates. In CM: typed question and gate entries
    rendered with buttons.
-4. **Outcomes and lessons**, with pack overlays, and the per-project export
+4. **The retrospective and lessons**, with pack overlays (approval built,
+   applying them to later blueprints still to come), and the per-project export
    opt-in that commits the bundle to a repository through an allowlist of
    target repositories.
 5. **Later**: a gate inbox in CM's web UI;

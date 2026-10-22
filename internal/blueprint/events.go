@@ -144,6 +144,10 @@ const (
 	// with its signals, its finding and its proposed lesson. It is the
 	// pass's only record of the findings.
 	EventRetroReport = "retro_report"
+	// EventRetroStopOffered is the offer of the retrospective at the first
+	// emitted card the watch sees parked, stalled or blocked: its line. It is
+	// stored once per blueprint and starts nothing.
+	EventRetroStopOffered = "retro_stop_offered"
 	// EventLessonDecided records the decision a lesson round's answer made
 	// on one lesson: its id, new state, scope and text, its project when the
 	// scope is a project's, the merged lists' error when an approval was

@@ -389,6 +389,9 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventWatch:
 		entry.Type = "system"
 		entry.Content = str(p["line"])
+	case blueprint.EventRetroStopOffered:
+		entry.Type = "system"
+		entry.Content = str(p["line"])
 	case blueprint.EventWatchEnded:
 		entry.Type = "text"
 
@@ -437,7 +440,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			}
 		}
 
-		b.WriteString("\n\nReply export for the bundle, or end the session.")
+		b.WriteString("\n\nReply export for the bundle, retrospective to learn from the cards that struggled, or end the session.")
 
 		entry.Content = b.String()
 	case blueprint.EventEmitted:
