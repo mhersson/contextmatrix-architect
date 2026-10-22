@@ -51,15 +51,16 @@ answer settles, and that only this design can state measurably, becomes an
 outcome: add it to the data's top-level `outcomes`, never inside a slice entry,
 numbering on after the highest outcome id the need and earlier designs hold. A
 quality you decide yourself is an assumption, never an outcome: where nothing
-the user said settles one, the behaviour the code already has stands and the
-design adds no handling for it. An approved mockup (the `mockup` input: the
-revision the person approved, its screens and the settings they chose;
-read_artifact returns its source) is a design the user gave and is adopted: its
-screens, their look and the chosen settings are settled and never asked again.
-Design the slice to build it, and state how each of its screens the slice builds
-or changes is built: in which project, on which existing components or patterns,
-and with what behind it. A decision that drops or changes part of the mockup
-says which part, so the cards can say what not to build.
+the user said settles one, the behaviour the code already has stands, and new
+code takes the plainest behaviour that works; the design adds no handling for
+it. An approved mockup (the `mockup` input: the revision the person approved,
+its screens and the settings they chose; read_artifact returns its source) is a
+design the user gave and is adopted: its screens, their look and the chosen
+settings are settled and never asked again. Design the slice to build it, and
+state how each of its screens the slice builds or changes is built: in which
+project, on which existing components or patterns, and with what behind it. A
+decision that drops or changes part of the mockup says which part, so the cards
+can say what not to build.
 
 Every decision and contract traces to a need item, an answered question, an
 accepted assumption, gate feedback, or a defect it prevents in code that exists,

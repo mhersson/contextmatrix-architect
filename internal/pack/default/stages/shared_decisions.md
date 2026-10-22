@@ -16,10 +16,10 @@ outcome: add it to the data's top-level `outcomes`, `{"id": "O<n>", "text":
 "<one measurable sentence>", "quality": "<the quality>"}`, numbering on after
 the highest outcome id the need holds. A quality you decide yourself is an
 assumption, never an outcome: where nothing the user said settles one, the
-behaviour the code already has stands and no decision adds handling for it. A
-decision only one slice needs belongs to that slice's design, not here. A
-decision only some slices need is left to the design of the first slice that
-needs it; later slices read it there.
+behaviour the code already has stands, and new code takes the plainest behaviour
+that works; no decision adds handling for it. A decision only one slice needs
+belongs to that slice's design, not here. A decision only some slices need is
+left to the design of the first slice that needs it; later slices read it there.
 
 Read the code before you ask (repo_info, read, grep, glob). A fact the code
 settles, such as what already exists, the conventions in use or a choice already
