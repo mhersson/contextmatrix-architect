@@ -16,7 +16,7 @@ specification and must stay true at HEAD.
 - Holds no secret but the backend HMAC key. The LLM endpoint, MCP key,
   git-credentials token and search key arrive in every session start from CM
   and live in memory only. There is no CM-less mode.
-- Every action is logged: full transcripts (less web search result lists and artifact reads) and an append-only event log.
+- Every action is logged: full transcripts (less web search result lists and artifact reads, and reasoning details that redaction would change, dropped whole) and an append-only event log.
   The append-only tables (events, transcripts, artifacts, gates, emissions, questions) are never updated
   or deleted.
 

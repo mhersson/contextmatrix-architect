@@ -69,7 +69,7 @@ Settled during design. Each has its reason so it is not re-litigated.
 | Provisioned by CM, like the agent and chat backends      | Every blueprint is a CM session. The start payload delivers the LLM endpoint, the MCP key, the model, a git-credentials token and, when research is on, the search provider and its key. The architect's own config holds no secret but the backend HMAC key, and there is no CM-less mode. |
 | Questions in stored rounds; a stage resumes its stored conversation | A big need takes a long interview, answered in one sitting or in batches over days. Posting a round ends the run, so nothing waits in memory and End, a reopen or a restart loses nothing; once every question has an answer and every assumption a decision the stage resumes the conversation that asked, with the answers as its next message, so the model reads the calls it made and what they returned and, with reasoning replay on, the reasoning behind them when the same model resumes it. Every run of a stage, a chat run included, is offered the same tools, so the prompt cache is warm when the answer comes before the cache expires, on either endpoint. |
 | SQLite is the record; markdown is a rendering             | One store for artifacts, gates, transcripts, audit and cost. Committing per-stage markdown into code repos bloats them fast; an opt-in automatic export serves teams that review in pull requests. |
-| Everything is logged                                      | Every run's full transcript (less web search result lists and `read_artifact` results, whose artifacts the record holds) and an append-only event log. The append-only tables are never updated or deleted. The export is a complete audit record, less the web search result lists the next row keeps out. |
+| Everything is logged                                      | Every run's full transcript (less web search result lists and `read_artifact` results, whose artifacts the record holds, and reasoning details that redaction would change, dropped whole) and an append-only event log. The append-only tables are never updated or deleted. The export is a complete audit record, less the web search result lists the next row keeps out. |
 | Search result lists are never stored                      | The search provider's terms forbid storing or caching results beyond transient use, and no storage rights are bought. The model sees a list in the run that searched; transcripts, events and exports keep the query and the result count. The pages `web_fetch` reads are the recorded sources, so a claim cites a page the architect read itself. A deliberate, permanent exception, with no switch to record lists. |
 | A playbook for several cards, a bare card for one         | Manual entries are the only way to express human and live checks across cards. A one-card playbook would end in a merged PR on a playbook branch plus a second PR to main; a bare card ends in one PR to the default branch. The `emissions` table is the blueprint's handle in CM either way. |
 | Fixed stage list, repeated per slice; no composer; size is never estimated | Every stage earns its place for any need. Stages the pack marks per slice repeat once per slice, so slicing's count decides how much runs. A stage with nothing to do collapses: it is recorded but not run, as the shared decisions stage is for one slice. Gates fold and the playbook decision falls out of counts in the artifacts (slices, cards), so a need is never classified small or big up front. Evidence for skippable stages comes from Outcomes, which does not exist yet. |
@@ -1660,16 +1660,16 @@ frames on the session's chat stream.
   session start (128000 tokens when it does not know it), and once a prompt
   reaches 85% of it the harness summarizes the older turns, keeps the last
   six messages and goes on. A run whose system prompt, task and newest
-  history messages (what compaction cannot summarize) are estimated, at 2.5
-  bytes a token and a reply's reasoning details at 4, to reach that 85%, or whose whole opening prompt is
-  estimated to reach the window itself (the first call carries all of it
-  before compaction can act), is refused before any model call. A resumed
-  conversation that fits only without its earlier reasoning goes on without
-  it. A model
-  whose real window is smaller than CM says fails on the provider's error
-  first. A refused run fails like any failed run, its row ending `too_big`
-  at no cost, and its error names the biggest inputs of its task by step
-  name; a run the harness stops on a full window says so in plain words.
+  history messages (what compaction cannot summarize) are estimated, at
+  2.5 bytes a token and a reply's reasoning details at 4, to reach that
+  85%, or whose whole opening prompt is estimated to reach the window
+  itself (the first call carries all of it before compaction can act), is
+  refused before any model call. A resumed conversation that fits only
+  without its earlier reasoning goes on without it. A model whose real
+  window is smaller than CM says fails on the provider's error first. A
+  refused run fails like any failed run, its row ending `too_big` at no
+  cost, and its error names the biggest inputs of its task by step name; a
+  run the harness stops on a full window says so in plain words.
   `continue` runs either again. The window is stored with the blueprint, and
   a reopen whose start carries none keeps it on the same model; a
   per-persona override runs on the fallback.
