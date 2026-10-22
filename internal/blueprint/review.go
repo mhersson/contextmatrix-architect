@@ -565,7 +565,7 @@ func (c *Controller) builderRound(ctx context.Context, bp store.Blueprint, st pi
 
 	fmt.Fprintf(&b, "## Reviewer findings (round %d)\n\n", v.Round)
 
-	fmt.Fprintf(&b, "The reviewer scored your artifact %d of 5; %d passes, and a critical finding left open fails it whatever the score. Address every finding below, then submit the artifact again. Your revision is reviewed again: the reviewer re-checks each finding against it, whatever your addressed notes say:\n\n", v.Score, st.Reviewer.Threshold)
+	fmt.Fprintf(&b, "The reviewer scored your artifact %d of 5; %d passes, and a critical finding left open fails it whatever the score. Act on the findings below as your instructions say, then submit the artifact again. Your revision is reviewed again: the reviewer re-checks each finding against it, whatever your addressed notes say:\n\n", v.Score, st.Reviewer.Threshold)
 
 	// By id: the round's submit names the findings it addressed by id.
 	for _, f := range open {

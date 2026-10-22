@@ -45,8 +45,14 @@ criteria and manual checks. Submit with a data object
 `{"slices": [{"id": "SL1", "criteria": [{"id": "AC1", "project": "<name>", "text": "<the test or command and what passes>", "outcomes": ["O1"]}], "manual": [{"id": "MC1", "text": "<the check a human makes>", "outcomes": ["O2"]}], "sweep": [{"condition": "<an edge case>", "settled_by": ["AC1"]}, {"condition": "<an edge case>", "not_applicable": "<why>"}]}]}`.
 Ids run on across slices: AC1, AC2, ... and MC1, MC2, ..., each after the highest an earlier slice's acceptance holds.
 
-When a reviewer's findings come back to you, each with an id such as R2,
-revise for them and add `"addressed": [{"finding": "<its id>", "note": "<one sentence on what you changed>"}]`
-to the data, one entry per finding you addressed. Leave out a finding you
-did not address; never claim one you did not. The reviewer checks your
-revision itself, not your notes.
+When a reviewer's findings come back to you, each with an id such as R2, add
+`"addressed": [{"finding": "<its id>", "note": "<one sentence>"}]` to the data,
+one entry per finding you act on. Revise for a finding that the need, the
+answers, the accepted assumptions or a defect in code that exists calls for, and
+say in its note what you changed. A finding that asks you to add what none of
+them asks for, such as a recovery path, a cache, a guard, a limit, a test hook
+or an outcome, is out of scope: change nothing for it, and note `out of scope:
+<what it would add>`. A finding that asks you to remove such a part is in scope.
+Where a finding can be met by removing or by adding, remove. A minor finding
+changes wording, never what is built. Never claim a finding you did not address.
+The reviewer checks your revision itself, not your notes.

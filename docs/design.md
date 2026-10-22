@@ -382,6 +382,18 @@ Every stage is a model run, except a shared stage that collapses with one slice,
 - Every stage that interviews (intake, slicing, shared decisions and solution
   design) reads the code, so it states what the code answers as a finding and
   asks only what neither the code nor the need settles.
+- Every stage of the default pack plans only what the need and the person's
+  decisions ask for. Each part an artifact adds (a decision, a contract, an
+  outcome, a criterion, a card) traces to a need item, an answered question,
+  an accepted assumption, gate feedback, or a defect it prevents in code that
+  exists. Where the need is silent, the code's present behaviour stands. An
+  assumption never adds work, and a quality question recommends its least-work
+  option. A builder round acts on its findings as the stage's instructions
+  say. It revises for a finding the trace calls for. It declines one that
+  would add a part nothing asks for, noting it `out of scope`, and removes
+  where removing or adding would both meet a finding. Doing the asked-for work
+  correctly and securely is the work itself, not an addition: a security hole,
+  or a wrong result on input the need's users will give, is a defect.
 - The first stage with the code tools, intake in the default pack, ends -
   for a per-slice stage, its SL1 step ends - by telling the session what
   each target project lacks for an agent run: a verify command in CM (read
@@ -483,13 +495,13 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   operability, data loss, compatibility, or another), the quality's name.
   Intake and every design ask about the qualities that matter for the need
   as researched questions. The shared decisions and each slice's design may
-  add outcomes, at the top level of their data, for qualities only they can
-  state; ids run on across the blueprint. The `outcomes` check refuses an
-  entry of another shape (`outcome_shape`), an id that is not `O<n>`,
-  repeats one or is not after the highest an earlier step holds
-  (`outcome_id`), an outcome without its sentence (`outcome_text`), and an
-  intake that states none (`no_outcomes`); bounded like the other checks,
-  never fatal. Earlier means the steps before it in pipeline order, so a
+  add outcomes, at the top level of their data, for qualities the user's
+  answers settle and only they can state; ids run on across the blueprint.
+  The `outcomes` check refuses an entry of another shape (`outcome_shape`),
+  an id that is not `O<n>`, repeats one or is not after the highest an
+  earlier step holds (`outcome_id`), an outcome without its sentence
+  (`outcome_text`), and an intake that states none (`no_outcomes`); bounded
+  like the other checks, never fatal. Earlier means the steps before it in pipeline order, so a
   re-run's own earlier version never counts.
 - Acceptance's submit is checked: it has slices, every slice of slicing
   among them, or a per-slice acceptance's own slice alone, and each with at
