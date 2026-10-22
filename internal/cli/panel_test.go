@@ -116,6 +116,7 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		{"a retrospective reply on an idle blueprint", blueprint.EventRetroReply, map[string]any{"reason": "not_emitted", "during_run": false}, true},
 		{"a retrospective reply while a run works", blueprint.EventRetroReply, map[string]any{"reason": "running", "during_run": true}, false},
 		{"a retrospective's findings", blueprint.EventRetroReport, map[string]any{"cards": []any{}}, true},
+		{"a lesson decided", blueprint.EventLessonDecided, map[string]any{"lesson": 2, "state": "active"}, true},
 		{"created", blueprint.EventCreated, nil, false},
 		{"stage started", blueprint.EventStageStarted, nil, false},
 		{"artifact", blueprint.EventArtifact, nil, false},

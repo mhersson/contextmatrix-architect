@@ -1316,20 +1316,21 @@ It never runs on its own.
 - **The pass**: a `retrospective` reply, once the cards are emitted (an
   `emitted` event, not the state). What it answers instead, each a
   `retro_reply`: a run in flight, nothing emitted, a pack without
-  `stages/retrospective.md`. It reads every emitted card once with
-  `get_card` and its activity log, and the run signals. A card struggled
-  when it took 2 or more review attempts, was parked, stalled, blocked or not
-  planned, or cost at least 3 times the costed cards' median when 3 or more
-  are costed; cost is the estimated cost plus `subtask_cost_usd`, and a
-  parked card's reason is its newest parked entry's message. When none
-  struggled, it says so. Else a `retro` run of stage `retrospective`, persona
-  reviewer, on the run slot, under the blueprint's cost cap, with no tools
-  and no questions, given the card template, the lists, the instructions of
-  the stage that checks readiness and each struggled card's signals and
-  fenced body as data, submits one finding per struggled card, each checked:
-  the card, a rule, evidence quoted from its body, a lesson exactly when the
-  card was at fault, and an overlay of the three lists only. A repeated reply
-  judges every struggled card again.
+  `stages/retrospective.md`, an open lesson round. It reads every emitted
+  card once with `get_card` and its activity log, and the run signals. A
+  card struggled when it took 2 or more review attempts, was parked,
+  stalled, blocked or not planned, or cost at least 3 times the costed
+  cards' median when 3 or more are costed; cost is the estimated cost plus
+  `subtask_cost_usd`, and a parked card's reason is its newest parked
+  entry's message. When none struggled, it says so. Else a `retro` run of
+  stage `retrospective`, persona reviewer, on the run slot, under the
+  blueprint's cost cap, with no tools and no questions, given the card
+  template, the lists, the instructions of the stage that checks readiness
+  and each struggled card's signals and fenced body as data, submits one
+  finding per struggled card, each checked: the card, a rule, evidence
+  quoted from its body, a lesson exactly when the card was at fault, and an
+  overlay of the three lists only. A repeated reply judges every struggled
+  card again.
 - **The findings message**: one `retro_report` lists each struggled card
   with its signals and finding and its lesson as `L<n>`, or that it was not
   the card's fault; it is the pass's record of every finding. Each lesson is
@@ -1354,6 +1355,16 @@ It never runs on its own.
   open prompt. A round past the frame limit is not posted (`round_too_big`)
   and its lessons stay proposed. A `retrospective` while it is open says so
   (`round_open`) and starts nothing.
+- **Answers**: a reply stores the answers as any round's; once every
+  question has an answer the round closes (questions rows of stage
+  `retrospective`) and each lesson is decided in question order: reject,
+  approve for the project, approve for the pack, or own words, which reword
+  the lesson and approve it at its proposed scope. An approval checks the
+  pack's lists merged with that lesson's overlay with the loader's own
+  parser; a failure leaves the lesson rejected with the parser's error in its
+  `lesson_decided` event. A decision sets the state from `proposed` only, so
+  it applies once; answers take no run slot. Nothing a model proposes takes
+  effect without this approval.
 - Reading the cards needs no CM change: the architect knows its card ids
   and reads them with `get_card` only. A CM card-creator field comes later,
   to compare architect cards with human-written ones across the whole board.
@@ -1373,7 +1384,7 @@ the mockup reply (see Mockups):
 
 | Reply                         | Effect                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
-| `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At a slice's design gate, `reject slicing <feedback>` runs slicing and everything after it again, and `reject shared_decisions <feedback>` the shared decisions and every slice. At the sign-off, approve emits and resumes an emission that stopped, and reject runs the blueprint again from its first decisions, the shared decisions when they ran, else the first slice's design, with everything after it, as the typed rejection of that step does; on a record whose steps have no such step it re-runs decomposition, every slice's in slice order. Every stage that runs after a sign-off rejection is given its feedback, and so are its reviewer and its auto responder. `reject slicing <feedback>` runs slicing and everything after it again, `reject SL<n> <feedback>` that slice's design and every later slice, and `reject shared_decisions <feedback>` the shared decisions and every slice; the sign-off records its rejection first, then a rejection of the step that runs again, and the replaced versions superseded. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
+| `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At a slice's design gate, `reject slicing <feedback>` runs slicing and everything after it again, and `reject shared_decisions <feedback>` the shared decisions and every slice. At the sign-off, approve emits and resumes an emission that stopped, and reject runs the blueprint again from its first decisions, the shared decisions when they ran, else the first slice's design, with everything after it, as the typed rejection of that step does; on a record whose steps have no such step it re-runs decomposition, every slice's in slice order. Every stage that runs after a sign-off rejection is given its feedback, and so are its reviewer and its auto responder. `reject slicing <feedback>` runs slicing and everything after it again, `reject SL<n> <feedback>` that slice's design and every later slice, and `reject shared_decisions <feedback>` the shared decisions and every slice; the sign-off records its rejection first, then a rejection of the step that runs again, and the replaced versions superseded. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round (a note while a lesson round waits; see Learning). |
 | `show mockup`, `skip mockup`  | Answers the mockup offer (see Mockups): show runs the mockup step, skip goes on without it. Matched as a gate's replies are; any other text while the offer waits is a note and the offer stays open. |
 | `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round, gate or mockup offer keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
 | `cap <usd>`, `cap off`        | Sets the blueprint's cost cap (see below); CM sends it when the person clicks the cost in the sheet header. Exactly two words, the amount one plain decimal number, so an answer that starts with "cap" stays an answer. Works while a stage runs, and binds the run in flight from its next model call. |

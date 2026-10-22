@@ -7,10 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	protocol "github.com/mhersson/contextmatrix-protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
+	"github.com/mhersson/contextmatrix-architect/internal/contract"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
@@ -288,4 +290,284 @@ func TestLessonRound_ChatIsANote(t *testing.T) {
 	assert.Equal(t, "why L1?", note.Payload["text"])
 	assert.Equal(t, calls, runner.calls(), "no run follows")
 	assert.Empty(t, newestSnapshot(t, c).Frame.Chat)
+}
+
+// answerLessons sends answers to lesson round s as reply msgID.
+func answerLessons(t *testing.T, c *Controller, s roundState, msgID string, answers ...protocol.RoundAnswer) {
+	t.Helper()
+
+	require.NoError(t, c.Reply(context.Background(), "BP1", protocol.RoundReply{PromptID: roundPromptID(s.Number), Answers: answers}, msgID))
+}
+
+// decisions returns the lesson_decided payloads, oldest first.
+func decisions(rec *recorder) []map[string]any {
+	var out []map[string]any
+
+	for _, e := range rec.all(EventLessonDecided) {
+		out = append(out, e.Payload)
+	}
+
+	return out
+}
+
+func lessonOf(t *testing.T, st *store.Store, id int64) store.Lesson {
+	t.Helper()
+
+	l, err := st.GetLesson(context.Background(), id)
+	require.NoError(t, err)
+
+	return l
+}
+
+// lessonIDs are the lesson ids of round s's questions, in question order.
+func lessonIDs(s roundState) []int64 {
+	out := make([]int64, 0, len(s.Frame.Questions))
+	for _, q := range s.Frame.Questions {
+		out = append(out, s.Lessons[q.Number])
+	}
+
+	return out
+}
+
+func TestLessonRound_AnswersDecideEachLessonInQuestionOrder(t *testing.T) {
+	script := manyCardScript(4)
+	script[RetroStage] = atFault(4)
+
+	c, st, _, rec, fake := emitted(t, script)
+	stuck(fake, emittedIDs(4)...)
+
+	ctx := context.Background()
+
+	require.NoError(t, c.Retrospective(ctx, "BP1", "m-retro"))
+	c.Wait("BP1")
+
+	open := newestSnapshot(t, c)
+	q := open.Frame.Questions
+	require.Len(t, q, 4)
+
+	ids := lessonIDs(open)
+
+	answerLessons(t, c, open, "m-answers",
+		pick(q[0].Number, 1), pick(q[1].Number, 2), pick(q[2].Number, 3), own(q[3].Number, "Name every key a card needs"))
+	c.Wait("BP1")
+
+	first := lessonOf(t, st, ids[0])
+	assert.Equal(t, store.LessonActive, first.State)
+	assert.Equal(t, store.ScopeProject, first.Scope)
+	assert.Equal(t, "alpha", first.Project)
+	assert.Equal(t, store.ResponderHuman, first.DecidedBy)
+	assert.NotNil(t, first.DecidedAt)
+
+	second := lessonOf(t, st, ids[1])
+	assert.Equal(t, store.LessonActive, second.State)
+	assert.Equal(t, store.ScopePack, second.Scope)
+
+	third := lessonOf(t, st, ids[2])
+	assert.Equal(t, store.LessonRejected, third.State)
+	assert.Equal(t, store.ScopeProject, third.Scope)
+	assert.Equal(t, "Name where the key comes from", third.Text)
+
+	fourth := lessonOf(t, st, ids[3])
+	assert.Equal(t, store.LessonActive, fourth.State)
+	assert.Equal(t, store.ScopeProject, fourth.Scope, "own words approve at the proposed scope")
+	assert.Equal(t, "Name every key a card needs", fourth.Text)
+
+	got := decisions(rec)
+	require.Len(t, got, 4)
+
+	for i, p := range got {
+		assert.Equal(t, ids[i], p["lesson"], "decided in question order")
+		assert.Equal(t, "m-answers", p["message_id"])
+		assert.NotContains(t, p, "error")
+	}
+
+	assert.Equal(t, store.LessonActive, got[0]["state"])
+	assert.Equal(t, store.ScopeProject, got[0]["scope"])
+	assert.Equal(t, "alpha", got[0]["project"])
+	assert.Equal(t, store.ScopePack, got[1]["scope"])
+	assert.NotContains(t, got[1], "project", "a pack lesson names no project")
+	assert.Equal(t, store.LessonRejected, got[2]["state"])
+	assert.Equal(t, "Name every key a card needs", got[3]["text"])
+
+	run := retroRuns(t, st)[0]
+
+	rows, err := st.ListQuestions(ctx, "BP1")
+	require.NoError(t, err)
+
+	var asked []store.Question
+
+	for _, r := range rows {
+		if r.Stage == RetroStage {
+			asked = append(asked, r)
+		}
+	}
+
+	require.Len(t, asked, 4)
+
+	for i, r := range asked {
+		assert.Equal(t, q[i].Number, r.Number)
+		assert.Equal(t, run.ID, r.RunID)
+		assert.Equal(t, store.ResponderHuman, r.Responder)
+		assert.Equal(t, "m-answers", r.MessageID)
+	}
+
+	s := newestSnapshot(t, c)
+	assert.Equal(t, open.Number, s.Number)
+	assert.True(t, s.Frame.Closed)
+	assert.Equal(t, changeClosed, s.Change)
+}
+
+func TestLessonRound_APartialReplyDecidesNothing(t *testing.T) {
+	script := twoCardScript()
+	script[RetroStage] = atFault(2)
+
+	c, st, _, rec, fake := emitted(t, script)
+	stuck(fake, emittedIDs(2)...)
+
+	require.NoError(t, c.Retrospective(context.Background(), "BP1", "m-retro"))
+	c.Wait("BP1")
+
+	open := newestSnapshot(t, c)
+	q := open.Frame.Questions
+	require.Len(t, q, 2)
+
+	answerLessons(t, c, open, "m-part", pick(q[0].Number, 1), own(q[1].Number, "   "))
+	c.Wait("BP1")
+
+	assert.Empty(t, decisions(rec))
+
+	for _, l := range lessons(t, st) {
+		assert.Equal(t, store.LessonProposed, l.State)
+	}
+
+	s := newestSnapshot(t, c)
+	assert.Equal(t, open.Number, s.Number)
+	assert.False(t, s.Frame.Closed)
+	assert.Equal(t, changeAnswers, s.Change)
+	assert.Equal(t, "m-part", s.MessageID)
+	assert.Equal(t, 1, s.Dropped, "blank own words are dropped")
+	require.Len(t, s.Frame.Answers, 1)
+	assert.Equal(t, q[0].Number, s.Frame.Answers[0].Number)
+}
+
+func TestLessonRound_AnApprovalTheMergedListsFailIsRejectedWithTheParsersError(t *testing.T) {
+	broken := []contract.Pattern{{Name: "broken", Pattern: "(["}}
+
+	lesson := lessonFor(store.ScopeProject)
+	lesson["overlay"] = map[string]any{"forbidden_references": []any{map[string]any{"name": broken[0].Name, "pattern": broken[0].Pattern}}}
+
+	script := twoCardScript()
+	script[RetroStage] = retroRun(retroFinding("ALPHA-001", "ALPHA-001", lesson))
+
+	c, st, _, rec, fake := emitted(t, script)
+	stuck(fake, "ALPHA-001")
+	fake.setEnded("ALPHA-002", finished("ALPHA-002", cardBody("Wire the parser"), 0))
+
+	require.NoError(t, c.Retrospective(context.Background(), "BP1", "m-retro"))
+	c.Wait("BP1")
+
+	_, want := c.opts.Pack.MergeLists([]contract.Overlay{{ForbiddenReferences: broken}})
+	require.Error(t, want)
+
+	open := newestSnapshot(t, c)
+	require.Len(t, open.Frame.Questions, 1)
+
+	answerLessons(t, c, open, "m-approve", pick(open.Frame.Questions[0].Number, 1))
+	c.Wait("BP1")
+
+	l := lessonOf(t, st, lessonIDs(open)[0])
+	assert.Equal(t, store.LessonRejected, l.State)
+	assert.Equal(t, store.ScopeProject, l.Scope)
+	assert.Equal(t, "Name where the key comes from", l.Text)
+
+	got := decisions(rec)
+	require.Len(t, got, 1)
+	assert.Equal(t, store.LessonRejected, got[0]["state"])
+	assert.Equal(t, want.Error(), got[0]["error"])
+}
+
+func TestLessonRound_AnswersAfterAReopenAndARestartDecide(t *testing.T) {
+	t.Run("after the session's end and a start", func(t *testing.T) {
+		c, st, _, rec, _, _ := oneLesson(t)
+		open := newestSnapshot(t, c)
+
+		ctx := context.Background()
+
+		require.NoError(t, c.End(ctx, "BP1"))
+		require.NoError(t, c.Start(ctx, startInput("BP1")))
+		c.Wait("BP1")
+
+		answerLessons(t, c, open, "m-answers", pick(open.Frame.Questions[0].Number, 1))
+		c.Wait("BP1")
+
+		l := lessonOf(t, st, lessonIDs(open)[0])
+		assert.Equal(t, store.LessonActive, l.State)
+		assert.Equal(t, store.ScopeProject, l.Scope)
+		assert.Len(t, decisions(rec), 1)
+	})
+
+	t.Run("after a restart", func(t *testing.T) {
+		c, st, _, _, fake, script := oneLesson(t)
+		open := newestSnapshot(t, c)
+
+		c2, rec2 := reopen(t, c, st, nil, script, fake, startInput("BP1"))
+
+		answerLessons(t, c2, open, "m-answers", pick(open.Frame.Questions[0].Number, 1))
+		c2.Wait("BP1")
+
+		l := lessonOf(t, st, lessonIDs(open)[0])
+		assert.Equal(t, store.LessonActive, l.State)
+		assert.Equal(t, store.ScopeProject, l.Scope)
+		assert.Equal(t, "alpha", l.Project)
+		assert.JSONEq(t, `{"edge_cases":["a missing key"]}`, string(l.Overlay))
+		assert.Len(t, decisions(rec2), 1)
+	})
+}
+
+func TestLessonRound_AnAnswerNeedsNoRunSlot(t *testing.T) {
+	c, st, _, rec, _, _ := oneLesson(t)
+	open := newestSnapshot(t, c)
+
+	c.mu.Lock()
+	r, _, claimed := c.claimLocked("BP1")
+	c.mu.Unlock()
+	require.True(t, claimed)
+
+	answerLessons(t, c, open, "m-answers", pick(open.Frame.Questions[0].Number, 2))
+
+	assert.Equal(t, store.LessonActive, lessonOf(t, st, lessonIDs(open)[0]).State)
+	assert.Len(t, decisions(rec), 1)
+
+	c.mu.Lock()
+	assert.Same(t, r, c.runs["BP1"], "the answer leaves the slot to its holder")
+	c.mu.Unlock()
+
+	c.release("BP1", r)
+	c.Wait("BP1")
+}
+
+func TestLessonRound_ARepliedRoundTakesNoSecondReply(t *testing.T) {
+	c, st, _, rec, _, _ := oneLesson(t)
+	open := newestSnapshot(t, c)
+
+	answerLessons(t, c, open, "m-answers", pick(open.Frame.Questions[0].Number, 3))
+	c.Wait("BP1")
+	require.Len(t, decisions(rec), 1)
+
+	answerLessons(t, c, open, "m-again", pick(open.Frame.Questions[0].Number, 1))
+	c.Wait("BP1")
+
+	var stale []map[string]any
+
+	for _, e := range rec.all(EventError) {
+		if e.Payload["message_id"] == "m-again" {
+			stale = append(stale, e.Payload)
+		}
+	}
+
+	require.Len(t, stale, 1)
+	assert.Equal(t, reasonStaleReply, stale[0]["reason"])
+	assert.Equal(t, roundPromptID(open.Number), stale[0]["prompt_id"])
+	assert.Len(t, decisions(rec), 1)
+	assert.Equal(t, store.LessonRejected, lessonOf(t, st, lessonIDs(open)[0]).State)
 }

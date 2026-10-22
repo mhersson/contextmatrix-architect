@@ -36,9 +36,9 @@ const retroCanceled = "The retrospective was canceled before it finished; nothin
 
 // Retrospective starts a pass over the blueprint's emitted cards on its run
 // slot (see retroPass). It refuses with a retro_reply, starting nothing,
-// while a run holds the slot, before the cards are emitted, and on a pack
-// without the retrospective's instructions. The pass's outcome arrives as
-// events only.
+// while a run holds the slot, before the cards are emitted, on a pack
+// without the retrospective's instructions, and while a lesson round is
+// open. The pass's outcome arrives as events only.
 func (c *Controller) Retrospective(ctx context.Context, id, msgID string) error {
 	c.mu.Lock()
 

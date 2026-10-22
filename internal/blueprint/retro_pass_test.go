@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	protocol "github.com/mhersson/contextmatrix-protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -595,4 +596,58 @@ func TestRetrospective_AnAbortBeforeThePassStartsNamesIt(t *testing.T) {
 	assert.Equal(t, RetroStage, aborted.Payload["stage"])
 	assert.Equal(t, []string{retroStopped}, reasonsOf(rec))
 	assert.Empty(t, retroRuns(t, st))
+}
+
+func TestRetrospective_ARepeatedPassJudgesEveryCardAgain(t *testing.T) {
+	script := twoCardScript()
+	script[RetroStage] = atFault(2)
+
+	c, st, runner, _, fake := emitted(t, script)
+	stuck(fake, emittedIDs(2)...)
+
+	ctx := context.Background()
+
+	require.NoError(t, c.Retrospective(ctx, "BP1", "m-retro"))
+	c.Wait("BP1")
+
+	first := lessons(t, st)
+	require.Len(t, first, 2)
+
+	open := newestSnapshot(t, c)
+
+	answers := make([]protocol.RoundAnswer, 0, len(open.Frame.Questions))
+	for _, q := range open.Frame.Questions {
+		answers = append(answers, pick(q.Number, 3))
+	}
+
+	answerLessons(t, c, open, "m-answers", answers...)
+	require.True(t, newestSnapshot(t, c).Frame.Closed)
+
+	require.NoError(t, c.Retrospective(ctx, "BP1", "m-again"))
+	c.Wait("BP1")
+
+	runs := retroRuns(t, st)
+	require.Len(t, runs, 2)
+	assert.Equal(t, 2, runs[1].Attempt)
+
+	inputs := inputsOf(runner, RetroStage)
+	require.Len(t, inputs, 2)
+
+	for _, id := range emittedIDs(2) {
+		assert.Contains(t, inputs[1].Task, cardBody(id), "the second pass judges %s again", id)
+	}
+
+	all := lessons(t, st)
+	require.Len(t, all, 4)
+
+	for _, l := range all[2:] {
+		assert.Greater(t, l.ID, first[1].ID, "the second pass's lessons follow the first's")
+		assert.Equal(t, runs[1].ID, l.RunID)
+		assert.Equal(t, store.LessonProposed, l.State)
+	}
+
+	again := newestSnapshot(t, c)
+	assert.Greater(t, again.Number, open.Number)
+	assert.False(t, again.Frame.Closed)
+	assert.Equal(t, []int64{all[2].ID, all[3].ID}, lessonIDs(again))
 }

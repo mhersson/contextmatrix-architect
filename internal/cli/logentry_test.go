@@ -254,6 +254,13 @@ func TestLogEntryFor(t *testing.T) {
 				},
 			},
 		}}, "text", []string{"ALPHA-001", "ALPHA-002", "needs a key", "go test passes", "L3"}, false},
+		{"a lesson approved", blueprint.Event{Kind: blueprint.EventLessonDecided, BlueprintID: "S1", Payload: map[string]any{
+			"lesson": 2, "state": "active", "scope": "project", "project": "alpha", "text": "Name where the key comes from", "message_id": "m1",
+		}}, "system", []string{"L2", "alpha"}, false},
+		{"a lesson the merged lists refused", blueprint.Event{Kind: blueprint.EventLessonDecided, BlueprintID: "S1", Payload: map[string]any{
+			"lesson": 2, "state": "rejected", "scope": "project", "project": "alpha", "text": "Name where the key comes from",
+			"error": "forbidden reference broken: missing closing ]", "message_id": "m1",
+		}}, "system", []string{"L2", "forbidden reference broken: missing closing ]"}, false},
 		{"a review started", blueprint.Event{Kind: blueprint.EventStageStarted, BlueprintID: "S1", Payload: map[string]any{
 			"stage": "shape", "kind": "reviewer", "persona": "reviewer",
 		}}, "system", []string{"Review of Shape"}, false},

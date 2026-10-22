@@ -224,6 +224,9 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventRetroReport:
 		entry.Type = "text"
 		entry.Content = retroReportText(p)
+	case blueprint.EventLessonDecided:
+		entry.Type = "system"
+		entry.Content = lessonDecidedText(p)
 	case blueprint.EventError:
 		entry.Type = "stderr"
 		entry.Content = str(p["message"])
@@ -1194,6 +1197,24 @@ func retroReportText(p map[string]any) string {
 	}
 
 	return b.String()
+}
+
+// lessonDecidedText renders a lesson's decision: approved for its project
+// or the whole pack, rejected, or rejected because the pack's lists merged
+// with its additions failed, with the parser's error.
+func lessonDecidedText(p map[string]any) string {
+	tag := fmt.Sprintf("L%.0f", num(p["lesson"]))
+
+	switch {
+	case str(p["error"]) != "":
+		return fmt.Sprintf("Lesson %s is rejected: the pack's lists with its additions do not load: %s", tag, str(p["error"]))
+	case str(p["state"]) == store.LessonRejected:
+		return "Lesson " + tag + " is rejected."
+	case str(p["scope"]) == store.ScopePack:
+		return fmt.Sprintf("Lesson %s is approved for the whole pack: %s", tag, str(p["text"]))
+	default:
+		return fmt.Sprintf("Lesson %s is approved for project %s: %s", tag, str(p["project"]), str(p["text"]))
+	}
 }
 
 // whyWords says in words why a struggled card of a findings message

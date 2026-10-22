@@ -128,6 +128,9 @@ func waitsOnUser(e blueprint.Event) bool {
 	case blueprint.EventRetroReport:
 		// A pass's findings end it.
 		return true
+	case blueprint.EventLessonDecided:
+		// An answer to a lesson round runs nothing after its decisions.
+		return true
 	case blueprint.EventRetroReply:
 		// CM arms its working indicator on every message; a retrospective
 		// reply that leaves nothing running, or a pass that stopped, must
