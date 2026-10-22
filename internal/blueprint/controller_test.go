@@ -1024,7 +1024,7 @@ func TestRunCapZero_DisablesThePerRunCap(t *testing.T) {
 			}
 
 			require.Equal(t, 1, runner.calls(), "the run starts")
-			assert.InDelta(t, tt.wantRunCap, runner.input(0).MaxCostUSD, 1e-9)
+			assert.InDelta(t, tt.wantRunCap, runCapOf(t, runner.input(0)), 1e-9)
 			assert.False(t, rec.has(EventError))
 		})
 	}
@@ -1092,7 +1092,7 @@ func TestMessage_CostCap(t *testing.T) {
 			}
 
 			require.Equal(t, 1, runner.calls())
-			assert.InDelta(t, tt.wantRunCap, runner.input(0).MaxCostUSD, 1e-9, "the run cap is what is left of the blueprint cap")
+			assert.InDelta(t, tt.wantRunCap, runCapOf(t, runner.input(0)), 1e-9, "the run cap is what is left of the blueprint cap")
 			assert.False(t, rec.has(EventError))
 		})
 	}
@@ -1219,7 +1219,7 @@ func TestRun_LessThanTheFloorLeftIsACapStop(t *testing.T) {
 
 			if tt.wantRun {
 				require.Equal(t, 1, runner.calls())
-				assert.InDelta(t, tt.wantRunCap, runner.input(0).MaxCostUSD, 1e-9)
+				assert.InDelta(t, tt.wantRunCap, runCapOf(t, runner.input(0)), 1e-9)
 				assert.Empty(t, capStops(t, st))
 
 				return
@@ -1339,6 +1339,73 @@ func TestRun_AMaxCostStopIsACapStopWhenTheBlueprintCapBinds(t *testing.T) {
 			assert.Equal(t, []string{"intake"}, capStops(t, st))
 			assert.InDelta(t, tt.capUSD, ev.Payload["cap_usd"], 1e-9)
 			assert.InDelta(t, 1.1, ev.Payload["blueprint_spent_usd"], 1e-9, "the ledger with the stopped run")
+		})
+	}
+}
+
+func TestCapStopAfter_SaysWhenTheStoredCapLiftsTheStop(t *testing.T) {
+	tests := []struct {
+		name   string
+		stored float64
+		lifted bool
+		nowUSD float64
+	}{
+		{name: "the cap it was cut under is still stored", stored: 1.5},
+		{name: "a raise above the spend", stored: 4, lifted: true, nowUSD: 4},
+		{name: "the cap removed", stored: 0, lifted: true},
+		// The floor is the median of the done intake stage runs, 1.60; 0.05 left is below it.
+		{name: "a raise that leaves less than the rerun's floor", stored: 1.65},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, _, _ := newController(t, artifactRun("# Need"))
+			ctx := context.Background()
+			require.NoError(t, c.Start(ctx, cappedInput(tt.stored)))
+			ranBefore(t, st, store.RunKindStage, "intake", store.RunDone, 1.6)
+
+			stop, err := c.capStopAfter(ctx, "BP1", 1.5, store.RunKindStage, "intake")
+			require.NoError(t, err)
+			assert.Equal(t, tt.lifted, stop.lifted)
+			assert.InDelta(t, tt.nowUSD, stop.nowUSD, 1e-9)
+		})
+	}
+}
+
+func TestCapStopAfter_ACutWhoseOwnCapStillLeavesTheFloorIsLifted(t *testing.T) {
+	c, st, _, _ := newController(t, artifactRun("# Need"))
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx, cappedInput(1.5)))
+	// The sink counts each line at its higher cost, the ledger the run's
+	// totals, so the ledger can stand below the cap the sink cut at. No done
+	// intake run leaves the floor at its 0.10 minimum.
+	ranBefore(t, st, store.RunKindStage, "intake", store.RunFailed, 1.35)
+
+	stop, err := c.capStopAfter(ctx, "BP1", 1.5, store.RunKindStage, "intake")
+	require.NoError(t, err)
+	assert.True(t, stop.lifted, "0.15 left covers a rerun's 0.10 floor")
+	assert.InDelta(t, 1.5, stop.nowUSD, 1e-9)
+	assert.Zero(t, stop.floor, "what is left is not below the floor")
+	assert.False(t, stop.usedUp(), "money is left, so the cap is not used up")
+}
+
+func TestCapStop_IsUsedUpOnlyWithNoWholeCentLeft(t *testing.T) {
+	tests := []struct {
+		name          string
+		capUSD, spent float64
+		want          bool
+	}{
+		{name: "a spent cap", capUSD: 1, spent: 1.2, want: true},
+		{name: "exactly at the cap", capUSD: 1, spent: 1, want: true},
+		{name: "under a cent left is at the cap in whole cents", capUSD: 1, spent: 0.999, want: true},
+		{name: "a cut whose ledger stands below the cap", capUSD: 1.5, spent: 1.35},
+		{name: "one whole cent left", capUSD: 1, spent: 0.99},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &capStop{stage: "intake", capUSD: tt.capUSD, spent: tt.spent}
+			assert.Equal(t, tt.want, s.usedUp())
 		})
 	}
 }

@@ -20,7 +20,7 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-// errCostCap is the cancel cause when a run's priced usage passes its cap.
+// errCostCap is the cancel cause when a run's cost passes its run cap.
 var errCostCap = errors.New("run cost cap reached")
 
 // priced is the cost of u at p, in USD. CM resolves the cache rates before
@@ -185,7 +185,11 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 		return stageStopped
 	}
 
-	runCap := budget.capUSD
+	// An unpriced run has no sink to bind a cap change.
+	lim := runLimit{perRunUSD: c.opts.MaxRunCostUSD, baseUSD: budget.baseUSD}
+	if m.price != nil {
+		lim.blueprint = c.capOf(id)
+	}
 
 	var err error
 
@@ -218,7 +222,7 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	f := &flight{
 		runID: runID, stage: stageID, kind: store.RunKindStage, persona: st.Persona, model: m.name,
-		round: number, startedAt: c.opts.Now().UTC(), price: m.price, capUSD: runCap,
+		round: number, startedAt: c.opts.Now().UTC(), price: m.price, limit: lim.kept(m.price != nil),
 	}
 	defer c.fly(id, f)()
 
@@ -299,19 +303,19 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 	defer closeTools()
 
-	// runCtx is cancelled with errCostCap by the sink when the priced usage
+	// runCtx is cancelled with errCostCap by the sink when the run's cost
 	// passes the run cap; the harness's own cap only sees the wire cost.
 	runCtx, stop := context.WithCancelCause(ctx)
 	defer stop(nil)
 
 	sink := &harnessSink{
 		audit: au, id: id, runID: runID, canceled: runCtx.Done(),
-		price: m.price, capUSD: runCap, stop: stop, flight: f, chat: in.Chat,
+		price: m.price, limit: lim, stop: stop, flight: f, chat: in.Chat,
 	}
 
 	in.Model = m.name
 	in.Endpoint = sess.endpoint
-	in.MaxCostUSD = runCap
+	in.MaxCostUSD = lim.fixedUSD(m.price != nil)
 	in.MaxTurns = c.opts.MaxTurns
 	in.ContextWindow = m.window
 
@@ -462,15 +466,18 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			note = fmt.Sprintf(", %.2f USD of it for its responder runs", charged)
 		}
 
+		end := sink.capAtEnd()
+
 		payload := map[string]any{
-			"stage":     stageID,
-			"reason":    "max_cost",
-			"spent_usd": spent,
-			"message":   fmt.Sprintf("run cost cap %.2f USD reached after %.2f USD%s; the stage stopped", runCap, spent, note),
+			"stage":       stageID,
+			"reason":      "max_cost",
+			"spent_usd":   spent,
+			"run_cap_usd": end.usd,
+			"message":     fmt.Sprintf("run cost cap %.2f USD reached after %.2f USD%s; the stage stopped", end.usd, spent, note),
 		}
 
-		if budget.bound {
-			if stop, err := c.capStopAfter(bg, id, budget.blueprintCapUSD, store.RunKindStage, stageID); err != nil {
+		if end.bound {
+			if stop, err := c.capStopAfter(bg, id, end.blueprintUSD, store.RunKindStage, stageID); err != nil {
 				c.opts.Logger.Error("blueprint: read the cap stop", "blueprint", id, "run", runID, "error", err)
 			} else {
 				maps.Copy(payload, stop.payload())
@@ -832,12 +839,13 @@ type harnessSink struct {
 	// canceled is closed once abort, End, Shutdown or the cost cap cancels
 	// the run.
 	canceled <-chan struct{}
-	// price, capUSD and stop bind the run cap on endpoints that report no
-	// cost: every usage line is priced and the run is stopped once the sum
-	// passes capUSD. Idle when price is nil or capUSD is zero.
-	price  *protocol.ModelPrice
-	capUSD float64
-	stop   context.CancelCauseFunc
+	// price, limit and stop bind the run cap: every usage line counts at the
+	// higher of its reported and priced cost, and the run is stopped once the
+	// sum passes the limit as read at that line, so a cap change binds the
+	// run from its next model call. Idle when price or stop is nil.
+	price *protocol.ModelPrice
+	limit runLimit
+	stop  context.CancelCauseFunc
 	// flight counts the run's lines for the view; nil counts nothing.
 	flight *flight
 	// chat keeps a chat run's text and its answer_chat call off the panel:
@@ -848,6 +856,9 @@ type harnessSink struct {
 	spent float64
 	// charged is the part of spent that served runs cost.
 	charged float64
+	// cut is the limit the sink stopped the run under, once wasCut is set.
+	cut    capRead
+	wasCut bool
 }
 
 func (s *harnessSink) Write(p []byte) (int, error) {
@@ -867,19 +878,22 @@ func (s *harnessSink) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// account prices a usage line and stops the run once the cap is passed.
+// account counts a usage line at the higher of its reported and priced
+// cost, and stops the run once the sum passes the limit in force. It counts
+// on an uncapped run too, so a cap set later sees what was spent before.
 func (s *harnessSink) account(line []byte) {
-	if !s.capped() {
+	if s == nil || s.price == nil || s.stop == nil {
 		return
 	}
 
 	var ev struct {
 		Kind string `json:"kind"`
 		Data struct {
-			Prompt     int64 `json:"prompt_tokens"`
-			Completion int64 `json:"completion_tokens"`
-			CacheRead  int64 `json:"cache_read_tokens"`
-			CacheWrite int64 `json:"cache_creation_tokens"`
+			Prompt     int64   `json:"prompt_tokens"`
+			Completion int64   `json:"completion_tokens"`
+			CacheRead  int64   `json:"cache_read_tokens"`
+			CacheWrite int64   `json:"cache_creation_tokens"`
+			Cost       float64 `json:"cost_usd"`
 		} `json:"data"`
 	}
 
@@ -887,58 +901,85 @@ func (s *harnessSink) account(line []byte) {
 		return
 	}
 
+	cost := max(ev.Data.Cost, priced(s.price, store.RunUsage{
+		PromptTokens: ev.Data.Prompt, CompletionTokens: ev.Data.Completion,
+		CacheReadTokens: ev.Data.CacheRead, CacheWriteTokens: ev.Data.CacheWrite,
+	}))
+
+	// Read before mu: read locks the cell and the parent sink.
+	now := s.limit.read()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.spent += priced(s.price, store.RunUsage{
-		PromptTokens: ev.Data.Prompt, CompletionTokens: ev.Data.Completion,
-		CacheReadTokens: ev.Data.CacheRead, CacheWriteTokens: ev.Data.CacheWrite,
-	})
+	s.spent += cost
+	s.cutAt(now)
+}
 
-	if s.spent > s.capUSD {
+// cutAt stops the run the first time spent passes now, and keeps now as the
+// limit it was cut under. s.mu must be held.
+func (s *harnessSink) cutAt(now capRead) {
+	if now.capped && s.spent > now.usd && !s.wasCut {
+		s.cut, s.wasCut = now, true
 		s.stop(errCostCap)
 	}
 }
 
-// capped reports whether the sink enforces a cap: a priced model and a
-// positive cap. A nil sink enforces none.
-func (s *harnessSink) capped() bool {
-	return s != nil && s.price != nil && s.capUSD > 0 && s.stop != nil
+// capAtEnd is the limit the run ended under: the one the sink cut it under,
+// else the limit as it stands.
+func (s *harnessSink) capAtEnd() capRead {
+	s.mu.Lock()
+	cut, wasCut := s.cut, s.wasCut
+	s.mu.Unlock()
+
+	if wasCut {
+		return cut
+	}
+
+	return s.limit.read()
 }
 
-// left is what the run cap has not spent; capped is false when the sink
-// enforces no cap.
+// left is what the run cap in force has not spent; capped is false when the
+// sink enforces no cap. A nil sink enforces none.
 func (s *harnessSink) left() (float64, bool) {
-	if !s.capped() {
+	if s == nil || s.price == nil || s.stop == nil {
+		return 0, false
+	}
+
+	now := s.limit.read()
+	if !now.capped {
 		return 0, false
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.capUSD - s.spent, true
+	return now.usd - s.spent, true
 }
 
-// charge adds the cost of a run served on this run's behalf, and stops the
-// run once the cap is passed. A nil or uncapped sink ignores it.
+// charge adds the cost of a run served on this run's behalf: the flight
+// counts it, and a priced sink, as account does, counts it and stops the run
+// once the cap in force is passed. A nil sink ignores it.
 func (s *harnessSink) charge(usd float64) {
-	if s != nil {
-		s.flight.charge(usd)
-	}
-
-	if !s.capped() {
+	if s == nil {
 		return
 	}
+
+	s.flight.charge(usd)
+
+	if s.price == nil || s.stop == nil {
+		return
+	}
+
+	now := s.limit.read()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Counted uncapped too: a cap set later must see it.
 	s.spent += usd
 	s.charged += usd
-
-	if s.spent > s.capUSD {
-		s.stop(errCostCap)
-	}
+	s.cutAt(now)
 }
 
 // tally is what the sink has priced, and how much of it was charged for

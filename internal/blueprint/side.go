@@ -60,18 +60,18 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 		reason = b.refused.reason()
 	}
 
-	if left, capped := s.parent.left(); capped {
-		if left <= 0 {
-			reason = fmt.Sprintf("the asking run's cost cap of %.2f USD is spent", s.parent.capUSD)
-		} else if b.capUSD <= 0 || left < b.capUSD {
-			b.capUSD, b.bound = left, false
-		}
+	if left, capped := s.parent.left(); capped && left <= 0 {
+		reason = fmt.Sprintf("the asking run's cost cap of %.2f USD is spent", s.parent.limit.read().usd)
 	}
-
-	runCap := b.capUSD
 
 	if reason != "" {
 		return stage.Output{}, refusal{reason: reason}
+	}
+
+	// An unpriced run has no sink to bind a cap change.
+	lim := runLimit{perRunUSD: c.opts.MaxRunCostUSD, baseUSD: b.baseUSD, parent: s.parent}
+	if m.price != nil {
+		lim.blueprint = c.capOf(bp.ID)
 	}
 
 	runID, err := c.opts.Store.StartRun(bg, store.Run{
@@ -84,7 +84,7 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 
 	f := &flight{
 		runID: runID, stage: s.stage, kind: s.kind, persona: s.persona, model: m.name,
-		round: s.round, startedAt: c.opts.Now().UTC(), price: m.price, capUSD: runCap,
+		round: s.round, startedAt: c.opts.Now().UTC(), price: m.price, limit: lim.kept(m.price != nil),
 	}
 	defer c.fly(bp.ID, f)()
 
@@ -103,12 +103,13 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 	defer stop(nil)
 
 	in := s.in
-	in.Model, in.Endpoint, in.MaxCostUSD, in.MaxTurns, in.ContextWindow = m.name, sess.endpoint, runCap, c.opts.MaxTurns, m.window
+	in.Model, in.Endpoint, in.MaxCostUSD, in.MaxTurns, in.ContextWindow = m.name, sess.endpoint, f.limit.fixedUSD(m.price != nil), c.opts.MaxTurns, m.window
 	in.Secrets = sess.secrets()
-	in.Events = &harnessSink{
+	sink := &harnessSink{
 		audit: au, id: bp.ID, runID: runID, canceled: runCtx.Done(),
-		price: m.price, capUSD: runCap, stop: stop, flight: f,
+		price: m.price, limit: lim, stop: stop, flight: f,
 	}
+	in.Events = sink
 
 	out, runErr := c.opts.Runner.Run(withRun(runCtx, runID), in)
 
@@ -152,13 +153,15 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 		return out, nil
 	}
 
-	if endReason == "max_cost" && b.bound && stopsStage {
-		stop, err := c.capStopAfter(bg, bp.ID, b.blueprintCapUSD, s.kind, s.stage)
-		if err == nil {
-			return out, stop
-		}
+	if endReason == "max_cost" && stopsStage {
+		if end := sink.capAtEnd(); end.bound {
+			stop, err := c.capStopAfter(bg, bp.ID, end.blueprintUSD, s.kind, s.stage)
+			if err == nil {
+				return out, stop
+			}
 
-		c.opts.Logger.Error("blueprint: read the cap stop", "blueprint", bp.ID, "run", runID, "error", err)
+			c.opts.Logger.Error("blueprint: read the cap stop", "blueprint", bp.ID, "run", runID, "error", err)
+		}
 	}
 
 	return out, fmt.Errorf("blueprint: the %s run of %s: %w", s.kind, c.stepName(bg, bp.ID, s.stage), runErr)

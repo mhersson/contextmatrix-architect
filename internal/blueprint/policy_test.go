@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -398,8 +399,8 @@ func TestStart_AReopenKeepsTheStoredCap(t *testing.T) {
 }
 
 // cutShortAfterARaise leaves BP1 on the single pack idle on a cap stop of
-// intake: its run started under a 1.5 USD cap, the cap went up to 4 while it
-// ran, and what the old cap left cut it short.
+// intake: its run was cut at a 1.5 USD cap, and the cap went up to 4 after
+// the cut and before the run ended.
 func cutShortAfterARaise(t *testing.T) (*Controller, *store.Store, *fakeRunner, *recorder) {
 	t.Helper()
 
@@ -407,15 +408,18 @@ func cutShortAfterARaise(t *testing.T) (*Controller, *store.Store, *fakeRunner, 
 
 	var n atomic.Int32
 
-	c, st, runner, rec := newController(t, func(_ context.Context, in stage.Input) (stage.Output, error) {
+	c, st, runner, rec := newController(t, func(ctx context.Context, in stage.Input) (stage.Output, error) {
 		if n.Add(1) > 1 {
 			return artifactOutput("# Need", in), nil
 		}
 
+		k := spendFifths(ctx, in, 10)
+		assert.Equal(t, 8, k, "1.60 passes the 1.5 cap")
+
 		close(started)
 		<-held
 
-		return stage.Output{Result: harness.Result{Reason: "max_cost", TotalCostUSD: 1.6}}, errors.New("stage intake: no artifact")
+		return stage.Output{Result: fifths(k)}, ctx.Err()
 	})
 	release := closer(t, held)
 
@@ -429,7 +433,7 @@ func cutShortAfterARaise(t *testing.T) (*Controller, *store.Store, *fakeRunner, 
 
 	ev, ok := rec.first(EventError)
 	require.True(t, ok)
-	require.InDelta(t, 1.5, ev.Payload["cap_usd"], 1e-9, "the stop names the cap its run started under")
+	require.InDelta(t, 1.5, ev.Payload["cap_usd"], 1e-9, "the stop names the cap the run was cut at")
 
 	return c, st, runner, rec
 }
@@ -719,37 +723,136 @@ func TestSetCap_StartsNothingWithoutACapStop(t *testing.T) {
 	}
 }
 
-func TestSetCap_DuringARunAppliesFromTheNextRun(t *testing.T) {
+func TestSetCap_ReachesTheRunInFlight(t *testing.T) {
+	tests := []struct {
+		name   string
+		capUSD float64
+		perRun float64
+		value  string
+		// fifths is how many fifthLines the run writes; wantCut is the one
+		// that cuts it, 0 for none.
+		fifths  int
+		wantCut int32
+		// wantStopCap is the cap the stop names; 0 means no stop.
+		wantStopCap float64
+	}{
+		{name: "a raise lets it go on", capUSD: 1, perRun: 2, value: "4", fifths: 6},
+		{name: "off lets it go on without a per-run cap", capUSD: 1, perRun: 0, value: "off", fifths: 10},
+		{name: "a raise it still passes stops it at the raised cap", capUSD: 1, perRun: 2, value: "1.5", fifths: 10, wantCut: 8, wantStopCap: 1.5},
+		{name: "a lower cap stops it once passed", capUSD: 4, perRun: 2, value: "0.5", fifths: 5, wantCut: 3, wantStopCap: 0.5},
+		{name: "a cap set where there was none binds it", capUSD: 0, perRun: 2, value: "0.5", fifths: 5, wantCut: 3, wantStopCap: 0.5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			started, held := make(chan struct{}), make(chan struct{})
+
+			var cutAt atomic.Int32
+
+			script := gatedScript()
+			script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+				close(started)
+				<-held
+
+				k := spendFifths(ctx, in, tt.fifths)
+				cutAt.Store(int32(k))
+
+				if k > 0 {
+					return stage.Output{Result: fifths(k)}, ctx.Err()
+				}
+
+				out := done("# Need", map[string]any{"slices": 1})
+				out.Result = fifths(tt.fifths)
+
+				return out, nil
+			}
+
+			c, st, runner, rec := newGated(t, script)
+			c.opts.MaxRunCostUSD = tt.perRun
+			release := closer(t, held)
+
+			ctx := context.Background()
+			require.NoError(t, c.Start(ctx, cappedInput(tt.capUSD)))
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			signalled(t, started)
+			require.NoError(t, c.SetCap(ctx, "BP1", tt.value, "m2"))
+			release()
+			c.Wait("BP1")
+
+			assert.Equal(t, tt.wantCut, cutAt.Load())
+			assert.InDelta(t, tt.perRun, inputsOf(runner, "intake")[0].MaxCostUSD, 1e-9, "the harness gets only the per-run cap")
+
+			ev := onlyCap(t, rec)
+			assert.Equal(t, true, ev.Payload["during_run"])
+			assert.NotContains(t, ev.Payload, "resumes")
+
+			intake := lastRunOf(t, st, "intake")
+
+			if tt.wantStopCap == 0 {
+				assert.Empty(t, capStops(t, st))
+				assert.Equal(t, []string{"intake", "shape"}, stagesRun(runner))
+				assert.Equal(t, store.RunDone, intake.Status)
+
+				return
+			}
+
+			assert.Equal(t, []string{"intake"}, capStops(t, st))
+
+			stop, ok := rec.first(EventError)
+			require.True(t, ok)
+			assert.InDelta(t, tt.wantStopCap, stop.Payload["cap_usd"], 1e-9)
+			assert.InDelta(t, tt.wantStopCap, stop.Payload["run_cap_usd"], 1e-9)
+			assert.Equal(t, store.RunFailed, intake.Status)
+			assert.Equal(t, "max_cost", intake.Reason)
+		})
+	}
+}
+
+func TestSetCap_ARaiseReachesTheReviewInFlight(t *testing.T) {
 	started, held := make(chan struct{}), make(chan struct{})
 
+	// A review that ran again would fail the reviewer row check, not panic.
+	var once sync.Once
+
 	script := gatedScript()
-	script["intake"] = spending(0.95, func(_ context.Context, _ stage.Input) (stage.Output, error) {
-		close(started)
+	script["shape.review"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		once.Do(func() { close(started) })
 		<-held
 
-		return done("# Need", map[string]any{"slices": 1}), nil
-	})
+		assert.Zero(t, spendFifths(ctx, in, 6), "1.20 is under the raised cap")
 
-	c, st, runner, rec := newGated(t, script)
+		out, err := reviews(5)(ctx, in)
+		out.Result = fifths(6)
+
+		return out, err
+	}
+
+	c, st, _, rec := newGated(t, script)
 	release := closer(t, held)
+
 	ctx := context.Background()
 	require.NoError(t, c.Start(ctx, cappedInput(1)))
 	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
 	signalled(t, started)
-
 	require.NoError(t, c.SetCap(ctx, "BP1", "4", "m2"))
-
-	ev := onlyCap(t, rec)
-	assert.Equal(t, true, ev.Payload["during_run"])
-	assert.NotContains(t, ev.Payload, "resumes")
-	assert.InDelta(t, 4.0, storedCap(t, st), 1e-9)
-
 	release()
 	c.Wait("BP1")
 
-	assert.InDelta(t, 1.0, inputsOf(runner, "intake")[0].MaxCostUSD, 1e-9, "the run in flight keeps the cap it started with")
-	assert.Equal(t, []string{"intake", "shape"}, stagesRun(runner), "the next run starts under the new cap; nothing else starts")
 	assert.Empty(t, capStops(t, st))
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+
+	var reviewers []string
+
+	for _, r := range runs {
+		if r.Kind == store.RunKindReviewer {
+			reviewers = append(reviewers, r.Status)
+		}
+	}
+
+	assert.Equal(t, []string{store.RunDone}, reviewers)
+	assert.True(t, rec.has(EventGate))
 }
 
 func TestSetCap_ARunCutShortAfterAChangeNamesTheCapItStartedUnder(t *testing.T) {
@@ -1240,4 +1343,75 @@ func TestMessage_StillRetriesAFailedStageWithANote(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "shape", note.Payload["retries"])
 	assert.False(t, rec.has(EventResume))
+}
+
+func TestView_TheRunCapFollowsACapChange(t *testing.T) {
+	tests := []struct {
+		name    string
+		priced  bool
+		capUSD  float64
+		replies []string
+		// wantRunCaps is the run cap the view shows at the start, then after each reply.
+		wantRunCaps []float64
+		wantCaps    []float64
+	}{
+		{
+			name: "a priced run follows each change", priced: true, capUSD: 1,
+			replies: []string{"1.5", "off"}, wantRunCaps: []float64{1, 1.5, 2}, wantCaps: []float64{1, 1.5, 0},
+		},
+		{
+			name: "an unpriced run keeps showing its per-run cap", capUSD: 0,
+			replies: []string{"1"}, wantRunCaps: []float64{2, 2}, wantCaps: []float64{0, 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			started, held := make(chan struct{}), make(chan struct{})
+
+			var once sync.Once
+
+			script := gatedScript()
+			script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+				once.Do(func() { close(started) })
+				<-held
+
+				return done("# Need", map[string]any{"slices": 1}), nil
+			}
+
+			c, _, _, _ := newGated(t, script)
+			release := closer(t, held)
+
+			ctx := context.Background()
+			start := startInput("BP1")
+			start.CostCapUSD = tt.capUSD
+
+			if tt.priced {
+				start.Price = testPrice()
+			}
+
+			require.NoError(t, c.Start(ctx, start))
+			require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+			signalled(t, started)
+
+			check := func(i int) {
+				t.Helper()
+
+				v, err := c.View(ctx, "BP1")
+				require.NoError(t, err)
+				assert.InDelta(t, tt.wantRunCaps[i], v.Cost.RunCapUSD, 1e-9)
+				assert.InDelta(t, tt.wantCaps[i], v.Cost.CapUSD, 1e-9)
+			}
+
+			check(0)
+
+			for i, reply := range tt.replies {
+				require.NoError(t, c.SetCap(ctx, "BP1", reply, fmt.Sprintf("r%d", i)))
+				check(i + 1)
+			}
+
+			release()
+			c.Wait("BP1")
+		})
+	}
 }

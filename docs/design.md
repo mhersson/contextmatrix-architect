@@ -1302,7 +1302,7 @@ the mockup reply (see Mockups):
 | `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At a slice's design gate, `reject slicing <feedback>` runs slicing and everything after it again, and `reject shared_decisions <feedback>` the shared decisions and every slice. At the sign-off, approve emits and resumes an emission that stopped, and reject runs the blueprint again from its first decisions, the shared decisions when they ran, else the first slice's design, with everything after it, as the typed rejection of that step does; on a record whose steps have no such step it re-runs decomposition, every slice's in slice order. Every stage that runs after a sign-off rejection is given its feedback, and so are its reviewer and its auto responder. `reject slicing <feedback>` runs slicing and everything after it again, `reject SL<n> <feedback>` that slice's design and every later slice, and `reject shared_decisions <feedback>` the shared decisions and every slice; the sign-off records its rejection first, then a rejection of the step that runs again, and the replaced versions superseded. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
 | `show mockup`, `skip mockup`  | Answers the mockup offer (see Mockups): show runs the mockup step, skip goes on without it. Matched as a gate's replies are; any other text while the offer waits is a note and the offer stays open. |
 | `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round, gate or mockup offer keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
-| `cap <usd>`, `cap off`        | Sets the blueprint's cost cap (see below); CM sends it when the person clicks the cost in the sheet header. Exactly two words, the amount one plain decimal number, so an answer that starts with "cap" stays an answer. Works while a stage runs. |
+| `cap <usd>`, `cap off`        | Sets the blueprint's cost cap (see below); CM sends it when the person clicks the cost in the sheet header. Exactly two words, the amount one plain decimal number, so an answer that starts with "cap" stays an answer. Works while a stage runs, and binds the run in flight from its next model call. |
 | `mode default\|auto\|auto+emit\|yolo` | Switches the blueprint's mode; every later question, gate and the sign-off follow the new one, and the gate plan, once posted, is posted again. Into `auto+emit` or `yolo`, a sign-off waiting for a human runs again, preflight included, and approves itself unless a critical finding across the blueprint, cards readiness did not pass or preflight stops it. Into any mode but default, the round waiting for a human goes to the auto responder at once when its stage's policy is now `auto` (a `gate` reply still wins): it turns read-only, the answers and decisions already sent stay the human's, the responder answers each open question and every undecided assumption is accepted, and the stage then continues; a switch back to default after that leaves it with the responder, and `continue`, the next message or a reopen finishes one an abort or a restart cut short. Into any mode but default, a mockup offer waiting for a human is taken when the mockup stage's policy is now `auto`, and the step runs; a mockup waiting for the person goes to the auto responder as it stands, and the row names the mockup, never a round. Into default, a mockup the responder steers comes back to the person at once when nothing runs on it, as a running turn ends (storing no use it reached), else at its next revision or turn (see Mockups). Into `auto`, `auto+emit` or `yolo`, a stage gate shown only because its policy asked a human is approved when the policies are now `auto` (a `gate` reply still wins) and its reviewer's verdict passes, and the pipeline goes on; one shown because its verdict did not pass stays with its human, as it would in auto, and a switch back to default decides no gate. A round whose asking run read the policy before the switch and had not yet ended on it stays with its human too. Exactly two words, the mode one of the four, case ignored, so an answer that starts with "mode" stays an answer. Works while a stage runs. Refused, changing nothing, for the mode in effect, once emission has started (the sign-off approved) and after the pipeline ended. The stored mode survives a reopen: a later start's mode is ignored, as its cap is. Each reply is a `mode` event with the switch, or the refusal's reason (`unchanged`, `emission_started`, `ended`). |
 | `resume`, `continue`          | Runs the stopped stage again once, as a retry message would but storing no note (see below); a stage the cap stopped runs too and meets the cap again. The whole message, case ignored, so an answer that starts with either word stays an answer. While a run is in flight, or where nothing is stopped (an open gate, the mockup offer, a round waiting for answers, the sign-off, an ended pipeline, no need yet), nothing starts and the panel says so. Each reply is a `resume` event with the stage it runs again, or with `nothing` and the stage `running`, if any. |
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, the mockup version a use took carrying its `chosen` as the sheet shows it, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
@@ -1317,15 +1317,22 @@ the mockup reply (see Mockups):
   blueprint cap refuses (spent, below the floor, or on a model without a
   price), or one cut short at what the blueprint had left because that was
   below the per-run cap or there is none, is a cap stop: the blueprint is
-  idle and the error event carries `"cap": "blueprint"`, the cap (`cap_usd`)
-  and what the blueprint has spent (`blueprint_spent_usd`). Its message names
-  the stage and says how to go on, for a spent cap "The blueprint's $2.00 cap
-  is used up ($2.14 spent); Readiness stopped. Raise the cap by clicking the
-  cost in the header (or reply `cap <usd>`) and it continues.", below the
-  floor that the cap leaves less than the next run needs; a model without a
-  price keeps its own refusal. A run that reaches the per-run cap is an
-  ordinary failed run, and a responder below its floor is refused inside the
-  asking run, which decides the question itself.
+  idle and the error event carries `"cap": "blueprint"`, the cap (`cap_usd`),
+  for a run cut short the cap in force when it was cut, and what the
+  blueprint has spent (`blueprint_spent_usd`). Its message names the stage
+  and says how to go on, for a spent cap "The blueprint's $2.00 cap is used
+  up ($2.14 spent); Readiness stopped. Raise the cap by clicking the cost in
+  the header (or reply `cap <usd>`) and it continues.", below the floor that
+  the cap leaves less than the next run needs, and for a run cut short with
+  money left on the ledger that the cap cut the run short; a model without a
+  price keeps its own refusal. When the cap stored once the run has ended is off or
+  still leaves a rerun its floor, raised since or not, the message says the
+  cap now in force and to reply `continue` instead of asking for a raise
+  ("... Readiness stopped. The cap is now $4.00: reply `continue` and it
+  goes on."). A stage run's `max_cost` error carries its run cap in force
+  (`run_cap_usd`). A run that reaches the
+  per-run cap is an ordinary failed run, and a responder below its floor is
+  refused inside the asking run, which decides the question itself.
 - The cap is set when the blueprint is created and changed only by the `cap`
   reply: a reopen keeps the stored cap whatever the start payload carries.
   `cap <usd>` stores a new cap and `cap off` removes it; an amount not above
@@ -1333,14 +1340,18 @@ the mockup reply (see Mockups):
   changed: the blueprint has spent $2.14; a cap must be above that, or reply
   `cap off`."). Each reply is a `cap` event with the cap it changed `from`
   and `to`, or why it was refused, and the view's cost shows the new cap at
-  once. The cap applies from the next run, a later run of the same chain
-  included; a run in flight keeps the cap it started with. With nothing in
+  once. The cap applies at once, to the run in flight too: from its next
+  model call that run is bound by the new cap less what the blueprint had
+  spent outside it when it started, so a raise or `cap off` lets it go on
+  and a lower cap it has passed stops it as a cap stop naming the lower cap.
+  A run on a model without a price is not bound by a change. With nothing in
   flight, a cap above the one a cap stop happened under (its `cap_usd`), or
   no cap, runs the stopped stage again once, as a retry message would but
   storing no note: a stage, a review or builder round, a round's
   continuation or chat run, or an intake with a need stored, which runs on
-  that need. The stored cap may be above it already, raised while the
-  stopped run went on; sending that cap again then resumes. The newest
+  that need. The stored cap may be above it already, raised after the run
+  was cut and before it ended; `continue`, or sending that cap again, then
+  resumes. The newest
   start, end or refusal of the blueprint's runs must be that cap stop, and the
   event records the stage it resumes ("Cost cap raised from $2.00 to
   $4.00; resuming Readiness."). A cap at or below the stop's resumes
@@ -1431,7 +1442,9 @@ frames on the session's chat stream.
   person, not while the auto responder steers it or a designer run writes
   the next one, nor once a use or skip decided it, or `emission:v<n>` for a stopped emission or run start), and
   the cost: the ledger plus the runs in flight, the
-  blueprint and per-run caps, and whether every run was priced.
+  blueprint cap and the run cap in force of the run in flight (read afresh,
+  so a cap reply moves it at once; an unpriced run shows the cap its
+  harness got at start, the only one that binds it), and whether every run was priced.
   While a round waits, its stage's step is waiting and no run is in
   flight; while a chat run answers its chat, the step is running and the
   round stays the open prompt (a mockup's does not; see Mockups). A round
@@ -1620,12 +1633,16 @@ frames on the session's chat stream.
   head and tail kept, as in the chat backend.
 - Cost: every run's token buckets are priced at the model price CM sends in
   the start payload; the ledger sums runs per blueprint. A run's cap is the
-  per-run cap (off at zero), or what the blueprint cap, as stored when the
-  run starts, has left when that is smaller, and under a blueprint cap a run
-  needs its floor left to start (see Sessions). The run cap stops a run
-  within one model call of passing it, on a priced model a responder run
-  spends from the asking run's cap, and a capped blueprint whose model has
-  no price does not run. An unpriced model on an uncapped blueprint counts
+  per-run cap (off at zero), or, when smaller, the blueprint cap in force
+  less what the blueprint had spent outside the run when it started, and
+  under a blueprint cap a run needs its floor left to start (see Sessions).
+  The harness stops a run on the reported cost: a priced run at the per-run
+  cap, an unpriced one at its run cap as it stood when the run started. On a
+  priced model the controller also stops a run at its run cap on each model
+  call's priced tokens or reported cost, whichever is higher, so the run cap
+  stops it within one model call of passing it, and a responder run spends
+  from the asking run's cap. A capped blueprint whose model has no price
+  does not run. An unpriced model on an uncapped blueprint counts
   only the cost the endpoint reports, and max_turns still bounds every run.
   CM prices only the session model, so a run on a per-persona override is
   unpriced: a capped blueprint refuses it, an uncapped one counts the

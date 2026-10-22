@@ -43,8 +43,8 @@ type Config struct {
 	// default for every persona not listed.
 	Models map[string]string
 	// MaxRunCostUSD caps each stage run: the harness stops at the endpoint's
-	// reported cost, the controller at the run's priced usage. Zero disables
-	// the cap.
+	// reported cost, the controller at the higher of each model call's
+	// reported and priced cost. Zero disables the cap.
 	MaxRunCostUSD float64
 	MaxTurns      int
 	// WorkspaceMaxAgeDays is how long a blueprint's code trees are kept

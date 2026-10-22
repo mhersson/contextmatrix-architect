@@ -896,7 +896,7 @@ func TestView_Cost(t *testing.T) {
 				put(t, st, "intake", nil)
 
 				f := flying(t, c, st, "slicing", store.RunKindStage, 1)
-				f.price, f.capUSD, f.spent = testPrice(), 1, 0.1
+				f.price, f.limit, f.spent = testPrice(), runLimit{perRunUSD: 1}, 0.1
 			},
 			want:  protocol.BlueprintCost{SpentUSD: 0.35, RunSpentUSD: 0.1, CapUSD: 2, RunCapUSD: 1, Priced: true},
 			steps: map[string]float64{"intake": 0.25, "slicing": 0.1},
@@ -927,7 +927,7 @@ func TestView_Cost(t *testing.T) {
 			name: "a responder in flight spends against the asking run's cap",
 			setup: func(t *testing.T, c *Controller, st *store.Store) {
 				f := flying(t, c, st, "intake", store.RunKindStage, 1)
-				f.price, f.capUSD, f.spent, f.charged = testPrice(), 1, 0.2, 0.1
+				f.price, f.limit, f.spent, f.charged = testPrice(), runLimit{perRunUSD: 1}, 0.2, 0.1
 
 				r := flying(t, c, st, "intake", store.RunKindResponder, 1)
 				r.price, r.spent = testPrice(), 0.05

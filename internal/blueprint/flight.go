@@ -23,7 +23,9 @@ type flight struct {
 	round     int
 	startedAt time.Time
 	price     *protocol.ModelPrice
-	capUSD    float64
+	// limit is read afresh by each view: a cap reply moves what binds a
+	// priced run.
+	limit runLimit
 
 	mu        sync.Mutex
 	turns     int
@@ -105,12 +107,15 @@ func (f *flight) charge(usd float64) {
 }
 
 func (f *flight) view() flightView {
+	// Outside mu: read locks the cap cell and the asking run's sink.
+	capUSD := f.limit.read().usd
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	return flightView{
 		runID: f.runID, stage: f.stage, kind: f.kind, persona: f.persona, model: f.model, round: f.round,
-		startedAt: f.startedAt, priced: f.price != nil, capUSD: f.capUSD,
+		startedAt: f.startedAt, priced: f.price != nil, capUSD: capUSD,
 		turns: f.turns, toolCalls: f.toolCalls, tokens: f.tokens, spent: f.spent, charged: f.charged,
 	}
 }
