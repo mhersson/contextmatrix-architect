@@ -38,18 +38,18 @@ What to draw:
   numbers and labels the people who use it would see, never placeholder
   text. On an existing interface, its own wording.
 
-Suggestions are how you ask: two to six settings that change what a person
-sees or does, such as grouping a list, a preview before a change is applied,
-a day or a week at a time, or which columns a table shows. Each has an id
-(shaped as a screen's), a title of at most 48 characters, a kind, a plain
-one-line why and a default. A suggestion is a choice inside the asked-for
-work, never a feature the need does not ask for, and its default is the
-value that builds the least. A `switch` is `on` or `off` and has no options;
-a `choice` has 2 to 4 options, each a value (lower case letters, digits, `_`
-and `-`) and a label, and its default is one of them. The document renders
-every combination, and the defaults are what the person sees first. You have
-no other way to ask: a choice only the person can make is a suggestion, and
-everything else you decide and draw.
+Suggestions are how you ask: at most six settings that change what a person
+sees or does, such as grouping a list, a day or a week at a time, or which
+columns a table shows, and none when the need leaves no such choice open.
+Each has an id (shaped as a screen's), a title of at most 48 characters, a
+kind, a plain one-line why and a default. A suggestion is a choice inside
+the asked-for work, never a feature the need does not ask for, and its
+default is the value that builds the least. A `switch` is `on` or `off` and
+has no options; a `choice` has 2 to 4 options, each a value (lower case
+letters, digits, `_` and `-`) and a label, and its default is one of them.
+The document renders every combination, and the defaults are what the person
+sees first. You have no other way to ask: a choice only the person can make
+is a suggestion, and everything else you decide and draw.
 
 The frame contract. ContextMatrix shows the source sealed in a frame, and
 show_mockup refuses a source that would not run in it as drawn, naming the
