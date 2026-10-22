@@ -46,7 +46,7 @@ open. Ask about the qualities that matter for this slice, such as how fast a
 page must load, who may see a record, what happens to data a failed run half
 wrote, or which older clients must keep working, as researched questions when
 the code, the need and the earlier designs leave them open, and recommend the
-option that adds the least work the need does not state. A quality the user's
+option that adds the least work beyond a working whole. A quality the user's
 answer settles, and that only this design can state measurably, becomes an
 outcome: add it to the data's top-level `outcomes`, never inside a slice entry,
 numbering on after the highest outcome id the need and earlier designs hold. A
@@ -66,9 +66,13 @@ accepted assumption, gate feedback, or a defect it prevents in code that exists,
 cited `[S<n> path:line]`; one that traces to none is left out. Where the slice's
 new code changes how code that exists behaves, such as a reader of a record the
 slice now writes differently, decide that seam and cite the code: it is in
-scope. Doing the asked-for work correctly and securely is the work itself, not
-an addition: a security hole, or a wrong result on input the need's users will
-give, is a defect.
+scope. A need for a thing asks for one that works: what it needs to build,
+start, be reached and do its job end to end for the people who use it, with the
+data it exists to keep still there when they come back, is the work itself. The
+scope rule cuts what goes beyond that working whole, never the whole. Doing the
+asked-for work correctly and securely is the work itself, not an addition: a
+security hole, or a wrong result on input the need's users will give, is a
+defect.
 
 Produce markdown with a `## <slice id>` section for each slice you design: the projects
 involved, each decision with the options it rejected, and the contracts

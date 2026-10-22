@@ -392,14 +392,20 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   decisions ask for. Each part an artifact adds (a decision, a contract, an
   outcome, a criterion, a card) traces to a need item, an answered question,
   an accepted assumption, gate feedback, or a defect it prevents in code that
-  exists. Where the need is silent, the code's present behaviour stands. An
-  assumption never adds work, and a quality question recommends its least-work
-  option. A builder round acts on its findings as the stage's instructions
-  say. It revises for a finding the trace calls for. It declines one that
-  would add a part nothing asks for, noting it `out of scope`, and removes
-  where removing or adding would both meet a finding. Doing the asked-for work
-  correctly and securely is the work itself, not an addition: a security hole,
-  or a wrong result on input the need's users will give, is a defect.
+  exists. Where the need is silent, the code's present behaviour stands, and
+  new code takes the plainest behaviour that works. An assumption never adds
+  work, and a quality question recommends its least-work option beyond a
+  working whole. A builder round acts on its findings as the stage's
+  instructions say. It revises for a finding the trace calls for. It declines
+  one that would add a part nothing asks for, noting it `out of scope`, and
+  removes where removing or adding would both meet a finding. A need for a
+  thing asks for one that works: what it needs to build, start, be reached and
+  do its job end to end for the people who use it, with the data it exists to
+  keep still there when they come back, is the work itself. The scope rule
+  cuts what goes beyond that working whole, never the whole. Doing the
+  asked-for work correctly and securely is the work itself, not an addition: a
+  security hole, or a wrong result on input the need's users will give, is a
+  defect.
 - The first stage with the code tools, intake in the default pack, ends -
   for a per-slice stage, its SL1 step ends - by telling the session what
   each target project lacks for an agent run: a verify command in CM (read

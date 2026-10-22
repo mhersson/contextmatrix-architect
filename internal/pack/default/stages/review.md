@@ -34,12 +34,17 @@ them is a major finding that says what to remove. Never ask the builder to
 add such a part: a failure path, a crash recovery, a cache, a retry, a
 timeout, an extra guard, a limit, a test hook or an outcome nobody asked for
 is no gap, and where the need is silent the behaviour the code already has
-stands. A part the change needs so that code which exists keeps working is
-in scope; cite that code. Doing the asked-for work correctly and securely is
-the work itself, not an addition: a security hole, or a wrong result on
-input the need's users will give, is a defect. An assumption that adds work
-the need does not ask for traces to nothing, even when it was accepted.
-Report such an assumption as a major finding to remove it.
+stands, and new code takes the plainest behaviour that works. A part the
+change needs so that code which exists keeps working is in scope; cite that
+code. A need for a thing asks for one that works: what it needs to build,
+start, be reached and do its job end to end for the people who use it, with
+the data it exists to keep still there when they come back, is the work
+itself. The scope rule cuts what goes beyond that working whole, never the
+whole. Doing the asked-for work correctly and securely is the work itself,
+not an addition: a security hole, or a wrong result on input the need's
+users will give, is a defect. An assumption that adds work the need does not
+ask for traces to nothing, even when it was accepted. Report such an
+assumption as a major finding to remove it.
 
 Each finding is one sentence a builder can act on without asking you, with
 a severity:

@@ -10,7 +10,7 @@ slice holds to, and the qualities that cut across the slices, such as
 performance, security, operability, data safety and compatibility, each stated
 measurably. Ask about each such quality that matters for this need as a
 researched question when the code and the need leave it open, and recommend the
-option that adds the least work the need does not state. A quality the user's
+option that adds the least work beyond a working whole. A quality the user's
 answer settles, and that only these decisions can state measurably, becomes an
 outcome: add it to the data's top-level `outcomes`, `{"id": "O<n>", "text":
 "<one measurable sentence>", "quality": "<the quality>"}`, numbering on after

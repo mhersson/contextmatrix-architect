@@ -26,7 +26,7 @@ Rules:
   this need and that neither the code nor the need settles: performance,
   security, operability, data loss, compatibility, or another quality the need
   turns on. Ask only those that would change the cards. Recommend the option
-  that adds the least work the need does not state; an option that adds a
+  that adds the least work beyond a working whole; an option that adds a
   safeguard, a recovery path or a limit says so in its cons.
 - Number every measurable outcome of the need O1, O2, ...: what a person could
   check to call the need met, such as a search that answers within 200 ms at 50
@@ -38,7 +38,11 @@ Rules:
 - Scope in lists the need's items and what the user's answers and gate feedback
   add, and nothing else. A safeguard, recovery path, cache, limit or extra check
   nobody asked for stays out; where the need is silent, the behaviour the code
-  already has stands.
+  already has stands, and new code takes the plainest behaviour that works. A
+  need for a thing asks for one that works: what it needs to build, start, be
+  reached and do its job end to end for the people who use it, with the data it
+  exists to keep still there when they come back, is the work itself. The scope
+  rule cuts what goes beyond that working whole, never the whole.
 - Ask in a round: call ask_questions once with the related questions
   together. Each question has a short tab title, the question, why it
   matters, and the real alternatives as options, each with a one-line
