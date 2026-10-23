@@ -341,8 +341,8 @@ Schema bumps are one-way: an older binary refuses a newer file.
 (model, pack version, persona, config snapshot), tool call made, question
 asked, answer given, assumption recorded, check passed or failed, reviewer
 score, gate decided, artifact version stored, emission call and CM's response,
-export written, playbook run started, retrospective reported, lesson proposed or
-decided. Tables marked append-only have no update or delete path in code, and
+export written, playbook run started, retrospective reported, lesson proposed,
+decided or retired. Tables marked append-only have no update or delete path in code, and
 tests prove it. Secrets are redacted before anything is stored.
 
 **Source tags.** Every tool result that reads something external is prefixed
@@ -1391,8 +1391,8 @@ It never runs on its own.
   runs of the stage that checks cards (decomposition) and the stage that
   checks readiness, after the plain-language text, and to no other run.
 - **`retire L<n>`**: sets an active lesson retired, from active only, so a
-  lesson that is proposed, rejected, retired or unknown is refused with its
-  state and nothing changes. It needs only the session, works in any state
+  lesson that is not active is refused with its state, an unknown one as
+  unknown, and nothing changes. It needs only the session, works in any state
   and while a run is in flight, and takes no run slot. Blueprints created
   afterwards do not get the lesson; those created before keep it in their set.
 - Reading the cards needs no CM change: the architect knows its card ids
@@ -1830,7 +1830,7 @@ internal/retro       the retrospective's struggle rules, findings, task and less
 internal/export      markdown rendering into the state directory
 internal/config
 internal/buildinfo   build version, commit and time (ldflags) and the embedded merge history
-internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, mode, resume, continue, retrospective and lessons commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
+internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, mode, resume, continue, retrospective, lessons and retire commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
 ```
 
 ## Changes needed in CM

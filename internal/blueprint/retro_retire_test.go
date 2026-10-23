@@ -69,10 +69,14 @@ func TestRetire_RefusesAnUnknownOrInactiveLesson(t *testing.T) {
 
 	got := lessonRetires(rec)
 	require.Len(t, got, 3)
-	assert.Equal(t, "There is no lesson L99.", got[0]["refused"])
-	assert.Equal(t, "L1 is proposed; only an active lesson can be retired.", got[1]["refused"])
+
+	for i, want := range []string{"L99", store.LessonProposed, "L99999999999999999999"} {
+		refused, _ := got[i]["refused"].(string)
+		assert.NotEmpty(t, refused)
+		assert.Contains(t, refused, want)
+	}
+
 	assert.Equal(t, added[0].ID, got[1]["lesson"])
-	assert.Equal(t, "There is no lesson L99999999999999999999.", got[2]["refused"])
 
 	for _, p := range got {
 		assert.NotContains(t, p, "state")

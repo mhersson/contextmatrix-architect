@@ -26,12 +26,35 @@ func (c *Controller) Retire(ctx context.Context, id, ref, msgID string) error {
 	digits := strings.TrimPrefix(ref, "l")
 	payload := map[string]any{"message_id": msgID, "during_run": c.running(id)}
 
+	if err := c.retire(ctx, digits, payload); err != nil {
+		return err
+	}
+
+	sess.audit.event(ctx, Event{Kind: EventLessonRetire, BlueprintID: id, Payload: payload})
+
+	return nil
+}
+
+// retire fills payload with the outcome of retiring the lesson numbered
+// digits. The lesson is read first so a failed read changes nothing; an
+// active lesson's text is fixed, so the text read before the retire is its text.
+func (c *Controller) retire(ctx context.Context, digits string, payload map[string]any) error {
 	lessonID, err := strconv.ParseInt(digits, 10, 64)
 	if err != nil {
 		payload["refused"] = fmt.Sprintf("There is no lesson L%s.", digits)
-		sess.audit.event(ctx, Event{Kind: EventLessonRetire, BlueprintID: id, Payload: payload})
 
 		return nil
+	}
+
+	l, err := c.opts.Store.GetLesson(ctx, lessonID)
+	if errors.Is(err, store.ErrNotFound) {
+		payload["refused"] = fmt.Sprintf("There is no lesson L%d.", lessonID)
+
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("blueprint: read lesson %d: %w", lessonID, err)
 	}
 
 	retired, err := c.opts.Store.RetireLesson(ctx, lessonID)
@@ -39,21 +62,20 @@ func (c *Controller) Retire(ctx context.Context, id, ref, msgID string) error {
 		return fmt.Errorf("blueprint: retire lesson %d: %w", lessonID, err)
 	}
 
-	l, err := c.opts.Store.GetLesson(ctx, lessonID)
+	payload["lesson"] = l.ID
 
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		payload["refused"] = fmt.Sprintf("There is no lesson L%d.", lessonID)
-	case err != nil:
-		return fmt.Errorf("blueprint: read lesson %d: %w", lessonID, err)
-	case retired:
-		payload["lesson"], payload["state"], payload["text"] = l.ID, store.LessonRetired, l.Text
-	default:
-		payload["lesson"] = l.ID
-		payload["refused"] = fmt.Sprintf("L%d is %s; only an active lesson can be retired.", l.ID, l.State)
+	if retired {
+		payload["state"], payload["text"] = store.LessonRetired, l.Text
+
+		return nil
 	}
 
-	sess.audit.event(ctx, Event{Kind: EventLessonRetire, BlueprintID: id, Payload: payload})
+	now, err := c.opts.Store.GetLesson(ctx, lessonID)
+	if err != nil {
+		return fmt.Errorf("blueprint: read lesson %d: %w", lessonID, err)
+	}
+
+	payload["refused"] = fmt.Sprintf("L%d is %s; only an active lesson can be retired.", now.ID, now.State)
 
 	return nil
 }

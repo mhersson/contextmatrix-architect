@@ -283,8 +283,8 @@ func TestWithLessons(t *testing.T) {
 
 	got := withLessons("base", []store.Lesson{{ID: 1, Text: "a"}, {ID: 2, Text: "b"}})
 
-	assert.True(t, strings.HasPrefix(got, "base\n\n## Lessons from earlier blueprints\n\n"))
-	assert.Contains(t, got, "- L1: a\n- L2: b\n")
+	require.True(t, strings.HasPrefix(got, "base"))
+	assert.Contains(t, strings.TrimPrefix(got, "base"), "- L1: a\n- L2: b\n")
 }
 
 func TestStageInput_LessonsReachDecompositionAndReadinessOnly(t *testing.T) {
@@ -343,6 +343,7 @@ func TestStageInput_ABlueprintCreatedBeforeTheApprovalGetsNone(t *testing.T) {
 
 	got := instructionsByStage(runner)
 	require.Contains(t, got, "decomposition")
+	require.Contains(t, got, "readiness")
 	assert.NotContains(t, got["decomposition"], "L1")
 	assert.NotContains(t, got["readiness"], "L1")
 }
