@@ -29,6 +29,9 @@ type fakeCM struct {
 	runErr     error
 	list       []cm.PlaybookSummary
 	cardSeq    map[string][]cm.Card
+	ended      map[string]cm.EndedCard // by card id, as GetEndedCard serves it
+	failEnded  int                     // fail this many GetEndedCard calls
+	endedGets  int
 	bookSeq    map[string][]cm.Playbook
 	seq        map[string]int
 	gets       int
@@ -43,6 +46,7 @@ func newFakeCM() *fakeCM {
 		warnings:   map[string][]string{},
 		failCreate: map[string]int{},
 		cardSeq:    map[string][]cm.Card{},
+		ended:      map[string]cm.EndedCard{},
 		bookSeq:    map[string][]cm.Playbook{},
 		seq:        map[string]int{},
 	}
@@ -115,6 +119,27 @@ func (f *fakeCM) GetCard(_ context.Context, _, id string) (cm.Card, error) {
 	}
 
 	return seq[0], nil
+}
+
+func (f *fakeCM) GetEndedCard(_ context.Context, _, id string) (cm.EndedCard, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.gets++
+	f.endedGets++
+
+	if f.failEnded > 0 {
+		f.failEnded--
+
+		return cm.EndedCard{}, errors.New("cm: get_card: remote unreachable")
+	}
+
+	card, ok := f.ended[id]
+	if !ok {
+		return cm.EndedCard{}, fmt.Errorf("cm: get_card: %s not found", id)
+	}
+
+	return card, nil
 }
 
 func (f *fakeCM) CreateCard(_ context.Context, in cm.CardInput) (cm.CreatedCard, error) {
@@ -285,6 +310,14 @@ func (f *fakeCM) setCards(id string, seq ...cm.Card) {
 	f.cardSeq[id] = seq
 }
 
+// setEnded replaces what the fake serves for a card read as it ended.
+func (f *fakeCM) setEnded(id string, card cm.EndedCard) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.ended[id] = card
+}
+
 func (f *fakeCM) setBooks(id string, seq ...cm.Playbook) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -297,6 +330,14 @@ func (f *fakeCM) getCount() int {
 	defer f.mu.Unlock()
 
 	return f.gets
+}
+
+// endedReads is how many GetEndedCard calls were made.
+func (f *fakeCM) endedReads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.endedGets
 }
 
 func (f *fakeCM) closeCount() int {

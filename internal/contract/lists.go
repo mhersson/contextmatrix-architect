@@ -42,6 +42,13 @@ type Lists struct {
 
 // Pattern is one named regular expression.
 type Pattern struct {
-	Name    string `yaml:"name"`
-	Pattern string `yaml:"pattern"`
+	Name    string `yaml:"name" json:"name"`
+	Pattern string `yaml:"pattern" json:"pattern"`
+}
+
+// Overlay is a lesson's additions to the three lists a lesson may extend.
+type Overlay struct {
+	EdgeCases           []string  `json:"edge_cases,omitempty"`
+	DanglingReferences  []string  `json:"dangling_references,omitempty"`
+	ForbiddenReferences []Pattern `json:"forbidden_references,omitempty"`
 }

@@ -17,6 +17,8 @@ func TestLoadEmbedded_ReferencesResolve(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, p.Name)
 	assert.NotEmpty(t, p.Version)
+	assert.NotEmpty(t, p.RetroInstructions())
+	assert.NotEmpty(t, p.Persona(RetroPersona))
 	require.NotEmpty(t, p.Stages)
 
 	ids := map[string]bool{}
@@ -300,6 +302,8 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "a reviewer with an unknown tool group", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4, tools: [shell]}\n", files: map[string]string{"stages/review.md": "x"}, want: "not code or research"},
 		{name: "a reserved stage id", stage: "  - id: review\n    persona: po\n", files: map[string]string{"stages/review.md": "x"}, want: "reserved"},
 		{name: "the reserved plain id", stage: "  - id: plain\n    persona: po\n", files: map[string]string{"stages/plain.md": "x"}, want: "reserved"},
+		{name: "the reserved retrospective id", stage: "  - id: retrospective\n    persona: po\n", files: map[string]string{"stages/retrospective.md": "x", "personas/reviewer.md": "x"}, want: "reserved"},
+		{name: "retrospective instructions without the reviewer persona", files: map[string]string{"stages/retrospective.md": "x"}, want: `persona "reviewer"`},
 		{name: "a dot in a stage id", stage: "  - id: s1.review\n    persona: po\n", files: map[string]string{"stages/s1.review.md": "x"}, want: "dot"},
 	}
 
@@ -649,4 +653,83 @@ func TestLoad_MockupStageInvalid(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.want)
 		})
 	}
+}
+
+func listsPack(t *testing.T) *Pack {
+	t.Helper()
+
+	p, err := load(packFS("", map[string]string{"lists.yaml": "edge_cases: [Limits]\ndangling_references: [see above]\nforbidden_references:\n  - {name: home, pattern: '/home/'}\n"}))
+	require.NoError(t, err)
+
+	return p
+}
+
+func TestMergeLists(t *testing.T) {
+	tests := []struct {
+		name      string
+		overlays  []contract.Overlay
+		edges     []string
+		dangling  []string
+		forbidden []string
+		err       string
+	}{
+		{name: "no overlays", edges: []string{"Limits"}, dangling: []string{"see above"}, forbidden: []string{"home"}},
+		{name: "pack first, then each overlay in order", overlays: []contract.Overlay{
+			{EdgeCases: []string{"Clock skew"}, DanglingReferences: []string{"as before"}},
+			{EdgeCases: []string{"Retries"}, ForbiddenReferences: []contract.Pattern{{Name: "tmp", Pattern: "/tmp/"}}},
+		}, edges: []string{"Limits", "Clock skew", "Retries"}, dangling: []string{"see above", "as before"}, forbidden: []string{"home", "tmp"}},
+		{name: "an edge case the pack lists, in other case and spacing, adds nothing", overlays: []contract.Overlay{{EdgeCases: []string{"  limits "}}}, edges: []string{"Limits"}, dangling: []string{"see above"}, forbidden: []string{"home"}},
+		{name: "an edge case two overlays add is added once", overlays: []contract.Overlay{{EdgeCases: []string{"Retries"}}, {EdgeCases: []string{"retries"}}}, edges: []string{"Limits", "Retries"}, dangling: []string{"see above"}, forbidden: []string{"home"}},
+		{name: "a blank edge case", overlays: []contract.Overlay{{EdgeCases: []string{" "}}}, err: "edge_cases"},
+		{name: "a blank dangling reference", overlays: []contract.Overlay{{DanglingReferences: []string{" "}}}, err: "dangling_references"},
+		{name: "a bad pattern", overlays: []contract.Overlay{{ForbiddenReferences: []contract.Pattern{{Name: "broken", Pattern: "(["}}}}, err: "forbidden reference"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := listsPack(t).MergeLists(tt.overlays)
+			if tt.err != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.err)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.edges, got.EdgeCases)
+			assert.Equal(t, tt.dangling, got.DanglingReferences)
+
+			names := make([]string, 0, len(got.ForbiddenReferences))
+			for _, f := range got.ForbiddenReferences {
+				names = append(names, f.Name)
+			}
+
+			assert.Equal(t, tt.forbidden, names)
+		})
+	}
+}
+
+func TestMergeLists_LeavesThePacksListsAsTheyAre(t *testing.T) {
+	p := listsPack(t)
+	before := p.Lists()
+
+	_, err := p.MergeLists([]contract.Overlay{{
+		EdgeCases:           []string{"Retries"},
+		DanglingReferences:  []string{"as before"},
+		ForbiddenReferences: []contract.Pattern{{Name: "tmp", Pattern: "/tmp/"}},
+	}})
+	require.NoError(t, err)
+
+	assert.Equal(t, before, p.Lists())
+}
+
+func TestLoad_RetroInstructionsAreOptional(t *testing.T) {
+	p, err := load(packFS("", nil))
+	require.NoError(t, err)
+	assert.Empty(t, p.RetroInstructions())
+
+	p, err = load(packFS("", map[string]string{"stages/retrospective.md": "judge", "personas/reviewer.md": "rev"}))
+	require.NoError(t, err)
+	assert.Equal(t, "judge", p.RetroInstructions())
+	assert.Equal(t, "rev", p.Persona(RetroPersona))
 }

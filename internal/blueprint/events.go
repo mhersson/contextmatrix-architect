@@ -136,6 +136,28 @@ const (
 	// it, and by "mode" when a mode switch took it. The newest one is the
 	// offer.
 	EventMockupOffer = "mockup_offer"
+	// EventRetroReply answers a retrospective reply that starts no pass, or
+	// ends a pass that did not complete: the reason code, the message, the
+	// reply's message id and whether a run goes on working after it.
+	EventRetroReply = "retro_reply"
+	// EventRetroReport is a pass's findings message: every struggled card
+	// with its signals, its finding and its proposed lesson. It is the
+	// pass's only record of the findings.
+	EventRetroReport = "retro_report"
+	// EventRetroStopOffered is the offer of the retrospective at the first
+	// emitted card the watch sees parked, stalled or blocked: its line. It is
+	// stored once per blueprint and starts nothing.
+	EventRetroStopOffered = "retro_stop_offered"
+	// EventLessonDecided records the decision a lesson round's answer made
+	// on one lesson: its id, new state, scope and text, its project when the
+	// scope is a project's, the merged lists' error when an approval was
+	// refused, and the answering reply's message id.
+	EventLessonDecided = "lesson_decided"
+	// EventLessonList is the reply to a lessons reply: every lesson of every
+	// blueprint with its state, scope, project, text, rationale, evidence card
+	// ids and decider, the reply's message id and whether a run goes on
+	// working after it.
+	EventLessonList = "lesson_list"
 	// EventEnded records that CM ended the session; the blueprint persists.
 	EventEnded = "session_ended"
 	// EventHarness wraps one raw harness JSONL line; the payload is the line.

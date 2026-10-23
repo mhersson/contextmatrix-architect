@@ -820,6 +820,47 @@ func TestOpen_MigratesV5(t *testing.T) {
 	assert.True(t, got.PlainLanguage)
 }
 
+func TestOpen_MigratesV6(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "architect.db")
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	s, err := Open(ctx, path)
+	require.NoError(t, err)
+	require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: "BP1", Mode: "default", State: "new", CreatedAt: now, UpdatedAt: now}))
+
+	// A v6 file: no lesson tables.
+	for _, stmt := range []string{
+		`DROP TABLE lessons`,
+		`DROP TABLE blueprint_lessons`,
+		`PRAGMA user_version = 6`,
+	} {
+		_, err := s.db.Exec(stmt)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, s.Close())
+
+	s, err = Open(ctx, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	var version int
+	require.NoError(t, s.db.QueryRow("PRAGMA user_version").Scan(&version))
+	assert.Equal(t, schemaVersion, version)
+
+	got, err := s.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, "default", got.Mode)
+
+	_, err = s.AddLessons(ctx, []Lesson{{BlueprintID: "BP1", Scope: ScopePack, Text: "kept"}})
+	require.NoError(t, err)
+
+	var n int
+	require.NoError(t, s.db.QueryRow("SELECT COUNT(*) FROM blueprint_lessons").Scan(&n))
+	assert.Equal(t, 0, n)
+}
+
 func TestRunModel(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()

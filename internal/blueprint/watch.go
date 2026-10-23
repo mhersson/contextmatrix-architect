@@ -59,6 +59,7 @@ func (c *Controller) watchLoop(ctx context.Context, sess *session, id string) {
 	var client CMClient
 
 	prev := c.reportedSnapshot(bg, sess.audit, id)
+	offered := false
 
 	defer func() {
 		if client != nil {
@@ -97,6 +98,10 @@ func (c *Controller) watchLoop(ctx context.Context, sess *session, id string) {
 
 				prev = &snap
 
+				if !offered {
+					offered = c.offerRetro(bg, sess, id, snap)
+				}
+
 				if snap.done {
 					c.finish(bg, sess, id, snap)
 
@@ -111,6 +116,43 @@ func (c *Controller) watchLoop(ctx context.Context, sess *session, id string) {
 		case <-tick.C:
 		}
 	}
+}
+
+// offerRetro posts the first-stop offer once per blueprint and reports
+// whether no offer is still owed. The stored event is what survives a restart
+// or a reopen; an offer starts nothing.
+func (c *Controller) offerRetro(ctx context.Context, sess *session, id string, snap snapshot) bool {
+	stopped := snap.stopped()
+	if len(stopped) == 0 {
+		return false
+	}
+
+	n, err := c.opts.Store.CountEvents(ctx, id, EventRetroStopOffered)
+	if err != nil {
+		c.opts.Logger.Warn("blueprint: count the retrospective offers", "blueprint", id, "error", sess.audit.text(err.Error()))
+
+		return false
+	}
+
+	if n > 0 {
+		return true
+	}
+
+	parts := make([]string, 0, len(stopped))
+
+	for _, cv := range stopped {
+		why := cv.State
+		if cv.Worker == "parked" {
+			why = "worker parked"
+		}
+
+		parts = append(parts, fmt.Sprintf("%s (%s)", cv.ID, why))
+	}
+
+	line := fmt.Sprintf("%s stopped. Reply `retrospective` to learn from the cards that struggled.", strings.Join(parts, ", "))
+	sess.audit.event(ctx, Event{Kind: EventRetroStopOffered, BlueprintID: id, Payload: map[string]any{"line": line}})
+
+	return true
 }
 
 // finish closes an ended run: the closing summary, posted once, then the
@@ -154,6 +196,19 @@ type cardView struct {
 	Worker  string `json:"worker"`
 	Phase   string `json:"phase"`
 	PR      string `json:"pr"`
+}
+
+// stopped lists the cards whose worker is parked or whose state is stalled or blocked.
+func (s snapshot) stopped() []cardView {
+	var out []cardView
+
+	for _, cv := range s.Cards {
+		if cv.Worker == "parked" || cv.State == "stalled" || cv.State == "blocked" {
+			out = append(out, cv)
+		}
+	}
+
+	return out
 }
 
 // runView is what the watch tracks of the playbook's run.

@@ -397,3 +397,96 @@ func TestWatch_AnEndAlreadyPostedIsNotPostedAgain(t *testing.T) {
 	}, 2*time.Second, 5*time.Millisecond, "the reopened watch sets the state")
 	assert.False(t, rec2.has(EventWatchEnded), "the stored summary is not posted again")
 }
+
+// startWatchedTwoCards drives twoCardScript to its emission and returns the
+// controller watching it.
+func startWatchedTwoCards(t *testing.T) (*Controller, *store.Store, *fakeRunner, *recorder, *fakeWorkspace, *fakeCM) {
+	t.Helper()
+
+	c, st, runner, rec, ws := newPipeline(t, twoCardScript())
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	c.opts.WatchInterval = 5 * time.Millisecond
+
+	drive(t, c, "BP1")
+	require.NoError(t, c.Message(context.Background(), "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	return c, st, runner, rec, ws, fake
+}
+
+func TestWatch_OffersTheRetrospectiveOnceWhenACardStops(t *testing.T) {
+	_, _, runner, rec, _, fake := startWatchedTwoCards(t)
+
+	calls := runner.calls()
+
+	fake.setCards("ALPHA-002", cm.Card{ID: "ALPHA-002", State: "in_progress", WorkerStatus: "parked", Phase: "execute"})
+
+	rec.waitFor(t, EventRetroStopOffered)
+
+	gets := fake.getCount()
+
+	require.Eventually(t, func() bool { return fake.getCount() > gets+6 }, time.Second, 5*time.Millisecond)
+	require.Equal(t, 1, rec.count(EventRetroStopOffered))
+
+	offer, _ := rec.first(EventRetroStopOffered)
+	assert.Contains(t, offer.Payload["line"], "ALPHA-002")
+	assert.NotContains(t, offer.Payload["line"], "ALPHA-001")
+	assert.Equal(t, calls, runner.calls(), "an offer starts nothing")
+}
+
+func TestWatch_TheOfferIsMadeOnceAcrossARestart(t *testing.T) {
+	c, st, _, rec, ws, fake := startWatchedTwoCards(t)
+
+	fake.setCards("ALPHA-002", cm.Card{ID: "ALPHA-002", State: "stalled"})
+	rec.waitFor(t, EventRetroStopOffered)
+
+	c2, rec2 := reopen(t, c, st, ws, twoCardScript(), fake, startInput("BP1"))
+	require.NotNil(t, watcherOf(c2, "BP1"))
+
+	gets := fake.getCount()
+
+	require.Eventually(t, func() bool { return fake.getCount() > gets+6 }, time.Second, 5*time.Millisecond)
+
+	n, err := st.CountEvents(context.Background(), "BP1", EventRetroStopOffered)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	assert.Zero(t, rec2.count(EventRetroStopOffered))
+}
+
+func TestWatch_OffersOnThePollThatEndsTheRun(t *testing.T) {
+	_, _, _, rec, _, fake := startWatchedTwoCards(t)
+
+	fake.setCards("ALPHA-001", cm.Card{ID: "ALPHA-001", State: "blocked"})
+	fake.setBooks("ship-the-parser", cm.Playbook{ID: "ship-the-parser", Total: 3, Complete: 3, Run: &cm.PlaybookRun{Status: "completed"}})
+
+	rec.waitFor(t, EventWatchEnded)
+
+	kinds := rec.kinds()
+	offered, ended := -1, -1
+
+	for i, k := range kinds {
+		switch k {
+		case EventRetroStopOffered:
+			offered = i
+		case EventWatchEnded:
+			ended = i
+		}
+	}
+
+	require.GreaterOrEqual(t, offered, 0, "the offer was made")
+	assert.Less(t, offered, ended)
+	assert.Equal(t, 1, rec.count(EventRetroStopOffered))
+}
+
+func TestWatch_ARunningCardIsNoStop(t *testing.T) {
+	_, _, _, rec, _, fake := startWatchedTwoCards(t)
+
+	fake.setCards("ALPHA-001", cm.Card{ID: "ALPHA-001", State: "in_progress", WorkerStatus: "running", Phase: "execute"})
+	fake.setCards("ALPHA-002", cm.Card{ID: "ALPHA-002", State: "done", WorkerStatus: "completed"})
+
+	gets := fake.getCount()
+
+	require.Eventually(t, func() bool { return fake.getCount() > gets+6 }, time.Second, 5*time.Millisecond)
+	assert.Zero(t, rec.count(EventRetroStopOffered))
+}

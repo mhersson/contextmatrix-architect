@@ -36,7 +36,8 @@ type segmentStep struct {
 // the open round, and once every question has an answer closes the round
 // and continues its stage. A reply for a round that takes no answers stores
 // nothing and says so. A reply carries every answer CM holds, so entries
-// replace per question and a missing one deletes nothing.
+// replace per question and a missing one deletes nothing. The answers to an
+// open lesson round decide its lessons instead (see replyLessons).
 func (c *Controller) Reply(ctx context.Context, id string, rr protocol.RoundReply, msgID string) error {
 	c.mu.Lock()
 	sess, ok := c.sessions[id]
@@ -48,6 +49,19 @@ func (c *Controller) Reply(ctx context.Context, id string, rr protocol.RoundRepl
 
 	lock := c.roundLock(id)
 	lock.Lock()
+
+	s, isLessons, err := c.lessonRoundAt(ctx, id)
+	if err != nil {
+		lock.Unlock()
+
+		return err
+	}
+
+	if isLessons && rr.PromptID == roundPromptID(s.Number) {
+		defer lock.Unlock()
+
+		return c.replyLessons(ctx, sess, id, s, rr, msgID)
+	}
 
 	r, runCtx, err := c.storeReply(ctx, sess, id, rr, msgID)
 
@@ -450,8 +464,10 @@ func (c *Controller) collapseLeftRound(ctx context.Context, au audit, id string)
 	lock.Lock()
 	defer lock.Unlock()
 
+	// A lesson round is no pipeline round: nothing collapses it, and its
+	// answers still decide its lessons after a reopen.
 	s, ok := c.newestRound(ctx, id)
-	if !ok || s.Frame.Closed {
+	if !ok || s.Frame.Closed || s.Frame.Stage == RetroStage {
 		return
 	}
 

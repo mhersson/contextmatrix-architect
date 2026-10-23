@@ -796,9 +796,10 @@ func (rec record) emissionStep() protocol.PipelineStep {
 }
 
 // current is the innermost live run: a responder inside the stage that
-// asked, else the run itself.
+// asked, else the run itself. A retro run is none: the view's current run
+// names a pipeline stage, and a pass runs alone on the slot.
 func (rec record) current() *protocol.CurrentRun {
-	live := rec.live()
+	live := slices.DeleteFunc(rec.live(), func(f flightView) bool { return f.kind == store.RunKindRetro })
 	if len(live) == 0 {
 		return nil
 	}

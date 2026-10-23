@@ -964,6 +964,22 @@ func TestView_Cost(t *testing.T) {
 	}
 }
 
+func TestView_ARetroRunInFlightIsNoCurrentRunButCountsItsSpend(t *testing.T) {
+	c, st := newViewController(t, "default", 0)
+	through(t, c, st, "readiness")
+	before := view(t, c)
+
+	f := flying(t, c, st, RetroStage, store.RunKindRetro, 1)
+	f.mu.Lock()
+	f.spent = 0.25
+	f.mu.Unlock()
+
+	v := view(t, c)
+	assert.Nil(t, v.Current, "a pass is no current run")
+	assert.Equal(t, before.Pipeline, v.Pipeline, "a retro run moves no step")
+	assert.InDelta(t, before.Cost.SpentUSD+0.25, v.Cost.SpentUSD, 1e-9, "its spend counts in the in-flight cost")
+}
+
 func TestView_SeqRisesWithEveryChange(t *testing.T) {
 	c, st := newViewController(t, "default", 0)
 	ctx := context.Background()

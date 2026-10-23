@@ -11,6 +11,7 @@ import (
 
 	"github.com/mhersson/contextmatrix-architect/internal/blueprint"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
+	"github.com/mhersson/contextmatrix-architect/internal/retro"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
@@ -217,6 +218,18 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		files, _ := p["files"].(int)
 		entry.Type = "system"
 		entry.Content = fmt.Sprintf("Export written on the server: %s (%d files).", str(p["path"]), files)
+	case blueprint.EventRetroReply:
+		entry.Type = "system"
+		entry.Content = str(p["message"])
+	case blueprint.EventLessonList:
+		entry.Type = "text"
+		entry.Content = lessonListText(p)
+	case blueprint.EventRetroReport:
+		entry.Type = "text"
+		entry.Content = retroReportText(p)
+	case blueprint.EventLessonDecided:
+		entry.Type = "system"
+		entry.Content = lessonDecidedText(p)
 	case blueprint.EventError:
 		entry.Type = "stderr"
 		entry.Content = str(p["message"])
@@ -376,6 +389,9 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventWatch:
 		entry.Type = "system"
 		entry.Content = str(p["line"])
+	case blueprint.EventRetroStopOffered:
+		entry.Type = "system"
+		entry.Content = str(p["line"])
 	case blueprint.EventWatchEnded:
 		entry.Type = "text"
 
@@ -424,7 +440,7 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			}
 		}
 
-		b.WriteString("\n\nReply export for the bundle, or end the session.")
+		b.WriteString("\n\nReply export for the bundle, retrospective to learn from the cards that struggled, or end the session.")
 
 		entry.Content = b.String()
 	case blueprint.EventEmitted:
@@ -716,6 +732,8 @@ func num(v any) float64 {
 	case float64:
 		return n
 	case int:
+		return float64(n)
+	case int64:
 		return float64(n)
 	default:
 		return 0
@@ -1102,8 +1120,13 @@ func modeName(m string) string {
 
 // abortedText renders an abort: a stage whose run it cut runs again on
 // continue, while an abort that cut nothing, or the sign-off's emission or
-// run start, which approve resumes, leaves continue nothing to run.
+// run start, which approve resumes, leaves continue nothing to run, and a
+// retrospective runs again on its own reply.
 func abortedText(p map[string]any, sliced bool) string {
+	if str(p["stage"]) == blueprint.RetroStage {
+		return "Abort requested. The retrospective is canceled; reply `retrospective` to run it again. The blueprint is kept and can be reopened."
+	}
+
 	if stage := str(p["stage"]); stage != "" && stage != "signoff" {
 		return "Abort requested. " + pack.StageName(stage, sliced) + " is canceled; reply `continue` to run it again. The blueprint is kept and can be reopened."
 	}
@@ -1141,6 +1164,134 @@ func resumeText(p map[string]any, sliced bool) string {
 	}
 
 	return "Nothing is waiting to resume."
+}
+
+// retroReportText renders a retrospective's findings message: the counts,
+// then each struggled card with its signals, why it struggled, its finding's
+// rule and evidence, and its proposed lesson or that the struggle was not
+// the card's fault.
+func retroReportText(p map[string]any) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "**Retrospective**: %.0f of %.0f emitted card(s) struggled.", num(p["struggled"]), num(p["read"]))
+
+	for _, card := range anyMaps(p["cards"]) {
+		fmt.Fprintf(&b, "\n\n**%s** (%s): %s", str(card["card"]), str(card["project"]), str(card["title"]))
+		fmt.Fprintf(&b, "\n- State %s", str(card["state"]))
+
+		if worker := str(card["worker"]); worker != "" {
+			fmt.Fprintf(&b, ", worker %s", worker)
+		}
+
+		fmt.Fprintf(&b, "; %.0f review attempt(s), %.0f subtask(s), $%.2f.", num(card["review_attempts"]), num(card["subtasks"]), num(card["cost_usd"]))
+		fmt.Fprintf(&b, "\n- Struggled: %s.", strings.Join(whyWords(card), "; "))
+		fmt.Fprintf(&b, "\n- Rule: %s", str(card["rule"]))
+		fmt.Fprintf(&b, "\n- Evidence: \"%s\"", strings.Join(strings.Fields(str(card["evidence"])), " "))
+
+		if lesson, ok := card["lesson"].(map[string]any); ok {
+			scope := "for project " + str(lesson["project"])
+			if str(lesson["scope"]) == store.ScopePack {
+				scope = "for the whole pack"
+			}
+
+			fmt.Fprintf(&b, "\n- Proposed lesson L%.0f, %s: %s", num(lesson["id"]), scope, str(lesson["text"]))
+
+			continue
+		}
+
+		b.WriteString("\n- Not the card's fault, so no lesson.")
+	}
+
+	return b.String()
+}
+
+// lessonDecidedText renders a lesson's decision: approved for its project
+// or the whole pack, rejected, or rejected because the pack's lists merged
+// with its additions failed, with the parser's error.
+func lessonDecidedText(p map[string]any) string {
+	tag := fmt.Sprintf("L%.0f", num(p["lesson"]))
+
+	switch {
+	case str(p["error"]) != "":
+		return fmt.Sprintf("Lesson %s is rejected: the pack's lists with its additions do not load: %s", tag, str(p["error"]))
+	case str(p["state"]) == store.LessonRejected:
+		return "Lesson " + tag + " is rejected."
+	case str(p["scope"]) == store.ScopePack:
+		return fmt.Sprintf("Lesson %s is approved for the whole pack: %s", tag, str(p["text"]))
+	default:
+		return fmt.Sprintf("Lesson %s is approved for project %s: %s", tag, str(p["project"]), str(p["text"]))
+	}
+}
+
+// lessonListText renders a lessons reply: one line per lesson with its state,
+// scope, text, rationale and evidence card ids, or that there are none yet.
+func lessonListText(p map[string]any) string {
+	lessons := anyMaps(p["lessons"])
+	if len(lessons) == 0 {
+		return "There are no lessons yet."
+	}
+
+	var b strings.Builder
+
+	b.WriteString("**Lessons**")
+
+	for _, l := range lessons {
+		scope := "whole pack"
+		if str(l["scope"]) == store.ScopeProject {
+			scope = "project " + str(l["project"])
+		}
+
+		fmt.Fprintf(&b, "\n- L%.0f (%s, %s): %s", num(l["lesson"]), str(l["state"]), scope, str(l["text"]))
+
+		if why := str(l["rationale"]); why != "" {
+			fmt.Fprintf(&b, " Why: %s", why)
+		}
+
+		if ev := stringsOf(l["evidence"]); len(ev) > 0 {
+			fmt.Fprintf(&b, " Evidence: %s.", strings.Join(ev, ", "))
+		}
+	}
+
+	return b.String()
+}
+
+// whyWords says in words why a struggled card of a findings message
+// struggled.
+func whyWords(card map[string]any) []string {
+	var out []string
+
+	for _, why := range stringsOf(card["why"]) {
+		switch why {
+		case retro.WhyReviews:
+			out = append(out, fmt.Sprintf("%.0f review attempts", num(card["review_attempts"])))
+		case retro.WhyParked:
+			parked := "parked"
+			if reason := str(card["reason"]); reason != "" {
+				parked += " (" + reason + ")"
+			}
+
+			out = append(out, parked)
+		case retro.WhyStalled:
+			out = append(out, "stalled")
+		case retro.WhyBlocked:
+			out = append(out, "blocked")
+		case retro.WhyNotPlanned:
+			out = append(out, "not planned")
+		case retro.WhyCost:
+			cost, median := num(card["cost_usd"]), num(card["median_usd"])
+			if median > 0 {
+				out = append(out, fmt.Sprintf("cost $%.2f, %.1f times the costed cards' median of $%.2f", cost, cost/median, median))
+
+				break
+			}
+
+			out = append(out, fmt.Sprintf("cost $%.2f", cost))
+		default:
+			out = append(out, why)
+		}
+	}
+
+	return out
 }
 
 // gatePlanText renders the gate plan: who answers each stage's questions
@@ -1343,14 +1494,17 @@ func decidedText(p map[string]any, sliced bool) string {
 	}
 }
 
-// runLabel names a run in the panel: a stage, a stage's review, or the
-// responder answering for a stage. sliced names a step's slice.
+// runLabel names a run in the panel: a stage, a stage's review, the
+// responder answering for a stage, or the retrospective. sliced names a
+// step's slice.
 func runLabel(p map[string]any, sliced bool) string {
 	switch str(p["kind"]) {
 	case store.RunKindReviewer:
 		return "Review of " + pack.StageName(str(p["stage"]), sliced)
 	case store.RunKindResponder:
 		return "The responder for " + pack.StageName(str(p["stage"]), sliced)
+	case store.RunKindRetro:
+		return "The retrospective"
 	default:
 		return "Stage " + pack.StageName(str(p["stage"]), sliced)
 	}

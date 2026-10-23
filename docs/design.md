@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slices 0 to 3 are implemented: slice 2 signs off ready cards, emits them and a playbook into CM, starts them in yolo mode and reports their run, and slice 3 adds the dialog stages (intake's questions, slicing, solution design, acceptance) with a responder policy per stage, the human and auto responders, reviewer runs with the critique loop, gates with slicing's folding into solution design, CM prompts, notes that reach later stages and assumptions with grounding's verdicts. A big need is worked piece by piece: slicing orders the slices, shared decisions settles what they share and collapses for one slice, design, grounding, acceptance and decomposition run once per slice, and readiness, one sign-off and one playbook cover every card. Outcomes, lessons and the export's commit to a repository are slice 4; the export writes the bundle under the state directory.
+Status: agreed design, 2026-10-15. Slices 0 to 3 are implemented: slice 2 signs off ready cards, emits them and a playbook into CM, starts them in yolo mode and reports their run, and slice 3 adds the dialog stages (intake's questions, slicing, solution design, acceptance) with a responder policy per stage, the human and auto responders, reviewer runs with the critique loop, gates with slicing's folding into solution design, CM prompts, notes that reach later stages and assumptions with grounding's verdicts. A big need is worked piece by piece: slicing orders the slices, shared decisions settles what they share and collapses for one slice, design, grounding, acceptance and decomposition run once per slice, and readiness, one sign-off and one playbook cover every card. The retrospective and lesson approval (slice 4) are built: a `retrospective` reply judges the emitted cards that struggled and the operator decides its lessons, which take effect on no blueprint yet. Applying them and the export's commit to a repository are still to come; the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -64,7 +64,7 @@ Settled during design. Each has its reason so it is not re-litigated.
 | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Standalone Go service on `contextmatrix-harness`          | The stage controller, gates and cross-run ledger have to be written either way; the chat backend cannot host them (lossy resume, no terminal tools, no responder policy). CM stays a coordination layer rather than becoming a model runner. |
 | Not built on `contextmatrix-agent`; `backendkit` only for the CM-facing side | The agent is shaped for card work in a container, and nothing under its `internal/` is importable. backendkit's `webhookcore` and `logbridge` are the chat-backend protocol the architect speaks towards CM, so they are used for exactly that and nothing else. |
-| CM's chat panel is the only client                        | The architect implements CM's chat-backend protocol as a third backend kind, so CM's existing panel is where the need is stated, questions and gates are answered, and side operations (export, outcomes, lessons) are requested by reply. Same look and feel, session list, auth and browser for free. No UI, no CLI beyond `contextmatrix-architect serve` and the `config defaults` and `config validate` helpers contextmatrix-setup drives, no client API. |
+| CM's chat panel is the only client                        | The architect implements CM's chat-backend protocol as a third backend kind, so CM's existing panel is where the need is stated, questions and gates are answered, and side operations (export, the retrospective, lessons) are requested by reply. Same look and feel, session list, auth and browser for free. No UI, no CLI beyond `contextmatrix-architect serve` and the `config defaults` and `config validate` helpers contextmatrix-setup drives, no client API. |
 | One controller process                                    | `contextmatrix-architect serve` alone owns the store, the workspaces and the harness runs, and every session originates in CM. One record, one place code is checked out, no laptop copy of anything. |
 | Provisioned by CM, like the agent and chat backends      | Every blueprint is a CM session. The start payload delivers the LLM endpoint, the MCP key, the model, a git-credentials token and, when research is on, the search provider and its key. The architect's own config holds no secret but the backend HMAC key, and there is no CM-less mode. |
 | Questions in stored rounds; a stage resumes its stored conversation | A big need takes a long interview, answered in one sitting or in batches over days. Posting a round ends the run, so nothing waits in memory and End, a reopen or a restart loses nothing; once every question has an answer and every assumption a decision the stage resumes the conversation that asked, with the answers as its next message, so the model reads the calls it made and what they returned and, with reasoning replay on, the reasoning behind them when the same model resumes it. Every run of a stage, a chat run included, is offered the same tools, so the prompt cache is warm when the answer comes before the cache expires, on either endpoint. |
@@ -72,7 +72,7 @@ Settled during design. Each has its reason so it is not re-litigated.
 | Everything is logged                                      | Every run's full transcript (less web search result lists and `read_artifact` results, whose artifacts the record holds, and reasoning details that redaction would change, dropped whole) and an append-only event log. The append-only tables are never updated or deleted. The export is a complete audit record, less the web search result lists the next row keeps out. |
 | Search result lists are never stored                      | The search provider's terms forbid storing or caching results beyond transient use, and no storage rights are bought. The model sees a list in the run that searched; transcripts, events and exports keep the query and the result count. The pages `web_fetch` reads are the recorded sources, so a claim cites a page the architect read itself. A deliberate, permanent exception, with no switch to record lists. |
 | A playbook for several cards, a bare card for one         | Manual entries are the only way to express human and live checks across cards. A one-card playbook would end in a merged PR on a playbook branch plus a second PR to main; a bare card ends in one PR to the default branch. The `emissions` table is the blueprint's handle in CM either way. |
-| Fixed stage list, repeated per slice; no composer; size is never estimated | Every stage earns its place for any need. Stages the pack marks per slice repeat once per slice, so slicing's count decides how much runs. A stage with nothing to do collapses: it is recorded but not run, as the shared decisions stage is for one slice. Gates fold and the playbook decision falls out of counts in the artifacts (slices, cards), so a need is never classified small or big up front. Evidence for skippable stages comes from Outcomes, which does not exist yet. |
+| Fixed stage list, repeated per slice; no composer; size is never estimated | Every stage earns its place for any need. Stages the pack marks per slice repeat once per slice, so slicing's count decides how much runs. A stage with nothing to do collapses: it is recorded but not run, as the shared decisions stage is for one slice. Gates fold and the playbook decision falls out of counts in the artifacts (slices, cards), so a need is never classified small or big up front. Evidence for skippable stages would come from the retrospective's findings. |
 | Personas attached to stages, no agent system              | Roles are prompt text in the pack. The composer-and-agents machinery of AI-DLC is a second decision engine the first one has not earned.                         |
 | Reviewers read from the next role's seat and keep a findings ledger | A reviewer that trusts the builder's notes passes artifacts the next role cannot use. Each gated artifact is judged by the role that works from it next, with the code and the pages it cites to check claims, and told to refute rather than confirm. Findings keep their id through the attempt and every revision is reviewed again, so a finding is fixed only when the reviewer sees it fixed in the artifact, never on the builder's word; an open critical finding fails the review whatever the score. |
 | Jira out of v1, in as one later slice                     | The pipeline is exercised on the operator's own projects first. The adapter shape (seed in, mirror out, never state) keeps later integration small, provided sources carry kinds from day one. |
@@ -90,7 +90,7 @@ context window; never use film references.
 CM chat panel (the only client)
      |  internal/webhook (backendkit webhookcore + logbridge:
      |  session start, /message, /logs SSE, end-session, the blueprint view, artifacts and live SSE)
-     |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, cap <usd>|off, mode <m>, resume|continue, outcomes, lesson decision
+     |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, cap <usd>|off, mode <m>, resume|continue, retrospective, lessons, lesson round answers
      |  events out: stage progress, tool calls, questions, gates, cost
 controller (internal/blueprint)     blueprint state machine, gates, responder policy, cost cap
      |
@@ -112,7 +112,7 @@ stage runner (internal/stage)       one harness.Run per round: persona + stage p
      |
 store (internal/store, SQLite)      blueprints, stage runs, artifacts, questions, gates,
                                     transcripts, events, sources, ledger, emissions,
-                                    outcomes, lessons
+                                    lessons, blueprint lessons
 ```
 
 - **The controller has one interface.** Commands in, events out, behind one
@@ -310,7 +310,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | Table         | Holds                                                                                                                        |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price and context window as CM sent them, and whether it runs in plain language |
-| stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets; a mockup's settle run has no model and costs nothing (see Mockups) |
+| stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`, `retro`; a retro run judges emitted cards; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets; a mockup's settle run has no model and costs nothing (see Mockups) |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, whether it passed, its summary when it gave one, its findings ledger with ids, severities, statuses and the reviewer's notes, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes, or at the responder's answer under auto, or at the answer for one asked alone before rounds, or, one per suggestion, when a mockup closes on a use; an assumption a human accepted on a tab is recorded on its round, not here |
 | gates         | append-only, one row per decision at a stage's gate or the sign-off, and at the mockup step its use (approve) or skip (reject) of a revision: blueprint, stage, the judged artifact's version, decision (approve, reject, fold, superseded; a fold at version 0 records a stage that collapsed), feedback, responder (human, auto), decided at |
@@ -319,8 +319,8 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | sources       | id (`S<n>` per blueprint), kind (`repo`, `url`, `file`, `cm`; later `jira`), identity, version (sha, content hash; none for `cm` or a repository with no commits), fetched at, first used by stage; a page `web_fetch` read is a `url` source versioned by the sha256 of its text, its title on its `research` event |
 | ledger        | per-run cost rows summed per blueprint                                                                                        |
 | emissions     | append-only: blueprint, kind (card, playbook, run), the draft card id, project, CM id, created at; one row per blueprint, kind and draft id |
-| outcomes      | per emitted card: final state, review attempts, parked reason, cost, finding text, proposed lesson                            |
-| lessons       | text, rationale, evidence card ids, scope (pack or project), state (`proposed`, `active`, `rejected`), decided by             |
+| lessons       | id (`L<n>`, across the whole store, never reused), the blueprint and retro run that proposed it, state (`proposed`, `active`, `rejected`, `retired`), scope (`pack` or `project`) and the evidence card's project, text, rationale, evidence card ids, an overlay of list additions (JSON, never edited), decided at and by; mutable, not append-only, every state change also an event |
+| blueprint_lessons | blueprint, lesson; a blueprint's lesson set, rows only inserted; nothing writes it yet |
 
 Every `stage` column, and every event payload's `stage`, holds a step key:
 the stage id for a whole-blueprint stage, `<stage>@SL<n>` for a per-slice
@@ -341,7 +341,7 @@ Schema bumps are one-way: an older binary refuses a newer file.
 (model, pack version, persona, config snapshot), tool call made, question
 asked, answer given, assumption recorded, check passed or failed, reviewer
 score, gate decided, artifact version stored, emission call and CM's response,
-export written, playbook run started, outcome recorded, lesson proposed or
+export written, playbook run started, retrospective reported, lesson proposed or
 decided. Tables marked append-only have no update or delete path in code, and
 tests prove it. Secrets are redacted before anything is stored.
 
@@ -371,9 +371,9 @@ designer (SD), senior developer (DEV), tester (TST), reviewer (REV).
 | 8  | Decomposition    | DEV     | all above, earlier slices' cards | once per slice: draft cards with type and priority, `depends_on` per project, the mockup's screens each card builds, manual entries for human and live checks, the order, and the setup for a project without a verify command or instruction file; the last slice's draft gives the playbook title | no        | -        |
 | 9  | Readiness        | REV     | every slice's cards | contract check per card; failures loop back to 8 for the slice that holds the card and every later slice, three rounds max, then sign-off with the cards still not ready | no        | -        |
 | 10 | Sign-off         | human   | everything        | approval; then emission of one playbook                                                                | yes       | -        |
-| -  | Outcomes         | REV     | emitted cards     | one finding per struggled card and a proposed lesson                                                  | lessons   | -        |
+| -  | Retrospective    | REV     | emitted cards     | one finding per struggled card, with a proposed lesson or none when the card was not at fault         | the lesson round | -  |
 
-The embedded pack holds every stage of the table but Sign-off and Outcomes. Sign-off is the controller's step after readiness (see Emission).
+The embedded pack holds every stage of the table but Sign-off and Retrospective, whose instructions are `stages/retrospective.md`. Sign-off is the controller's step after readiness (see Emission).
 Every stage is a model run, except a shared stage that collapses with one slice, which is recorded and not run, and the mockup step of a need without a screen, which never runs: the view lists it pending until intake decides, then skipped. A mockup step whose first look the person declined reads skipped from the decline on. A design the user already has goes in the need or an answer, and solution design adopts it.
 
 - Intake states the shape it expects (slices, projects involved). When its
@@ -667,7 +667,10 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
   gate to fold into, a loop stage takes no gate, and a pack with a reviewer
   carries `stages/review.md`. A reviewer's tool groups are `code` and
   `research` only, and `research` gives it `web_fetch` alone. No stage id
-  is `review` or `responder` or holds a dot, which names a stage's review.
+  is `review`, `responder`, `plain`, `mockup_responder` or `retrospective`, the
+  reserved instruction ids, or holds a dot, which names a stage's review.
+  `stages/retrospective.md` is optional; a pack that carries it carries
+  `personas/reviewer.md`, the persona its runs play (see Learning).
   Per-slice stages are contiguous, follow the stage that checks slices and
   neither fold nor loop; `earlier_slices` names per-slice stages only; a
   shared stage has a gate and sits between the stage that checks slices and
@@ -688,8 +691,10 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
 - A stage's responder policies, for its questions and its gate, come from
   the pack; the mode and the blueprint's `gate` replies override both (see
   Interaction).
-- A lesson that extends a list lands as a pack overlay stored in SQLite and
-  applied at load time, so a lesson never needs a code change.
+- A lesson that extends a list carries its additions as an overlay stored in
+  SQLite with the lesson; the pack's lists merged with overlays, pack entries
+  first and an edge case the merged lists already hold left out, are checked
+  by the loader's own list parser, so a lesson never needs a code change.
 - Pack prose is never tested. Tests check only that a pack parses and that
   every stage, persona and list reference resolves.
 
@@ -731,7 +736,7 @@ size and scope, not wording. Under the current harness, struggle starts once the
 planner splits a card into two or more subtasks (26% against 6% below that).
 Cards with both an acceptance-criteria section and a project verify command
 struggled 8% of the time, against 25% when either was missing. The data is thin
-(18 struggled cards on the main repo); Outcomes re-measures it.
+(18 struggled cards on the main repo); the retrospective re-measures it per blueprint.
 
 ### What the agent does with a card
 
@@ -1268,7 +1273,7 @@ Then, in order:
    ContextMatrix board. Another project's repository is not named, and a
    body citing no tag gets no section. A `create_card` warning is reported
    and emission continues: CM creates the card before it lints it, the
-   readiness checks mirror its lint, and the outcomes stage learns from
+   readiness checks mirror its lint, and the retrospective learns from
    what slips through.
 3. **Playbook**, for two or more cards: card and manual entries in draft
    order, the draft's title, and a description with intake's problem and
@@ -1294,7 +1299,10 @@ Then, in order:
    or not planned, or the playbook run completes or every entry is complete,
    with a closing summary: each card's state and pull request, the playbook
    and one compare link per repository, the architect's total cost, and
-   "Reply export for the bundle, or end the session." Then the blueprint's
+   "Reply export for the bundle, retrospective to learn from the cards that
+   struggled, or end the session." A card the watch first sees parked,
+   stalled or blocked brings the retrospective's offer, once (see Learning).
+   Then the blueprint's
    state is `done`. The summary is posted once: a restart between the two
    finds it stored and only sets the state, and a reopen of a `done`
    blueprint posts nothing. Ending the session stays with the user.
@@ -1305,23 +1313,74 @@ are set, and an appended epic-context section is not stripped.
 
 ## Learning
 
-The Outcomes stage closes the loop from emitted cards back to the contract.
+The retrospective closes the loop from emitted cards back to the contract.
+It never runs on its own.
 
-- **Trigger**: an `outcomes` reply in the session, or the server noticing the
-  run has ended.
-- **Input** per card: the card as emitted, the card as it ended (`get_card`
-  returns the body with the agent's appended review findings, plan and log),
-  and the run signals: final state, review attempts, parked or stalled reason,
-  cost.
-- **Output**: one finding per struggled card naming which contract rule or
-  readiness check should have caught it, with evidence, and a proposed lesson.
-- **Lessons** are proposed by Outcomes as a message in the session and decided
-  by a human replying approve or reject to it. Active lessons are injected into the
-  decomposition and readiness prompts. A lesson that extends a check list
-  becomes a pack overlay. Lessons are scoped to the pack or to one project.
-- Reading outcomes needs no CM change: the architect knows its card ids. A CM
-  card-creator field comes later, to compare architect cards with human-written
-  ones across the whole board.
+- **Offers**: the closing summary offers it, and the first time the watch
+  sees an emitted card parked, stalled or blocked it offers it once per
+  blueprint, remembered by its `retro_stop_offered` event across restarts and
+  reopens; an offer starts nothing.
+- **The pass**: a `retrospective` reply, once the cards are emitted (an
+  `emitted` event, not the state). What it answers instead, each a
+  `retro_reply`: a run in flight, nothing emitted, a pack without
+  `stages/retrospective.md`, an open lesson round. It reads every emitted
+  card once with `get_card` and its activity log, and the run signals. A
+  card struggled when it took 2 or more review attempts, was parked,
+  stalled, blocked or not planned, or cost at least 3 times the costed
+  cards' median when 3 or more are costed; cost is the estimated cost plus
+  `subtask_cost_usd`, and a parked card's reason is its newest parked
+  entry's message. When none struggled, it says so. Else a `retro` run of
+  stage `retrospective`, persona reviewer, on the run slot, under the
+  blueprint's cost cap, with no tools and no questions, given the card
+  template, the lists, the instructions of the stage that checks readiness
+  and each struggled card's signals and fenced body as data, submits one
+  finding per struggled card, each checked: the card, a rule, evidence
+  quoted from its body, a lesson exactly when the card was at fault, and an
+  overlay of the three lists only. A repeated reply judges every struggled
+  card again.
+- **The findings message**: one `retro_report` lists each struggled card
+  with its signals and finding and its lesson as `L<n>`, or that it was not
+  the card's fault; it is the pass's record of every finding. Each lesson is
+  stored `proposed`.
+- **A pass that does not complete** (a card that cannot be read, a run
+  error, a cap refusal or stop, an abort, a restart) stores nothing and says
+  why; the blueprint never fails. A restart says so after the restart, once,
+  as it marks the retro run interrupted, and runs no pass again. A cap
+  refusal says to raise the cap and reply `retrospective` again, since `cap`
+  and `continue` resume no pass. The state turns `running` when the retro
+  run starts (reading the cards leaves it as it was) and, once the pass ends
+  or the restart has said so, is `done` when the watch has ended, else
+  `emitted`.
+- **The lesson round**: when a pass has lessons, one question round follows
+  the findings message, one question per lesson (no question cap; the
+  round's 96 KiB frame bounds it), numbered after every question of the
+  blueprint, titled `L<n> <card>`, the lesson as its text, the rationale,
+  rule, evidence and list additions as its why, and exactly the options
+  approve for the card's project, approve for the whole pack and reject, the
+  proposed scope recommended. Its frame's stage is `retrospective`; it is
+  found only by its own lookup, so a reopen neither collapses it nor shows it
+  again (the panel finds it in the transcript), a mode switch never hands it
+  to the auto responder, chat about it is a note, and the view shows it as no
+  open prompt. A round past the frame limit is not posted (`round_too_big`)
+  and its lessons stay proposed. A `retrospective` while it is open says so
+  (`round_open`) and starts nothing.
+- **Answers**: a reply stores the answers as any round's; once every
+  question has an answer the round closes (questions rows of stage
+  `retrospective`) and each lesson is decided in question order: reject,
+  approve for the project, approve for the pack, or own words, which reword
+  the lesson and approve it at its proposed scope. An approval checks the
+  pack's lists merged with that lesson's overlay with the loader's own
+  parser; a failure leaves the lesson rejected with the parser's error in its
+  `lesson_decided` event. A decision sets the state from `proposed` only, so
+  it applies once; answers take no run slot. Nothing a model proposes takes
+  effect without this approval.
+- **`lessons`**: lesson ids `L<n>` count across the store and are never
+  reused, and `lessons` lists every lesson in every state, with its scope,
+  rationale and evidence card ids; it needs only the session and takes no run
+  slot.
+- Reading the cards needs no CM change: the architect knows its card ids
+  and reads them with `get_card` only. A CM card-creator field comes later,
+  to compare architect cards with human-written ones across the whole board.
 
 ## Sessions
 
@@ -1338,20 +1397,20 @@ the mockup reply (see Mockups):
 
 | Reply                         | Effect                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------- |
-| `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At a slice's design gate, `reject slicing <feedback>` runs slicing and everything after it again, and `reject shared_decisions <feedback>` the shared decisions and every slice. At the sign-off, approve emits and resumes an emission that stopped, and reject runs the blueprint again from its first decisions, the shared decisions when they ran, else the first slice's design, with everything after it, as the typed rejection of that step does; on a record whose steps have no such step it re-runs decomposition, every slice's in slice order. Every stage that runs after a sign-off rejection is given its feedback, and so are its reviewer and its auto responder. `reject slicing <feedback>` runs slicing and everything after it again, `reject SL<n> <feedback>` that slice's design and every later slice, and `reject shared_decisions <feedback>` the shared decisions and every slice; the sign-off records its rejection first, then a rejection of the step that runs again, and the replaced versions superseded. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round. |
+| `approve`, `reject <feedback>` | Decides the open gate. At a stage's gate, approve goes on and reject runs the stage again as a new attempt, given its rejected artifact and every rejection's feedback. At a gate another stage folded into, `reject <stage> <feedback>` runs that stage and everything after it again; a bare `reject <stage>` is a reject whose feedback is the stage's name. At a slice's design gate, `reject slicing <feedback>` runs slicing and everything after it again, and `reject shared_decisions <feedback>` the shared decisions and every slice. At the sign-off, approve emits and resumes an emission that stopped, and reject runs the blueprint again from its first decisions, the shared decisions when they ran, else the first slice's design, with everything after it, as the typed rejection of that step does; on a record whose steps have no such step it re-runs decomposition, every slice's in slice order. Every stage that runs after a sign-off rejection is given its feedback, and so are its reviewer and its auto responder. `reject slicing <feedback>` runs slicing and everything after it again, `reject SL<n> <feedback>` that slice's design and every later slice, and `reject shared_decisions <feedback>` the shared decisions and every slice; the sign-off records its rejection first, then a rejection of the step that runs again, and the replaced versions superseded. Replies are matched as CM's panel matches a prompt: case ignored, feedback after whitespace, the longest reply winning. With no gate open the text is the need or a note; while a round waits it is chat about the round (a note while a lesson round waits; see Learning). |
 | `show mockup`, `skip mockup`  | Answers the mockup offer (see Mockups): show runs the mockup step, skip goes on without it. Matched as a gate's replies are; any other text while the offer waits is a note and the offer stays open. |
 | `gate <stage> human\|auto`    | Changes a stage's responder policy for this blueprint, for its questions and its gate, from its next round or gate on; an open round, gate or mockup offer keeps its responder. Exactly three words, so an answer that starts with "gate" stays an answer. Works while a stage runs. The sign-off follows the mode and takes none. |
 | `cap <usd>`, `cap off`        | Sets the blueprint's cost cap (see below); CM sends it when the person clicks the cost in the sheet header. Exactly two words, the amount one plain decimal number, so an answer that starts with "cap" stays an answer. Works while a stage runs, and binds the run in flight from its next model call. |
 | `mode default\|auto\|auto+emit\|yolo` | Switches the blueprint's mode; every later question, gate and the sign-off follow the new one, and the gate plan, once posted, is posted again. Into `auto+emit` or `yolo`, a sign-off waiting for a human runs again, preflight included, and approves itself unless a critical finding across the blueprint, cards readiness did not pass or preflight stops it. Into any mode but default, the round waiting for a human goes to the auto responder at once when its stage's policy is now `auto` (a `gate` reply still wins): it turns read-only, the answers and decisions already sent stay the human's, the responder answers each open question and every undecided assumption is accepted, and the stage then continues; a switch back to default after that leaves it with the responder, and `continue`, the next message or a reopen finishes one an abort or a restart cut short. Into any mode but default, a mockup offer waiting for a human is taken when the mockup stage's policy is now `auto`, and the step runs; a mockup waiting for the person goes to the auto responder as it stands, and the row names the mockup, never a round. Into default, a mockup the responder steers comes back to the person at once when nothing runs on it, as a running turn ends (storing no use it reached), else at its next revision or turn (see Mockups). Into `auto`, `auto+emit` or `yolo`, a stage gate shown only because its policy asked a human is approved when the policies are now `auto` (a `gate` reply still wins) and its reviewer's verdict passes, and the pipeline goes on; one shown because its verdict did not pass stays with its human, as it would in auto, and a switch back to default decides no gate. A round whose asking run read the policy before the switch and had not yet ended on it stays with its human too. Exactly two words, the mode one of the four, case ignored, so an answer that starts with "mode" stays an answer. Works while a stage runs. Refused, changing nothing, for the mode in effect, once emission has started (the sign-off approved) and after the pipeline ended. The stored mode survives a reopen: a later start's mode is ignored, as its cap is. Each reply is a `mode` event with the switch, or the refusal's reason (`unchanged`, `emission_started`, `ended`). |
 | `resume`, `continue`          | Runs the stopped stage again once, as a retry message would but storing no note (see below); a stage the cap stopped runs too and meets the cap again. The whole message, case ignored, so an answer that starts with either word stays an answer. While a run is in flight, or where nothing is stopped (an open gate, the mockup offer, a round waiting for answers, the sign-off, an ended pipeline, no need yet), nothing starts and the panel says so. Each reply is a `resume` event with the stage it runs again, or with `nothing` and the stage `running`, if any. |
-| `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, the mockup version a use took carrying its `chosen` as the sheet shows it, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository arrives with outcomes in slice 4. |
-| `outcomes`                    | Runs the Outcomes stage on the emitted cards.                           |
-| `lessons`                     | Lists lessons and their state.                                          |
+| `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, the mockup version a use took carrying its `chosen` as the sheet shows it, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository is still to come. |
+| `retrospective`               | Judges the emitted cards that struggled and proposes lessons (see Learning). The whole message, case ignored. |
+| `lessons`                     | Lists every lesson of every blueprint with its state, scope, rationale and evidence card ids. Works in any state and while a run is in flight. |
 | `abort`                       | Ends the open run; the blueprint stays and can be reopened, and an open round stays open. |
 
 - Under a blueprint cost cap a run starts only with its floor left: the
-  median cost of the blueprint's done runs of its kind (stage, reviewer or
-  responder) and stage, never less than $0.10. The floor bounds what the
+  median cost of the blueprint's done runs of its kind (stage, reviewer,
+  responder or retro) and stage, never less than $0.10. The floor bounds what the
   blueprint cap has left, compared in whole cents, never the per-run cap. A stage or reviewer run the
   blueprint cap refuses (spent, below the floor, or on a model without a
   price), or one cut short at what the blueprint had left because that was
@@ -1416,14 +1475,18 @@ the mockup reply (see Mockups):
   its earlier runs got and who gave each; a reopen that comes while that run
   still winds down waits for it first. A round outlives End, a restart and
   days away: its stored answers stay, a reopen shows it again with them, and
-  it waits; a chat message that a chat run cut short by the session's end
-  or a restart left unanswered is answered first. A continuation that the
+  it waits; a lesson round is not shown again, as Learning says; a chat
+  message that a chat run cut short by the session's end or a restart left
+  unanswered is answered first. A continuation that the
   session's end or a restart cut short runs again on reopen from the same
   stored conversation, and a round that
-  closed but never continued continues; a close cut short finishes, and no
+  closed but never continued continues; a close cut short finishes (not a lesson round's: a crash between its
+  answers snapshot and its closed snapshot is not finished, and lessons whose
+  decisions a crash cut short stay proposed), and no
   answer is recorded twice. An abort ends a run in flight, never a round. A
   round the pipeline went past without its answers, as when the run that
-  posted it never recorded its end, is collapsed in the panel, and its stage
+  posted it never recorded its end, is collapsed in the panel (a lesson
+  round never is), and its stage
   runs again as any stage cut short does. An aborted stage waits for the
   next message or `continue`, as below.
 - After a later stage fails or is aborted, the next message is logged as a
@@ -1474,7 +1537,9 @@ frames on the session's chat stream.
   responder, and is done once a use or skip settles it), attempt, a loop stage's round of its
   maximum, latest version and cost. The view also carries the run in flight
   (stage, kind, persona, model, start, and the turns, tool calls and tokens
-  its harness lines have counted), the open prompt (`round:<n>` of kind
+  its harness lines have counted; a retrospective's run is no current run,
+  and every step stays as the pipeline left it, but its spend counts in the
+  in-flight cost), the open prompt (`round:<n>` of kind
   `round`, `gate:<stage>:v<n>`, `gate:<stage>:<slice>:v<n>` for a per-slice
   gate, `gate:signoff:v<n>`, `mockup:offer` of kind `gate` while the mockup
   offer waits, `mockup:<n>` of kind `mockup` while a revision waits for the
@@ -1492,7 +1557,8 @@ frames on the session's chat stream.
   see Mockups), and its
   stage's step reads as an auto round's would at the same point: running, or
   revising in a builder round, while the responder answers, and as after an
-  aborted run of its stage once an abort stops the responder.
+  aborted run of its stage once an abort stops the responder. An open
+  lesson round is no open prompt (see Learning).
   Every artifact version is listed with its
   status (current, reviewing, at_gate, approved, rejected, superseded,
   folded; a mockup's revisions as Mockups says), who decided
@@ -1742,11 +1808,11 @@ internal/store       SQLite: schema, append-only tables, queries
 internal/code        workspace checkout and repo_info
 internal/research    web_search and web_fetch, the leak guard, the public-only fetcher, the search provider
 internal/cm          MCP client: the project list, the stage read tools, and the card, playbook and run calls emission makes
-internal/outcomes    outcomes stage and lessons
+internal/retro       the retrospective's struggle rules, findings, task and lesson questions
 internal/export      markdown rendering into the state directory
 internal/config
 internal/buildinfo   build version, commit and time (ldflags) and the embedded merge history
-internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, resume and continue commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
+internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, mode, resume, continue, retrospective and lessons commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
 ```
 
 ## Changes needed in CM
@@ -1759,7 +1825,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Panel: a new-session dialog for blueprints with a multi-project picker, mode and cost cap | slice 0 |
 | The git-credentials endpoint treats an attached architect session as live | slice 1 |
 | CM re-sends the start to an architect session after the architect restarts: on a 404 `not_found` for a message (then re-sends the message once), and when the log stream ends | slice 2 |
-| Panel: question and gate prompts (`LogEntry.Prompt`, protocol v0.24.0, with their own text, kind and recommended option from v0.25.0) rendered as buttons; the gate plan stays text, and lesson prompts reuse the same shape | slice 3 (lessons slice 4) |
+| Panel: question and gate prompts (`LogEntry.Prompt`, protocol v0.24.0, with their own text, kind and recommended option from v0.25.0) rendered as buttons; the gate plan stays text, and lesson prompts reuse the same shape | slice 3; the lesson round reuses the round prompt |
 | Panel: the blueprint pane (scale bar, sheet, transcript markers), read through CM proxies of the architect's signed view and artifact endpoints, with its live stream relayed on the session's chat stream (protocol v0.26.0) | blueprint UI |
 | A research setting (`off` or `search`, off by default) with the search provider and its key in CM's configuration, sent as `ArchitectStart.Research` (protocol v0.27.0) | research |
 | Panel: clicking the cost in the sheet header asks for a new cap and sends `cap <usd>` or `cap off` as a chat message hidden from the transcript | cost cap |
@@ -1803,7 +1869,8 @@ Ordered so a real card comes out as early as possible.
 3. **Dialog stages.** Intake, slicing, solution design, acceptance; `human`
    and `auto` responders; gates. In CM: typed question and gate entries
    rendered with buttons.
-4. **Outcomes and lessons**, with pack overlays, and the per-project export
+4. **The retrospective and lessons**, with pack overlays (approval built,
+   applying them to later blueprints still to come), and the per-project export
    opt-in that commits the bundle to a repository through an allowlist of
    target repositories.
 5. **Later**: a gate inbox in CM's web UI;

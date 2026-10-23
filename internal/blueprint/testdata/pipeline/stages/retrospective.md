@@ -1,0 +1,1 @@
+Judge each listed card.
