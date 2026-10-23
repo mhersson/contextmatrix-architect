@@ -439,34 +439,38 @@ any card is written.
 **Grounding** runs once per slice, right after its design. The senior developer
 reads a copy of the code and checks what the design takes for granted: that the
 files and functions it names exist as it says, how the project builds and runs
-its tests (its verify command), whether the code has an instruction file for the
-agent, and which of the blueprint's assumptions the code confirms or
-contradicts. It also looks on the board for open cards that already cover part
-of the need.
+its tests (its verify command), whether the code has an **instruction file**, a
+file that tells the agent how the project is laid out and how to work on it,
+and which of the blueprint's assumptions the code confirms or contradicts. It
+also looks on the board for open cards that already cover part of the need.
+
+![SL1's Grounding sheet: a table with the project recipe-box, its checkout 447af66, Verify reading none declared; the repository documents python3 -m unittest, and Instructions none; under Verified, A1: the repository holds only a README titled recipe-box, with no code, stack, instruction file or verify command; a folded Written grounding; and the title block Drawn by Senior developer, Checked by Contract checks, Status Done](images/22b-grounding-sheet.png)
 
 Grounding asks you nothing and has no gate, so in the example it ran without
-stopping. Its result is on the **Grounding** sheet: a table with the version of
-the code it checked, the verify command and the instruction file for each
-project, then the assumptions it found **Verified** or **Contradicted**. Each
-verdict also sets that assumption's status in the list the sign-off shows you
-(chapter 14).
+stopping. The **Grounding** sheet's table gives, for each project, the version
+of the code it checked, the verify command declared in ContextMatrix and the
+instruction file: recipe-box had neither yet. Under **Verified** come the
+assumptions the code confirmed, with what was found, here A1: the repository
+held only a short description file. A **Contradicted** list appears when the
+code says otherwise. Each verdict also sets that assumption's status in the
+list the sign-off shows you (chapter 14).
 
-For recipe-box it confirmed that the repository held only a short description
-file: no code yet, no verify command and no instruction file. That is what a new
-project looks like, and the cards set up what is missing (chapter 12).
+That is what a new project looks like, and the cards set up what is missing
+(chapter 12).
 
 ## 11. What done means
 
 This step writes down, for each slice, how anyone can tell that it works.
 
-![The Acceptance sheet for SL1 with an Approved automatically stamp: four criteria AC1 to AC4, each with its project recipe-box and the outcomes it proves, AC3 and AC4 inside dashed revision clouds, then the first two of four manual checks, MC1 and MC2](images/26a-acceptance-sheet.png)
+![The Acceptance sheet for SL1 with an Approved automatically stamp: four criteria AC1 to AC4, each with its project recipe-box and the outcomes it proves, AC3 and AC4 inside dashed revision clouds, then the first two of four manual checks, MC1 and MC2](images/23a-acceptance-sheet.png)
 
 In **Acceptance** the senior developer writes the slice's **acceptance
 criteria**: tests or commands the agent runs in the project's code, each naming
 its project and the measurable outcomes it proves. SL1 got four. A check only a
-person can make, or one that needs the app running, becomes a **manual check**
-instead (MC1 to MC4 here). The playbook will stop at each one until a person
-has tried it and ticked it off (chapter 15).
+person can make, such as trying the real app in a browser, or one that needs a
+live system, becomes a **manual check** instead (MC1 to MC4 here). The playbook
+will stop at each one until a person has tried it and ticked it off
+(chapter 15).
 
 Then comes the **edge-case sweep**. The architect keeps a list of the unusual
 cases software tends to meet: empty or missing input, a failure part way
@@ -475,10 +479,11 @@ new one, and limits such as the largest upload. For each case the slice names
 the criterion or manual check that covers it, or says in a sentence why it needs
 none, and the sheet lists the result under **Edge cases**. A slice whose
 projects are all proofs of concept skips the sweep, since a POC's cards ask for
-the main behaviour and not for hardening. recipe-box is a POC, so neither slice
-had one. See [POC projects](reference.md#poc-projects).
+the main behaviour and not for hardening, the extra guards against unusual
+cases. recipe-box is a POC, so neither slice had one. See
+[POC projects](reference.md#poc-projects).
 
-![The chat during SL2's acceptance: the tester's review of rev 1 sent back with 6 new findings in round 1 of 3, Acceptance SL2 rev 2 Revised for the 6 findings, the review of rev 2 passed with 6 fixed in round 2 of 3, and the line Acceptance (SL2) passed its gate under the auto policy](images/23a-acceptance-sent-back.png)
+![The chat during SL2's acceptance: the tester's review of rev 1 sent back with 6 new findings in round 1 of 3, Acceptance SL2 rev 2 Revised for the 6 findings, the review of rev 2 passed with 6 fixed in round 2 of 3, and the line Acceptance (SL2) passed its gate under the auto policy](images/23b-acceptance-sent-back.png)
 
 The **tester**, the AI role that reads the criteria as someone who must write
 the tests from them, reviews each version. In Default mode Acceptance's gate is
@@ -500,21 +505,20 @@ can, each one piece of work the agent can finish in one go. Every card has the
 same parts: **Context** (why it exists), **Where** (the files and functions it
 changes, and the files it creates), **Solution** (the decided approach),
 numbered **Acceptance criteria** (each criterion of the slice sits on exactly
-one card), **Tests expected** and **Out of scope**. The manual checks become
-**manual steps** (M1, M2 and so on), placed in the run order among the cards,
-as in chapter 1's picture.
+one card), **Tests expected** and **Out of scope**. Each manual check gets an
+id (M1, M2 and so on) and a place in the run order among the cards, as in
+chapter 1's picture.
 
-![The top of the Cards sheet for SL1: the slice tabs, then a summary saying SL1 is two cards in recipe-box plus four manual checks, that D1 builds the backend and also adds AGENTS.md as the setup instruction card, that D2 builds the page from the approved mockup's screens, and that the verify command is python3 -m unittest](images/25a-cards-summary.png)
+![The top of the Cards sheet for SL1: the slice tabs, then a summary saying SL1 is two cards in recipe-box plus four manual checks, that D1 builds the backend and also adds AGENTS.md as the setup instruction card, that D2 builds the page from the approved mockup's screens, and that the verify command is python3 -m unittest](images/24a-cards-summary.png)
 
 The Cards sheet opens with a summary. The project lacked two things the agent
-needs, and the cards supply them. recipe-box had no **instruction file**, a file
-in the code that tells the agent how the project is laid out and how to work on
-it, so D1 also writes one (AGENTS.md), and every other card comes after it. It
-had no verify command either, so the architect proposed one,
-`python3 -m unittest`, and every card runs it among its criteria. The sign-off
-asks you to set it in ContextMatrix (chapter 14).
+needs, and the cards supply them. recipe-box had no instruction file, so D1
+also writes one (AGENTS.md), and every other card comes after it. It had no
+verify command either, so the architect proposed one, `python3 -m unittest`,
+and every card runs it among its criteria. The sign-off asks you to set it in
+ContextMatrix (chapter 14).
 
-![The rest of the Cards sheet: D1 and D2, each with recipe-box, feature and high, the number of places and criteria, no dependencies for D1 and after D1 for D2, and a Card body toggle; the title block reads Drawn by Senior developer, Checked by Contract checks, Status Done](images/25b-cards-list.png)
+![The rest of the Cards sheet: D1 and D2, each with recipe-box, feature and high, the number of places and criteria, no dependencies for D1 and after D1 for D2, and a Card body toggle; the title block reads Drawn by Senior developer, Checked by Contract checks, Status Done](images/24b-cards-list.png)
 
 Each card is listed with its project, kind and priority, how many places in the
 code it touches, how many criteria it carries and the card it comes after;
@@ -524,10 +528,10 @@ Each time the senior developer hands in the cards, the architect checks them
 against its own rules for cards, the **contract checks** ("Checked by Contract
 checks" in the title block). Every part is there. Every file named under Where
 exists in the code, and every file marked new does not yet. Each criterion sits
-on exactly one card, and each manual check has its manual step. No card points
-at text it does not carry, and no wording would make the agent take a new
-feature for a bug fix. A draft that breaks a rule goes back with the list of
-problems. If the cards still fail after three tries, the blueprint ends; see
+on exactly one card, and each manual check has its place in the run order. No
+card points at text it does not carry, and no wording would make the agent take
+a new feature for a bug fix. A draft that breaks a rule goes back with the list
+of problems. If the cards still fail after three tries, the blueprint ends; see
 [When a blueprint stops](reference.md#when-a-blueprint-stops).
 
 Cards that build a screen of the mockup you chose carry that mockup: when the
@@ -539,7 +543,7 @@ so the agent builds what you tried. Here D2 builds SL1's screens from it.
 This step checks every card once more, all slices together, before you see the
 plan.
 
-![The Readiness sheet: Round 1 of 3, then D1, D2, D3 and D4 each marked Ready, and a folded Written readiness](images/24-readiness-sheet.png)
+![The Readiness sheet: Round 1 of 3, then D1, D2, D3 and D4 each marked Ready, and a folded Written readiness](images/25-readiness-sheet.png)
 
 **Readiness** comes after the last slice's cards are written. Its reviewer
 reads each card with the code open and asks: could an agent with only this
@@ -548,7 +552,7 @@ each card is one piece of work, leaves no decision open, adds nothing the plan
 does not ask for and does not repeat an open card on the board. Then it looks
 across the whole plan for parts that disagree, such as a decision and a card
 that say different things, or an outcome no criterion proves. For a POC project
-it judges the cards on how clear and buildable they are, not on hardening.
+it judges the cards on how clear and buildable they are, not on extra guards.
 
 A card that is not ready goes back to Decomposition with the reviewer's
 findings: its slice's cards are written again, and so are the cards of every
@@ -559,14 +563,14 @@ open findings**); a critical problem across the plan does the same (**Approve
 over critical findings**).
 
 In the example every card was ready in round 1. Readiness asks you nothing and
-has no gate. If a run fails or the cost cap runs out on the way, see
-[When a blueprint stops](reference.md#when-a-blueprint-stops).
+has no gate. If one of the architect's AI runs fails, or the cost cap runs out
+on the way, see [When a blueprint stops](reference.md#when-a-blueprint-stops).
 
 ## 14. Sign-off
 
 This step is your last word before the cards go on the board.
 
-![The sign-off in the chat: Sign-off. Readiness passed the cards. In playbook order: D1 and D2 with their project, kind and priority, D1 also writes AGENTS.md, and the start of manual check M1; a Read more link and the buttons Approve and Reject](images/23b-signoff-chat.png)
+![The sign-off in the chat: Sign-off. Readiness passed the cards. In playbook order: D1 and D2 with their project, kind and priority, D1 also writes AGENTS.md, and the start of manual check M1; a Read more link and the buttons Approve and Reject](images/26a-signoff-chat.png)
 
 In Default mode the **sign-off** waits for you. Its message says what Readiness
 found ("Readiness passed the cards.") and lists the cards and manual checks in
@@ -574,7 +578,7 @@ run order. **Read more** opens the rest: the playbook's title, the assumptions
 the plan rests on, riskiest first, and the result of the **preflight**, a last
 check that every card's project exists in ContextMatrix with a code repository.
 
-![The Sign-off sheet: Run order, 10 as playbook Recipe box, a table of steps 1 to 4 with D1 and D2 marked feature and M1 and M2 marked manual, each with what it does](images/23c-signoff-sheet.png)
+![The Sign-off sheet: Run order, 10 as playbook Recipe box, a table of steps 1 to 4 with D1 and D2 marked feature and M1 and M2 marked manual, each with what it does](images/26b-signoff-sheet.png)
 
 The **Sign-off** sheet shows the same. **Run order** lists the ten steps of the
 playbook "Recipe box": the four cards (feature) and the six manual checks
@@ -626,7 +630,7 @@ $3.16 of the $10 cap. The agent's work on the cards is not part of that cost;
 ContextMatrix's own limits cover it. See
 [The cost cap](reference.md#the-cost-cap).
 
-![The recipe-box board in ContextMatrix: no agents live and 4 open, and the four cards RECIPEBO-001 to RECIPEBO-004 in the Backlog column](images/28-project-board.png)
+![The recipe-box board in ContextMatrix: no agents live and 4 open, the Active agents, In flight and Stalled counters at 0, and the four cards RECIPEBO-001 to RECIPEBO-004 in the Backlog column beside the empty In progress and Blocked columns](images/28-project-board.png)
 
 On the recipe-box board the four cards wait in the Backlog column.
 
@@ -648,12 +652,18 @@ state, and the manual checks, each with a box to tick.
 
 ### Before the run
 
+The sign-off's manual step comes first. On the recipe-box board, click
+**Settings** at the top right:
+
+![The top right of the recipe-box board: Console, Settings and New Card](images/30a-board-settings.png)
+
+Then open the **Execution** tab:
+
 ![recipe-box's Project Settings on the Execution tab: Proof of concept project ticked, the worker images, and under Verify the Verify command python3 -m unittest](images/31-verify-command.png)
 
-The sign-off's manual step comes first. On the recipe-box board, click
-**Settings**, open the **Execution** tab, enter `python3 -m unittest` under
-**Verify command** and click **Save changes**. The same tab holds the **Proof of
-concept project** switch that makes recipe-box a POC. See ContextMatrix's
+Enter `python3 -m unittest` under **Verify command** and click **Save
+changes**. The same tab holds the **Proof of concept project** switch that makes
+recipe-box a POC. See ContextMatrix's
 [Projects](https://github.com/mhersson/contextmatrix/blob/main/docs/web-ui.md#projects).
 
 ### Starting the run
@@ -683,13 +693,14 @@ has no commits yet; see [Modes](reference.md#modes).
 While the session is open, the architect **watches** the cards. It checks the
 board every minute by default and posts a line when a card's state, its
 **worker** (the agent's run on it) or its **phase** (the step the agent is on)
-changes, when a card gets a pull request, and when the playbook's run changes.
+changes, when a card gets a **pull request** (the agent's proposed change,
+waiting to be merged), and when the playbook's run changes.
 
 ### When a card's run fails
 
 ![The watch line Playbook recipe-box needs a human: RECIPEBO-001 worker failed. Fix it, then Stop and Play the playbook in ContextMatrix.](images/34b-watch-card-failed.png)
 
-If a card's run fails, the playbook stops and waits, and the watch tells you
+If a card's run fails, the playbook pauses and waits, and the watch tells you
 what to do.
 
 ![The Run box: waiting for you, Waiting for you: RECIPEBO-001 worker failed, and a Stop button](images/35-playbook-waiting.png)
@@ -773,7 +784,10 @@ to you. See ContextMatrix's
 ![The Board sheet at the end: RECIPEBO-001 to RECIPEBO-004 each done with a Pull request link, a Compare link for recipe-box, the setup steps and The architect's runs cost $3.16.](images/39a-board-sheet-done.png)
 
 The Board sheet now shows every card done, each with its pull request, and a
-**Compare** link for each repository. The summary ends with three ways on:
+**Compare** link for each repository: the same link to its final pull request,
+not the Compare box of chapter 9.
+
+The closing summary ends with three ways on:
 
 - `export` writes the blueprint's whole record as text files on the architect's
   server: a summary with every decision, every sheet, the questions and
@@ -796,37 +810,26 @@ write better ones.
 
 Reply `retrospective` once the cards are on the board, and the architect reads
 every card it emitted and how its run went. A card **struggled** when its work
-went through two or more review rounds, when it got stuck (parked, stalled or
-blocked in ContextMatrix) or was dropped (not planned), or when it cost at
-least three times what a typical card did. In the example none did, and
-`lessons` found none either.
+went through two or more review rounds, when it got stuck in ContextMatrix
+(stalled, blocked, or **parked**: set aside by the agent for a person) or was
+dropped (not planned), or when it cost at least three times what a typical card
+did. In the example none did, and `lessons` found none either.
 
-When cards struggle, an AI run judges each one, paid from the cost cap: it says
-whether the card was at fault, with the rule it concerns and the evidence from
-the card. For a card at fault it proposes a **lesson**, numbered L1, L2 and so
-on: a rule for writing and checking later cards. A **lesson round** follows,
-one question per lesson, with three options:
+When cards struggle, an AI run paid from the cost cap judges each one and, for
+a card at fault, proposes a **lesson** (L1, L2 and so on): a rule for writing
+and checking later cards. A **lesson round** then asks about each lesson. It
+looks and works like the rounds in chapter 5, with three options: **Approve
+for** the card's project, **Approve for the whole pack** (every later
+blueprint, whatever its project) or **Reject**. Your own words reword a lesson
+and approve it at the scope it proposed. Only blueprints created afterwards get
+an approved lesson.
 
-- **Approve for** the project of the card that struggled, such as recipe-box:
-  later blueprints for that project get the lesson.
-- **Approve for the whole pack**: every later blueprint gets it, whatever its
-  project. The pack is the architect's set of rules and instructions.
-- **Reject**.
-
-Your own words reword the lesson and approve it at the scope it proposed.
-Nothing a model proposes takes effect until you approve it, and an approved
-lesson reaches only blueprints created afterwards, where it guides how their
-cards are written and checked.
-
-`lessons` lists every lesson from every blueprint, with its state, its scope,
-why it was proposed and the cards behind it. `retire L<n>`, such as
-`retire L3`, retires an active lesson: blueprints created afterwards no longer
-get it. See [Commands](reference.md#commands) and
-[In a question round](reference.md#in-a-question-round).
-
-The architect also offers the retrospective by itself the first time the watch
-sees a card parked, stalled or blocked. If a retrospective stops, reply
-`retrospective` to run it again; see
+`lessons` lists every lesson, and `retire L<n>`, such as `retire L3`, retires
+an active one, so later blueprints no longer get it; see
+[Commands](reference.md#commands) and
+[In a question round](reference.md#in-a-question-round). The architect also
+offers the retrospective when the watch first sees a card parked, stalled or
+blocked, and a retrospective that stops runs again on `retrospective`; see
 [When a blueprint stops](reference.md#when-a-blueprint-stops).
 
 ## 18. Reading the sheet
@@ -846,7 +849,7 @@ step with a gate. Hover over a segment for its name, role, status and cost, and
 click a done one to open its sheet. Beside the bar a line says what the current
 step is doing or waiting for.
 
-![The right end of the scale bar at the end of the example: Emission, Cards on the board, then Default above Mode locked, and $3.16 of $10.00 above a thin meter](images/39c-scale-bar-end.png)
+![The right end of the scale bar at the end of the example: Emission, Cards on the board, then Default above Mode locked, and $3.16 of $10.00 above a thin meter](images/40a-scale-bar-end.png)
 
 At the right end are the mode and the cost against the cap; click either to
 change it. Once the sign-off is approved the mode reads **Mode locked**. The
@@ -864,7 +867,7 @@ tabs (chapter 9). With one slice nothing about slices shows.
 
 ### The title block
 
-![A title block: Sheet Board, Rev 1, Drawn by The architect, Checked by Contract checks, Status Done](images/39d-title-block.png)
+![A title block: Sheet Board, Rev 1, Drawn by The architect, Checked by Contract checks, Status Done](images/40b-title-block.png)
 
 At the foot of every sheet: which sheet it is, the version shown (**Rev**, a
 list when there are several, with **Compare** beside it), who drew it, who
@@ -873,7 +876,7 @@ AI reviewer reads that sheet, only the architect's own rules (chapter 12).
 
 ### Stamps
 
-![The head of the Acceptance sheet for SL1 with a stamp reading Approved automatically](images/26b-stamp.png)
+![The head of the Acceptance sheet for SL1 with a stamp reading Approved automatically](images/40c-stamp.png)
 
 A decided version carries a stamp: **Approved**, by you with the time or
 automatically as here; **Rejected**, by you; **Superseded**, by a newer
@@ -881,7 +884,7 @@ version; or **Folded**, decided at the design's gate.
 
 ### Revision clouds and Compare
 
-![Criterion AC3 inside a dashed revision cloud, with a small triangle holding 2 in the margin](images/26c-revision-cloud.png)
+![Criterion AC3 inside a dashed revision cloud, with a small triangle holding 2 in the margin](images/40d-revision-cloud.png)
 
 On a newer version, each part that changed sits in a dashed cloud, with the
 version number in a small triangle in the margin: here AC3 in version 2 of SL1's
