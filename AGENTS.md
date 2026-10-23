@@ -53,7 +53,8 @@ specification and must stay true at HEAD.
 
 ### Documentation
 
-- Every statement matches the code at HEAD; a change that makes a doc line false updates it in the same commit.
+- Every statement matches the code at HEAD, in `README.md`, `docs/guide.md`, `docs/reference.md`, `docs/installing.md` and `docs/design.md` alike; a change that makes a doc line false updates it in the same commit.
+- A screenshot in `docs/images/` is replaced when the behaviour it shows changes, not for cosmetic drift.
 - Comments explain non-obvious decisions and invariants only. No em-dashes; use hyphens.
 - Never reference plan phases, task numbers or private card IDs.
 - Never put organisation-specific hosts, keys or IDs in repo files, and never name an LLM gateway operator.
