@@ -5,48 +5,20 @@
 > This project is under heavy development. Breaking changes should be expected
 > at the current stage.
 
-Turns a stated need into a blueprint of ContextMatrix cards. Runs as a third
-ContextMatrix backend next to the agent and chat backends; ContextMatrix's
-chat panel is its client. See `docs/design.md`.
+Tell the architect what you need, in your own words. It interviews you, works
+the plan out step by step and writes the cards an AI agent can build, and you
+approve each big decision before the next step builds on it. It runs as a third
+ContextMatrix backend next to the agent and chat backends; ContextMatrix's chat
+panel is its client.
 
-## What it does today
+![The Cards sheet of an example blueprint: the first slice's two cards and the four checks a person does by hand, listed in the order they run](docs/images/01-cards-sheet.png)
 
-A blueprint session runs intake on the first message, the need. When the need
-has a screen people will use, a designer then shows a live mockup to try and
-change before the rest is designed (default mode offers it first), and the
-approved design reaches the later stages and every card of each slice that
-builds one of its screens.
-Slicing then cuts the need into ordered slices, the thinnest working version
-first, and waits at its gate. With two or more slices, shared decisions settles what every slice
-shares and waits at its gate; then solution design, grounding, acceptance and
-decomposition run once per slice in slicing's order, each slice reading the
-shared decisions and every earlier slice's design, acceptance and cards, with a
-gate at each slice's design. With one slice the shared decisions are skipped,
-slicing's gate folds into the slice's design gate when both have the same
-policy, and that design settles the shared decisions too. Solution design,
-grounding, decomposition and readiness work over read-only checkouts of the
-target projects' repositories, and acceptance writes the criteria each card must
-carry. Every decomposition submit is checked against the card contract inside
-the run, including that every criterion maps to exactly one card, and readiness
-judges every slice's cards and sends one that is not ready back to its slice's
-decomposition, and every later slice's, for up to three rounds. The session then
-reports whether the cards are ready. Ready cards go to sign-off: reply approve
-to create them in ContextMatrix, with one playbook for two or more, or reject
-with feedback to re-run every slice's decomposition, or name a slice (reject SL2
-...) or the shared decisions to run that step and everything after it again. The
-auto+emit and yolo modes approve on their own when the preflight finds nothing
-that needs a human first; manual steps and notices it lists are shown with the
-emitted cards. In yolo mode the architect then starts the run: one card with
-run_card, several with run_playbook. If a card's repository has no commits it
-waits for a first commit and a reply of approve. While the session is open the
-architect watches the emitted cards and playbook in ContextMatrix and posts each
-change, ending with the pull requests and compare links.
+- [Guide](docs/guide.md): one real blueprint, step by step, with pictures.
+- [Reference](docs/reference.md): every reply you can type, the modes, and the marks on the sheet.
+- [Installing](docs/installing.md): what to set up before the first blueprint.
+- [Design](docs/design.md): how it works inside, for developers.
 
-In ContextMatrix's pane a blueprint session shows a scale bar of its
-pipeline, who acts and what it has spent, and a sheet with every artifact
-version, filled in live while the model writes it. ContextMatrix reads them
-through the architect's signed blueprint endpoints and live stream (see
-`docs/design.md`, "Blueprint view").
+The sections below are for whoever runs the architect.
 
 ## Run
 

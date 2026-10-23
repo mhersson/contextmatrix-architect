@@ -434,6 +434,12 @@ pane. Tabs along the top of the sheet name
 each sheet: Need, Mockup, Slices, Shared, Design, Grounding, Acceptance, Cards,
 Readiness, Sign-off and Board. A dot marks the current stage's tab.
 
+The guide shows each mark in a picture, where the example first meets it, and
+gathers them in [Reading the sheet](guide.md#18-reading-the-sheet): the
+[scale bar](guide.md#the-scale-bar), the [slice row](guide.md#the-slice-row),
+the [title block](guide.md#the-title-block), [stamps](guide.md#stamps) and
+[revision clouds and Compare](guide.md#revision-clouds-and-compare).
+
 ### The scale bar
 
 One segment per step of the pipeline, left to right.
