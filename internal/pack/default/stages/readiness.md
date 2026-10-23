@@ -36,12 +36,16 @@ tests its criteria do not demand is a finding. A criterion the card carries
 from acceptance is never a finding for being an edge case: the card must
 carry it.
 
-A project without a verify command or an instruction file is not a finding:
-the draft's `setup` covers it. Judge instead that the proposed
-`setup.<project>.verify_command` is one the repository can run once the
-cards land, and that the card named in `setup.<project>.instruction_card`
-writes AGENTS.md with the stack, the verify command, the layout and the
-conventions.
+A project without a verify command, an instruction file or a .gitignore
+that ignores what its stack writes is not a finding: the draft plans that
+setup. Judge instead that the proposed `setup.<project>.verify_command` is
+one the repository can run once the cards land, that the card named in
+`setup.<project>.instruction_card` writes AGENTS.md with the stack, the
+verify command, the layout and the conventions, and that when the
+repository does not ignore what the stack writes and the project does not
+commit, the project's first card ignores it as its first change and the
+other cards depend on that card. That .gitignore is setup, never scope the
+blueprint does not ask for.
 
 Compare each card with the open cards of its project through the cm_ tools:
 a card that duplicates an open card is not ready, and its finding names that

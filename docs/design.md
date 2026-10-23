@@ -368,7 +368,7 @@ designer (SD), senior developer (DEV), tester (TST), reviewer (REV).
 | 5  | Solution design  | SD      | need, mockup, slices, shared decisions, earlier slices | once per slice: projects involved, decisions with rejected options and their basis, contracts between the parts it builds (inside one project and across projects), how the slice builds the mockup's screens; asks a question for each decision with real alternatives; reads the code | yes       | DEV      |
 | 6  | Grounding        | DEV     | the slice's design | once per slice, per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        | -        |
 | 7  | Acceptance       | DEV     | the slice's design, grounding | once per slice: criteria checkable inside one repo; human and live checks split into manual steps | `auto` by default | TST      |
-| 8  | Decomposition    | DEV     | all above, earlier slices' cards | once per slice: draft cards with type and priority, `depends_on` per project, the mockup's screens each card builds, manual entries for human and live checks, the order, and the setup for a project without a verify command or instruction file; the last slice's draft gives the playbook title | no        | -        |
+| 8  | Decomposition    | DEV     | all above, earlier slices' cards | once per slice: draft cards with type and priority, `depends_on` per project, the mockup's screens each card builds, manual entries for human and live checks, the order, and the setup for a project without a verify command, an instruction file or a `.gitignore` that ignores what its stack writes; the last slice's draft gives the playbook title | no        | -        |
 | 9  | Readiness        | REV     | every slice's cards | contract check per card; failures loop back to 8 for the slice that holds the card and every later slice, three rounds max, then sign-off with the cards still not ready | no        | -        |
 | 10 | Sign-off         | human   | everything        | approval; then emission of one playbook                                                                | yes       | -        |
 | -  | Retrospective    | REV     | emitted cards     | one finding per struggled card, with a proposed lesson or none when the card was not at fault         | the lesson round | -  |
@@ -845,6 +845,17 @@ adds to a card that cites a source tag (see Emission).
   layout, conventions), `setup.<project>.instruction_card` names it, and
   every other card of the project depends on it. A repository that has an
   instruction file names no such card.
+- A repository that does not ignore what the stack writes when it is
+  built, installed or verified and the project does not commit (build
+  output, caches, dependency directories), because it has no `.gitignore`
+  or its `.gitignore` leaves it out: the project's first card writes or
+  extends `.gitignore` as its first change, before anything is built,
+  installed or verified, so its first commit carries it, and a criterion
+  checks that `.gitignore` ignores it; every other card of the project
+  depends on it. In a repository without an instruction file that is the
+  instruction card. The draft has no setup field for it: readiness judges
+  it from the cards. Files a repository already tracks stay tracked: the
+  agent's coder does not run git, so no card untracks them.
 
 **Target project prerequisites**
 
@@ -869,6 +880,7 @@ adds to a card that cites a source tag (see Emission).
 | Type and priority are ones the project declares                    | mechanical (`list_projects`) |
 | A card's mockup screens exist in the approved mockup               | mechanical                 |
 | No mockup block in a draft card's body                             | mechanical                 |
+| A repository whose `.gitignore` misses what the stack writes: the first card writes or extends it as its first change, every other card of the project depends on it | model-judged |
 | One deliverable, no open decisions, no optional scope              | model-judged               |
 | Builds only what the blueprint asks for; no card whose only work is documentation, tests, a guard or a proof over other cards' work, or the closing commands, except the instruction card setup asks for | model-judged |
 | Estimated planner split of two subtasks or fewer                   | model-judged               |
