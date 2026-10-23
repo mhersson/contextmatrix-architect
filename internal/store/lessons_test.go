@@ -122,6 +122,40 @@ func TestDecideLesson_DecidesAProposedLessonOnce(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestRetireLesson_RetiresOnlyAnActiveLesson(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+
+	active := addDecided(t, s, ScopePack, "", LessonActive)
+	before, err := s.GetLesson(ctx, active.ID)
+	require.NoError(t, err)
+
+	ok, err := s.RetireLesson(ctx, active.ID)
+	require.NoError(t, err)
+	assert.True(t, ok)
+
+	got, err := s.GetLesson(ctx, active.ID)
+	require.NoError(t, err)
+	assert.Equal(t, LessonRetired, got.State)
+
+	before.State = LessonRetired
+	assert.Equal(t, before, got, "only the state changes")
+
+	ok, err = s.RetireLesson(ctx, active.ID)
+	require.NoError(t, err)
+	assert.False(t, ok)
+
+	proposed := addDecided(t, s, ScopePack, "", LessonProposed)
+
+	ok, err = s.RetireLesson(ctx, proposed.ID)
+	require.NoError(t, err)
+	assert.False(t, ok)
+
+	got, err = s.GetLesson(ctx, proposed.ID)
+	require.NoError(t, err)
+	assert.Equal(t, LessonProposed, got.State)
+}
+
 // addDecided stores a lesson and decides it into state; proposed leaves it undecided.
 func addDecided(t *testing.T, s *Store, scope, project, state string) Lesson {
 	t.Helper()

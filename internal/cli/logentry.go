@@ -224,6 +224,9 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 	case blueprint.EventLessonList:
 		entry.Type = "text"
 		entry.Content = lessonListText(p)
+	case blueprint.EventLessonRetire:
+		entry.Type = "system"
+		entry.Content = lessonRetireText(p)
 	case blueprint.EventRetroReport:
 		entry.Type = "text"
 		entry.Content = retroReportText(p)
@@ -1221,6 +1224,16 @@ func lessonDecidedText(p map[string]any) string {
 	default:
 		return fmt.Sprintf("Lesson %s is approved for project %s: %s", tag, str(p["project"]), str(p["text"]))
 	}
+}
+
+// lessonRetireText renders a retire reply: the lesson retired with its text,
+// or the refusal.
+func lessonRetireText(p map[string]any) string {
+	if refused := str(p["refused"]); refused != "" {
+		return refused
+	}
+
+	return fmt.Sprintf("Retired L%.0f: %s.", num(p["lesson"]), strings.TrimSuffix(str(p["text"]), "."))
 }
 
 // lessonListText renders a lessons reply: one line per lesson with its state,

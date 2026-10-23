@@ -26,6 +26,7 @@ const (
 	CommandResume        = "resume"
 	CommandRetrospective = "retrospective"
 	CommandLessons       = "lessons"
+	CommandRetire        = "retire"
 )
 
 // commandContinue is CommandResume's synonym; ParseCommand returns
@@ -39,6 +40,9 @@ const capOff = "off"
 // exponent nor a word such as "inf" reads as one.
 var capAmount = regexp.MustCompile(`^-?(\d+(\.\d+)?|\.\d+)$`)
 
+// lessonRef is a retire reply's lesson: L and its number, lowercased.
+var lessonRef = regexp.MustCompile(`^l\d+$`)
+
 // errNoResponder tells a stage whose policy is auto, in a pack without
 // stages/responder.md, to decide a question itself; ask_questions returns it
 // as a tool error and the run goes on.
@@ -46,7 +50,8 @@ var errNoResponder = errors.New("nobody answers this stage's questions under its
 
 // ParseCommand recognises a reply that is a command rather than text for
 // the blueprint: abort, export, retrospective, lessons and resume (or its synonym
-// continue) are the whole message, a gate reply is exactly gate, a stage and
+// continue) are the whole message, a retire reply is exactly retire and a
+// lesson's L and number, a gate reply is exactly gate, a stage and
 // human or auto, a cap reply is exactly cap and an amount or off, and a mode
 // reply exactly mode and one of the modes, so an answer that starts with one
 // of these words stays an answer. Case is ignored; the arguments come back
@@ -63,6 +68,8 @@ func ParseCommand(text string) (string, []string) {
 		return CommandGate, fields[1:]
 	case len(fields) == 2 && fields[0] == CommandCap && (fields[1] == capOff || capAmount.MatchString(fields[1])):
 		return CommandCap, fields[1:]
+	case len(fields) == 2 && fields[0] == CommandRetire && lessonRef.MatchString(fields[1]):
+		return CommandRetire, fields[1:]
 	case len(fields) == 2 && fields[0] == CommandMode && protocol.ValidArchitectMode(fields[1]):
 		return CommandMode, fields[1:]
 	default:

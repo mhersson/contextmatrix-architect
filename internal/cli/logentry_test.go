@@ -249,6 +249,12 @@ func TestLogEntryFor(t *testing.T) {
 		{"an empty list of lessons", blueprint.Event{Kind: blueprint.EventLessonList, BlueprintID: "S1", Payload: map[string]any{
 			"lessons": []any{}, "message_id": "m1", "during_run": false,
 		}}, "text", []string{}, false},
+		{"a retired lesson", blueprint.Event{Kind: blueprint.EventLessonRetire, BlueprintID: "S1", Payload: map[string]any{
+			"lesson": 1, "state": "retired", "text": "Name where the key comes from", "message_id": "m1", "during_run": false,
+		}}, "system", []string{"L1", "Name where the key comes from"}, false},
+		{"a refused retire", blueprint.Event{Kind: blueprint.EventLessonRetire, BlueprintID: "S1", Payload: map[string]any{
+			"lesson": 2, "refused": "L2 is proposed; only an active lesson can be retired.", "message_id": "m1", "during_run": false,
+		}}, "system", []string{"L2 is proposed; only an active lesson can be retired."}, false},
 		{"a retrospective's findings", blueprint.Event{Kind: blueprint.EventRetroReport, BlueprintID: "S1", Payload: map[string]any{
 			"run": 7, "read": 4, "struggled": 2, "cards": []any{
 				map[string]any{

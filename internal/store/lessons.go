@@ -196,6 +196,23 @@ func (s *Store) DecideLesson(ctx context.Context, id int64, d LessonDecision) (b
 	return n == 1, nil
 }
 
+// RetireLesson sets an active lesson retired and changes no other column. It
+// reports false, with no change, when the lesson is missing or not active.
+func (s *Store) RetireLesson(ctx context.Context, id int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE lessons SET state = ? WHERE id = ? AND state = ?`,
+		LessonRetired, id, LessonActive)
+	if err != nil {
+		return false, fmt.Errorf("store: retire lesson %d: %w", id, err)
+	}
+
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("store: retire lesson %d: %w", id, err)
+	}
+
+	return n == 1, nil
+}
+
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanLesson(r rowScanner) (Lesson, error) {

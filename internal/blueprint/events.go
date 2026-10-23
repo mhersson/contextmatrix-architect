@@ -158,6 +158,11 @@ const (
 	// ids and decider, the reply's message id and whether a run goes on
 	// working after it.
 	EventLessonList = "lesson_list"
+	// EventLessonRetire is the reply to a retire reply: the lesson's id, its
+	// new state and text when it was retired, or the refusal sentence (and
+	// the id, where the lesson exists) when it was not, the reply's message id
+	// and whether a run goes on working after it.
+	EventLessonRetire = "lesson_retire"
 	// EventEnded records that CM ended the session; the blueprint persists.
 	EventEnded = "session_ended"
 	// EventHarness wraps one raw harness JSONL line; the payload is the line.
