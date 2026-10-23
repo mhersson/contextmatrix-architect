@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slices 0 to 3 are implemented: slice 2 signs off ready cards, emits them and a playbook into CM, starts them in yolo mode and reports their run, and slice 3 adds the dialog stages (intake's questions, slicing, solution design, acceptance) with a responder policy per stage, the human and auto responders, reviewer runs with the critique loop, gates with slicing's folding into solution design, CM prompts, notes that reach later stages and assumptions with grounding's verdicts. A big need is worked piece by piece: slicing orders the slices, shared decisions settles what they share and collapses for one slice, design, grounding, acceptance and decomposition run once per slice, and readiness, one sign-off and one playbook cover every card. The retrospective and lesson approval (slice 4) are built: a `retrospective` reply judges the emitted cards that struggled and the operator decides its lessons, which take effect on no blueprint yet. Applying them and the export's commit to a repository are still to come; the export writes the bundle under the state directory.
+Status: agreed design, 2026-10-15. Slices 0 to 3 are implemented: slice 2 signs off ready cards, emits them and a playbook into CM, starts them in yolo mode and reports their run, and slice 3 adds the dialog stages (intake's questions, slicing, solution design, acceptance) with a responder policy per stage, the human and auto responders, reviewer runs with the critique loop, gates with slicing's folding into solution design, CM prompts, notes that reach later stages and assumptions with grounding's verdicts. A big need is worked piece by piece: slicing orders the slices, shared decisions settles what they share and collapses for one slice, design, grounding, acceptance and decomposition run once per slice, and readiness, one sign-off and one playbook cover every card. The retrospective and lesson approval (slice 4) are built: a `retrospective` reply judges the emitted cards that struggled and the operator decides its lessons, whose list additions reach the blueprints created afterwards. Their text reaching decomposition's and readiness's instructions, retiring a lesson and the export's commit to a repository are still to come; the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -694,7 +694,9 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
 - A lesson that extends a list carries its additions as an overlay stored in
   SQLite with the lesson; the pack's lists merged with overlays, pack entries
   first and an edge case the merged lists already hold left out, are checked
-  by the loader's own list parser, so a lesson never needs a code change.
+  by the loader's own list parser. They are each blueprint's lists: the pack's
+  merged with the overlays of its lesson set, at each read, wherever the
+  pack's lists are read, so a lesson never needs a code change.
 - Pack prose is never tested. Tests check only that a pack parses and that
   every stage, persona and list reference resolves.
 
@@ -1383,7 +1385,9 @@ It never runs on its own.
   taken in the transaction that inserts the blueprint. A reopen never changes
   it, and a lesson approved or retired later reaches only blueprints created
   afterwards (a retired lesson stays in the sets that hold it). A blueprint
-  from before the store's v7 has none.
+  from before the store's v7 has none. Every card of a blueprint is checked
+  against its merged lists, a lesson retired later included; the checks are
+  not project-aware.
 - Reading the cards needs no CM change: the architect knows its card ids
   and reads them with `get_card` only. A CM card-creator field comes later,
   to compare architect cards with human-written ones across the whole board.
@@ -1875,8 +1879,8 @@ Ordered so a real card comes out as early as possible.
 3. **Dialog stages.** Intake, slicing, solution design, acceptance; `human`
    and `auto` responders; gates. In CM: typed question and gate entries
    rendered with buttons.
-4. **The retrospective and lessons**, with pack overlays (approval built,
-   applying them to later blueprints still to come), and the per-project export
+4. **The retrospective and lessons**, with pack overlays (approval and list
+   additions built, lesson text in instructions and `retire` still to come), and the per-project export
    opt-in that commits the bundle to a repository through an allowlist of
    target repositories.
 5. **Later**: a gate inbox in CM's web UI;

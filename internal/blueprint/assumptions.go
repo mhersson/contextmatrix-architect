@@ -684,9 +684,12 @@ func briefAssumptionLines(list []assumption) string {
 // accepted assumptions, or that restate one an earlier step states or
 // another step's tab accepted, as boundedValidator bounds it.
 func (c *Controller) assumptionsValidator(bp store.Blueprint, key string) (func(context.Context, stage.Artifact) error, *validatorState) {
-	lists := c.opts.Pack.Lists()
-
 	return boundedValidator("assumptions", func(ctx context.Context, a stage.Artifact) ([]string, error) {
+		lists, err := c.listsFor(ctx, bp)
+		if err != nil {
+			return nil, err
+		}
+
 		questions, err := c.opts.Store.ListQuestions(ctx, bp.ID)
 		if err != nil {
 			return nil, fmt.Errorf("read the questions: %w", err)

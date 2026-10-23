@@ -189,6 +189,13 @@ func (c *Controller) retroPass(runCtx context.Context, r *run, sess *session, bp
 		}
 	}
 
+	lists, err := c.listsFor(bg, bp)
+	if err != nil {
+		stop(retroStopped, stoppedText(err))
+
+		return
+	}
+
 	var runID int64
 
 	out, err := c.runSide(runCtx, r, sess, bp, sideRun{
@@ -196,7 +203,7 @@ func (c *Controller) retroPass(runCtx context.Context, r *run, sess *session, bp
 		started: func(id int64) { runID = id },
 		in: stage.Input{
 			Stage: RetroStage, Persona: c.opts.Pack.Persona(pack.RetroPersona), Instructions: c.opts.Pack.RetroInstructions(),
-			Task: retro.TaskFor(struggled, c.opts.Pack.CardTemplate(), c.opts.Pack.Lists(), c.opts.Pack.Instructions(c.readinessStage())),
+			Task: retro.TaskFor(struggled, c.opts.Pack.CardTemplate(), lists, c.opts.Pack.Instructions(c.readinessStage())),
 			Validate: func(_ context.Context, a stage.Artifact) error {
 				_, err := retro.ParseFindings(a.Data, struggled)
 
