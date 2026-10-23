@@ -434,7 +434,7 @@ func retroCapText(stop *capStop) string {
 	case stop.lifted:
 		return text + " The cap is now off: reply `retrospective` again."
 	default:
-		return text + " Raise the cap by clicking the cost in the header (or reply `cap <usd>`), then reply `retrospective` again."
+		return text + " Raise the cap by clicking the cost on the scale bar (or reply `cap <usd>`), then reply `retrospective` again."
 	}
 }
 

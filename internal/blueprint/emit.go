@@ -23,7 +23,7 @@ import (
 var errNoCMClient = errors.New("blueprint: emission needs the ContextMatrix client")
 
 // cmWriteTimeout bounds one ContextMatrix write of emission. It covers CM's
-// own bound on run_playbook, three minutes, as Play can wait behind a Stop
+// own bound on run_playbook, three minutes, as a Run can wait behind a Stop
 // of the same playbook.
 const cmWriteTimeout = 4 * time.Minute
 
