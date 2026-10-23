@@ -29,7 +29,10 @@ You run a blueprint from its chat in ContextMatrix. Most replies are buttons,
 and a click sends the reply for you. What a gate's buttons send can also be
 typed, and the commands below can only be typed; answers to a round, and the
 choices described under [The mockup](#the-mockup), have buttons of their own.
-Capital letters never matter.
+Capital letters never matter. A message in the message box holds at most 64 KiB
+(65,536 bytes), and a longer one is refused, never cut. The boxes in a question
+round, and the box a button such as **Reject** opens, stop taking text at about
+8,000 characters, so a longer paste is cut there.
 
 ### Commands
 

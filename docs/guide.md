@@ -2,8 +2,9 @@
 
 This guide follows one real blueprint, one short chapter per step: a family
 asks the architect for a small recipe web app. Every picture comes from that
-run. To look something up, such as every reply you can type, see the
-[reference](reference.md).
+run, except the two of a chat handing a need over (chapter 3), which come from
+a chat about the same app. To look something up, such as every reply you can
+type, see the [reference](reference.md).
 
 1. [What the architect is](#1-what-the-architect-is)
 2. [Before you start](#2-before-you-start)
@@ -98,6 +99,49 @@ against unusual cases); the design work is the same. See [POC projects](referenc
 setting of ContextMatrix, not of this dialog. It was off for this run. See
 [The research setting](reference.md#the-research-setting).
 
+### Starting from a chat
+
+You may work a need out first in a plain ContextMatrix chat: choose **Chat**
+instead of **Blueprint** in the same dialog, talk it through, and let the chat
+read the code of one project or several. When the need is clear, ask the chat to
+hand it over to the architect, or to start a blueprint from the chat. The chat
+writes the need up for the architect and posts a hand-off:
+
+![A hand-off in a chat, under the message Hand this over to the architect: Blueprint hand-off with its title, Projects to change: recipe-box, the need's size, the Review and start blueprint button and Show need](images/03c-handoff-block.png)
+
+The hand-off shows the blueprint's title, the projects to change, the need's
+size, **Review and start blueprint…**, and **Show need**, which shows the need
+as the chat wrote it. No blueprint exists yet, and the architect has spent
+nothing. You can keep talking, or ask for changes and for the need to be handed
+over again: the newer hand-off replaces the older one, which then says
+"Replaced by a newer hand-off" and loses its button.
+
+Only the projects that need changes are listed. The architect reads only their
+code, so what the chat learned from any other project belongs in the need, and
+the chat writes it there.
+
+**Review and start blueprint…** opens **New blueprint** for that hand-off. A
+banner, "Handed over from the chat" and the chat's title, takes the place of the
+Chat and Blueprint tiles. The dialog holds the title, the need in a **Need**
+field you can edit, with its size against the limit, and the hand-off's projects,
+ticked. Mode, plain language, model and cost cap start as they do when you open
+**New blueprint** yourself, not with the example's choices, so set them as you
+want. Check the model, the projects and plain language most of all: none of them
+can change once the blueprint exists. Read the need too, because it reaches the
+architect as your own words. A project ContextMatrix no longer has is left out,
+with a note that says so.
+
+![New blueprint opened from a hand-off: the banner Handed over from the chat, the Title field, the Need field holding the need with its size, and recipe-box ticked under Projects](images/03d-handoff-dialog.png)
+
+**Create blueprint** opens the blueprint and sends the need, as you left it in
+the dialog, as your first message, with "handed over from the chat" and a link
+back to the chat under it. The hand-off in the chat then says "Blueprint
+started:" and links to the blueprint. The chat stays open, but what you write
+there afterwards does not reach the blueprint; write it in the blueprint's chat.
+
+Intake then runs in full, as in chapters 4 and 5. The architect reads the need,
+never the chat.
+
 ## 4. Saying what you need
 
 This step gives the architect the **need**: what you want, in your own words.
@@ -113,6 +157,12 @@ foot of the chat and send it. The family wrote:
 
 Write it as you would to a person: who it is for and what they want to do. You
 need not know how it should be built; the interview asks for the rest.
+
+A message in the message box holds up to 64 KiB (65,536 bytes): about 65,000
+characters of plain English text, fewer where a letter takes more than one byte,
+as accented letters and emoji do. Near the limit the box shows the message's
+size, and it does not send a longer message, so nothing is cut; shorten it. A
+need handed over from a chat has the same limit.
 
 ![The blueprint pane just after the need was sent: the scale bar across the top, the chat with the need on the left, and the Need sheet on the right while the product owner works](images/04a-blueprint-pane.png)
 
