@@ -1,22 +1,35 @@
 # Architect reference
 
-This page is for looking things up while you run a blueprint: what you can
-type, the modes and settings, the cost cap, what to do when a blueprint stops,
-and what the marks on the sheet mean. Developers will find how the architect
-works inside in [design.md](design.md).
+This page is for looking things up while you work out a blueprint with the
+architect: what you can type, the modes and settings, the cost cap, what to do
+when a blueprint stops, and what the marks on the sheet mean. The table below
+explains these words. Developers will find how the architect works inside in
+[design.md](design.md).
+
+| Word | Meaning |
+|---|---|
+| ContextMatrix | A task board where an AI agent builds the work its cards describe. |
+| The architect | An AI planner behind ContextMatrix's chat: it interviews you about what you need and writes the cards for it. |
+| Blueprint | One need worked out with the architect, from your first message to cards on the board. Each blueprint is one chat session. |
+| Card | One piece of work, written for ContextMatrix's AI agent to build. |
+| Board | A project's cards in ContextMatrix. The agent builds a card once it is started. |
+| Stage | One step of the architect's work, such as Slicing or Solution design. The stages run one after another: the **pipeline**. |
+| Slice | A piece of a big need that works on its own (SL1, SL2 and so on). The design stages run once per slice. |
+| Round | The questions a stage asks you together, one tab each in the chat. |
+| Gate | A stop after a stage, where its result waits to be approved or rejected, by you or by an AI reviewer. |
+| Sheet | The drawing beside the chat that shows each stage's result. |
+| Scale bar | The strip across the top of the blueprint's pane that shows the pipeline, the mode and the cost. |
+| Sign-off | The last gate: the whole plan waits there before the cards go on the board. |
+| Mode | How much the architect does without you. See [Modes](#modes). |
+| Cost cap | The most the architect may spend on one blueprint. See [The cost cap](#the-cost-cap). |
 
 ## Replies you can type
 
 You run a blueprint from its chat in ContextMatrix. Most replies are buttons,
 and a click sends the reply for you. What a gate's buttons send can also be
-typed, and the commands below can only be typed; answers to a question round
-and choices on the mockup sheet have buttons of their own. Capital letters
-never matter.
-
-A blueprint is worked out in **stages**, steps of AI work such as Slicing or
-Solution design, run one after another (the **pipeline**). A big need is cut
-into **slices**, pieces that each work on their own (SL1, SL2 and so on), and
-the design stages then run once per slice.
+typed, and the commands below can only be typed; answers to a round, and the
+choices described under [The mockup](#the-mockup), have buttons of their own.
+Capital letters never matter.
 
 ### Commands
 
@@ -27,7 +40,7 @@ one has an effect.
 
 | What you type | What it does | When it works |
 |---|---|---|
-| `abort` | Stops the run that is working now. The blueprint is kept, and an open round stays open. | Any time. Afterwards `continue` runs the stage again. |
+| `abort` | Stops the run that is working now. The blueprint is kept, and an open round stays open. | Any time. Afterwards `continue` runs a stopped stage again; if it stopped the cards going on the board or the run's start, reply `approve`, and for a retrospective, `retrospective`. |
 | `continue` or `resume` | Runs the stopped stage again, once. | After a stage failed, was aborted or was stopped by the cost cap. See [When a blueprint stops](#when-a-blueprint-stops). |
 | `export` | Writes the blueprint's whole record as a set of text files on the architect's server, and says where. | Any time. |
 | `cap <amount>`, such as `cap 5` or `cap 7.50` | Sets the cost cap, in US dollars. | Any time. The amount must be above what is spent. See [The cost cap](#the-cost-cap). |
@@ -44,9 +57,8 @@ the stage written as one word: `gate shared_decisions human`.
 
 ### At a gate
 
-A **gate** is a stop after a stage: the stage's result waits on the **sheet**,
-the drawing beside the chat, until it is approved or rejected. A gate's replies
-are buttons in the chat and at the foot of the sheet.
+At a gate the stage's result waits on the sheet. The gate's replies are
+buttons in the chat and at the foot of the sheet.
 
 | What you type | What it does | When it works |
 |---|---|---|
@@ -56,14 +68,15 @@ are buttons in the chat and at the foot of the sheet.
 | `reject shared_decisions <feedback>` | Runs Shared decisions, and every slice, again. | At a slice's Solution design gate, when the blueprint has two or more slices (button "Reject shared decisions"). |
 
 Any other text at a gate is kept as a note, and the gate stays open with a
-reminder of its replies. Put a space after a stage's name, not a colon: at a
-stage's gate, `reject slicing` with nothing after it is a plain `reject` whose
-feedback is the word "slicing".
+reminder of its replies. Put a space after a stage's name, not a colon. At a
+stage's gate, `reject slicing: too many` is read as a plain `reject` of that
+gate's own stage, with "slicing: too many" as its feedback. A bare
+`reject slicing`, with nothing after it, is likewise a plain `reject`, with the
+word "slicing" as its feedback.
 
 ### At the sign-off
 
-The **sign-off** is the last gate. It lists the cards in order, the assumptions
-the plan rests on, and the result of a last check against ContextMatrix (the
+The sign-off lists the cards in order, the assumptions the plan rests on, and the result of a last check against ContextMatrix (the
 **preflight**: does every card's project exist and have a repository, and is
 there anything to warn about). In Default and Auto mode it waits for you.
 
@@ -108,9 +121,8 @@ kept as a note, and the offer stays open.
 
 ### In a question round
 
-A **round** is the questions a stage asks together, one tab each in the chat,
-with the stage's **assumptions** (what it decided itself) on the last tab. A
-round waits as long as you need, across days, a session's end and restarts.
+A round's last tab holds the stage's **assumptions**, what it decided itself.
+A round waits as long as you need, across days, a session's end and restarts.
 
 | What you do | What it does | When it works |
 |---|---|---|
@@ -135,8 +147,7 @@ proposed. A message typed while a lesson round waits is kept as a note.
 
 ## Modes
 
-The mode decides how much the architect does without you. You pick it in the
-New blueprint dialog, and you can switch it later.
+You pick the mode in the New blueprint dialog, and you can switch it later.
 
 | Mode | Questions and stage gates | Sign-off | Cards on the board | Run started |
 |---|---|---|---|---|
@@ -158,15 +169,12 @@ The mockup follows the mode too. In Default mode the architect offers it first
 and you steer it. In the other modes there is no offer: the AI responder tries
 the suggestions and asks for up to five changes while you watch.
 
-Yolo starts the cards in ContextMatrix. A single card ends as one pull request
-to its repository's default branch; several run as a playbook whose pull
-requests merge into a playbook branch, and the final merge into your default
-branch stays yours. If a card's repository has no commits yet, the cards go on
-the board and the run waits until you push a first commit and reply `approve`.
-How the agent then builds each card is described in
-[ContextMatrix's own docs](https://github.com/mhersson/contextmatrix). The cost
-cap limits the architect only; ContextMatrix's own per-card limits bound the
-agent.
+Yolo also starts the cards' run in ContextMatrix. What the agent then does
+with each card, and how its work reaches your project, is described in
+[ContextMatrix's own docs](https://github.com/mhersson/contextmatrix). If a
+card's code repository is still empty, the cards go on the board and the run
+waits until a first commit (a first saved version of the code) is pushed to it
+and you reply `approve`.
 
 ### Switching mode
 
@@ -179,7 +187,7 @@ nothing.
 
 | Switch | What happens to what waits for you |
 |---|---|
-| Into Auto, Auto + emit or Yolo | A round waiting for you goes to the AI responder: the answers you sent stay yours, and it answers the rest. Answers picked but not sent are dropped. A waiting mockup, or mockup offer, goes to the responder. A stage gate shown only because its policy asked you is approved if its review passed. |
+| Into Auto, Auto + emit or Yolo | A round waiting for you goes to the AI responder: the answers you sent stay yours, it answers the rest, and it accepts every assumption you had not decided. Answers picked but not sent are dropped. A waiting mockup, or mockup offer, goes to the responder. A stage gate shown only because its policy asked you is approved if its review passed. |
 | Into Auto + emit or Yolo, at the sign-off | The sign-off is decided again, and approves itself unless something needs a person. |
 | Back into Default | A round the responder took stays with it. A mockup comes back to you. No gate is decided. |
 
@@ -247,8 +255,8 @@ run. It is posted again after a mode switch.
 
 ## The cost cap
 
-The cost cap is the most the architect may spend on one blueprint, in US
-dollars. It covers every AI run the architect makes for the blueprint: the
+The cap is set in US dollars and covers every AI run the architect makes for
+the blueprint: the
 stages, their reviewers, the AI responder, the mockup designer and the
 retrospective. It does not cover the agent building the cards; ContextMatrix's
 own per-card limits do.
@@ -281,7 +289,9 @@ How it behaves:
 A cap stop names the stage and says how to go on, for example: "The
 blueprint's $2.00 cap is used up ($2.14 spent); Readiness stopped. Raise the
 cap by clicking the cost in the header (or reply `cap <usd>`) and it
-continues." The blueprint waits and keeps everything it has.
+continues." The blueprint waits and keeps everything it has. The cost to click
+is the one at the right end of the scale bar. The chat pane's header also shows
+the mode, the cap and what is spent, but there they cannot be clicked.
 
 - Raise the cap above the one it stopped under, or remove it: the stopped
   stage runs again at once ("Cost cap raised from $2.00 to $4.00; resuming
@@ -296,60 +306,53 @@ continues." The blueprint waits and keeps everything it has.
 
 | What happened | What you see | How to go on |
 |---|---|---|
-| A stage failed | A message naming the stage and why, ending "Reply `continue` to run it again." Its step on the scale bar reads Failed. | `continue`, or send a message: it is kept as a note, and the stage runs again with it. |
+| A stage failed | A message naming the stage and why, ending "Reply `continue` to run it again." The stage's segment on the scale bar gets a red outline (hovering over it shows Failed), and the line beside the bar reads "This stage failed; the transcript says why". | `continue`, or send a message: it is kept as a note, and the stage runs again with it. |
 | You sent `abort` | "Abort requested. ... is canceled; reply `continue` to run it again." | `continue`, or any message. |
 | Intake failed before it stored anything | As for any failed stage. | Your next message is taken as the need again; `continue` runs Intake on the need you already sent. |
 | The cost cap stopped a stage | See [When the cap stops a stage](#when-the-cap-stops-a-stage). | Raise the cap. |
 | Emission stopped, or ContextMatrix blocked it | "Emission stopped: ... Cards already created are kept; reply approve to resume.", or "Emission is blocked until this is fixed in ContextMatrix; then reply approve". | Fix what it names, then `approve` ("Resume emission"). |
 | Yolo found a repository with no commits | "... has no commits, so the run was not started; push an initial commit, then reply approve to start it, or start it in ContextMatrix and reply approve." | Push a first commit, then `approve` ("Start the run"). |
 | The run did not start | "The cards are emitted, but the run did not start: ..." | `approve` ("Retry the run start"), or start the run in ContextMatrix and reply `approve`. |
-| The pipeline ended | The scale bar reads "Stopped:" and a reason, such as "the cards still failed their contract checks after 3 submits". | Nothing more runs in this blueprint; start a new one. |
+| The pipeline ended | The scale bar reads "Stopped:" and a reason, such as "the cards still failed their contract checks after 3 submits": after three tries the cards still broke the architect's rules for cards. | Nothing more runs in this blueprint; start a new one. |
 | A retrospective stopped | "The retrospective stopped: ... reply `retrospective` to run it again." | `retrospective`. |
 
 ### When the architect restarts
 
 If the architect's server restarts, ContextMatrix starts the session again by
 itself, at the latest when you next send a message; you need not do anything.
-Nothing finished is lost:
-
-- A stage that was working runs again from its inputs, or from its stored
-  conversation after a round. The text it was writing on the sheet is written
-  again.
-- A round comes back with the answers you had sent. A gate or the sign-off is
-  shown again as it was.
-- An emission cut short carries on, creating nothing twice, and the watch on an
-  emitted blueprint's cards starts again.
-- A retrospective cut short is not run again: the chat says so once, and you
-  reply `retrospective`.
+The blueprint picks up as it does after a reopen (see the list below), and an
+emission the restart cut short carries on by itself, creating nothing twice.
 
 ### Ending and reopening a session
 
 "End session", in the chat pane's menu (the three dots), disconnects the chat
-from the architect. A run that is working is cancelled and the watch on the board
-stops, but the blueprint is kept. "Reopen", in the same menu, starts it again:
+from the architect. A run that is working is cancelled and the watch on the
+board stops, but the blueprint is kept. "Reopen", in the same menu, starts it
+again. After a reopen, as after a restart, nothing finished is lost:
 
-- A stage the end cut short runs again, with the answers it had been given.
-- A round comes back with its stored answers and waits, however long you were
-  away. A gate or the sign-off is shown again.
-- The watch on an emitted blueprint's cards starts again.
+- A stage that was cut short runs again, from its inputs or from where its
+  round left off, with the answers it had been given. The text it was writing
+  on the sheet is written again.
+- A round comes back with the answers you had sent and waits, however long you
+  were away. A gate or the sign-off is shown again as it was.
+- An emission or run start the end cut short waits for `approve`. The watch on
+  an emitted blueprint's cards starts again.
+- A retrospective that was cut short is not run again: the chat says so, and
+  you reply `retrospective`.
 - The mode, the cost cap and plain language stay as the blueprint stored them.
 
-A lesson round is not shown again on a reopen: scroll back to it in the chat
-and answer it there.
+A lesson round is not shown again: scroll back to it in the chat and answer it
+there.
 
 ### `continue` and `resume`
 
-The two words do the same: they run the stopped stage again, once, without
-adding a note. They work after a failed or aborted stage, review or revision,
-after a reply in a round's chat failed, and after a cap stop, where the stage
-meets the cap again unless you raised it. The chat answers "Resuming" and the
-stage's name.
-
-When nothing is stopped they start nothing, and the chat says "Nothing is
-waiting to resume.": a round, gate, mockup offer or sign-off waiting for you
-needs your answer instead, a working stage needs no help, and an ended
-pipeline runs no more. An emission or a run start resumes with `approve`, and
-a retrospective with `retrospective`.
+The two words do the same, and unlike any other message they add no note.
+Besides the stops in the table above, they also run again a review or revision
+that failed, and a reply in a round's chat that failed. The chat answers
+"Resuming" and the stage's name. When nothing is stopped they start nothing,
+and the chat says "Nothing is waiting to resume.": a round, gate, mockup offer
+or sign-off waiting for you needs your answer instead, a stopped emission or
+run start needs `approve`, and an ended pipeline runs no more.
 
 ## Plain language
 
@@ -363,7 +366,7 @@ shows "Plain language".
 | Questions | You are asked only about the experience: what you want, who uses it, how it should look and behave. The AI responder answers the technical questions on a read-only round of their own. |
 | Technical decisions | Shown on the assumptions tab as consequences, what they mean for you. Accept one, or turn it down: your concern goes back and the architect asks again. Accepting a consequence does not confirm the technical decision; the record says a person accepted its consequence. |
 | Stage gates | Decided by the reviewers, as in Auto, unless you reply `gate <stage> human`. A gate the review did not settle comes to you. |
-| Where the architect is stuck | Gates, the sign-off, a stopped emission or run start, and an ended pipeline are worded plainly, with the technical text folded underneath for a technical helper. The buttons read "Continue anyway" (or "Continue" when the review passed) and "Try again", and send `approve` and `reject` as usual. A stopped emission or run start offers "Try again", and a run waiting for a first commit "Done, continue"; both send `approve`. |
+| Where the architect is stuck | Gates, the sign-off, a stopped emission or run start, and an ended pipeline are worded plainly, with the technical text folded underneath for a technical helper. A stage gate's buttons read "Continue anyway" ("Continue" when its review passed) and "Try again". The sign-off keeps "Approve" (or "Approve and override warnings") beside "Try again", and reads "Continue anyway" only when it asks for a reason. Buttons that reject an earlier step keep their labels. A stopped emission or run start offers "Try again", and a run waiting for a first commit "Done, continue". Every button sends the same reply as without plain language. |
 | The sign-off | Opens with a plain summary: what will be built, what you will be able to do with it, and the consequences you accepted, each marked if it changed since. |
 
 What stays the same: the cards, the sheets and the export are technical, and a
@@ -422,9 +425,9 @@ price for.
 
 ## The sheet's marks
 
-A blueprint's pane shows the **scale bar** across the top and the **sheet**,
-where every result is drawn like a page of a technical drawing, beside the
-chat or over it on a narrow pane. Tabs along the top of the sheet name
+A blueprint's pane shows the scale bar across the top and the sheet, drawn
+like a page of a technical drawing, beside the chat or over it on a narrow
+pane. Tabs along the top of the sheet name
 each sheet: Need, Mockup, Slices, Shared, Design, Grounding, Acceptance, Cards,
 Readiness, Sign-off and Board. A dot marks the current stage's tab.
 
@@ -466,7 +469,7 @@ At the foot of every sheet, as on a drawing.
 | Rev | The version shown. With several, a list to pick another, each marked superseded, rejected, folded or writing where that applies. |
 | Compare | A tick box, when an earlier version exists. See [Compare](#compare). |
 | Drawn by | The role that drew it: product owner, designer, system designer, senior developer or reviewer. |
-| Checked by | The reviewer and its score, such as "System designer, 4 of 5", with "failed" when it did not pass; click it for the findings. "Contract checks" on a sheet checked by rules alone. |
+| Checked by | The reviewer and its score, such as "System designer, 4 of 5", with "failed" when it did not pass; click it for the findings. "Contract checks" when no reviewer reads the sheet, only the architect's own rule checks. |
 | Status | Where this version stands, such as Writing, Waiting on your answers, Being reviewed, At your gate, Approved, Rejected, Superseded or Done. |
 
 ### Stamps
