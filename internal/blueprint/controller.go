@@ -792,7 +792,7 @@ func (s *capStop) Error() string {
 
 	switch {
 	case !s.lifted:
-		return stopped + " Raise the cap by clicking the cost in the header (or reply `cap <usd>`) and it continues."
+		return stopped + " Raise the cap by clicking the cost on the scale bar (or reply `cap <usd>`) and it continues."
 	case s.nowUSD == 0:
 		return stopped + " The cap is now off: reply `continue` and it goes on."
 	default:

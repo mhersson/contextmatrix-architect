@@ -409,7 +409,7 @@ func (s snapshot) runLine() string {
 			return fmt.Sprintf("Playbook %s waits for a human to check off: %s", s.Playbook, s.Waiting)
 		}
 
-		return fmt.Sprintf("Playbook %s needs a human: %s. Fix it, then Stop and Play the playbook in ContextMatrix.", s.Playbook, s.Run.Reason)
+		return fmt.Sprintf("Playbook %s needs a human: %s. Fix it, then Stop and Run the playbook in ContextMatrix.", s.Playbook, s.Run.Reason)
 	case "stopped":
 		return fmt.Sprintf("Playbook %s was stopped in ContextMatrix.", s.Playbook)
 	default:

@@ -1437,8 +1437,8 @@ the mockup reply (see Mockups):
   for a run cut short the cap in force when it was cut, and what the
   blueprint has spent (`blueprint_spent_usd`). Its message names the stage
   and says how to go on, for a spent cap "The blueprint's $2.00 cap is used
-  up ($2.14 spent); Readiness stopped. Raise the cap by clicking the cost in
-  the header (or reply `cap <usd>`) and it continues.", below the floor that
+  up ($2.14 spent); Readiness stopped. Raise the cap by clicking the cost on
+  the scale bar (or reply `cap <usd>`) and it continues.", below the floor that
   the cap leaves less than the next run needs, and for a run cut short with
   money left on the ledger that the cap cut the run short; a model without a
   price keeps its own refusal. When the cap stored once the run has ended is off or
@@ -1837,7 +1837,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 
 | Change                                                                                             | Needed for          |
 | -------------------------------------------------------------------------------------------------- | ------------------- |
-| `run_playbook` MCP tool: makes the playbook runnable if it is not, then plays it; `human:` caller gate like `run_card` | yolo with several cards (slice 2); a single card uses the existing `run_card` |
+| `run_playbook` MCP tool: makes the playbook runnable if it is not, then runs it; `human:` caller gate like `run_card` | yolo with several cards (slice 2); a single card uses the existing `run_card` |
 | An `architect` backend kind: config entry with URL and key, its own callback prefix, session start dispatched by kind in the chat manager with the existing `ChatStartPayload` | slice 0 |
 | Chat sessions carry a kind and a blueprint binding instead of only a project; a one-way ops.db schema bump | slice 0 |
 | Panel: a new-session dialog for blueprints with a multi-project picker, mode and cost cap | slice 0 |
