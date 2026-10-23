@@ -699,16 +699,15 @@ waiting to be merged), and when the playbook's run changes.
 
 ### When a card's run fails
 
-![The watch line Playbook recipe-box needs a human: RECIPEBO-001 worker failed. Fix it, then Stop and Play the playbook in ContextMatrix.](images/34b-watch-card-failed.png)
-
-If a card's run fails, the playbook pauses and waits, and the watch tells you
-what to do.
+If a card's run fails, the playbook pauses and waits, and the watch posts a
+line such as "Playbook recipe-box needs a human: RECIPEBO-001 worker failed.
+Fix it, then Stop and Run the playbook in ContextMatrix."
 
 ![The Run box: waiting for you, Waiting for you: RECIPEBO-001 worker failed, and a Stop button](images/35-playbook-waiting.png)
 
 ContextMatrix never tries again on its own. Fix the cause, then click **Stop**
-and then **Run** on the playbook page (the line's "Stop and Play"): the run
-starts that card again. See ContextMatrix's
+and then **Run** on the playbook page, as the line says: the run starts that
+card again. See ContextMatrix's
 [Playbook runs](https://github.com/mhersson/contextmatrix/blob/main/docs/running-cards.md#playbook-runs);
 the architect's own stops are in
 [When a blueprint stops](reference.md#when-a-blueprint-stops).

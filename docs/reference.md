@@ -291,7 +291,7 @@ How it behaves:
 
 A cap stop names the stage and says how to go on, for example: "The
 blueprint's $2.00 cap is used up ($2.14 spent); Readiness stopped. Raise the
-cap by clicking the cost in the header (or reply `cap <usd>`) and it
+cap by clicking the cost on the scale bar (or reply `cap <usd>`) and it
 continues." The blueprint waits and keeps everything it has. The cost to click
 is the one at the right end of the scale bar. The chat pane's header also shows
 the mode, the cap and what is spent, but there they cannot be clicked.
@@ -302,8 +302,9 @@ the mode, the cap and what is spent, but there they cannot be clicked.
 - If the cap was already raised while the run was ending, the message says
   "The cap is now $4.00: reply `continue` and it goes on."
 - `continue` without a raise runs the stage again, and it meets the cap again.
-- A retrospective the cap stopped does not resume on a raise: raise the cap,
-  then reply `retrospective`.
+- A retrospective the cap stopped does not resume on a raise: its message ends
+  "Raise the cap by clicking the cost on the scale bar (or reply `cap <usd>`),
+  then reply `retrospective` again."
 
 ## When a blueprint stops
 
