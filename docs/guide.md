@@ -259,17 +259,17 @@ bottom of the shopping list and left the other two off.
 
 For a change no switch offers, ask in the chat. The family wrote: "On my phone
 the tabs at the top are hard to reach with my thumb. Can the three tabs sit at
-the bottom of the screen on a phone?" The designer answered with revision 2.
-Each new revision is one AI run, paid from the cap ($0.11 here).
+the bottom of the screen on a phone?" The switches you have flipped go along with
+your message, so the next revision starts from them wherever it still offers the
+same suggestions. The designer answered with revision 2. Each new revision is
+one AI run, paid from the cap ($0.11 here).
 
 ![Revision 2 on the Mockup sheet: the changed note inside a dashed cloud with a small triangle holding 2, and the tabs in a bar at the foot of the phone-sized screen; the title block shows Rev 2 and a Compare box](images/12b-mockup-rev2.png)
 
 Revision 2 puts the tabs in a bar at the foot of a phone-sized screen. The part
 that changed sits inside a dashed **revision cloud**, with the revision number
-in the small triangle beside it. Revision 2 opened with ticked lines back at
-**Stay in place**, so the family moved them to the bottom again. Earlier
-revisions stay: the **Rev** list in the title block opens them, and **Compare**
-shows what changed (chapter 9).
+in the small triangle beside it. Earlier revisions stay: the **Rev** list in the
+title block opens them, and **Compare** shows what changed (chapter 9).
 
 When it looks right, click **Use this design**. Your settings are recorded as
 your answers, and the chat confirms: "You chose revision 2 of the mockup; the
