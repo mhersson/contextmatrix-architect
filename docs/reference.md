@@ -132,7 +132,7 @@ A round waits as long as you need, across days, a session's end and restarts.
 | "Accept", "Accept all" or "Turn into a question" | Decides each assumption. One you turn into a question is asked in the next round. | On the Assumptions tab. |
 | The "Submit all" button | Sends every answer, and the stage goes on. | On the Submit tab, once everything is answered. |
 | The "Send ... now, answer the rest later" button | Stores the answers so far; the round keeps waiting for the rest. | On the Submit tab. |
-| Type a message | Chat about the round: the stage answers in the round's chat and may change or add questions. A question whose options change loses its answer. | While a round waits for you. |
+| Type a message | Chat about the round: the stage answers in the round's chat and may change or add questions. A question whose options change loses its answer. | While a round waits for you, in **Chat about these questions**: the usual message box is hidden while questions are open. |
 
 After a retrospective, a **lesson round** asks about each proposed lesson, with
 the options "Approve for *project*" (the project of the card that struggled),
@@ -206,12 +206,14 @@ gate. Each is `human` (you) or `auto`.
   result as the next role would (the system designer reads the need and the
   slices, the senior developer the designs, the tester the acceptance
   criteria), scores it from 1 to 5 and lists its findings. A version is
-  approved when it scores 4 or more with no critical finding open. Before
-  that, a version that scores lower or leaves a critical or major finding open
-  is revised and reviewed again, up to three reviews; if the third review
-  still does not pass it, the gate waits for you whatever its policy says.
+  approved when it scores 4 or more with no critical finding open.
 - Under `human`, the gate shows you the version with its reviewer's score and
   findings, and you `approve` or `reject` it.
+
+Under either policy, a version that scores lower or leaves a critical or major
+finding open is revised and reviewed again, up to three reviews, and the gate
+shows the version the last review looked at. Under `auto`, if the third review
+still does not pass it, the gate waits for you whatever its policy says.
 
 The policies in Default mode:
 
@@ -395,7 +397,8 @@ reaches a blueprint the next time it is opened.
 ## POC projects
 
 A project marked "Proof of concept project" in ContextMatrix's Project Settings
-(the sidebar shows it with a POC badge) gets cards that ask for less hardening.
+(the sidebar shows it with a POC badge) gets cards that ask for less hardening,
+meaning fewer extra guards against unusual cases.
 The design work does not change.
 
 | Part of the blueprint | For a POC project |
@@ -477,7 +480,7 @@ At the foot of every sheet, as on a drawing.
 | Sheet | Which sheet it is. |
 | Rev | The version shown. With several, a list to pick another, each marked superseded, rejected, folded or writing where that applies. |
 | Compare | A tick box, when an earlier version exists. See [Compare](#compare). |
-| Drawn by | The role that drew it: product owner, designer, system designer, senior developer or reviewer. |
+| Drawn by | The role that drew it: product owner, designer, system designer, senior developer or reviewer; or The architect, on the sheets it fills in itself (Sign-off, Board). |
 | Checked by | The reviewer and its score, such as "System designer, 4 of 5", with "failed" when it did not pass; click it for the findings. "Contract checks" when no reviewer reads the sheet, only the architect's own rule checks. |
 | Status | Where this version stands, such as Writing, Waiting on your answers, Being reviewed, At your gate, Approved, Rejected, Superseded or Done. |
 

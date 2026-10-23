@@ -91,8 +91,8 @@ time, and switch the mode until you approve the **sign-off**, the last approval
 before the cards go on the board; both are on the scale bar (chapter 4).
 
 recipe-box is marked as a proof of concept (**POC**) in ContextMatrix, so its
-cards ask for tests of the main behaviour and less hardening; the design work is
-the same. See [POC projects](reference.md#poc-projects).
+cards ask for tests of the main behaviour and less hardening (fewer extra guards
+against unusual cases); the design work is the same. See [POC projects](reference.md#poc-projects).
 
 **Research**, which lets the architect search the web before it asks you, is a
 setting of ContextMatrix, not of this dialog. It was off for this run. See
@@ -228,8 +228,9 @@ see [Gate policies](reference.md#gate-policies). The family kept it as it was.
 
 The **Setup** note lists what the project lacks for the agent to work in it. A
 new project like recipe-box has no **verify command** yet, the command (such as
-running the tests) that checks the agent's work, and no instruction file for the
-agent. Neither blocks anything: the first card writes the instruction file, and
+running the tests) that checks the agent's work, and no **instruction file**, a
+file in the project that tells the agent how it is laid out and how to work on
+it. Neither blocks anything: the first card writes the instruction file, and
 the architect proposes a verify command, which the sign-off asks you to set in
 ContextMatrix before the cards run.
 
@@ -273,12 +274,14 @@ your message, so the next revision starts from them wherever it still offers the
 same suggestions. The designer answered with revision 2. Each new revision is
 one AI run, paid from the cap ($0.11 here).
 
-![Revision 2 on the Mockup sheet: the changed note inside a dashed cloud with a small triangle holding 2, and the tabs in a bar at the foot of the phone-sized screen; the title block shows Rev 2 and a Compare box](images/12b-mockup-rev2.png)
+![Revision 2 on the Mockup sheet: the changed note inside a dashed cloud with a small triangle holding 2, and the phone-sized screen with its three tabs in a bar at the foot](images/12b-mockup-rev2.png)
 
 Revision 2 puts the tabs in a bar at the foot of a phone-sized screen. The part
 that changed sits inside a dashed **revision cloud**, with the revision number
 in the small triangle beside it. Earlier revisions stay: the **Rev** list in the
 title block opens them, and **Compare** shows what changed (chapter 9).
+
+![The title block of the Mockup sheet at revision 2: Rev 2 with a Compare box, Drawn by Designer, Checked by Contract checks](images/12c-mockup-rev2-title-block.png)
 
 When it looks right, click **Use this design**. Your settings are recorded as
 your answers, and the chat confirms: "You chose revision 2 of the mockup; the
@@ -439,8 +442,7 @@ any card is written.
 **Grounding** runs once per slice, right after its design. The senior developer
 reads a copy of the code and checks what the design takes for granted: that the
 files and functions it names exist as it says, how the project builds and runs
-its tests (its verify command), whether the code has an **instruction file**, a
-file that tells the agent how the project is laid out and how to work on it,
+its tests (its verify command), whether the code has an instruction file,
 and which of the blueprint's assumptions the code confirms or contradicts. It
 also looks on the board for open cards that already cover part of the need.
 
@@ -479,8 +481,7 @@ new one, and limits such as the largest upload. For each case the slice names
 the criterion or manual check that covers it, or says in a sentence why it needs
 none, and the sheet lists the result under **Edge cases**. A slice whose
 projects are all proofs of concept skips the sweep, since a POC's cards ask for
-the main behaviour and not for hardening, the extra guards against unusual
-cases. recipe-box is a POC, so neither slice had one. See
+the main behaviour and not for hardening. recipe-box is a POC, so neither slice had one. See
 [POC projects](reference.md#poc-projects).
 
 ![The chat during SL2's acceptance: the tester's review of rev 1 sent back with 6 new findings in round 1 of 3, Acceptance SL2 rev 2 Revised for the 6 findings, the review of rev 2 passed with 6 fixed in round 2 of 3, and the line Acceptance (SL2) passed its gate under the auto policy](images/23b-acceptance-sent-back.png)

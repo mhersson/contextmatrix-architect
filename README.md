@@ -7,9 +7,10 @@
 
 Tell the architect what you need, in your own words. It interviews you, works
 the plan out step by step and writes the cards an AI agent can build, and you
-approve each big decision before the next step builds on it. It runs as a third
-ContextMatrix backend next to the agent and chat backends; ContextMatrix's chat
-panel is its client.
+approve each big decision before the next step builds on it. The cards go on
+[ContextMatrix](https://github.com/mhersson/contextmatrix), a task board where
+an AI agent builds what each card describes, and you talk to the architect in
+ContextMatrix's chat panel.
 
 ![The Cards sheet of an example blueprint: the first slice's two cards and the four checks a person does by hand, listed in the order they run](docs/images/01-cards-sheet.png)
 
@@ -18,7 +19,9 @@ panel is its client.
 - [Installing](docs/installing.md): what to set up before the first blueprint.
 - [Design](docs/design.md): how it works inside, for developers.
 
-The sections below are for whoever runs the architect.
+The sections below are for whoever runs the architect. It runs as a third
+ContextMatrix backend next to the agent and chat backends, and ContextMatrix's
+chat panel is its client.
 
 ## Run
 
