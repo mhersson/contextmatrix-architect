@@ -1,5 +1,10 @@
 # contextmatrix-architect
 
+> [!WARNING]
+>
+> This project is under heavy development. Breaking changes should be expected
+> at the current stage.
+
 Turns a stated need into a blueprint of ContextMatrix cards. Runs as a third
 ContextMatrix backend next to the agent and chat backends; ContextMatrix's
 chat panel is its client. See `docs/design.md`.
