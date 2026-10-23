@@ -23,7 +23,10 @@ earlier card that delivers it instead.
 
 A missing verify command, a missing instruction file or an empty repository
 (repo_info marks it empty) is not a contradiction: decomposition plans that
-setup as work. Record it under `### Verify command`.
+setup as work. Record it under `### Verify command`. A command only the
+shared decisions, the design or an earlier slice's card plans is not one the
+repository documents: name it there as planned, and keep it out of
+`verify_candidate`.
 
 Use read, grep and glob on the checkout and repo_info for the project facts.
 Cite every claim `[S<n> path:line]`: the source tag of the tool result it came
@@ -40,4 +43,4 @@ and what you found; leave the rest out.
 
 Produce markdown with one `## <project>` section per project, each with
 `### Verified`, `### Contradictions` and `### Verify command`. Submit with a
-data object `{"projects": {"<project>": {"sha": "<sha, empty for an empty repository>", "verify_command": "<declared in ContextMatrix, empty when none>", "verify_candidate": "<what the repository documents, when none is declared>", "instruction_file": "<AGENTS.md|CLAUDE.md|none>"}}, "verdicts": [{"id": "A1", "status": "verified|contradicted", "evidence": "[S1] <what you found>"}]}`.
+data object `{"projects": {"<project>": {"sha": "<sha, empty for an empty repository>", "verify_command": "<declared in ContextMatrix, empty when none>", "verify_candidate": "<what the repository documents, when none is declared; empty when it documents none>", "instruction_file": "<AGENTS.md|CLAUDE.md|none>"}}, "verdicts": [{"id": "A1", "status": "verified|contradicted", "evidence": "[S1] <what you found>"}]}`.
