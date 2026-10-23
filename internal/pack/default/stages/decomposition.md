@@ -82,7 +82,8 @@ source):
 - Never paste the mockup's source into a card and never write a fenced
   block whose info string is `mockup`: describe the screen in words.
 
-Setup is work the cards carry, never a reason to stop. Read repo_info:
+Setup is work the cards carry, never a reason to stop. Read repo_info and
+the checkout:
 
 - A project with no verify command: propose one from the design and the
   checkout (what the repository documents in its README, Makefile or CI;
@@ -97,11 +98,25 @@ Setup is work the cards carry, never a reason to stop. Read repo_info:
   `setup.<project>.instruction_card`, and make every other card of the
   project depend on it. Its Solution section and criteria say what AGENTS.md
   holds.
+- A project whose stack writes files when it is built, installed or
+  verified that the project does not commit (build output, caches,
+  dependency directories), and whose primary repository does not ignore
+  them because it has no .gitignore or its .gitignore leaves them out: its
+  first card writes or extends .gitignore at the repository root to ignore
+  them, as its first change, before anything is built, installed or
+  verified, so the card's first commit carries it. Every other card of the
+  project depends on that card; when the project needs an instruction
+  card, it is that card. Its Solution section says what .gitignore ignores
+  and that it comes first, and a criterion checks that .gitignore ignores
+  them.
 - An empty repository has no files yet, so every path its cards list in
   `where` is new.
 - A project an earlier slice already set up keeps that setup: its verify
   command and its instruction card hold for this slice's cards too, and
-  every card of the project depends on that instruction card.
+  every card of the project depends on that instruction card. A .gitignore
+  an earlier slice's card writes counts for what it ignores, and every card
+  of the project depends on that card; what this slice's stack writes
+  beyond it, this slice's first card of the project adds the same way.
 
 Submit with the body as a short summary and a data object
 `{"title": "<playbook title, needed for two or more cards>", "cards": [{"id": "D1", "project": "<name>", "title": "...", "type": "feature", "priority": "medium", "labels": [], "skills": [], "depends_on": [], "body": "<markdown from the template>", "where": [{"path": "...", "symbol": "..."}, {"path": "<a file the card creates>", "new": true}], "criteria": ["AC1"], "mockup": ["<a screen id of the approved mockup, only on a card that builds or changes it>"]}], "manual": [{"id": "M1", "text": "<the check a human does>", "criteria": ["MC1"]}], "order": ["D1", "M1", "D2"], "setup": {"<project>": {"verify_command": "<only when the project declares none>", "instruction_card": "<only when the repository has no instruction file>"}}}`.
