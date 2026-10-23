@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slices 0 to 3 are implemented: slice 2 signs off ready cards, emits them and a playbook into CM, starts them in yolo mode and reports their run, and slice 3 adds the dialog stages (intake's questions, slicing, solution design, acceptance) with a responder policy per stage, the human and auto responders, reviewer runs with the critique loop, gates with slicing's folding into solution design, CM prompts, notes that reach later stages and assumptions with grounding's verdicts. A big need is worked piece by piece: slicing orders the slices, shared decisions settles what they share and collapses for one slice, design, grounding, acceptance and decomposition run once per slice, and readiness, one sign-off and one playbook cover every card. The retrospective and lesson approval (slice 4) are built: a `retrospective` reply judges the emitted cards that struggled and the operator decides its lessons, whose list additions reach the blueprints created afterwards. Their text reaching decomposition's and readiness's instructions, retiring a lesson and the export's commit to a repository are still to come; the export writes the bundle under the state directory.
+Status: agreed design, 2026-10-15. Slices 0 to 3 are implemented: slice 2 signs off ready cards, emits them and a playbook into CM, starts them in yolo mode and reports their run, and slice 3 adds the dialog stages (intake's questions, slicing, solution design, acceptance) with a responder policy per stage, the human and auto responders, reviewer runs with the critique loop, gates with slicing's folding into solution design, CM prompts, notes that reach later stages and assumptions with grounding's verdicts. A big need is worked piece by piece: slicing orders the slices, shared decisions settles what they share and collapses for one slice, design, grounding, acceptance and decomposition run once per slice, and readiness, one sign-off and one playbook cover every card. The retrospective and lesson approval (slice 4) are built: a `retrospective` reply judges the emitted cards that struggled and the operator decides its lessons, whose list additions reach the blueprints created afterwards. Their text also reaches decomposition's and readiness's instructions; retiring a lesson and the export's commit to a repository are still to come; the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -1387,7 +1387,9 @@ It never runs on its own.
   afterwards (a retired lesson stays in the sets that hold it). A blueprint
   from before the store's v7 has none. Every card of a blueprint is checked
   against its merged lists, a lesson retired later included; the checks are
-  not project-aware.
+  not project-aware. The set's lessons are added to the instructions of the
+  runs of the stage that checks cards (decomposition) and the stage that
+  checks readiness, after the plain-language text, and to no other run.
 - Reading the cards needs no CM change: the architect knows its card ids
   and reads them with `get_card` only. A CM card-creator field comes later,
   to compare architect cards with human-written ones across the whole board.
@@ -1880,8 +1882,8 @@ Ordered so a real card comes out as early as possible.
    and `auto` responders; gates. In CM: typed question and gate entries
    rendered with buttons.
 4. **The retrospective and lessons**, with pack overlays (approval and list
-   additions built, lesson text in instructions and `retire` still to come), and the per-project export
-   opt-in that commits the bundle to a repository through an allowlist of
+   additions and lesson text in instructions built, `retire` still to come),
+   and the per-project export opt-in that commits the bundle to a repository through an allowlist of
    target repositories.
 5. **Later**: a gate inbox in CM's web UI;
    seeding a blueprint from an existing CM card, in the same adapter shape as

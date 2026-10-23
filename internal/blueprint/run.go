@@ -562,9 +562,20 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		return stage.Input{}, stageChecks{}, nil, err
 	}
 
+	instructions := withPlain(bp, c.opts.Pack.Instructions(st.Stage.ID), c.opts.Pack.PlainInstructions())
+
+	if c.lessonsReach(st) {
+		lessons, err := c.opts.Store.BlueprintLessons(context.WithoutCancel(ctx), bp.ID)
+		if err != nil {
+			return stage.Input{}, stageChecks{}, nil, fmt.Errorf("read the lesson set: %w", err)
+		}
+
+		instructions = withLessons(instructions, lessons)
+	}
+
 	in := stage.Input{
 		Stage: st.ID, Persona: c.opts.Pack.Persona(st.Persona),
-		Instructions: withPlain(bp, c.opts.Pack.Instructions(st.Stage.ID), c.opts.Pack.PlainInstructions()), Task: task,
+		Instructions: instructions, Task: task,
 		PlainLanguage: bp.PlainLanguage,
 	}
 

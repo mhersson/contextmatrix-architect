@@ -3,6 +3,8 @@ package blueprint
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/contract"
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
@@ -228,4 +231,137 @@ func TestRetrospective_ItsTaskGivesTheBlueprintsLists(t *testing.T) {
 	runs := inputsOf(runner, RetroStage)
 	require.Len(t, runs, 1)
 	assert.Contains(t, runs[0].Task, "as agreed upon")
+}
+
+// lessonPack is the pipeline pack, copied to a temporary directory, with
+// readiness checking readiness and, when cardStage is not decomposition, the
+// stage that checks cards named cardStage.
+func lessonPack(t *testing.T, cardStage string) *pack.Pack {
+	t.Helper()
+
+	dir := t.TempDir()
+	require.NoError(t, os.CopyFS(dir, os.DirFS("testdata/pipeline")))
+
+	packYAML := filepath.Join(dir, "pack.yaml")
+	raw, err := os.ReadFile(packYAML) //nolint:gosec // the test's own temp dir
+	require.NoError(t, err)
+
+	text := strings.Replace(string(raw), "    loops_to: decomposition\n", "    checks: [readiness]\n    loops_to: decomposition\n", 1)
+	require.NotEqual(t, string(raw), text)
+
+	if cardStage != "decomposition" {
+		text = strings.ReplaceAll(text, "decomposition", cardStage)
+		require.NoError(t, os.Rename(filepath.Join(dir, "stages", "decomposition.md"), filepath.Join(dir, "stages", cardStage+".md")))
+	}
+
+	require.NoError(t, os.WriteFile(packYAML, []byte(text), 0o600)) //nolint:gosec // the test's own temp dir
+
+	pk, err := pack.LoadDir(dir)
+	require.NoError(t, err)
+
+	return pk
+}
+
+// instructionsByStage is the instructions of the first run of each stage.
+func instructionsByStage(runner *fakeRunner) map[string]string {
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+
+	out := map[string]string{}
+
+	for _, in := range runner.inputs {
+		if _, ok := out[in.Stage]; !ok {
+			out[in.Stage] = in.Instructions
+		}
+	}
+
+	return out
+}
+
+func TestWithLessons(t *testing.T) {
+	assert.Equal(t, "base", withLessons("base", nil))
+
+	got := withLessons("base", []store.Lesson{{ID: 1, Text: "a"}, {ID: 2, Text: "b"}})
+
+	assert.True(t, strings.HasPrefix(got, "base\n\n## Lessons from earlier blueprints\n\n"))
+	assert.Contains(t, got, "- L1: a\n- L2: b\n")
+}
+
+func TestStageInput_LessonsReachDecompositionAndReadinessOnly(t *testing.T) {
+	c, st, runner, _, _ := newPipeline(t, happyScript())
+	c.opts.Pack = lessonPack(t, "decomposition")
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP-OLD")))
+	activeLesson(t, st, store.ScopePack, "", "keep each card to one deliverable", contract.Overlay{})
+
+	drive(t, c, "BP-NEW")
+
+	got := instructionsByStage(runner)
+	require.Contains(t, got, "decomposition")
+	require.Contains(t, got, "readiness")
+
+	for _, id := range []string{"decomposition", "readiness"} {
+		assert.Contains(t, got[id], "L1: keep each card to one deliverable", id)
+	}
+
+	for _, id := range []string{"intake", "grounding"} {
+		require.Contains(t, got, id)
+		assert.NotContains(t, got[id], "L1", id)
+	}
+}
+
+func TestStageInput_LessonsFollowTheCardsCheckNotTheStageID(t *testing.T) {
+	script := happyScript()
+	script["cards"] = script["decomposition"]
+	delete(script, "decomposition")
+
+	c, st, runner, _, _ := newPipeline(t, script)
+	c.opts.Pack = lessonPack(t, "cards")
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP-OLD")))
+	activeLesson(t, st, store.ScopePack, "", "keep each card to one deliverable", contract.Overlay{})
+
+	drive(t, c, "BP-NEW")
+
+	got := instructionsByStage(runner)
+	require.Contains(t, got, "cards")
+	assert.Contains(t, got["cards"], "L1: keep each card to one deliverable")
+}
+
+func TestStageInput_ABlueprintCreatedBeforeTheApprovalGetsNone(t *testing.T) {
+	c, st, runner, _, _ := newPipeline(t, happyScript())
+	c.opts.Pack = lessonPack(t, "decomposition")
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP-OLD")))
+	activeLesson(t, st, store.ScopePack, "", "keep each card to one deliverable", contract.Overlay{})
+
+	require.NoError(t, c.Message(ctx, "BP-OLD", "the need", "m1"))
+	c.Wait("BP-OLD")
+
+	got := instructionsByStage(runner)
+	require.Contains(t, got, "decomposition")
+	assert.NotContains(t, got["decomposition"], "L1")
+	assert.NotContains(t, got["readiness"], "L1")
+}
+
+func TestStageInput_TheReviewerOfDecompositionGetsNoLesson(t *testing.T) {
+	script := happyScript()
+	script["decomposition.review"] = passing()
+
+	c, st, runner, _, _ := newPipeline(t, script)
+	c.opts.Pack = gatedCards(lessonPack(t, "decomposition"))
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP-OLD")))
+	activeLesson(t, st, store.ScopePack, "", "keep each card to one deliverable", contract.Overlay{})
+
+	drive(t, c, "BP-NEW")
+
+	got := instructionsByStage(runner)
+	require.Contains(t, got, "decomposition.review")
+	assert.Contains(t, got["decomposition"], "L1")
+	assert.NotContains(t, got["decomposition.review"], "keep each card to one deliverable")
 }
