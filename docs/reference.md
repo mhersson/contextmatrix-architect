@@ -413,6 +413,7 @@ The architect needs a Sonnet-class model: Anthropic's Claude Sonnet, or one as
 capable. In testing, smaller models sent empty or broken answers when a stage
 handed in a large result, and the architect does not repair a broken answer,
 so the stage fails.
+See [Installing](installing.md).
 
 Pick the model in the New blueprint dialog's "Model" field. Every role in the
 blueprint uses it, unless whoever runs the architect has set a model for a
