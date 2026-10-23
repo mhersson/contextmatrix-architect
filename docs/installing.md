@@ -91,7 +91,9 @@ need to build the architect from this repository (see
    list every `backends` setting, and the LLM endpoint's own block
    (`llm_endpoint`).
 
-5. Start the architect with `./contextmatrix-architect serve`. To keep it
+5. Start the architect with
+   `./contextmatrix-architect serve --config ~/.config/contextmatrix-architect/config.yaml`.
+   To keep it
    running in the background, the architect's [README](../README.md) shows how
    to run it as a service or in Docker, and lists every other setting.
 
