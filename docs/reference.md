@@ -76,9 +76,10 @@ word "slicing" as its feedback.
 
 ### At the sign-off
 
-The sign-off lists the cards in order, the assumptions the plan rests on, and the result of a last check against ContextMatrix (the
-**preflight**: does every card's project exist and have a repository, and is
-there anything to warn about). In Default and Auto mode it waits for you.
+The sign-off lists the cards in order, the assumptions the plan rests on, and
+the result of a last check against ContextMatrix (the **preflight**: does every
+card's project exist and have a repository, and is there anything to warn
+about). In Default and Auto mode it waits for you.
 
 | What you type | What it does | When it works |
 |---|---|---|
@@ -121,7 +122,8 @@ kept as a note, and the offer stays open.
 
 ### In a question round
 
-A round's last tab holds the stage's **assumptions**, what it decided itself.
+The Assumptions tab, before Submit, holds the stage's **assumptions**, what it
+decided itself.
 A round waits as long as you need, across days, a session's end and restarts.
 
 | What you do | What it does | When it works |
@@ -256,9 +258,8 @@ run. It is posted again after a mode switch.
 ## The cost cap
 
 The cap is set in US dollars and covers every AI run the architect makes for
-the blueprint: the
-stages, their reviewers, the AI responder, the mockup designer and the
-retrospective. It does not cover the agent building the cards; ContextMatrix's
+the blueprint: the stages, their reviewers, the AI responder, the mockup
+designer and the retrospective. It does not cover the agent building the cards; ContextMatrix's
 own per-card limits do.
 
 | Where | What you see and do |
@@ -307,12 +308,12 @@ the mode, the cap and what is spent, but there they cannot be clicked.
 | What happened | What you see | How to go on |
 |---|---|---|
 | A stage failed | A message naming the stage and why, ending "Reply `continue` to run it again." The stage's segment on the scale bar gets a red outline (hovering over it shows Failed), and the line beside the bar reads "This stage failed; the transcript says why". | `continue`, or send a message: it is kept as a note, and the stage runs again with it. |
-| You sent `abort` | "Abort requested. ... is canceled; reply `continue` to run it again." | `continue`, or any message. |
+| You sent `abort` | For a stage: "Abort requested. ... is canceled; reply `continue` to run it again." For a retrospective: "Abort requested. The retrospective is canceled; reply `retrospective` to run it again." For emission or the run start: the rows below, with "stopped by abort". | A stage: `continue`, or any message. A retrospective: `retrospective`. Emission or the run start: `approve`. |
 | Intake failed before it stored anything | As for any failed stage. | Your next message is taken as the need again; `continue` runs Intake on the need you already sent. |
 | The cost cap stopped a stage | See [When the cap stops a stage](#when-the-cap-stops-a-stage). | Raise the cap. |
-| Emission stopped, or ContextMatrix blocked it | "Emission stopped: ... Cards already created are kept; reply approve to resume.", or "Emission is blocked until this is fixed in ContextMatrix; then reply approve". | Fix what it names, then `approve` ("Resume emission"). |
+| Emission stopped, or ContextMatrix blocked it | "Emission stopped: ... Cards already created are kept; reply approve to resume.", which starts "Emission stopped by abort." when an abort or the session's end cut it short; or "Emission is blocked until this is fixed in ContextMatrix; then reply approve:" and what to fix. | Fix anything it names, then `approve` ("Resume emission"). |
 | Yolo found a repository with no commits | "... has no commits, so the run was not started; push an initial commit, then reply approve to start it, or start it in ContextMatrix and reply approve." | Push a first commit, then `approve` ("Start the run"). |
-| The run did not start | "The cards are emitted, but the run did not start: ..." | `approve` ("Retry the run start"), or start the run in ContextMatrix and reply `approve`. |
+| The run did not start | "The cards are emitted, but the run did not start: ...", or "The cards are emitted, but the run start was stopped by abort." after an abort or the session's end, each followed by "Reply approve to retry the start, or start it in ContextMatrix and reply approve." | `approve` ("Retry the run start"), or start the run in ContextMatrix and reply `approve`. |
 | The pipeline ended | The scale bar reads "Stopped:" and a reason, such as "the cards still failed their contract checks after 3 submits": after three tries the cards still broke the architect's rules for cards. | Nothing more runs in this blueprint; start a new one. |
 | A retrospective stopped | "The retrospective stopped: ... reply `retrospective` to run it again." | `retrospective`. |
 
@@ -321,7 +322,8 @@ the mode, the cap and what is spent, but there they cannot be clicked.
 If the architect's server restarts, ContextMatrix starts the session again by
 itself, at the latest when you next send a message; you need not do anything.
 The blueprint picks up as it does after a reopen (see the list below), and an
-emission the restart cut short carries on by itself, creating nothing twice.
+emission or run start the restart cut short carries on by itself, creating
+nothing twice.
 
 ### Ending and reopening a session
 
@@ -346,7 +348,8 @@ there.
 
 ### `continue` and `resume`
 
-The two words do the same, and unlike any other message they add no note.
+The two words do the same and, unlike a message sent to rerun a stopped
+stage, they add no note.
 Besides the stops in the table above, they also run again a review or revision
 that failed, and a reply in a round's chat that failed. The chat answers
 "Resuming" and the stage's name. When nothing is stopped they start nothing,
