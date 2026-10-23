@@ -32,6 +32,7 @@ type Controller interface {
 	Resume(ctx context.Context, id, msgID string) error
 	Retrospective(ctx context.Context, id, msgID string) error
 	Lessons(ctx context.Context, id, msgID string) error
+	Retire(ctx context.Context, id, ref, msgID string) error
 	End(ctx context.Context, id string) error
 
 	// View, Artifact and Subscribe serve CM's blueprint pane; the blueprint

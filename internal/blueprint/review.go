@@ -794,7 +794,10 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipe
 		}
 	}
 
-	c.writeEdgeCases(&b, st)
+	if err := c.writeEdgeCases(ctx, &b, bp, st); err != nil {
+		return "", err
+	}
+
 	writePOC(&b, poc)
 
 	var given []string

@@ -138,7 +138,7 @@ func waitsOnUser(e blueprint.Event) bool {
 		duringRun, _ := e.Payload["during_run"].(bool)
 
 		return !duringRun
-	case blueprint.EventLessonList:
+	case blueprint.EventLessonList, blueprint.EventLessonRetire:
 		// CM arms its working indicator on every message; a list that leaves
 		// nothing running must clear it.
 		duringRun, _ := e.Payload["during_run"].(bool)

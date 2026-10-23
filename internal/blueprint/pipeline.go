@@ -813,7 +813,10 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pipelin
 		return "", err
 	}
 
-	c.writeEdgeCases(&b, st)
+	if err := c.writeEdgeCases(ctx, &b, bp, st); err != nil {
+		return "", err
+	}
+
 	writePOC(&b, poc)
 
 	var given []string
@@ -841,12 +844,20 @@ func (c *Controller) taskFor(ctx context.Context, bp store.Blueprint, st pipelin
 }
 
 // writeEdgeCases gives a stage that checks criteria, and its reviewer, the
-// pack's edge cases a slice's sweep covers; nothing when the pack lists
-// none.
-func (c *Controller) writeEdgeCases(b *strings.Builder, st pipelineStep) {
-	cases := c.opts.Pack.Lists().EdgeCases
-	if len(cases) == 0 || !slices.Contains(st.Checks, pack.CheckCriteria) {
-		return
+// blueprint's edge cases a slice's sweep covers; nothing when it lists none.
+func (c *Controller) writeEdgeCases(ctx context.Context, b *strings.Builder, bp store.Blueprint, st pipelineStep) error {
+	if !slices.Contains(st.Checks, pack.CheckCriteria) {
+		return nil
+	}
+
+	lists, err := c.listsFor(ctx, bp)
+	if err != nil {
+		return err
+	}
+
+	cases := lists.EdgeCases
+	if len(cases) == 0 {
+		return nil
 	}
 
 	b.WriteString("## Edge cases to sweep\n\nA slice's sweep gives each one entry:\n\n")
@@ -856,6 +867,8 @@ func (c *Controller) writeEdgeCases(b *strings.Builder, st pipelineStep) {
 	}
 
 	b.WriteString("\n")
+
+	return nil
 }
 
 // writeAssumptions gives a stage that consumes a stage with stated
@@ -1327,12 +1340,16 @@ func (s *validatorState) round() int {
 // last slice's draft carries the playbook's title.
 func (c *Controller) cardsValidator(sess *session, bp store.Blueprint, st pipelineStep) (func(context.Context, stage.Artifact) error, *validatorState) {
 	state := &validatorState{}
-	lists := c.opts.Pack.Lists()
 
 	return func(ctx context.Context, a stage.Artifact) error {
 		draft, err := contract.ParseDraft(a.Data)
 		if err != nil {
 			return err
+		}
+
+		lists, err := c.listsFor(ctx, bp)
+		if err != nil {
+			return fmt.Errorf("the cards were not judged (%w); submit the same draft again", err)
 		}
 
 		projects, err := c.freshView(ctx, sess, bp)

@@ -121,3 +121,124 @@ func TestDecideLesson_DecidesAProposedLessonOnce(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ok)
 }
+
+func TestRetireLesson_RetiresOnlyAnActiveLesson(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+
+	active := addDecided(t, s, ScopePack, "", LessonActive)
+	before, err := s.GetLesson(ctx, active.ID)
+	require.NoError(t, err)
+
+	ok, err := s.RetireLesson(ctx, active.ID)
+	require.NoError(t, err)
+	assert.True(t, ok)
+
+	got, err := s.GetLesson(ctx, active.ID)
+	require.NoError(t, err)
+	assert.Equal(t, LessonRetired, got.State)
+
+	before.State = LessonRetired
+	assert.Equal(t, before, got, "only the state changes")
+
+	ok, err = s.RetireLesson(ctx, active.ID)
+	require.NoError(t, err)
+	assert.False(t, ok)
+
+	proposed := addDecided(t, s, ScopePack, "", LessonProposed)
+
+	ok, err = s.RetireLesson(ctx, proposed.ID)
+	require.NoError(t, err)
+	assert.False(t, ok)
+
+	got, err = s.GetLesson(ctx, proposed.ID)
+	require.NoError(t, err)
+	assert.Equal(t, LessonProposed, got.State)
+}
+
+// addDecided stores a lesson and decides it into state; proposed leaves it undecided.
+func addDecided(t *testing.T, s *Store, scope, project, state string) Lesson {
+	t.Helper()
+
+	ctx := context.Background()
+
+	added, err := s.AddLessons(ctx, []Lesson{{BlueprintID: "SRC", Scope: scope, Project: project, Text: scope + project + state}})
+	require.NoError(t, err)
+
+	if state != LessonProposed {
+		ok, err := s.DecideLesson(ctx, added[0].ID, LessonDecision{State: state, Scope: scope, Text: added[0].Text, By: "op", At: time.Now().UTC()})
+		require.NoError(t, err)
+		require.True(t, ok)
+	}
+
+	return added[0]
+}
+
+func lessonIDs(ls []Lesson) []int64 {
+	ids := make([]int64, 0, len(ls))
+	for _, l := range ls {
+		ids = append(ids, l.ID)
+	}
+
+	return ids
+}
+
+func newBlueprint(id string, projects ...string) Blueprint {
+	now := time.Now().UTC().Truncate(time.Second)
+
+	return Blueprint{ID: id, Projects: projects, Mode: "default", State: "new", CreatedAt: now, UpdatedAt: now}
+}
+
+func TestCreateBlueprint_TakesTheActiveLessonsItsProjectsCover(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+
+	l1 := addDecided(t, s, ScopePack, "", LessonActive)
+	l2 := addDecided(t, s, ScopeProject, "alpha", LessonActive)
+	addDecided(t, s, ScopeProject, "beta", LessonActive)
+	addDecided(t, s, ScopePack, "", LessonProposed)
+	addDecided(t, s, ScopePack, "", LessonRejected)
+
+	require.NoError(t, s.CreateBlueprint(ctx, newBlueprint("BP1", "alpha")))
+	require.NoError(t, s.CreateBlueprint(ctx, newBlueprint("BP2")))
+
+	got, err := s.BlueprintLessons(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, []int64{l1.ID, l2.ID}, lessonIDs(got))
+
+	got, err = s.BlueprintLessons(ctx, "BP2")
+	require.NoError(t, err)
+	assert.Equal(t, []int64{l1.ID}, lessonIDs(got))
+}
+
+func TestBlueprintLessons_KeepsALessonInItsNewState(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+
+	l1 := addDecided(t, s, ScopePack, "", LessonActive)
+	require.NoError(t, s.CreateBlueprint(ctx, newBlueprint("BP1")))
+
+	_, err := s.db.Exec("UPDATE lessons SET state = 'retired' WHERE id = ?", l1.ID)
+	require.NoError(t, err)
+
+	got, err := s.BlueprintLessons(ctx, "BP1")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, l1.ID, got[0].ID)
+	assert.Equal(t, LessonRetired, got[0].State)
+}
+
+func TestCreateBlueprint_ADuplicateIDAddsNoSet(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+
+	l1 := addDecided(t, s, ScopePack, "", LessonActive)
+	require.NoError(t, s.CreateBlueprint(ctx, newBlueprint("BP1")))
+	addDecided(t, s, ScopePack, "", LessonActive)
+
+	require.Error(t, s.CreateBlueprint(ctx, newBlueprint("BP1")))
+
+	got, err := s.BlueprintLessons(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, []int64{l1.ID}, lessonIDs(got))
+}

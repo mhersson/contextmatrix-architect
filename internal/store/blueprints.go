@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
@@ -32,7 +33,8 @@ type Blueprint struct {
 	UpdatedAt     time.Time
 }
 
-// CreateBlueprint inserts a blueprint; a duplicate id is an error.
+// CreateBlueprint inserts a blueprint and fixes its lesson set: every active
+// lesson scoped to the pack or to one of its projects. A duplicate id is an error.
 func (s *Store) CreateBlueprint(ctx context.Context, b Blueprint) error {
 	projects, err := json.Marshal(b.Projects)
 	if err != nil {
@@ -50,13 +52,43 @@ func (s *Store) CreateBlueprint(ctx context.Context, b Blueprint) error {
 		price = string(raw)
 	}
 
-	_, err = s.db.ExecContext(ctx, `INSERT INTO blueprints
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin create blueprint %s: %w", b.ID, err)
+	}
+
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, `INSERT INTO blueprints
 		(id, title, projects, mode, cost_cap_usd, model, price, context_window, plain_language, state, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.ID, b.Title, string(projects), b.Mode, b.CostCapUSD, b.Model, price, b.ContextWindow, b.PlainLanguage, b.State,
 		b.CreatedAt.Unix(), b.UpdatedAt.Unix())
 	if err != nil {
 		return fmt.Errorf("store: insert blueprint %s: %w", b.ID, err)
+	}
+
+	// The set is read and written in this transaction, so a later state change
+	// of a lesson cannot fall between the two.
+	cover := "scope = 'pack'"
+	args := []any{b.ID}
+
+	if len(b.Projects) > 0 {
+		cover += " OR (scope = 'project' AND project IN (?" + strings.Repeat(", ?", len(b.Projects)-1) + "))"
+
+		for _, p := range b.Projects {
+			args = append(args, p)
+		}
+	}
+
+	_, err = tx.ExecContext(ctx, `INSERT INTO blueprint_lessons (blueprint_id, lesson_id)
+		SELECT ?, id FROM lessons WHERE state = 'active' AND (`+cover+`) ORDER BY id`, args...)
+	if err != nil {
+		return fmt.Errorf("store: take lessons for blueprint %s: %w", b.ID, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit create blueprint %s: %w", b.ID, err)
 	}
 
 	return nil

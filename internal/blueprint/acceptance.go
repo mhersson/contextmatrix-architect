@@ -201,7 +201,13 @@ func (c *Controller) traceProblems(ctx context.Context, bp store.Blueprint, key 
 		ids, _ := citedOutcomes(trace)
 		mark(ids)
 	}
-	cases := c.opts.Pack.Lists().EdgeCases
+
+	lists, err := c.listsFor(ctx, bp)
+	if err != nil {
+		return nil, err
+	}
+
+	cases := lists.EdgeCases
 
 	isPOC := map[string]bool{}
 	for _, name := range poc {

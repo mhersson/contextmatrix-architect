@@ -1,6 +1,6 @@
 # contextmatrix-architect - design
 
-Status: agreed design, 2026-10-15. Slices 0 to 3 are implemented: slice 2 signs off ready cards, emits them and a playbook into CM, starts them in yolo mode and reports their run, and slice 3 adds the dialog stages (intake's questions, slicing, solution design, acceptance) with a responder policy per stage, the human and auto responders, reviewer runs with the critique loop, gates with slicing's folding into solution design, CM prompts, notes that reach later stages and assumptions with grounding's verdicts. A big need is worked piece by piece: slicing orders the slices, shared decisions settles what they share and collapses for one slice, design, grounding, acceptance and decomposition run once per slice, and readiness, one sign-off and one playbook cover every card. The retrospective and lesson approval (slice 4) are built: a `retrospective` reply judges the emitted cards that struggled and the operator decides its lessons, which take effect on no blueprint yet. Applying them and the export's commit to a repository are still to come; the export writes the bundle under the state directory.
+Status: agreed design, 2026-10-15. Slices 0 to 3 are implemented: slice 2 signs off ready cards, emits them and a playbook into CM, starts them in yolo mode and reports their run, and slice 3 adds the dialog stages (intake's questions, slicing, solution design, acceptance) with a responder policy per stage, the human and auto responders, reviewer runs with the critique loop, gates with slicing's folding into solution design, CM prompts, notes that reach later stages and assumptions with grounding's verdicts. A big need is worked piece by piece: slicing orders the slices, shared decisions settles what they share and collapses for one slice, design, grounding, acceptance and decomposition run once per slice, and readiness, one sign-off and one playbook cover every card. The retrospective and lessons (slice 4) are built: a `retrospective` reply judges the emitted cards that struggled and the operator decides its lessons, and approved lessons reach the decomposition and readiness runs and the lists of blueprints created afterwards until retired. The export's commit to a repository is still to come; the export writes the bundle under the state directory.
 
 ## Purpose
 
@@ -64,7 +64,7 @@ Settled during design. Each has its reason so it is not re-litigated.
 | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Standalone Go service on `contextmatrix-harness`          | The stage controller, gates and cross-run ledger have to be written either way; the chat backend cannot host them (lossy resume, no terminal tools, no responder policy). CM stays a coordination layer rather than becoming a model runner. |
 | Not built on `contextmatrix-agent`; `backendkit` only for the CM-facing side | The agent is shaped for card work in a container, and nothing under its `internal/` is importable. backendkit's `webhookcore` and `logbridge` are the chat-backend protocol the architect speaks towards CM, so they are used for exactly that and nothing else. |
-| CM's chat panel is the only client                        | The architect implements CM's chat-backend protocol as a third backend kind, so CM's existing panel is where the need is stated, questions and gates are answered, and side operations (export, the retrospective, lessons) are requested by reply. Same look and feel, session list, auth and browser for free. No UI, no CLI beyond `contextmatrix-architect serve` and the `config defaults` and `config validate` helpers contextmatrix-setup drives, no client API. |
+| CM's chat panel is the only client                        | The architect implements CM's chat-backend protocol as a third backend kind, so CM's existing panel is where the need is stated, questions and gates are answered, and side operations (export, the retrospective, lessons, retiring a lesson) are requested by reply. Same look and feel, session list, auth and browser for free. No UI, no CLI beyond `contextmatrix-architect serve` and the `config defaults` and `config validate` helpers contextmatrix-setup drives, no client API. |
 | One controller process                                    | `contextmatrix-architect serve` alone owns the store, the workspaces and the harness runs, and every session originates in CM. One record, one place code is checked out, no laptop copy of anything. |
 | Provisioned by CM, like the agent and chat backends      | Every blueprint is a CM session. The start payload delivers the LLM endpoint, the MCP key, the model, a git-credentials token and, when research is on, the search provider and its key. The architect's own config holds no secret but the backend HMAC key, and there is no CM-less mode. |
 | Questions in stored rounds; a stage resumes its stored conversation | A big need takes a long interview, answered in one sitting or in batches over days. Posting a round ends the run, so nothing waits in memory and End, a reopen or a restart loses nothing; once every question has an answer and every assumption a decision the stage resumes the conversation that asked, with the answers as its next message, so the model reads the calls it made and what they returned and, with reasoning replay on, the reasoning behind them when the same model resumes it. Every run of a stage, a chat run included, is offered the same tools, so the prompt cache is warm when the answer comes before the cache expires, on either endpoint. |
@@ -90,7 +90,7 @@ context window; never use film references.
 CM chat panel (the only client)
      |  internal/webhook (backendkit webhookcore + logbridge:
      |  session start, /message, /logs SSE, end-session, the blueprint view, artifacts and live SSE)
-     |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, cap <usd>|off, mode <m>, resume|continue, retrospective, lessons, lesson round answers
+     |  commands in: answer, approve, reject, abort, note, export, gate <stage> human|auto, cap <usd>|off, mode <m>, resume|continue, retrospective, lessons, retire L<n>, lesson round answers
      |  events out: stage progress, tool calls, questions, gates, cost
 controller (internal/blueprint)     blueprint state machine, gates, responder policy, cost cap
      |
@@ -320,7 +320,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | ledger        | per-run cost rows summed per blueprint                                                                                        |
 | emissions     | append-only: blueprint, kind (card, playbook, run), the draft card id, project, CM id, created at; one row per blueprint, kind and draft id |
 | lessons       | id (`L<n>`, across the whole store, never reused), the blueprint and retro run that proposed it, state (`proposed`, `active`, `rejected`, `retired`), scope (`pack` or `project`) and the evidence card's project, text, rationale, evidence card ids, an overlay of list additions (JSON, never edited), decided at and by; mutable, not append-only, every state change also an event |
-| blueprint_lessons | blueprint, lesson; a blueprint's lesson set, rows only inserted; nothing writes it yet |
+| blueprint_lessons | blueprint, lesson; a blueprint's lesson set, written in its creation's transaction: every lesson then active and pack-scoped or scoped to one of its target projects; rows only inserted, so a lesson retired later stays in it |
 
 Every `stage` column, and every event payload's `stage`, holds a step key:
 the stage id for a whole-blueprint stage, `<stage>@SL<n>` for a per-slice
@@ -341,8 +341,8 @@ Schema bumps are one-way: an older binary refuses a newer file.
 (model, pack version, persona, config snapshot), tool call made, question
 asked, answer given, assumption recorded, check passed or failed, reviewer
 score, gate decided, artifact version stored, emission call and CM's response,
-export written, playbook run started, retrospective reported, lesson proposed or
-decided. Tables marked append-only have no update or delete path in code, and
+export written, playbook run started, retrospective reported, lesson proposed,
+decided or retired. Tables marked append-only have no update or delete path in code, and
 tests prove it. Secrets are redacted before anything is stored.
 
 **Source tags.** Every tool result that reads something external is prefixed
@@ -694,7 +694,9 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
 - A lesson that extends a list carries its additions as an overlay stored in
   SQLite with the lesson; the pack's lists merged with overlays, pack entries
   first and an edge case the merged lists already hold left out, are checked
-  by the loader's own list parser, so a lesson never needs a code change.
+  by the loader's own list parser. They are each blueprint's lists: the pack's
+  merged with the overlays of its lesson set, at each read, wherever the
+  pack's lists are read, so a lesson never needs a code change.
 - Pack prose is never tested. Tests check only that a pack parses and that
   every stage, persona and list reference resolves.
 
@@ -1378,6 +1380,21 @@ It never runs on its own.
   reused, and `lessons` lists every lesson in every state, with its scope,
   rationale and evidence card ids; it needs only the session and takes no run
   slot.
+- **Applying lessons**: a blueprint's set is fixed when it is created: every
+  lesson then active and pack-scoped or scoped to one of its target projects,
+  taken in the transaction that inserts the blueprint. A reopen never changes
+  it, and a lesson approved or retired later reaches only blueprints created
+  afterwards (a retired lesson stays in the sets that hold it). A blueprint
+  from before the store's v7 has none. Every card of a blueprint is checked
+  against its merged lists, a lesson retired later included; the checks are
+  not project-aware. The set's lessons are added to the instructions of the
+  runs of the stage that checks cards (decomposition) and the stage that
+  checks readiness, after the plain-language text, and to no other run.
+- **`retire L<n>`**: sets an active lesson retired, from active only, so a
+  lesson that is not active is refused with its state, an unknown one as
+  unknown, and nothing changes. It needs only the session, works in any state
+  and while a run is in flight, and takes no run slot. Blueprints created
+  afterwards do not get the lesson; those created before keep it in their set.
 - Reading the cards needs no CM change: the architect knows its card ids
   and reads them with `get_card` only. A CM card-creator field comes later,
   to compare architect cards with human-written ones across the whole board.
@@ -1406,6 +1423,7 @@ the mockup reply (see Mockups):
 | `export`                      | Writes the markdown bundle (blueprint summary with every gate decision and the emitted ids, artifacts, the mockup version a use took carrying its `chosen` as the sheet shows it, questions, sources, events, transcripts) under `exports/<blueprint>/<time>` in the server's state directory. The per-project opt-in that commits it to a repository is still to come. |
 | `retrospective`               | Judges the emitted cards that struggled and proposes lessons (see Learning). The whole message, case ignored. |
 | `lessons`                     | Lists every lesson of every blueprint with its state, scope, rationale and evidence card ids. Works in any state and while a run is in flight. |
+| `retire L<n>`                 | Retires an active lesson: blueprints created afterwards do not get it, and those created before keep it. Exactly two words; works in any state and while a run is in flight. |
 | `abort`                       | Ends the open run; the blueprint stays and can be reopened, and an open round stays open. |
 
 - Under a blueprint cost cap a run starts only with its floor left: the
@@ -1812,7 +1830,7 @@ internal/retro       the retrospective's struggle rules, findings, task and less
 internal/export      markdown rendering into the state directory
 internal/config
 internal/buildinfo   build version, commit and time (ldflags) and the embedded merge history
-internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, mode, resume, continue, retrospective and lessons commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
+internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, mode, resume, continue, retrospective, lessons and retire commands that internal/blueprint recognises; serves the blueprint view, artifacts and live stream
 ```
 
 ## Changes needed in CM
@@ -1869,10 +1887,9 @@ Ordered so a real card comes out as early as possible.
 3. **Dialog stages.** Intake, slicing, solution design, acceptance; `human`
    and `auto` responders; gates. In CM: typed question and gate entries
    rendered with buttons.
-4. **The retrospective and lessons**, with pack overlays (approval built,
-   applying them to later blueprints still to come), and the per-project export
-   opt-in that commits the bundle to a repository through an allowlist of
-   target repositories.
+4. **The retrospective and lessons** (built), with pack overlays, and the
+   per-project export opt-in that commits the bundle to a repository through
+   an allowlist of target repositories.
 5. **Later**: a gate inbox in CM's web UI;
    seeding a blueprint from an existing CM card, in the same adapter shape as
    the Jira seed; Jira seed and mirror (decide REST against Atlassian MCP then,
