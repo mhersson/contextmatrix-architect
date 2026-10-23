@@ -455,3 +455,31 @@ func TestStart_AContinuationNamesTheModelThatWroteItsConversation(t *testing.T) 
 		})
 	}
 }
+
+func TestStart_AReopenKeepsTheSetItWasCreatedWith(t *testing.T) {
+	c, st, _, _ := newController(t, artifactRun("# Need"))
+	ctx := context.Background()
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	added, err := st.AddLessons(ctx, []store.Lesson{{BlueprintID: "SRC", Scope: store.ScopePack, Text: "a rule"}})
+	require.NoError(t, err)
+
+	ok, err := st.DecideLesson(ctx, added[0].ID, store.LessonDecision{State: store.LessonActive, Scope: store.ScopePack, Text: "a rule", By: "op", At: time.Now().UTC()})
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	require.NoError(t, c.End(ctx, "BP1"))
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+
+	set, err := st.BlueprintLessons(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Empty(t, set)
+
+	require.NoError(t, c.Start(ctx, startInput("BP2")))
+
+	set, err = st.BlueprintLessons(ctx, "BP2")
+	require.NoError(t, err)
+	require.Len(t, set, 1)
+	assert.Equal(t, added[0].ID, set[0].ID)
+}

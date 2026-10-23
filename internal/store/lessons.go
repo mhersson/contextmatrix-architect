@@ -148,6 +148,35 @@ func (s *Store) ListLessons(ctx context.Context) ([]Lesson, error) {
 	return out, nil
 }
 
+// BlueprintLessons returns the lessons fixed into a blueprint at its creation,
+// in id order, each in the state it has now. A blueprint with none gets nil.
+func (s *Store) BlueprintLessons(ctx context.Context, blueprintID string) ([]Lesson, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+lessonColumns+` FROM lessons
+		WHERE id IN (SELECT lesson_id FROM blueprint_lessons WHERE blueprint_id = ?) ORDER BY id`, blueprintID)
+	if err != nil {
+		return nil, fmt.Errorf("store: blueprint %s lessons: %w", blueprintID, err)
+	}
+
+	defer rows.Close()
+
+	var out []Lesson
+
+	for rows.Next() {
+		l, err := scanLesson(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: scan lesson: %w", err)
+		}
+
+		out = append(out, l)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: blueprint %s lessons: %w", blueprintID, err)
+	}
+
+	return out, nil
+}
+
 // DecideLesson records d on a proposed lesson. It reports false, with no
 // change, when the lesson is missing or already decided.
 func (s *Store) DecideLesson(ctx context.Context, id int64, d LessonDecision) (bool, error) {

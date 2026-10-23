@@ -859,6 +859,10 @@ func TestOpen_MigratesV6(t *testing.T) {
 	var n int
 	require.NoError(t, s.db.QueryRow("SELECT COUNT(*) FROM blueprint_lessons").Scan(&n))
 	assert.Equal(t, 0, n)
+
+	set, err := s.BlueprintLessons(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Empty(t, set)
 }
 
 func TestRunModel(t *testing.T) {

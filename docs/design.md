@@ -320,7 +320,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 | ledger        | per-run cost rows summed per blueprint                                                                                        |
 | emissions     | append-only: blueprint, kind (card, playbook, run), the draft card id, project, CM id, created at; one row per blueprint, kind and draft id |
 | lessons       | id (`L<n>`, across the whole store, never reused), the blueprint and retro run that proposed it, state (`proposed`, `active`, `rejected`, `retired`), scope (`pack` or `project`) and the evidence card's project, text, rationale, evidence card ids, an overlay of list additions (JSON, never edited), decided at and by; mutable, not append-only, every state change also an event |
-| blueprint_lessons | blueprint, lesson; a blueprint's lesson set, rows only inserted; nothing writes it yet |
+| blueprint_lessons | blueprint, lesson; a blueprint's lesson set, written in its creation's transaction: every lesson then active and pack-scoped or scoped to one of its target projects; rows only inserted, so a lesson retired later stays in it |
 
 Every `stage` column, and every event payload's `stage`, holds a step key:
 the stage id for a whole-blueprint stage, `<stage>@SL<n>` for a per-slice
@@ -1378,6 +1378,12 @@ It never runs on its own.
   reused, and `lessons` lists every lesson in every state, with its scope,
   rationale and evidence card ids; it needs only the session and takes no run
   slot.
+- **Applying lessons**: a blueprint's set is fixed when it is created: every
+  lesson then active and pack-scoped or scoped to one of its target projects,
+  taken in the transaction that inserts the blueprint. A reopen never changes
+  it, and a lesson approved or retired later reaches only blueprints created
+  afterwards (a retired lesson stays in the sets that hold it). A blueprint
+  from before the store's v7 has none.
 - Reading the cards needs no CM change: the architect knows its card ids
   and reads them with `get_card` only. A CM card-creator field comes later,
   to compare architect cards with human-written ones across the whole board.
