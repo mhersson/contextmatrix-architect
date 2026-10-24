@@ -85,12 +85,29 @@ source):
 Setup is work the cards carry, never a reason to stop. Read repo_info and
 the checkout:
 
-- A project with no verify command: propose one from the design and the
-  checkout (what the repository documents in its README, Makefile or CI;
-  for a new project, what its stack implies) as
-  `setup.<project>.verify_command`. Every card of that project runs it as a
-  numbered acceptance criterion, written exactly as proposed. A human sets
-  it in ContextMatrix after the sign-off.
+- A project with no verify command, or whose declared one grounding
+  reports under `### Contradictions` as one a worker cannot run: propose
+  grounding's `verify_candidate` as `setup.<project>.verify_command`, never
+  a command that runs a suite grounding left to CI. When it replaces a
+  declared command, name that command, exactly as grounding reports it, as
+  `setup.<project>.replaces`. When the candidate is empty (a new project,
+  or a repository that documents nothing a worker can run), propose what
+  the stack implies. Either way a worker runs it: a container with the
+  repository checkout, its image's language toolchain and network access for
+  packages, and no database, Docker daemon, cluster or deployed environment.
+  Every script, package script or build target it names exists where it
+  runs, or the project's first card adds it and every other card of the
+  project depends on that card, and nothing it runs needs a service a
+  worker lacks. Every card of that project runs it as a numbered acceptance
+  criterion, written exactly as proposed. A human sets it in ContextMatrix
+  after the sign-off, replacing a declared one. A project whose declared
+  command grounding does not contradict gets no proposal.
+- A project whose grounding leaves test suites to the pull request's CI,
+  whatever its verify command: every card of that project names them under
+  Out of scope as run by CI, never by the agent, and none of its criteria
+  runs them. A test a card writes in such a suite stays under Tests
+  expected; a criterion that only such a test proves names that test and
+  says the pull request's CI runs it.
 - A project whose primary repository (the tree named after the project) has
   no instruction file: its first card also writes AGENTS.md at the
   repository root, covering the stack, the verify command, the layout and
@@ -119,7 +136,7 @@ the checkout:
   beyond it, this slice's first card of the project adds the same way.
 
 Submit with the body as a short summary and a data object
-`{"title": "<playbook title, needed for two or more cards>", "cards": [{"id": "D1", "project": "<name>", "title": "...", "type": "feature", "priority": "medium", "labels": [], "skills": [], "depends_on": [], "body": "<markdown from the template>", "where": [{"path": "...", "symbol": "..."}, {"path": "<a file the card creates>", "new": true}], "criteria": ["AC1"], "mockup": ["<a screen id of the approved mockup, only on a card that builds or changes it>"]}], "manual": [{"id": "M1", "text": "<the check a human does>", "criteria": ["MC1"]}], "order": ["D1", "M1", "D2"], "setup": {"<project>": {"verify_command": "<only when the project declares none>", "instruction_card": "<only when the repository has no instruction file>"}}}`.
+`{"title": "<playbook title, needed for two or more cards>", "cards": [{"id": "D1", "project": "<name>", "title": "...", "type": "feature", "priority": "medium", "labels": [], "skills": [], "depends_on": [], "body": "<markdown from the template>", "where": [{"path": "...", "symbol": "..."}, {"path": "<a file the card creates>", "new": true}], "criteria": ["AC1"], "mockup": ["<a screen id of the approved mockup, only on a card that builds or changes it>"]}], "manual": [{"id": "M1", "text": "<the check a human does>", "criteria": ["MC1"]}], "order": ["D1", "M1", "D2"], "setup": {"<project>": {"verify_command": "<only when the project declares none, or grounding reports the declared one under Contradictions>", "replaces": "<the declared command, only when verify_command replaces it>", "instruction_card": "<only when the repository has no instruction file>"}}}`.
 The last slice's draft gives the playbook title for every slice's cards; an earlier slice may leave `title` empty. `order` lists this slice's cards and manual entries; the playbook takes the slices in their order.
 Leave `skills` empty to inherit the project's default task skills.
 A rejected submit lists what failed the contract; fix the cards and submit

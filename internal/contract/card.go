@@ -49,10 +49,13 @@ type Manual struct {
 
 // Setup is what decomposition plans for a target project an agent run is
 // not set up for yet: the verify command it proposes when ContextMatrix
-// declares none, and the draft id of the card that also writes AGENTS.md
-// when the repository has no instruction file.
+// declares none, or to replace a declared one a worker cannot run, with
+// Replaces naming the declared command it replaces, and the draft id of the
+// card that also writes AGENTS.md when the repository has no instruction
+// file.
 type Setup struct {
 	VerifyCommand   string `json:"verify_command,omitempty"`
+	Replaces        string `json:"replaces,omitempty"`
 	InstructionCard string `json:"instruction_card,omitempty"`
 }
 
@@ -108,7 +111,11 @@ func ParseDraft(data map[string]any) (Draft, error) {
 	}
 
 	for name, s := range d.Setup {
-		d.Setup[name] = Setup{VerifyCommand: strings.TrimSpace(s.VerifyCommand), InstructionCard: strings.TrimSpace(s.InstructionCard)}
+		d.Setup[name] = Setup{
+			VerifyCommand:   strings.TrimSpace(s.VerifyCommand),
+			Replaces:        strings.TrimSpace(s.Replaces),
+			InstructionCard: strings.TrimSpace(s.InstructionCard),
+		}
 	}
 
 	return d, nil

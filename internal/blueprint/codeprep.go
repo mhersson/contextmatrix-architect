@@ -159,9 +159,14 @@ func contractView(ctx context.Context, projects []cm.Project, targets []string, 
 			return nil, err
 		}
 
+		verify := ""
+		if p.Verify != nil {
+			verify = strings.TrimSpace(p.Verify.Command)
+		}
+
 		cp := contract.Project{
-			HasVerify: p.Verify != nil && strings.TrimSpace(p.Verify.Command) != "",
-			Types:     p.Types, Priorities: p.Priorities,
+			VerifyCommand: verify,
+			Types:         p.Types, Priorities: p.Priorities,
 			ForeignRepos: foreignRepos(projects, name),
 		}
 

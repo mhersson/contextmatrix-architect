@@ -366,9 +366,9 @@ designer (SD), senior developer (DEV), tester (TST), reviewer (REV).
 | 3  | Slicing          | PO      | need, mockup      | slices in order, the thinnest working one first and riskier ones before polish, each delivering standalone value; one slice is fine; reads the code | yes; folds into 5's gate when there is one slice | SD       |
 | 4  | Shared decisions | SD      | need, mockup, slices | the decisions every slice shares: tooling, conventions, platform, cross-slice contracts, cross-cutting qualities; asks a question for each decision with real alternatives; reads the code; collapses, unrun, with one slice | yes       | DEV      |
 | 5  | Solution design  | SD      | need, mockup, slices, shared decisions, earlier slices | once per slice: projects involved, decisions with rejected options and their basis, contracts between the parts it builds (inside one project and across projects), how the slice builds the mockup's screens; asks a question for each decision with real alternatives; reads the code | yes       | DEV      |
-| 6  | Grounding        | DEV     | the slice's design | once per slice, per project: files, symbols and patterns verified at a sha, verify command, instruction file presence | no        | -        |
+| 6  | Grounding        | DEV     | the slice's design | once per slice, per project: files, symbols and patterns verified at a sha, the verify command (declared, or a candidate a worker can run) and the test suites left to the pull request's CI, instruction file presence | no        | -        |
 | 7  | Acceptance       | DEV     | the slice's design, grounding | once per slice: criteria checkable inside one repo; human and live checks split into manual steps | `auto` by default | TST      |
-| 8  | Decomposition    | DEV     | all above, earlier slices' cards | once per slice: draft cards with type and priority, `depends_on` per project, the mockup's screens each card builds, manual entries for human and live checks, the order, and the setup for a project without a verify command, an instruction file or a `.gitignore` that ignores what its stack writes; the last slice's draft gives the playbook title | no        | -        |
+| 8  | Decomposition    | DEV     | all above, earlier slices' cards | once per slice: draft cards with type and priority, `depends_on` per project, the mockup's screens each card builds, manual entries for human and live checks, the order, and the setup for a project without a verify command a worker can run, an instruction file or a `.gitignore` that ignores what its stack writes; the last slice's draft gives the playbook title | no        | -        |
 | 9  | Readiness        | REV     | every slice's cards | contract check per card; failures loop back to 8 for the slice that holds the card and every later slice, three rounds max, then sign-off with the cards still not ready | no        | -        |
 | 10 | Sign-off         | human   | everything        | approval; then emission of one playbook                                                                | yes       | -        |
 | -  | Retrospective    | REV     | emitted cards     | one finding per struggled card, with a proposed lesson or none when the card was not at fault         | the lesson round | -  |
@@ -840,6 +840,40 @@ adds to a card that cites a source tag (see Emission).
   keeps the operator's. The sign-off lists setting it as a manual step, or
   in `yolo`, where the run starts without a human unless a repository with
   no commits holds it, a notice of what happens without it (see Emission).
+- A declared verify command grounding reports under Contradictions as
+  one a worker cannot run: grounding's candidate is its replacement, the
+  draft proposes it in `setup.<project>.verify_command` and names the
+  declared command in `setup.<project>.replaces`, and every card of the
+  project runs it in its criteria. Readiness judges that a contradicted
+  command gets its replacement and `replaces`, and that `replaces` names
+  only a contradicted command, exactly. The contract and preflight count a
+  replacement only while CM declares exactly the command `replaces` names;
+  any other proposal for a declared project is left alone, so a person's
+  own command stands. While CM still declares it, preflight warns in every
+  mode, so an emitting mode stops for a human, and the sign-off lists "set
+  verify command `<new>` on project `<p>` in ContextMatrix, replacing
+  `<declared>`" as a step in every mode, since the warning stops the run
+  start for a person.
+- A verify command runs in a worker: a container with the repository
+  checkout, its image's language toolchain and network access for
+  packages, and no database, Docker daemon, cluster or deployed
+  environment, and the agent runs the tests it writes there too. Grounding
+  finds, for every target project, declared verify command or not, the
+  suites whose setup, read down to what the tests load before they run,
+  needs a service a worker lacks, and leaves them to the pull request's
+  CI: every card of the project names them under Out of scope and runs
+  them in no criterion, and a criterion only such a test proves names the
+  test and leaves its run to CI. Grounding's candidate keeps what the
+  repository documents to the scripts and build targets that exist where
+  the command runs (a package script run at the root is in the root
+  manifest) and to the suites a worker can run; CI configuration is a
+  source, never proof. Decomposition proposes the candidate, or, when it
+  is empty, what the stack implies under the same rules, with anything it
+  names that is not there yet added by the project's first card, on which
+  every other card of the project depends. Readiness judges the proposal
+  by these rules on every card, reading grounding whole for the suites left
+  to CI. A declared verify command that fails them is a grounding
+  contradiction, and the draft proposes its replacement.
 - A repository without `AGENTS.md` or `CLAUDE.md` at the root: the
   project's first card also writes `AGENTS.md` (stack, verify command,
   layout, conventions), `setup.<project>.instruction_card` names it, and
@@ -875,12 +909,15 @@ adds to a card that cites a source tag (see Emission).
 | `depends_on` graph acyclic within each project                     | mechanical                 |
 | Every acceptance criterion maps to exactly one card of its project, every manual check to a manual entry | mechanical (acceptance's artifact) |
 | Target project declares a repo                                     | mechanical (`list_projects`) |
-| A project without a verify command: the proposed command in every card's criteria | mechanical (`list_projects`) |
+| A project without a verify command, or whose declared one the draft replaces with a matching `replaces`: the proposed command in every card's criteria | mechanical (`list_projects`) |
 | A repository without an instruction file: one card writes `AGENTS.md`, every other card of the project depends on it | mechanical (code tool) |
 | Type and priority are ones the project declares                    | mechanical (`list_projects`) |
 | A card's mockup screens exist in the approved mockup               | mechanical                 |
 | No mockup block in a draft card's body                             | mechanical                 |
 | A repository whose `.gitignore` misses what the stack writes: the first card writes or extends it as its first change, every other card of the project depends on it | model-judged |
+| A proposed verify command a worker can run on every card: what it names exists where it runs or the project's first card, on which the others depend, adds it; nothing it runs needs a service a worker lacks | model-judged |
+| Every card of a project with suites grounding left to CI names them under Out of scope and runs them in no criterion, whatever the project's verify command | model-judged |
+| A declared verify command grounding contradicts gets a replacement and a `replaces` that names it exactly; no `replaces` names a command grounding does not contradict | model-judged |
 | One deliverable, no open decisions, no optional scope              | model-judged               |
 | Builds only what the blueprint asks for; no card whose only work is documentation, tests, a guard or a proof over other cards' work, or the closing commands, except the instruction card setup asks for | model-judged |
 | Estimated planner split of two subtasks or fewer                   | model-judged               |
@@ -891,16 +928,17 @@ The contract lives here: the default pack's `card.md` and `lists.yaml` plus
 `internal/contract`. The agent is the consumer and its prompts are the ground
 truth the lists are copied from. The mechanical rows run on every decomposition
 submit as the critique loop, against the project config read from CM again
-for that submit, so a fix made in CM during the run counts at the next
-submit; a submit made while CM cannot be read is refused without spending a
-round. A per-slice decomposition's submit is checked inside the draft of every
-earlier slice plus itself: its `depends_on` may name an earlier slice's card of
-its project, a project's setup is the earliest slice's that sets each field, a
-finding the earlier slices' draft has without the submit is theirs and does not
-count while every other finding does, whichever card it names, and no card or
-manual entry id may repeat one an earlier slice holds. The last slice's draft
-carries the playbook's title once the slices hold two or more cards. The
-model-judged rows are the readiness stage.
+for that submit, so a fix made in CM during the run counts at the next submit;
+a submit made while CM cannot be read is refused without spending a round. A
+per-slice decomposition's submit is checked inside the draft of every earlier
+slice plus itself: its `depends_on` may name an earlier slice's card of its
+project, a project's setup is the earliest slice's that sets each field, with
+`replaces` taken from the slice whose verify command it goes with, a finding the
+earlier slices' draft has without the submit is theirs and does not count while
+every other finding does, whichever card it names, and no card or manual entry
+id may repeat one an earlier slice holds. The last slice's draft carries the
+playbook's title once the slices hold two or more cards. The model-judged rows
+are the readiness stage.
 
 ## Interaction
 
@@ -1244,29 +1282,34 @@ Then, in order:
    attempt, reading CM each time. Blocking: a card's project is missing in
    CM or declares no repository. A blocked emission waits for the fix in CM
    and another `approve`. Warnings: a repository whose default branch moved
-   since the checkout or could not be read (a move is a changed grounded commit:
-   a repository empty at the checkout that has commits now is not a move, the
-   push step is done), a project that declares no verify command while the
-   cards propose none, or a draft title that is a card in another runnable
-   playbook. An `approve` after the warnings were shown is
-   the logged override; an emitting mode stops for a human instead. Steps:
-   "set verify command `<cmd>` on project `<p>` in ContextMatrix" for each
-   project that still declares no verify command, with the command the
-   cards propose, listed in `default`, `auto` and `auto+emit`, which leaves
-   the run to a human; and "push an initial commit to `<repo>`'s default
-   branch before running the cards; the agent needs a base branch" for each
-   repository of a card's project with no commits, in every mode. In `yolo`,
-   judged from the mode the sign-off reads and again at emission, the verify
-   gap is a notice instead (unless a repository with no commits holds the run
-   start for a person, who can still set it): each card's agent looks for a
-   command in the repository as the cards build it (a test target or the
-   project's test command), else uses one its model proposes, else runs
-   unverified, and setting the proposed command pins it. Steps and notices, in
-   separate lists, are shown at the sign-off and again with the emitted cards;
-   neither blocks emission nor stops an emitting mode, and neither is a
-   playbook entry, which would hold a run at a check-off. A missing
-   instruction file is never a preflight finding: the contract makes a card
-   write it.
+   since the checkout or could not be read (a move is a changed grounded
+   commit: a repository empty at the checkout that has commits now is not a
+   move, the push step is done), a project that declares no verify command
+   while the cards propose none, a project whose declared verify command
+   the cards replace, or a draft title that is a card in another runnable
+   playbook. An `approve` after the warnings were shown is the logged
+   override; an emitting mode stops for a human instead. Steps: "set verify
+   command `<cmd>` on project `<p>` in ContextMatrix" for each project that
+   still declares no verify command, with the command the cards propose,
+   listed in `default`, `auto` and `auto+emit`, which leaves the run to a
+   human; the same step ending ", replacing `<declared>`" for each project
+   whose declared command the cards replace, listed in every mode; and
+   "push an initial commit to `<repo>`'s default branch before running the
+   cards; the agent needs a base branch" for each repository of a card's
+   project with no commits, in every mode. In `yolo`, judged from the mode
+   the sign-off reads and again at emission, the verify gap is a notice
+   instead (unless a repository with no commits holds the run start for
+   a person, who can still set it): each card's agent looks for a command
+   in the repository as the cards build it (a test target or the project's
+   test command), else uses one its model proposes, else runs unverified,
+   and setting the proposed command pins it. A replacement stays a step in
+   `yolo` too: its warning stops the run start for a person, who can set it
+   before approving; an approve without it starts the run with the declared
+   command. Steps and notices, in separate lists, are shown at the sign-off
+   and again with the emitted cards; neither blocks emission nor stops an
+   emitting mode, and neither is a playbook entry, which would hold a run at
+   a check-off. A missing instruction file is never a preflight finding: the
+   contract makes a card write it.
 2. **Cards**, in playbook order, which the contract keeps dependency-first,
    so `depends_on` carries real ids within a project. Each created id is
    stored in `emissions` at once, so a retry after a failure skips what

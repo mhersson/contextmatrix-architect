@@ -1549,7 +1549,7 @@ func TestPrepareCode_TreeNames(t *testing.T) {
 
 			p := facts.projects["alpha"]
 			assert.Equal(t, tt.wantRepo, p.HasRepo)
-			assert.True(t, p.HasVerify)
+			assert.Equal(t, "make test", p.VerifyCommand)
 			assert.Equal(t, tt.wantRepo, p.HasInstructionFile, "the primary tree's AGENTS.md")
 
 			if tt.wantRepo {

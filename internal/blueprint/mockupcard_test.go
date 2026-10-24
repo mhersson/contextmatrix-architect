@@ -362,7 +362,7 @@ func TestEmit_EveryCardOfASliceThatBuildsAScreenCarriesTheMockup(t *testing.T) {
 		assert.Contains(t, blocks[0], "error: that name is taken", "the source made it in")
 
 		card := contract.Card{ID: "D1", Project: "alpha", Title: "Add the member list", Type: "feature", Body: body}
-		for _, f := range contract.Check(contract.Draft{Cards: []contract.Card{card}}, lists, map[string]contract.Project{"alpha": {HasRepo: true, HasVerify: true}}) {
+		for _, f := range contract.Check(contract.Draft{Cards: []contract.Card{card}}, lists, map[string]contract.Project{"alpha": {HasRepo: true, VerifyCommand: "make test"}}) {
 			assert.NotEqual(t, "defect_phrase", f.Check, "card %d: %s", i+1, f)
 		}
 	}

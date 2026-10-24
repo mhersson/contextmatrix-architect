@@ -12,14 +12,14 @@ import (
 )
 
 // Project is what the checks know about a target project: whether CM
-// declares a repository and a verify command for it, the checkout root the
-// where check reads (empty skips it and the instruction check), whether that
-// checkout has an instruction file, the card types and priorities it
-// declares (empty skips that check), and the repository urls of every other
-// CM project, which no card may name.
+// declares a repository for it, the verify command CM declares (trimmed,
+// empty when none), the checkout root the where check reads (empty skips it
+// and the instruction check), whether that checkout has an instruction file,
+// the card types and priorities it declares (empty skips that check), and
+// the repository urls of every other CM project, which no card may name.
 type Project struct {
 	HasRepo            bool
-	HasVerify          bool
+	VerifyCommand      string
 	HasInstructionFile bool
 	Root               string
 	Types              []string
@@ -79,13 +79,18 @@ func Check(d Draft, lists Lists, projects map[string]Project) []Finding {
 	return out
 }
 
-// checkVerifySetup applies to a card whose project declares no verify
-// command: the draft proposes one in the project's setup, and the card's
-// acceptance criteria run it, written exactly as proposed. A proposal for a
-// project that declares one is ignored; the sign-off reads CM itself.
+// checkVerifySetup holds a card to its project's proposed verify command. A
+// project that declares none needs a proposal, and the card's acceptance
+// criteria run it, written exactly as proposed. A declared project's
+// proposal counts only when Replaces names the command CM declares, and then
+// the card runs it as well; any other proposal is left alone, so a command a
+// person set stands. Readiness judges whether a contradicted command got its
+// Replaces. The sign-off reads CM itself.
 func checkVerifySetup(c Card, p Project, s Setup, lists Lists) []Finding {
-	if p.HasVerify {
-		return nil
+	if declared := p.VerifyCommand; declared != "" {
+		if s.VerifyCommand == "" || s.VerifyCommand == declared || s.Replaces != declared {
+			return nil
+		}
 	}
 
 	if s.VerifyCommand == "" {
