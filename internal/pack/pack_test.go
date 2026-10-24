@@ -200,7 +200,7 @@ func forbiddenRefs(t *testing.T, extra string) []string {
 	body.WriteString(extra)
 
 	card := contract.Card{ID: "D1", Project: "alpha", Title: "Add a container image", Type: "feature", Body: body.String()}
-	projects := map[string]contract.Project{"alpha": {HasRepo: true, HasVerify: true}}
+	projects := map[string]contract.Project{"alpha": {HasRepo: true, VerifyCommand: "make test"}}
 
 	var out []string
 

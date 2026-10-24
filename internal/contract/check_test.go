@@ -57,7 +57,7 @@ func withRoot(t *testing.T) map[string]Project {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "internal", "api"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "internal", "api", "router.go"), []byte("package api\n\nfunc NewRouter() {}\n"), 0o600))
 
-	return map[string]Project{"alpha": {HasRepo: true, HasVerify: true, HasInstructionFile: true, Root: root}}
+	return map[string]Project{"alpha": {HasRepo: true, VerifyCommand: "make test", HasInstructionFile: true, Root: root}}
 }
 
 func checkNames(fs []Finding) []string {
@@ -239,14 +239,14 @@ func TestCheck_CycleReportsOnlyCardsOnIt(t *testing.T) {
 }
 
 func TestCheck_ProjectWithoutARepository(t *testing.T) {
-	projects := map[string]Project{"alpha": {HasVerify: true}}
+	projects := map[string]Project{"alpha": {VerifyCommand: "make test"}}
 
 	names := checkNames(Check(Draft{Cards: []Card{goodCard("D1")}}, testLists(), projects))
 	assert.Equal(t, []string{"D1:project_repo"}, names)
 }
 
 func TestCheck_NoRootSkipsWhere(t *testing.T) {
-	projects := map[string]Project{"alpha": {HasRepo: true, HasVerify: true}}
+	projects := map[string]Project{"alpha": {HasRepo: true, VerifyCommand: "make test"}}
 
 	findings := Check(Draft{Cards: []Card{goodCard("D1")}}, testLists(), projects)
 	assert.Empty(t, findings, "without a checkout neither the where check nor the instruction check runs")
@@ -370,7 +370,7 @@ func TestCheck_ProjectFieldsAndSelfContainment(t *testing.T) {
 		{Name: "file url", Pattern: `file://[^\s"'` + "`" + `)\]]*`},
 	}}
 	projects := map[string]Project{"alpha": {
-		HasRepo: true, HasVerify: true,
+		HasRepo: true, VerifyCommand: "make test",
 		Types: []string{"feature", "bug"}, Priorities: []string{"low", "medium", "high"},
 		ForeignRepos: []string{"https://github.com/acme/beta.git"},
 	}}
@@ -420,7 +420,7 @@ func TestCheck_ProjectFieldsAndSelfContainment(t *testing.T) {
 }
 
 func TestCheck_ProjectWithoutTypesOrPrioritiesSkipsThoseChecks(t *testing.T) {
-	projects := map[string]Project{"alpha": {HasRepo: true, HasVerify: true}}
+	projects := map[string]Project{"alpha": {HasRepo: true, VerifyCommand: "make test"}}
 	d := Draft{Cards: []Card{{ID: "D1", Project: "alpha", Title: "Add the thing", Type: "anything", Priority: "whatever", Body: validBody()}}}
 
 	assert.Empty(t, Check(d, Lists{}, projects))
@@ -451,7 +451,7 @@ func TestCheck_VerifySetup(t *testing.T) {
 		want    []string
 		message string // substring of the first finding
 	}{
-		{name: "the project declares one", project: Project{HasRepo: true, HasVerify: true}},
+		{name: "the project declares one", project: Project{HasRepo: true, VerifyCommand: "make test"}},
 		{
 			name: "no command and no proposal", project: Project{HasRepo: true},
 			want: []string{"D1:setup_verify", "D2:setup_verify"}, message: "setup.alpha.verify_command",
@@ -471,8 +471,29 @@ func TestCheck_VerifySetup(t *testing.T) {
 			want: []string{"D1:setup_verify", "D2:setup_verify"}, message: `"make check"`,
 		},
 		{
-			name: "a proposal the project does not need is ignored", project: Project{HasRepo: true, HasVerify: true},
+			name: "a proposal equal to the declared command is ignored", project: Project{HasRepo: true, VerifyCommand: "make check"},
 			setup: map[string]Setup{"alpha": {VerifyCommand: "make check"}},
+		},
+		{
+			name: "a replacement run by every card", project: Project{HasRepo: true, VerifyCommand: "make all"},
+			setup: map[string]Setup{"alpha": {VerifyCommand: "go test ./internal/api/", Replaces: "make all"}},
+		},
+		{
+			name: "a replacement run by no card", project: Project{HasRepo: true, VerifyCommand: "make all"},
+			setup: map[string]Setup{"alpha": {VerifyCommand: "make check", Replaces: "make all"}},
+			want:  []string{"D1:setup_verify", "D2:setup_verify"}, message: `"make check"`,
+		},
+		{
+			name: "a differing proposal without replaces is ignored", project: Project{HasRepo: true, VerifyCommand: "make all"},
+			setup: map[string]Setup{"alpha": {VerifyCommand: "make check"}},
+		},
+		{
+			name: "a replacement for a command no longer declared is ignored", project: Project{HasRepo: true, VerifyCommand: "make lint"},
+			setup: map[string]Setup{"alpha": {VerifyCommand: "make check", Replaces: "make all"}},
+		},
+		{
+			name: "replaces on a project that declares none", project: Project{HasRepo: true},
+			setup: map[string]Setup{"alpha": {VerifyCommand: "go test ./internal/api/", Replaces: "make all"}},
 		},
 	}
 
@@ -576,10 +597,10 @@ func TestCheck_InstructionSetupIsPerProject(t *testing.T) {
 func TestParseDraft_ReadsTheSetupTrimmed(t *testing.T) {
 	d, err := ParseDraft(map[string]any{
 		"cards": []any{map[string]any{"id": "D1", "project": "alpha", "title": "Add x"}},
-		"setup": map[string]any{"alpha": map[string]any{"verify_command": "  go test ./...\n", "instruction_card": " D1 "}},
+		"setup": map[string]any{"alpha": map[string]any{"verify_command": "  go test ./...\n", "replaces": " make all ", "instruction_card": " D1 "}},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, map[string]Setup{"alpha": {VerifyCommand: "go test ./...", InstructionCard: "D1"}}, d.Setup)
+	assert.Equal(t, map[string]Setup{"alpha": {VerifyCommand: "go test ./...", Replaces: "make all", InstructionCard: "D1"}}, d.Setup)
 }
 
 // nilIfEmpty lets a table expect nil for no findings.
@@ -594,7 +615,7 @@ func nilIfEmpty(s []string) []string {
 func TestCheck_DanglingReference(t *testing.T) {
 	lists := testLists()
 	lists.DanglingReferences = []string{"as noted above", "as above", "as mentioned"}
-	projects := map[string]Project{"alpha": {HasRepo: true, HasVerify: true}}
+	projects := map[string]Project{"alpha": {HasRepo: true, VerifyCommand: "make test"}}
 
 	card := goodCard("D1")
 	assert.Empty(t, Check(Draft{Cards: []Card{card}}, lists, projects))

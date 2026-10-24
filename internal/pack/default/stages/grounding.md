@@ -12,9 +12,9 @@ assumes:
 - the files, functions, types and patterns the design names, with the path, the
   line and the symbol as they exist;
 - how the project builds and tests: the verify command the project declares
-  in ContextMatrix (repo_info), and when it declares none, the commands the
-  repository documents (README, Makefile, CI); and which of its test suites
-  a worker can run;
+  in ContextMatrix (repo_info), and when it declares none or the declared
+  one fails the checks below, the commands the repository documents (README,
+  Makefile, CI); and which of its test suites a worker can run;
 - the instruction file (AGENTS.md or CLAUDE.md) at the root;
 - anything the design assumes that the code contradicts.
 
@@ -56,10 +56,14 @@ Check every verify command against the worker:
 
 `verify_candidate` is what remains of what the repository documents, such
 as its lint, its type checks and the unit tests that need no service, and
-empty when nothing remains. A verify command the project declares in
-ContextMatrix that fails these checks is a contradiction: report it under
-`### Contradictions` with the evidence. It stays the project's verify
-command, and `verify_candidate` stays empty.
+empty when nothing remains.
+
+A verify command the project declares in ContextMatrix that fails these
+checks is a contradiction: report it under `### Contradictions` with the
+evidence, and give as `verify_candidate` what a worker can run of it and of
+what the repository documents, which decomposition proposes as its
+replacement. A declared command that passes them leaves `verify_candidate`
+empty.
 
 Use read, grep and glob on the checkout and repo_info for the project facts.
 Cite every claim `[S<n> path:line]`: the source tag of the tool result it came
@@ -76,4 +80,4 @@ and what you found; leave the rest out.
 
 Produce markdown with one `## <project>` section per project, each with
 `### Verified`, `### Contradictions` and `### Verify command`. Submit with a
-data object `{"projects": {"<project>": {"sha": "<sha, empty for an empty repository>", "verify_command": "<declared in ContextMatrix, empty when none>", "verify_candidate": "<what the repository documents and a worker can run, when none is declared; empty when nothing remains>", "instruction_file": "<AGENTS.md|CLAUDE.md|none>"}}, "verdicts": [{"id": "A1", "status": "verified|contradicted", "evidence": "[S1] <what you found>"}]}`.
+data object `{"projects": {"<project>": {"sha": "<sha, empty for an empty repository>", "verify_command": "<declared in ContextMatrix, empty when none>", "verify_candidate": "<what the repository documents and a worker can run, when none is declared or the declared one fails the checks; empty otherwise and when nothing remains>", "instruction_file": "<AGENTS.md|CLAUDE.md|none>"}}, "verdicts": [{"id": "A1", "status": "verified|contradicted", "evidence": "[S1] <what you found>"}]}`.

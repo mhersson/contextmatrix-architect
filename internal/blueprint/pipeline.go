@@ -1610,7 +1610,8 @@ func collisions(earlier []sliceDraft, d contract.Draft) []string {
 
 // mergeDrafts is the one playbook the slices' drafts make, in slice order:
 // their cards, manual entries and order one after another; for each project
-// and each setup field, the earliest slice's value that sets it; and the
+// and each setup field, the earliest slice's value that sets it, with
+// replaces taken from the slice whose verify command it goes with; and the
 // last draft's title.
 func mergeDrafts(ds []contract.Draft) contract.Draft {
 	var out contract.Draft
@@ -1626,7 +1627,10 @@ func mergeDrafts(ds []contract.Draft) contract.Draft {
 			}
 
 			cur := out.Setup[name]
-			cur.VerifyCommand = cmp.Or(cur.VerifyCommand, s.VerifyCommand)
+			if cur.VerifyCommand == "" && s.VerifyCommand != "" {
+				cur.VerifyCommand, cur.Replaces = s.VerifyCommand, s.Replaces
+			}
+
 			cur.InstructionCard = cmp.Or(cur.InstructionCard, s.InstructionCard)
 			out.Setup[name] = cur
 		}

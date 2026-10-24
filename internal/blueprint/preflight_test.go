@@ -33,6 +33,17 @@ func preflightOf(t *testing.T, c *Controller, st *store.Store, fake *fakeCM) pre
 	return res
 }
 
+// replacingCards is setupCards with alpha's setup naming, in replaces, the
+// declared command its verify command replaces.
+func replacingCards(replaces string) map[string]any {
+	cards := setupCards()
+	setup, _ := cards["setup"].(map[string]any)
+	alpha, _ := setup["alpha"].(map[string]any)
+	alpha["replaces"] = replaces
+
+	return cards
+}
+
 func TestPreflight(t *testing.T) {
 	unset := []cm.Project{{Name: "alpha", Repo: "https://example.com/alpha.git"}}
 	noop := func(*testing.T, *fakeCM, *fakeWorkspace, string) {}
@@ -70,7 +81,24 @@ func TestPreflight(t *testing.T) {
 			arrange: func(_ *testing.T, f *fakeCM, _ *fakeWorkspace, _ string) { f.projects = unset },
 			warning: "project alpha declares no verify command and the cards propose none",
 		},
-		{name: "a proposal for a project that has a verify command", cards: setupCards(), arrange: noop},
+		{
+			name: "a proposal that replaces the declared command", cards: replacingCards("make test"), arrange: noop,
+			verify:  []verifyGap{{Project: "alpha", Command: "go test ./...", Declared: "make test"}},
+			warning: "project alpha declares verify command `make test`, which a worker cannot run; set `go test ./...` in ContextMatrix before the cards run",
+		},
+		{name: "a proposal that names no replaced command", cards: setupCards(), arrange: noop},
+		{
+			name: "a replacement after the person set their own command", cards: replacingCards("make test"),
+			arrange: func(_ *testing.T, f *fakeCM, _ *fakeWorkspace, _ string) {
+				f.projects = []cm.Project{{Name: "alpha", Repo: "https://example.com/alpha.git", Verify: &cm.Verify{Command: "make lint"}}}
+			},
+		},
+		{
+			name: "a proposal equal to the declared command", cards: setupCards(),
+			arrange: func(_ *testing.T, f *fakeCM, _ *fakeWorkspace, _ string) {
+				f.projects = []cm.Project{{Name: "alpha", Repo: "https://example.com/alpha.git", Verify: &cm.Verify{Command: "go test ./..."}}}
+			},
+		},
 		{
 			name: "no instruction file",
 			arrange: func(t *testing.T, _ *fakeCM, _ *fakeWorkspace, root string) {
@@ -243,6 +271,7 @@ func TestPreflightSetup(t *testing.T) {
 	const push = "push an initial commit to https://example.com/alpha.git's default branch before running the cards; the agent needs a base branch"
 
 	res := preflightResult{Verify: []verifyGap{{Project: "alpha", Command: "go test ./..."}}, Steps: []string{push}}
+	replaced := preflightResult{Verify: []verifyGap{{Project: "alpha", Command: "go test ./...", Declared: "make test"}}}
 
 	tests := []struct {
 		name       string
@@ -253,6 +282,14 @@ func TestPreflightSetup(t *testing.T) {
 	}{
 		{name: "a person can still set it", res: res, steps: []string{verifyStep, push}, notices: []string{}},
 		{name: "the run starts at once", res: res, runsAtOnce: true, steps: []string{push}, notices: []string{verifyNotice("alpha", "go test ./...")}},
+		{
+			name: "a replacement a person can still set", res: replaced,
+			steps: []string{"set verify command `go test ./...` on project alpha in ContextMatrix, replacing `make test`"}, notices: []string{},
+		},
+		{
+			name: "a replacement, the run starts at once", res: replaced, runsAtOnce: true,
+			steps: []string{"set verify command `go test ./...` on project alpha in ContextMatrix, replacing `make test`"}, notices: []string{},
+		},
 		{name: "nothing found", steps: []string{}, notices: []string{}},
 		{name: "nothing found, the run starts at once", runsAtOnce: true, steps: []string{}, notices: []string{}},
 	}

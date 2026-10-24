@@ -137,12 +137,12 @@ func (c *Controller) setupGaps(ctx context.Context, sess *session, bp store.Blue
 		version, recorded := versions[code.CleanURL(ts[0].url)]
 		empty := recorded && version == ""
 
-		if cp.HasVerify && cp.HasInstructionFile && !empty {
+		if cp.VerifyCommand != "" && cp.HasInstructionFile && !empty {
 			continue
 		}
 
 		gaps = append(gaps, map[string]any{
-			"project": name, "has_verify": cp.HasVerify, "has_instruction_file": cp.HasInstructionFile, "empty": empty,
+			"project": name, "has_verify": cp.VerifyCommand != "", "has_instruction_file": cp.HasInstructionFile, "empty": empty,
 		})
 	}
 

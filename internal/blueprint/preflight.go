@@ -21,10 +21,14 @@ import (
 // setup only a human can do before the cards run; they are shown but
 // neither block emission nor stop an emitting mode, because creating the
 // cards does not need them. Verify are the projects that declare no verify
-// command while the cards propose one: setup turns them into steps or
-// notices, because when the run starts at once no human can set it.
-// EmptyRepos are the identities (clean urls) of the repositories of card
-// projects with no commits, in source order; a yolo run waits for them.
+// command while the cards propose one, and those whose declared command the
+// cards replace with a different one, which needs the draft's replaces to
+// name the command CM still declares: setup turns a missing command into a
+// step, or a notice when the run starts at once and no human can set it, and
+// a replacement always into a step, because its warning stops every mode for
+// a person. EmptyRepos are the identities (clean urls) of the repositories
+// of card projects with no commits, in source order; a yolo run waits for
+// them.
 type preflightResult struct {
 	Blocking   []string
 	Warnings   []string
@@ -33,10 +37,14 @@ type preflightResult struct {
 	EmptyRepos []string
 }
 
-// verifyGap is a project with no verify command that the cards propose one
-// for.
+// verifyGap is a project the cards propose a verify command for: one with no
+// verify command, or one whose declared command, Declared, the proposed
+// Command replaces, because the draft's replaces names the command CM still
+// declares. Declared is empty for a project that declares none. A
+// replacement is always a step: its warning stops every mode for a person.
 type verifyGap struct {
 	Project, Command string
+	Declared         string
 }
 
 // runsAtOnce is whether the cards run with no human in between: only yolo
@@ -47,16 +55,20 @@ func (r preflightResult) runsAtOnce(mode string) bool {
 
 // setup is what a human is told about setup. A verify gap is a step while a
 // person can still set the command before the cards run, and a notice of
-// what happens without it when the run starts at once. Neither list is nil.
+// what happens without it when the run starts at once. A replacement is
+// always a step that names the declared command it replaces: its warning
+// stops every mode, yolo included, for a person who can set it before
+// approving. Neither list is nil.
 func (r preflightResult) setup(runsAtOnce bool) (steps, notices []string) {
 	steps, notices = []string{}, []string{}
 
-	if runsAtOnce {
-		for _, g := range r.Verify {
+	for _, g := range r.Verify {
+		switch {
+		case g.Declared != "":
+			steps = append(steps, fmt.Sprintf("set verify command `%s` on project %s in ContextMatrix, replacing `%s`", g.Command, g.Project, g.Declared))
+		case runsAtOnce:
 			notices = append(notices, verifyNotice(g.Project, g.Command))
-		}
-	} else {
-		for _, g := range r.Verify {
+		default:
 			steps = append(steps, fmt.Sprintf("set verify command `%s` on project %s in ContextMatrix", g.Command, g.Project))
 		}
 	}
@@ -74,8 +86,13 @@ func verifyNotice(project, command string) string {
 // with a repository; every repository's default branch where the checkout read
 // it; and no draft title already a card in another runnable playbook. A project
 // ContextMatrix declares no verify command for is a verify gap when the draft
-// proposes one and a warning when it proposes none. A missing instruction file
-// is no finding: the contract makes a card write it.
+// proposes one and a warning when it proposes none. A project whose declared
+// command the draft proposes a different one for, naming it in replaces
+// while CM still declares it, is a verify gap that replaces it, and a
+// warning in every mode, so an emitting mode stops for a human. Any other
+// proposal for a declared command is left alone: a command a person set
+// since grounding stands. A missing instruction file is no finding: the
+// contract makes a card write it.
 func (c *Controller) preflight(ctx context.Context, sess *session, bp store.Blueprint, draft contract.Draft, client CMClient) (preflightResult, error) {
 	var res preflightResult
 
@@ -117,14 +134,21 @@ func (c *Controller) preflight(ctx context.Context, sess *session, bp store.Blue
 			res.Blocking = append(res.Blocking, fmt.Sprintf("project %s declares no repository", name))
 		}
 
-		if p.Verify != nil && strings.TrimSpace(p.Verify.Command) != "" {
-			continue
+		declared := ""
+		if p.Verify != nil {
+			declared = strings.TrimSpace(p.Verify.Command)
 		}
 
-		if command := draft.Setup[name].VerifyCommand; command != "" {
-			res.Verify = append(res.Verify, verifyGap{Project: name, Command: command})
-		} else {
+		s := draft.Setup[name]
+
+		switch {
+		case declared == "" && s.VerifyCommand != "":
+			res.Verify = append(res.Verify, verifyGap{Project: name, Command: s.VerifyCommand})
+		case declared == "":
 			res.Warnings = append(res.Warnings, fmt.Sprintf("project %s declares no verify command and the cards propose none", name))
+		case s.VerifyCommand != "" && s.VerifyCommand != declared && s.Replaces == declared:
+			res.Verify = append(res.Verify, verifyGap{Project: name, Command: s.VerifyCommand, Declared: declared})
+			res.Warnings = append(res.Warnings, fmt.Sprintf("project %s declares verify command `%s`, which a worker cannot run; set `%s` in ContextMatrix before the cards run", name, declared, s.VerifyCommand))
 		}
 	}
 

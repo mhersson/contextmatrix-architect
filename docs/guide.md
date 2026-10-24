@@ -492,12 +492,12 @@ any card is written.
 **Grounding** runs once per slice, right after its design. The senior developer
 reads a copy of the code and checks what the design takes for granted: that the
 files and functions it names exist as it says, how the project builds and runs
-its tests (its verify command: the one set in ContextMatrix, or else one the
-agent's own container can run, with tests that need a database or a deployed
-environment left to the checks that run on the pull request), whether the code
-has an instruction file, and which of the blueprint's assumptions the code
-confirms or contradicts. It also looks on the board for open cards that already
-cover part of the need.
+its tests (its verify command: the one set in ContextMatrix when the agent's own
+container can run it, or else one it can, with tests that need a database or a
+deployed environment left to the checks that run on the pull request), whether
+the code has an instruction file, and which of the blueprint's assumptions the
+code confirms or contradicts. It also looks on the board for open cards that
+already cover part of the need.
 
 ![SL1's Grounding sheet: a table with the project recipe-box, its checkout 447af66, Verify reading none declared; the repository documents python3 -m unittest, and Instructions none; under Verified, A1: the repository holds only a README titled recipe-box, with no code, stack, instruction file or verify command; a folded Written grounding; and the title block Drawn by Senior developer, Checked by Contract checks, Status Done](images/22b-grounding-sheet.png)
 

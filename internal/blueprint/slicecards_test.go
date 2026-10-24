@@ -232,7 +232,11 @@ func TestMergeDrafts(t *testing.T) {
 	}
 	second := contract.Draft{
 		Title: "Export the reports", Cards: []contract.Card{{ID: "D2"}}, Order: []string{"D2"},
-		Setup: map[string]contract.Setup{"alpha": {VerifyCommand: "make check", InstructionCard: "D2"}, "beta": {VerifyCommand: "make verify"}},
+		Setup: map[string]contract.Setup{
+			"alpha": {VerifyCommand: "make check", Replaces: "make all", InstructionCard: "D2"},
+			"beta":  {VerifyCommand: "make verify"},
+			"gamma": {VerifyCommand: "make verify", Replaces: "make all"},
+		},
 	}
 
 	got := mergeDrafts([]contract.Draft{first, second})
@@ -243,4 +247,5 @@ func TestMergeDrafts(t *testing.T) {
 	assert.Len(t, got.Manual, 1)
 	assert.Equal(t, contract.Setup{VerifyCommand: "make test", InstructionCard: "D2"}, got.Setup["alpha"], "per field, the earliest slice that sets it")
 	assert.Equal(t, contract.Setup{VerifyCommand: "make verify"}, got.Setup["beta"])
+	assert.Equal(t, contract.Setup{VerifyCommand: "make verify", Replaces: "make all"}, got.Setup["gamma"], "replaces goes with its verify command")
 }
