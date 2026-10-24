@@ -1894,8 +1894,10 @@ Ordered so a real card comes out as early as possible.
    design first.
 2. **Emission.** Cards and playbook over CM MCP, their status reported back
    into the session, yolo with `run_card` for one card and, after the CM
-   change, `run_playbook` for several. First real blueprints: a one-card
-   feature, then the Kubernetes example, on the operator's own projects.
+   change, `run_playbook` for several. First real blueprints, on the
+   operator's own projects: a one-card feature, a small shopping-list web app
+   emitted as a playbook in yolo mode, and the architect's own retrospective
+   and lessons feature, a need big enough to slice, planned but not emitted.
 3. **Dialog stages.** Intake, slicing, solution design, acceptance; `human`
    and `auto` responders; gates. In CM: typed question and gate entries
    rendered with buttons.
