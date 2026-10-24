@@ -85,12 +85,25 @@ source):
 Setup is work the cards carry, never a reason to stop. Read repo_info and
 the checkout:
 
-- A project with no verify command: propose one from the design and the
-  checkout (what the repository documents in its README, Makefile or CI;
-  for a new project, what its stack implies) as
-  `setup.<project>.verify_command`. Every card of that project runs it as a
-  numbered acceptance criterion, written exactly as proposed. A human sets
-  it in ContextMatrix after the sign-off.
+- A project with no verify command: propose grounding's `verify_candidate`
+  as `setup.<project>.verify_command`, never a command that runs a suite
+  grounding left to CI. When the candidate is empty (a new project, or a
+  repository that documents nothing a worker can run), propose what the
+  stack implies. Either way a worker runs it: a container with the
+  repository checkout, its image's language toolchain and network access for
+  packages, and no database, Docker daemon, cluster or deployed environment.
+  Every script, package script or build target it names exists where it
+  runs, or the project's first card adds it and every other card of the
+  project depends on that card, and nothing it runs needs a service a worker
+  lacks. Every card of that project runs it as a numbered acceptance
+  criterion, written exactly as proposed. A human sets it in ContextMatrix
+  after the sign-off.
+- A project whose grounding leaves test suites to the pull request's CI,
+  whatever its verify command: every card of that project names them under
+  Out of scope as run by CI, never by the agent, and none of its criteria
+  runs them. A test a card writes in such a suite stays under Tests
+  expected; a criterion that only such a test proves names that test and
+  says the pull request's CI runs it.
 - A project whose primary repository (the tree named after the project) has
   no instruction file: its first card also writes AGENTS.md at the
   repository root, covering the stack, the verify command, the layout and

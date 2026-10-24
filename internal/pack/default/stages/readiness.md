@@ -37,15 +37,31 @@ from acceptance is never a finding for being an edge case: the card must
 carry it.
 
 A project without a verify command, an instruction file or a .gitignore
-that ignores what its stack writes is not a finding: the draft plans that
-setup. Judge instead that the proposed `setup.<project>.verify_command` is
-one the repository can run once the cards land, that the card named in
-`setup.<project>.instruction_card` writes AGENTS.md with the stack, the
-verify command, the layout and the conventions, and that when the
-repository does not ignore what the stack writes and the project does not
-commit, the project's first card ignores it as its first change and the
+that ignores what its stack writes is not a finding: the draft
+plans that setup. Judge instead that a worker can run the proposed
+`setup.<project>.verify_command` on every card of the project, since each
+card runs it as a criterion. A worker is a container with the repository
+checkout, its image's language toolchain and network access for packages,
+and no database, Docker daemon, cluster or deployed environment. Every
+script, package script or build target the command names exists where
+it runs, or the project's first card adds it and every other card of the
+project depends on that card; nothing it runs needs a database, Docker,
+containers its tests start, a cluster, a deployed environment or another
+service a worker lacks; and it runs no suite grounding left to the pull
+request's CI. CI configuration is never proof that it runs. Judge too that
+the card named in `setup.<project>.instruction_card` writes AGENTS.md with
+the stack, the verify command, the layout and the conventions, and that when
+the repository does not ignore what the stack writes and the project does
+not commit, the project's first card ignores it as its first change and the
 other cards depend on that card. That .gitignore is setup, never scope the
 blueprint does not ask for.
+
+For every project, whatever its verify command, grounding names under
+`### Verify command` the test suites it leaves to the pull request's CI;
+when grounding comes as a digest, read it whole with `read_artifact`. Every
+card of such a project names them under Out of scope and none of its
+criteria runs them; a criterion that names a test the card writes in such a
+suite and leaves its run to the pull request's CI is no finding.
 
 Compare each card with the open cards of its project through the cm_ tools:
 a card that duplicates an open card is not ready, and its finding names that

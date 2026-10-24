@@ -840,6 +840,26 @@ adds to a card that cites a source tag (see Emission).
   keeps the operator's. The sign-off lists setting it as a manual step, or
   in `yolo`, where the run starts without a human unless a repository with
   no commits holds it, a notice of what happens without it (see Emission).
+- A verify command runs in a worker: a container with the repository
+  checkout, its image's language toolchain and network access for
+  packages, and no database, Docker daemon, cluster or deployed
+  environment, and the agent runs the tests it writes there too. Grounding
+  finds, for every target project, declared verify command or not, the
+  suites whose setup, read down to what the tests load before they run,
+  needs a service a worker lacks, and leaves them to the pull request's
+  CI: every card of the project names them under Out of scope and runs
+  them in no criterion, and a criterion only such a test proves names the
+  test and leaves its run to CI. Grounding's candidate keeps what the
+  repository documents to the scripts and build targets that exist where
+  the command runs (a package script run at the root is in the root
+  manifest) and to the suites a worker can run; CI configuration is a
+  source, never proof. Decomposition proposes the candidate, or, when it
+  is empty, what the stack implies under the same rules, with anything it
+  names that is not there yet added by the project's first card, on which
+  every other card of the project depends. Readiness judges the proposal
+  by these rules on every card, reading grounding whole for the suites left
+  to CI. A declared verify command that fails them is a grounding
+  contradiction and stays the project's.
 - A repository without `AGENTS.md` or `CLAUDE.md` at the root: the
   project's first card also writes `AGENTS.md` (stack, verify command,
   layout, conventions), `setup.<project>.instruction_card` names it, and
@@ -881,6 +901,8 @@ adds to a card that cites a source tag (see Emission).
 | A card's mockup screens exist in the approved mockup               | mechanical                 |
 | No mockup block in a draft card's body                             | mechanical                 |
 | A repository whose `.gitignore` misses what the stack writes: the first card writes or extends it as its first change, every other card of the project depends on it | model-judged |
+| A proposed verify command a worker can run on every card: what it names exists where it runs or the project's first card, on which the others depend, adds it; nothing it runs needs a service a worker lacks | model-judged |
+| Every card of a project with suites grounding left to CI names them under Out of scope and runs them in no criterion, whatever the project's verify command | model-judged |
 | One deliverable, no open decisions, no optional scope              | model-judged               |
 | Builds only what the blueprint asks for; no card whose only work is documentation, tests, a guard or a proof over other cards' work, or the closing commands, except the instruction card setup asks for | model-judged |
 | Estimated planner split of two subtasks or fewer                   | model-judged               |
