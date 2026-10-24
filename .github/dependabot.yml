@@ -1,7 +1,8 @@
 # Dependabot config for contextmatrix-architect.
 # Canonical copy: contextmatrix-agent/.github/dependabot.yml - sync by
 # full-file copy plus repo-name swap (with the docker block pointed at the
-# repo root, where the Dockerfile lives).
+# repo root, where the Dockerfile lives), keeping the architect-only go-git
+# ignore in the gomod block.
 # Tracks three ecosystems weekly:
 #   - gomod          : Go module dependencies at the repo root.
 #   - docker         : Dockerfile base images.
@@ -28,6 +29,13 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # Held at 5.19.2 to match contextmatrix: 5.19.3 writes an empty
+      # extensions.objectformat when it rewrites a format-version-1 config,
+      # which shell git then rejects. No architect path hits it today (go-git
+      # creates every mirror at format version 0 and git runs only in tests).
+      - dependency-name: github.com/go-git/go-git/v5
+        versions: [">5.19.2"]
     labels:
       - dependencies
       - go
