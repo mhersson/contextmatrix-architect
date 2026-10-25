@@ -14,6 +14,7 @@ import (
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
+	"github.com/mhersson/contextmatrix-architect/internal/contract"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/research"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
@@ -392,6 +393,24 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 
 			data["stopped"] = len(findings) > 0
 			data["findings"] = findings
+
+			// The manual entries after the playbook's last card are its
+			// follow-ups, not run steps; the order and the followups are the
+			// controller's keys as well, so every reader sees the split.
+			draft, err := contract.ParseDraft(data)
+			if err != nil {
+				c.endRun(bg, runID, store.RunFailed, "decode the cards failed", usage)
+				c.fail(bg, au, id, runID, err.Error())
+
+				return stageStopped
+			}
+
+			if checks.cards.endsOrder() {
+				draft = trailingFollowups(draft)
+			}
+
+			data["order"] = nonNil(draft.Order)
+			data["followups"] = nonNil(draft.Followups)
 			out.Artifact.Data = data
 		}
 

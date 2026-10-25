@@ -1662,9 +1662,9 @@ func TestDraftProblems_ManualEntriesAndTitle(t *testing.T) {
 			want:  []string{"the draft has several cards, so it needs a playbook title"},
 		},
 		{
-			name:  "a manual entry missing from order",
+			name:  "a manual entry in neither list",
 			draft: contract.Draft{Title: "T", Cards: []contract.Card{card("D1"), card("D2")}, Manual: []contract.Manual{{ID: "M1", Text: "check"}}, Order: []string{"D1", "D2"}},
-			want:  []string{"M1 is missing from order"},
+			want:  []string{"M1 is in neither order nor followups; list it in one"},
 		},
 		{
 			name:  "a manual entry twice in order",
@@ -1678,6 +1678,111 @@ func TestDraftProblems_ManualEntriesAndTitle(t *testing.T) {
 			assert.Equal(t, tt.want, draftProblems(tt.draft, len(tt.draft.Cards) > 1))
 		})
 	}
+}
+
+func TestDraftProblems_EachManualEntryIsInOrderOrFollowups(t *testing.T) {
+	card := func(id string) contract.Card { return contract.Card{ID: id, Project: "alpha", Title: "Add " + id} }
+	manual := []contract.Manual{{ID: "M1", Text: "check"}}
+	one := []contract.Card{card("D1")}
+
+	tests := []struct {
+		name  string
+		draft contract.Draft
+		want  []string
+	}{
+		{
+			name:  "a clean split",
+			draft: contract.Draft{Cards: one, Manual: append(manual, contract.Manual{ID: "M2", Text: "look"}), Order: []string{"D1", "M1"}, Followups: []string{"M2"}},
+		},
+		{
+			name:  "a manual entry in both lists",
+			draft: contract.Draft{Cards: one, Manual: manual, Order: []string{"D1", "M1"}, Followups: []string{"M1"}},
+			want:  []string{"M1 is in both order and followups; list it in one"},
+		},
+		{
+			name:  "a manual entry in neither list",
+			draft: contract.Draft{Cards: one, Manual: manual, Order: []string{"D1"}},
+			want:  []string{"M1 is in neither order nor followups; list it in one"},
+		},
+		{
+			name:  "a card in followups",
+			draft: contract.Draft{Cards: one, Order: []string{"D1"}, Followups: []string{"D1"}},
+			want:  []string{"D1 in followups is not a manual entry; followups hold manual entry ids only"},
+		},
+		{
+			name:  "a manual entry twice in followups",
+			draft: contract.Draft{Cards: one, Manual: manual, Order: []string{"D1"}, Followups: []string{"M1", "M1"}},
+			want:  []string{"M1 appears more than once in followups"},
+		},
+		{
+			name:  "an id nothing holds in followups",
+			draft: contract.Draft{Cards: one, Order: []string{"D1"}, Followups: []string{"M9"}},
+			want:  []string{"M9 in followups is not a manual entry; followups hold manual entry ids only"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, draftProblems(tt.draft, false))
+		})
+	}
+}
+
+func TestTrailingFollowups(t *testing.T) {
+	card := func(id string) contract.Card { return contract.Card{ID: id} }
+	entries := func(ids ...string) []contract.Manual {
+		var out []contract.Manual
+		for _, id := range ids {
+			out = append(out, contract.Manual{ID: id, Text: "check"})
+		}
+
+		return out
+	}
+	cards := []contract.Card{card("D1"), card("D2")}
+
+	tests := []struct {
+		name      string
+		draft     contract.Draft
+		order     []string
+		followups []string
+	}{
+		{
+			name:  "the entries after the last card move",
+			draft: contract.Draft{Cards: cards, Manual: entries("M1", "M2", "M3"), Order: []string{"D1", "M1", "D2", "M2", "M3"}},
+			order: []string{"D1", "M1", "D2"}, followups: []string{"M2", "M3"},
+		},
+		{
+			name:  "the followups the draft lists stay first",
+			draft: contract.Draft{Cards: cards, Manual: entries("M1", "M2", "M3", "M4"), Order: []string{"D1", "M1", "D2", "M2", "M3"}, Followups: []string{"M4"}},
+			order: []string{"D1", "M1", "D2"}, followups: []string{"M4", "M2", "M3"},
+		},
+		{
+			name:  "nothing after the last card",
+			draft: contract.Draft{Cards: cards, Manual: entries("M1"), Order: []string{"D1", "M1", "D2"}},
+			order: []string{"D1", "M1", "D2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := trailingFollowups(tt.draft)
+
+			assert.Equal(t, tt.order, got.Order)
+			assert.Equal(t, tt.followups, got.Followups)
+			assert.Equal(t, tt.draft.Cards, got.Cards)
+			assert.Equal(t, tt.draft.Manual, got.Manual)
+		})
+	}
+}
+
+func TestMergeDrafts_JoinsTheFollowups(t *testing.T) {
+	first := contract.Draft{Cards: []contract.Card{{ID: "D1"}}, Order: []string{"D1"}, Followups: []string{"M1"}}
+	second := contract.Draft{Cards: []contract.Card{{ID: "D2"}}, Order: []string{"D2"}, Followups: []string{"M2", "M3"}}
+
+	got := mergeDrafts([]contract.Draft{first, second})
+
+	assert.Equal(t, []string{"M1", "M2", "M3"}, got.Followups, "in slice order")
+	assert.Equal(t, []string{"D1", "D2"}, got.Order)
 }
 
 func TestPipeline_CodeStagesSeeTheTypesAndPrioritiesTheProjectDeclares(t *testing.T) {

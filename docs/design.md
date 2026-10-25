@@ -368,7 +368,7 @@ designer (SD), senior developer (DEV), tester (TST), reviewer (REV).
 | 5  | Solution design  | SD      | need, mockup, slices, shared decisions, earlier slices | once per slice: projects involved, decisions with rejected options and their basis, contracts between the parts it builds (inside one project and across projects), how the slice builds the mockup's screens; asks a question for each decision with real alternatives; reads the code | yes       | DEV      |
 | 6  | Grounding        | DEV     | the slice's design | once per slice, per project: files, symbols and patterns verified at a sha, the verify command (declared, or a candidate a worker can run) and the test suites left to the pull request's CI, instruction file presence | no        | -        |
 | 7  | Acceptance       | DEV     | the slice's design, grounding | once per slice: criteria checkable inside one repo; human and live checks split into manual steps | `auto` by default | TST      |
-| 8  | Decomposition    | DEV     | all above, earlier slices' cards | once per slice: draft cards with type and priority, `depends_on` per project, the mockup's screens each card builds, manual entries for human and live checks, the order, and the setup for a project without a verify command a worker can run, an instruction file or a `.gitignore` that ignores what its stack writes; the last slice's draft gives the playbook title | no        | -        |
+| 8  | Decomposition    | DEV     | all above, earlier slices' cards | once per slice: draft cards with type and priority, `depends_on` per project, the mockup's screens each card builds, manual entries for human and live checks, the order (the manual entries after the last card are stored as follow-ups, not run steps), and the setup for a project without a verify command a worker can run, an instruction file or a `.gitignore` that ignores what its stack writes; the last slice's draft gives the playbook title | no        | -        |
 | 9  | Readiness        | REV     | every slice's cards | contract check per card; failures loop back to 8 for the slice that holds the card and every later slice, three rounds max, then sign-off with the cards still not ready | no        | -        |
 | 10 | Sign-off         | human   | everything        | approval; then emission of one playbook                                                                | yes       | -        |
 | -  | Retrospective    | REV     | emitted cards     | one finding per struggled card, with a proposed lesson or none when the card was not at fault         | the lesson round | -  |
@@ -1246,8 +1246,10 @@ Cards that pass readiness go to sign-off, and so do cards readiness still
 finds not ready after its last round, with those card findings (`not_ready`,
 in `D<n>: <finding>` form, an empty list when every card passed). When
 decomposition ran per slice, the sign-off, preflight and emission read one
-draft: every slice's latest cards, manual entries and order in slice order,
-with each project's setup as the earliest slice that sets it gives it and
+draft: every slice's latest cards, manual entries, order and follow-ups in
+slice order (only the last slice's trailing manual entries are follow-ups;
+an earlier slice's stay run steps), with each project's setup as the earliest
+slice that sets it gives it and
 the last slice's title, so the blueprint ends in one playbook across every
 project. Default and `auto` modes show the sign-off (the entries in playbook
 order with the card that also writes `AGENTS.md` marked, the playbook title,

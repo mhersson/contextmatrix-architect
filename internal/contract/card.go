@@ -36,8 +36,8 @@ type Card struct {
 }
 
 // Manual is a playbook step for a human: a check no card can carry, such as
-// a live check or a cross-project gate. Its id (M1, M2, ...) sits in Order
-// with the card ids.
+// a live check a person makes. Its id (M1, M2, ...) sits in Order with the
+// card ids, or in Followups when it is not a step of the run.
 type Manual struct {
 	ID   string `json:"id"`
 	Text string `json:"text"`
@@ -63,11 +63,15 @@ type Setup struct {
 // the playbook title, the playbook order over both, and the setup per
 // target project.
 type Draft struct {
-	Title  string           `json:"title"`
-	Cards  []Card           `json:"cards"`
-	Manual []Manual         `json:"manual"`
-	Order  []string         `json:"order"`
-	Setup  map[string]Setup `json:"setup,omitempty"`
+	Title  string   `json:"title"`
+	Cards  []Card   `json:"cards"`
+	Manual []Manual `json:"manual"`
+	Order  []string `json:"order"`
+	// Followups are the manual entries that are not run steps: a check a
+	// person makes after the run, listed instead of in Order. Every manual
+	// entry is in exactly one of the two.
+	Followups []string         `json:"followups,omitempty"`
+	Setup     map[string]Setup `json:"setup,omitempty"`
 }
 
 // ParseDraft decodes an artifact's data block into a Draft. Ids must be
