@@ -281,9 +281,9 @@ func New(opts Options) *Controller {
 	return c
 }
 
-// effectivePrice maps an all-zero price to nil. CM sends zero rates for a
-// model it cannot price; treating that as priced would make a cost cap that
-// can never bind.
+// effectivePrice maps an all-zero price to nil. CM sends no price for a model
+// it cannot price; an all-zero one, from an older CM, is unpriced too, since
+// counting it as priced would make a cost cap that can never bind.
 func effectivePrice(p *protocol.ModelPrice) *protocol.ModelPrice {
 	if p == nil || *p == (protocol.ModelPrice{}) {
 		return nil
