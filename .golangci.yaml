@@ -1,5 +1,8 @@
-# Canonical copy: contextmatrix-agent/.golangci.yaml - sync by full-file copy
-# plus repo-name word swap (this repo: contextmatrix-architect).
+# Derived from contextmatrix-agent/.golangci.yaml by full-file copy plus a
+# repo-name word swap (this repo: contextmatrix-architect), less the agent's
+# gosec G301/G302/G306 exclusion: its rationale is files written into agent
+# workspaces, which does not hold here, so the few deliberate modes carry
+# their own //nolint.
 version: "2"
 linters:
   default: none
