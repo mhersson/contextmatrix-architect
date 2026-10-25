@@ -37,7 +37,7 @@ func newReviewed(t *testing.T, script stageScript) (*Controller, *store.Store, *
 	c := New(Options{
 		Store: st, Pack: pk, Runner: runner, MaxRunCostUSD: 2, MaxTurns: 10,
 		Sink: rec.sink, HarnessLine: rec.line,
-		Workspace: &fakeWorkspace{root: t.TempDir()}, Projects: listAlpha,
+		Workspace: &fakeWorkspace{root: t.TempDir()}, Projects: listAlpha, Credentials: fakeCredentials,
 		Search: searchOK, Fetch: fakeFetcher{},
 	})
 	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })

@@ -21,6 +21,8 @@ var errNoCodeSupport = errors.New("blueprint: code stages need a workspace and t
 
 var errNoCMSupport = errors.New("blueprint: cm stages need the ContextMatrix tool source")
 
+var errNoGitCredentials = errors.New("blueprint: the session has no git credentials, so no repository is fetched")
+
 // cmSourceIdentity is the ContextMatrix board as a source: one per
 // blueprint, because CM state carries no version a read could cite.
 const cmSourceIdentity = "contextmatrix"
@@ -188,6 +190,16 @@ func contractView(ctx context.Context, projects []cm.Project, targets []string, 
 	return out, nil
 }
 
+// credentials is the git credential source for sess's token. A missing
+// source or token is refused, so nothing is fetched anonymously.
+func (c *Controller) credentials(sess *session) (code.Credentials, error) {
+	if c.opts.Credentials == nil || sess.gitToken == "" {
+		return nil, errNoGitCredentials
+	}
+
+	return c.opts.Credentials(sess.gitToken), nil
+}
+
 // prepareCode makes sure every target project's repositories are checked
 // out for the blueprint and recorded as sources. A tree checked out by an
 // earlier stage is reused at its recorded sha, so later stages and a
@@ -265,9 +277,9 @@ func (c *Controller) prepareCode(ctx context.Context, sess *session, bp store.Bl
 		byIdentity[s.Identity] = s
 	}
 
-	var creds code.Credentials
-	if c.opts.Credentials != nil && sess.gitToken != "" {
-		creds = c.opts.Credentials(sess.gitToken)
+	creds, err := c.credentials(sess)
+	if err != nil {
+		return nil, err
 	}
 
 	// Sources recorded here are announced even when a later checkout fails,

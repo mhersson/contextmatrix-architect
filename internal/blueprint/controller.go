@@ -153,7 +153,8 @@ type Options struct {
 	// need it for repository urls and verify commands. nil disables them.
 	Projects func(ctx context.Context, mcpAPIKey string) ([]cm.Project, error)
 	// Credentials builds the git credential source for a session's token.
-	// nil means repositories are fetched without auth.
+	// Without it, or without the session's token, a checkout or a sign-off
+	// that reads a repository fails: nothing is fetched anonymously.
 	Credentials func(gitToken string) code.Credentials
 	// CMTools opens one MCP session with the session's key for a run of a
 	// stage with the cm tools and returns them, each result tagged with tag,
