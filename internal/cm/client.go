@@ -133,21 +133,35 @@ type ToolError struct {
 
 func (e *ToolError) Error() string { return fmt.Sprintf("cm: %s: %s", e.Tool, e.Text) }
 
-// CardNotFound reports whether err is CM's answer that a card does not
-// exist, as for one deleted there. A transport error, a timeout or CM being
-// down is never that answer.
-func CardNotFound(err error) bool { return refused(err, "card not found") }
+// CardNotFound reports whether err is get_card's answer that a card does
+// not exist: it was deleted, or its project was, which CM allows only once
+// the project holds no cards. A transport error, a timeout or CM being down
+// is never that answer.
+func CardNotFound(err error) bool {
+	return refused(err, "get_card", "card not found", "project not found")
+}
 
-// PlaybookNotFound reports whether err is CM's answer that a playbook does
-// not exist, as CardNotFound does for a card.
-func PlaybookNotFound(err error) bool { return refused(err, "playbook not found") }
+// PlaybookNotFound reports whether err is get_playbook's answer that a
+// playbook does not exist, as CardNotFound does for a card.
+func PlaybookNotFound(err error) bool { return refused(err, "get_playbook", "playbook not found") }
 
-// refused reports whether err is a tool error whose text holds text, CM's
-// own error for the case.
-func refused(err error, text string) bool {
+// refused reports whether err is tool's own error result and its text holds
+// one of texts, CM's errors for the case. The tool is checked because
+// another tool's text can hold the same words: create_card's "parent card
+// not found" is about a different card.
+func refused(err error, tool string, texts ...string) bool {
 	var te *ToolError
+	if !errors.As(err, &te) || te.Tool != tool {
+		return false
+	}
 
-	return errors.As(err, &te) && strings.Contains(te.Text, text)
+	for _, text := range texts {
+		if strings.Contains(te.Text, text) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (c *Client) call(ctx context.Context, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {

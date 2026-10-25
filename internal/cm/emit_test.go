@@ -245,6 +245,7 @@ func TestNotFound_IsOnlyContextMatrixsOwnAnswer(t *testing.T) {
 		playbook bool
 	}{
 		{name: "a deleted card", tool: "get_card", reply: "get card ALPHA-007: card not found", card: true},
+		{name: "a card whose project was deleted", tool: "get_card", reply: "get card ALPHA-007: project not found", card: true},
 		{name: "a deleted playbook", tool: "get_playbook", reply: "get playbook ship-the-thing: playbook not found", playbook: true},
 		{name: "another refusal", tool: "get_card", reply: "get card ALPHA-007: read card file: permission denied"},
 		{name: "a call that never reached ContextMatrix", tool: "get_card", reply: "get card ALPHA-007: card not found", canceled: true},
@@ -279,5 +280,11 @@ func TestNotFound_IsOnlyContextMatrixsOwnAnswer(t *testing.T) {
 		err := fmt.Errorf("cm: call get_card: %w", errors.New("card not found"))
 		assert.False(t, CardNotFound(err))
 		assert.False(t, CardNotFound(nil))
+	})
+
+	t.Run("another tool's refusal", func(t *testing.T) {
+		assert.False(t, CardNotFound(&ToolError{Tool: "create_card", Text: "create card: parent card not found"}))
+		assert.False(t, CardNotFound(&ToolError{Tool: "get_playbook", Text: "get playbook ship-the-thing: project not found"}))
+		assert.False(t, PlaybookNotFound(&ToolError{Tool: "get_card", Text: "get card ALPHA-007: playbook not found"}))
 	})
 }

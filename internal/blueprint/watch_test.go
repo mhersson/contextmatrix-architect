@@ -630,46 +630,73 @@ func TestWatch_ADeletedCardStaysDeletedAcrossARestart(t *testing.T) {
 }
 
 func TestWatch_ADeletedSingleCardEndsTheWatch(t *testing.T) {
-	c, st, _, rec, _ := newPipeline(t, happyScript())
-	fake := newFakeCM()
-	c.opts.ConnectCM = fake.connect
-	c.opts.WatchInterval = 5 * time.Millisecond
-	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		delete func(*fakeCM)
+	}{
+		{name: "the card", delete: func(f *fakeCM) { f.remove("ALPHA-001") }},
+		{name: "its project, the card first", delete: func(f *fakeCM) { f.tearDown("alpha") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, st, _, rec, _ := newPipeline(t, happyScript())
+			fake := newFakeCM()
+			c.opts.ConnectCM = fake.connect
+			c.opts.WatchInterval = 5 * time.Millisecond
+			ctx := context.Background()
 
-	drive(t, c, "BP1")
-	require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
-	c.Wait("BP1")
+			drive(t, c, "BP1")
+			require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+			c.Wait("BP1")
 
-	fake.remove("ALPHA-001")
-	rec.waitFor(t, EventWatchEnded)
+			tc.delete(fake)
+			rec.waitFor(t, EventWatchEnded)
 
-	lines := watchLines(rec)
-	require.NotEmpty(t, lines)
-	assert.Equal(t, "ALPHA-001 was deleted in ContextMatrix", lines[len(lines)-1], "the final line")
+			lines := watchLines(rec)
+			require.NotEmpty(t, lines)
+			assert.Equal(t, "ALPHA-001 was deleted in ContextMatrix", lines[len(lines)-1], "the final line")
 
-	end, ok := rec.first(EventWatchEnded)
-	require.True(t, ok)
-	assert.Equal(t, []string{"ALPHA-001"}, deletedCards(t, end))
-	assert.Equal(t, string(StateDone), stateOf(t, st, "BP1"))
-	require.Eventually(t, func() bool { return watcherOf(c, "BP1") == nil }, time.Second, 5*time.Millisecond, "the watch ended")
+			end, ok := rec.first(EventWatchEnded)
+			require.True(t, ok)
+			assert.Equal(t, []string{"ALPHA-001"}, deletedCards(t, end))
+			assert.Equal(t, string(StateDone), stateOf(t, st, "BP1"))
+			require.Eventually(t, func() bool { return watcherOf(c, "BP1") == nil }, time.Second, 5*time.Millisecond, "the watch ended")
+		})
+	}
 }
 
+// A deleted playbook ends its watch whatever its cards' reads would answer:
+// they are not read again.
 func TestWatch_ADeletedPlaybookEndsTheWatch(t *testing.T) {
-	c, st, _, rec, _, fake := startWatchedTwoCards(t)
+	for _, tc := range []struct {
+		name  string
+		cards func(*fakeCM) // run under the fake's lock, with the playbook's deletion
+	}{
+		{name: "its cards still there", cards: func(*fakeCM) {}},
+		{name: "its project torn down", cards: func(f *fakeCM) { f.torn["alpha"] = true }},
+		{name: "its cards unreadable", cards: func(f *fakeCM) { f.failGets = 1 << 30 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, st, _, rec, _, fake := startWatchedTwoCards(t)
 
-	fake.remove("ship-the-parser")
-	rec.waitFor(t, EventWatchEnded)
+			fake.mu.Lock()
+			fake.deleted["ship-the-parser"] = true
+			tc.cards(fake)
+			fake.mu.Unlock()
 
-	lines := watchLines(rec)
-	require.NotEmpty(t, lines)
-	assert.Equal(t, "Playbook ship-the-parser was deleted in ContextMatrix.", lines[len(lines)-1], "the final line")
+			rec.waitFor(t, EventWatchEnded)
 
-	end, ok := rec.first(EventWatchEnded)
-	require.True(t, ok)
-	assert.Equal(t, true, end.Payload["playbook_deleted"])
-	assert.Empty(t, deletedCards(t, end), "the cards are still there")
-	assert.Equal(t, string(StateDone), stateOf(t, st, "BP1"))
-	require.Eventually(t, func() bool { return watcherOf(c, "BP1") == nil }, time.Second, 5*time.Millisecond, "the watch ended")
+			lines := watchLines(rec)
+			require.NotEmpty(t, lines)
+			assert.Equal(t, "Playbook ship-the-parser was deleted in ContextMatrix.", lines[len(lines)-1], "the final line")
+
+			end, ok := rec.first(EventWatchEnded)
+			require.True(t, ok)
+			assert.Equal(t, true, end.Payload["playbook_deleted"])
+			assert.Empty(t, deletedCards(t, end), "the cards are as the watch last saw them")
+			assert.Equal(t, string(StateDone), stateOf(t, st, "BP1"))
+			require.Eventually(t, func() bool { return watcherOf(c, "BP1") == nil }, time.Second, 5*time.Millisecond, "the watch ended")
+		})
+	}
 }
 
 // A read that fails for any other reason, such as ContextMatrix being down,

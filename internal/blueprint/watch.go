@@ -288,9 +288,10 @@ func (c *Controller) reportedSnapshot(ctx context.Context, au audit, id string) 
 }
 
 // snapshot reads every emitted card and the playbook. A card is gone when
-// its playbook entry is flagged missing or ContextMatrix answers that it is
-// not found; prev's gone cards and playbook are not read again. Any other
-// failed read fails the poll.
+// its playbook entry is flagged missing or ContextMatrix answers that it, or
+// its project, is not found; prev's gone cards and playbook are not read
+// again. Once the playbook is gone no card is read either, so no card read
+// can hold the watch's end. Any other failed read fails the poll.
 func (c *Controller) snapshot(ctx context.Context, client CMClient, id string, prev *snapshot) (snapshot, error) {
 	recs, err := c.opts.Store.ListEmissions(ctx, id)
 	if err != nil {
@@ -356,12 +357,19 @@ func (c *Controller) snapshot(ctx context.Context, client CMClient, id string, p
 			continue
 		}
 
-		// A gone card keeps what the watch last saw of it.
-		gone := before[e.CMID]
-		gone.Draft, gone.Project, gone.ID, gone.Title, gone.Gone = e.DraftID, e.Project, e.CMID, titles[e.DraftID], true
+		// A card that is not read keeps what the watch last saw of it.
+		last := before[e.CMID]
+		last.Draft, last.Project, last.ID, last.Title = e.DraftID, e.Project, e.CMID, titles[e.DraftID]
 
-		if before[e.CMID].Gone || missing[e.Project+"/"+e.CMID] {
-			snap.Cards = append(snap.Cards, gone)
+		if last.Gone || snap.PlaybookGone {
+			snap.Cards = append(snap.Cards, last)
+
+			continue
+		}
+
+		if missing[e.Project+"/"+e.CMID] {
+			last.Gone = true
+			snap.Cards = append(snap.Cards, last)
 
 			continue
 		}
@@ -370,7 +378,8 @@ func (c *Controller) snapshot(ctx context.Context, client CMClient, id string, p
 
 		switch {
 		case cm.CardNotFound(err):
-			snap.Cards = append(snap.Cards, gone)
+			last.Gone = true
+			snap.Cards = append(snap.Cards, last)
 		case err != nil:
 			return snapshot{}, fmt.Errorf("read %s: %w", e.CMID, err)
 		default:

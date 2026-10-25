@@ -427,10 +427,14 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		}
 
 		for _, card := range cards {
-			if flag(card["deleted"]) {
+			switch state := str(card["state"]); {
+			case flag(card["deleted"]):
 				fmt.Fprintf(&b, "\n- %s was deleted in ContextMatrix", str(card["card"]))
-			} else {
-				fmt.Fprintf(&b, "\n- %s is %s", str(card["card"]), str(card["state"]))
+			case state == "":
+				// The watch never read the card before the playbook was deleted.
+				fmt.Fprintf(&b, "\n- %s", str(card["card"]))
+			default:
+				fmt.Fprintf(&b, "\n- %s is %s", str(card["card"]), state)
 			}
 
 			if pr := str(card["pr"]); pr != "" {

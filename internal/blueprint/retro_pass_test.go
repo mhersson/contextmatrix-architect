@@ -523,22 +523,31 @@ func TestRetrospective_SkipsADeletedCard(t *testing.T) {
 }
 
 func TestRetrospective_WithEveryCardDeletedSaysSo(t *testing.T) {
-	c, st, runner, rec, fake := emitted(t, twoCardScript())
-	fake.remove("ALPHA-001")
-	fake.remove("ALPHA-002")
+	for _, tc := range []struct {
+		name   string
+		delete func(*fakeCM)
+	}{
+		{name: "the cards", delete: func(f *fakeCM) { f.remove("ALPHA-001"); f.remove("ALPHA-002") }},
+		{name: "their project, the cards first", delete: func(f *fakeCM) { f.tearDown("alpha") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, st, runner, rec, fake := emitted(t, twoCardScript())
+			tc.delete(fake)
 
-	require.NoError(t, c.Retrospective(context.Background(), "BP1", "m-retro"))
-	c.Wait("BP1")
+			require.NoError(t, c.Retrospective(context.Background(), "BP1", "m-retro"))
+			c.Wait("BP1")
 
-	got := replies(rec)
-	require.Len(t, got, 1)
-	assert.Equal(t, retroDeleted, got[0]["reason"])
-	assert.Contains(t, got[0]["message"], "ALPHA-001")
-	assert.Contains(t, got[0]["message"], "ALPHA-002")
-	assert.Empty(t, inputsOf(runner, RetroStage))
-	assert.Empty(t, lessons(t, st))
-	assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
-	assert.False(t, holdsSlot(c, "BP1"))
+			got := replies(rec)
+			require.Len(t, got, 1)
+			assert.Equal(t, retroDeleted, got[0]["reason"])
+			assert.Contains(t, got[0]["message"], "ALPHA-001")
+			assert.Contains(t, got[0]["message"], "ALPHA-002")
+			assert.Empty(t, inputsOf(runner, RetroStage))
+			assert.Empty(t, lessons(t, st))
+			assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
+			assert.False(t, holdsSlot(c, "BP1"))
+		})
+	}
 }
 
 func TestRetrospective_NoStruggleCountsTheDeletedCards(t *testing.T) {

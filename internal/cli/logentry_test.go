@@ -1981,6 +1981,15 @@ func TestLogEntryFor_TheClosingSummaryNamesWhatWasDeleted(t *testing.T) {
 			absent: []string{"ALPHA-002 is done"},
 		},
 		{
+			name: "a deleted playbook with a card the watch never saw",
+			payload: map[string]any{
+				"playbook": "ship-the-parser", "playbook_deleted": true, "repos": []any{},
+				"cards": []any{map[string]any{"card": "ALPHA-001", "state": "", "pr": ""}},
+			},
+			want:   []string{"\n- ALPHA-001\n"},
+			absent: []string{"ALPHA-001 is"},
+		},
+		{
 			name:    "a deleted single card",
 			payload: map[string]any{"playbook": "", "cards": []any{card("ALPHA-001", true)}},
 			want:    []string{"**Ended.**", "- ALPHA-001 was deleted in ContextMatrix"},

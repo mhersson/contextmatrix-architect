@@ -39,6 +39,7 @@ type fakeCM struct {
 	failBooks  int             // fail this many GetPlaybook calls
 	cardGets   map[string]int  // GetCard calls by card id
 	deleted    map[string]bool // card or playbook ids deleted in ContextMatrix
+	torn       map[string]bool // projects deleted in ContextMatrix, their cards first
 	connects   int
 	closes     int
 }
@@ -54,6 +55,7 @@ func newFakeCM() *fakeCM {
 		seq:        map[string]int{},
 		cardGets:   map[string]int{},
 		deleted:    map[string]bool{},
+		torn:       map[string]bool{},
 	}
 }
 
@@ -112,7 +114,7 @@ func (f *fakeCM) GetPlaybook(_ context.Context, id string) (cm.Playbook, error) 
 	return seq[0], nil
 }
 
-func (f *fakeCM) GetCard(_ context.Context, _, id string) (cm.Card, error) {
+func (f *fakeCM) GetCard(_ context.Context, project, id string) (cm.Card, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -125,8 +127,8 @@ func (f *fakeCM) GetCard(_ context.Context, _, id string) (cm.Card, error) {
 		return cm.Card{}, errors.New("cm: get_card: remote unreachable")
 	}
 
-	if f.deleted[id] {
-		return cm.Card{}, cardDeleted(id)
+	if err := f.goneCard(project, id); err != nil {
+		return cm.Card{}, err
 	}
 
 	seq := f.cardSeq[id]
@@ -141,7 +143,7 @@ func (f *fakeCM) GetCard(_ context.Context, _, id string) (cm.Card, error) {
 	return seq[0], nil
 }
 
-func (f *fakeCM) GetEndedCard(_ context.Context, _, id string) (cm.EndedCard, error) {
+func (f *fakeCM) GetEndedCard(_ context.Context, project, id string) (cm.EndedCard, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -154,8 +156,8 @@ func (f *fakeCM) GetEndedCard(_ context.Context, _, id string) (cm.EndedCard, er
 		return cm.EndedCard{}, errors.New("cm: get_card: remote unreachable")
 	}
 
-	if f.deleted[id] {
-		return cm.EndedCard{}, cardDeleted(id)
+	if err := f.goneCard(project, id); err != nil {
+		return cm.EndedCard{}, err
 	}
 
 	card, ok := f.ended[id]
@@ -357,9 +359,18 @@ func (f *fakeCM) setBooks(id string, seq ...cm.Playbook) {
 	f.bookSeq[id] = seq
 }
 
-// cardDeleted is ContextMatrix's answer to a read of a deleted card.
-func cardDeleted(id string) error {
-	return &cm.ToolError{Tool: "get_card", Text: fmt.Sprintf("get card %s: card not found", id)}
+// goneCard is ContextMatrix's answer to a read of a card deleted there, or
+// of one whose project was torn down; nil for a card that is there. The
+// caller holds mu.
+func (f *fakeCM) goneCard(project, id string) error {
+	switch {
+	case f.torn[project]:
+		return &cm.ToolError{Tool: "get_card", Text: fmt.Sprintf("get card %s: project not found", id)}
+	case f.deleted[id]:
+		return &cm.ToolError{Tool: "get_card", Text: fmt.Sprintf("get card %s: card not found", id)}
+	default:
+		return nil
+	}
 }
 
 // remove deletes a card or a playbook in ContextMatrix: every later read of
@@ -369,6 +380,16 @@ func (f *fakeCM) remove(id string) {
 	defer f.mu.Unlock()
 
 	f.deleted[id] = true
+}
+
+// tearDown deletes a project in ContextMatrix, which allows it only once
+// its cards are deleted: every later read of one of its cards is refused as
+// the project not found.
+func (f *fakeCM) tearDown(project string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.torn[project] = true
 }
 
 // cardReads is how many GetCard calls read card id.
