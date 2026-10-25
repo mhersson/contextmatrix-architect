@@ -376,7 +376,7 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 		}
 	}
 
-	next, err := c.resumePoint(ctx, sess.audit, bp)
+	next, err := c.resumePoint(ctx, sess, bp)
 	if err != nil {
 		c.release(in.ID, r)
 		c.detach(in.ID, sess)
@@ -458,8 +458,8 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 // itself. A builder round is not returned: the critique runs that round
 // again, in its attempt. A retro run is never re-run; marking it says the
 // pass was cut short (see retroInterrupted). Empty means no stage is re-run.
-// The caller holds the run slot.
-func (c *Controller) interruptedStage(ctx context.Context, au audit, bp store.Blueprint) (string, error) {
+// The caller holds the run slot; sess is the session that restarts it.
+func (c *Controller) interruptedStage(ctx context.Context, sess *session, bp store.Blueprint) (string, error) {
 	left, err := c.leftRunning(ctx, bp.ID)
 	if err != nil || len(left) == 0 {
 		return "", err
@@ -503,7 +503,7 @@ func (c *Controller) interruptedStage(ctx context.Context, au audit, bp store.Bl
 	}
 
 	for _, r := range left {
-		usage, err := c.spentBefore(ctx, bp, r)
+		usage, err := c.spentBefore(ctx, sess, bp, r)
 		if err != nil {
 			return "", err
 		}
@@ -515,7 +515,7 @@ func (c *Controller) interruptedStage(ctx context.Context, au audit, bp store.Bl
 
 	// Said once: a later restart finds the retro run interrupted, not running.
 	if pass {
-		c.retroInterrupted(ctx, au, bp.ID)
+		c.retroInterrupted(ctx, sess.audit, bp.ID)
 	}
 
 	if noNeed {
@@ -526,16 +526,21 @@ func (c *Controller) interruptedStage(ctx context.Context, au audit, bp store.Bl
 }
 
 // spentBefore is what r's stored usage lines add up to, as its sink counted
-// them while it ran. The blueprint's stored price prices them on the model it
-// belongs to; a run on another model ran unpriced (see modelFor).
-func (c *Controller) spentBefore(ctx context.Context, bp store.Blueprint, r store.Run) (store.RunUsage, error) {
+// them while it ran: priced at sess's price when r ran on sess's model, else
+// at the blueprint's stored price when r ran on the model that price belongs
+// to, else at the reported cost only, as an override runs (see modelFor).
+func (c *Controller) spentBefore(ctx context.Context, sess *session, bp store.Blueprint, r store.Run) (store.RunUsage, error) {
 	events, err := c.opts.Store.ListRunEventsOfKind(ctx, bp.ID, r.ID, EventHarness)
 	if err != nil {
 		return store.RunUsage{}, fmt.Errorf("blueprint: read the usage of interrupted run %d: %w", r.ID, err)
 	}
 
 	var price *protocol.ModelPrice
-	if r.Model == bp.Model {
+
+	switch r.Model {
+	case sess.model:
+		price = sess.price
+	case bp.Model:
 		price = effectivePrice(bp.Price)
 	}
 

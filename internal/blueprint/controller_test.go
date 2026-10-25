@@ -2,6 +2,7 @@ package blueprint
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -858,8 +859,13 @@ func TestStart_AnInterruptedRunKeepsWhatItsUsageLinesSpent(t *testing.T) {
 		`{"seq":3,"kind":"usage","data":{"cost_usd":0.15}}`,
 	}
 
+	// Twice testPrice: the first line's tokens cost 0.40 USD.
+	double := &protocol.ModelPrice{PromptUSDPerMTok: 2, CompletionUSDPerMTok: 20}
+
 	tests := []struct {
 		name     string
+		bpModel  string // the model the blueprint was created on; "" is the session's
+		price    *protocol.ModelPrice
 		runModel string
 		capUSD   float64
 		want     float64
@@ -868,6 +874,14 @@ func TestStart_AnInterruptedRunKeepsWhatItsUsageLinesSpent(t *testing.T) {
 		{name: "each line at the higher of reported and priced", runModel: "session/model", want: 0.35, reruns: true},
 		{name: "the cap counts it", runModel: "session/model", capUSD: 0.30, want: 0.35},
 		{name: "a run on another model counts what was reported", runModel: "other/model", want: 0.20, reruns: true},
+		{
+			name: "a run on the session's model at the session's price", bpModel: "old/model", price: double,
+			runModel: "session/model", want: 0.55, reruns: true,
+		},
+		{
+			name: "a run on the blueprint's model at its stored price", bpModel: "old/model", price: double,
+			runModel: "old/model", want: 0.35, reruns: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -876,9 +890,10 @@ func TestStart_AnInterruptedRunKeepsWhatItsUsageLinesSpent(t *testing.T) {
 			ctx := context.Background()
 			now := time.Now().UTC()
 
+			bpModel := cmp.Or(tt.bpModel, "session/model")
 			require.NoError(t, st.CreateBlueprint(ctx, store.Blueprint{
 				ID: "BP1", Projects: []string{"alpha"}, CostCapUSD: tt.capUSD,
-				Model: "session/model", Price: testPrice(), State: string(StateRunning), CreatedAt: now, UpdatedAt: now,
+				Model: bpModel, Price: testPrice(), State: string(StateRunning), CreatedAt: now, UpdatedAt: now,
 			}))
 			_, err := st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: "need", Body: "the stored need"})
 			require.NoError(t, err)
@@ -899,7 +914,9 @@ func TestStart_AnInterruptedRunKeepsWhatItsUsageLinesSpent(t *testing.T) {
 				Time: now, BlueprintID: "BP1", RunID: oldRun + 100, Kind: EventHarness, Payload: []byte(`{"kind":"usage","data":{"cost_usd":9}}`),
 			}))
 
-			require.NoError(t, c.Start(ctx, startInput("BP1")))
+			in := startInput("BP1")
+			in.Price = tt.price
+			require.NoError(t, c.Start(ctx, in))
 			c.Wait("BP1")
 
 			runs, err := st.ListRuns(ctx, "BP1")

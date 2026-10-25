@@ -380,9 +380,11 @@ func rerunsOnReopen(r store.Run) bool {
 // unless its latest review or builder round failed or was aborted.
 // A ready end is returned for the sign-off, emission or watch to resume. A
 // position the record does not yield is reported, not returned: the session
-// still attaches. The caller holds the run slot.
-func (c *Controller) resumePoint(ctx context.Context, au audit, bp store.Blueprint) (outcome, error) {
-	interrupted, err := c.interruptedStage(ctx, au, bp)
+// still attaches. The caller holds the run slot for sess.
+func (c *Controller) resumePoint(ctx context.Context, sess *session, bp store.Blueprint) (outcome, error) {
+	au := sess.audit
+
+	interrupted, err := c.interruptedStage(ctx, sess, bp)
 	if err != nil {
 		return outcome{}, err
 	}
