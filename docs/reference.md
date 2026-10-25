@@ -102,7 +102,11 @@ a hint.
 ### After the sign-off
 
 While the session is open, the architect **watches** the emitted cards on the
-board and posts each change in the chat.
+board and posts each change in the chat. A card deleted in ContextMatrix is
+reported once and no longer watched. Deleting the only emitted card, or the
+playbook, ends the watch with the closing summary. A playbook whose run reaches
+a deleted card waits for you, as ContextMatrix's run does: remove the entry in
+ContextMatrix, and the run goes on.
 
 | What you type | What it does | When it works |
 |---|---|---|

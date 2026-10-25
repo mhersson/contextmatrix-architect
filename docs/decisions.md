@@ -227,6 +227,10 @@ HEAD.
   draft lists itself, where its instructions allow. Why: ContextMatrix's
   runner stops at every manual entry in order, and telling a real gate from a
   check is judgement that lives in the prompt.
+- The watch takes a card or the playbook for deleted only on ContextMatrix's
+  own answer: a playbook entry flagged missing, or a read refused as not
+  found. Why: a failed read, a timeout or ContextMatrix being down must never
+  end a watch.
 - Cards are never created through ContextMatrix's Jira import. Why: imported
   titles start with the issue key, no labels are set, and the epic-context
   section is not stripped.

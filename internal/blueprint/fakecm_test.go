@@ -35,7 +35,10 @@ type fakeCM struct {
 	bookSeq    map[string][]cm.Playbook
 	seq        map[string]int
 	gets       int
-	failGets   int // fail this many GetCard calls
+	failGets   int             // fail this many GetCard calls
+	failBooks  int             // fail this many GetPlaybook calls
+	cardGets   map[string]int  // GetCard calls by card id
+	deleted    map[string]bool // card or playbook ids deleted in ContextMatrix
 	connects   int
 	closes     int
 }
@@ -49,6 +52,8 @@ func newFakeCM() *fakeCM {
 		ended:      map[string]cm.EndedCard{},
 		bookSeq:    map[string][]cm.Playbook{},
 		seq:        map[string]int{},
+		cardGets:   map[string]int{},
+		deleted:    map[string]bool{},
 	}
 }
 
@@ -85,6 +90,16 @@ func (f *fakeCM) GetPlaybook(_ context.Context, id string) (cm.Playbook, error) 
 
 	f.gets++
 
+	if f.failBooks > 0 {
+		f.failBooks--
+
+		return cm.Playbook{}, errors.New("cm: get_playbook: remote unreachable")
+	}
+
+	if f.deleted[id] {
+		return cm.Playbook{}, &cm.ToolError{Tool: "get_playbook", Text: fmt.Sprintf("get playbook %s: playbook not found", id)}
+	}
+
 	seq := f.bookSeq[id]
 	if len(seq) == 0 {
 		return cm.Playbook{}, fmt.Errorf("cm: get_playbook: %s not found", id)
@@ -102,11 +117,16 @@ func (f *fakeCM) GetCard(_ context.Context, _, id string) (cm.Card, error) {
 	defer f.mu.Unlock()
 
 	f.gets++
+	f.cardGets[id]++
 
 	if f.failGets > 0 {
 		f.failGets--
 
 		return cm.Card{}, errors.New("cm: get_card: remote unreachable")
+	}
+
+	if f.deleted[id] {
+		return cm.Card{}, cardDeleted(id)
 	}
 
 	seq := f.cardSeq[id]
@@ -132,6 +152,10 @@ func (f *fakeCM) GetEndedCard(_ context.Context, _, id string) (cm.EndedCard, er
 		f.failEnded--
 
 		return cm.EndedCard{}, errors.New("cm: get_card: remote unreachable")
+	}
+
+	if f.deleted[id] {
+		return cm.EndedCard{}, cardDeleted(id)
 	}
 
 	card, ok := f.ended[id]
@@ -331,6 +355,28 @@ func (f *fakeCM) setBooks(id string, seq ...cm.Playbook) {
 	defer f.mu.Unlock()
 
 	f.bookSeq[id] = seq
+}
+
+// cardDeleted is ContextMatrix's answer to a read of a deleted card.
+func cardDeleted(id string) error {
+	return &cm.ToolError{Tool: "get_card", Text: fmt.Sprintf("get card %s: card not found", id)}
+}
+
+// remove deletes a card or a playbook in ContextMatrix: every later read of
+// it is refused as not found.
+func (f *fakeCM) remove(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.deleted[id] = true
+}
+
+// cardReads is how many GetCard calls read card id.
+func (f *fakeCM) cardReads(id string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.cardGets[id]
 }
 
 func (f *fakeCM) getCount() int {

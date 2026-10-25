@@ -119,10 +119,35 @@ func (c *Client) callArgs(ctx context.Context, tool string, args any) (string, e
 	}
 
 	if result.IsError {
-		return "", fmt.Errorf("cm: %s: %s", tool, sb.String())
+		return "", &ToolError{Tool: tool, Text: sb.String()}
 	}
 
 	return sb.String(), nil
+}
+
+// ToolError is a tool's own error result: CM took the call and refused it.
+type ToolError struct {
+	Tool string
+	Text string
+}
+
+func (e *ToolError) Error() string { return fmt.Sprintf("cm: %s: %s", e.Tool, e.Text) }
+
+// CardNotFound reports whether err is CM's answer that a card does not
+// exist, as for one deleted there. A transport error, a timeout or CM being
+// down is never that answer.
+func CardNotFound(err error) bool { return refused(err, "card not found") }
+
+// PlaybookNotFound reports whether err is CM's answer that a playbook does
+// not exist, as CardNotFound does for a card.
+func PlaybookNotFound(err error) bool { return refused(err, "playbook not found") }
+
+// refused reports whether err is a tool error whose text holds text, CM's
+// own error for the case.
+func refused(err error, text string) bool {
+	var te *ToolError
+
+	return errors.As(err, &te) && strings.Contains(te.Text, text)
 }
 
 func (c *Client) call(ctx context.Context, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {

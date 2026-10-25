@@ -400,27 +400,38 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 
 		var b strings.Builder
 
-		if pb := str(p["playbook"]); pb != "" {
+		cards := anyMaps(p["cards"])
+		pb := str(p["playbook"])
+
+		switch {
+		case pb != "" && flag(p["playbook_deleted"]):
+			fmt.Fprintf(&b, "**Ended.** Playbook %s was deleted in ContextMatrix.", pb)
+		case pb != "":
 			fmt.Fprintf(&b, "**Done.** Playbook %s completed.", pb)
-
-			if repos := anyMaps(p["repos"]); len(repos) > 0 {
-				b.WriteString("\n\nOpen the final pull request for each repository:")
-
-				for _, r := range repos {
-					fmt.Fprintf(&b, "\n- %s: %s", str(r["project"]), str(r["compare_url"]))
-				}
-			}
-		} else {
+		case len(cards) == 1 && flag(cards[0]["deleted"]):
+			b.WriteString("**Ended.**")
+		default:
 			b.WriteString("**Done.**")
 		}
 
-		cards := anyMaps(p["cards"])
+		if repos := anyMaps(p["repos"]); pb != "" && len(repos) > 0 {
+			b.WriteString("\n\nOpen the final pull request for each repository:")
+
+			for _, r := range repos {
+				fmt.Fprintf(&b, "\n- %s: %s", str(r["project"]), str(r["compare_url"]))
+			}
+		}
+
 		if len(cards) > 0 {
 			b.WriteString("\n\nCards:")
 		}
 
 		for _, card := range cards {
-			fmt.Fprintf(&b, "\n- %s is %s", str(card["card"]), str(card["state"]))
+			if flag(card["deleted"]) {
+				fmt.Fprintf(&b, "\n- %s was deleted in ContextMatrix", str(card["card"]))
+			} else {
+				fmt.Fprintf(&b, "\n- %s is %s", str(card["card"]), str(card["state"]))
+			}
 
 			if pr := str(card["pr"]); pr != "" {
 				b.WriteString(": " + pr)
@@ -735,6 +746,12 @@ func str(v any) string {
 	s, _ := v.(string)
 
 	return s
+}
+
+func flag(v any) bool {
+	b, _ := v.(bool)
+
+	return b
 }
 
 func num(v any) float64 {
