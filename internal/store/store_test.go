@@ -388,6 +388,7 @@ func TestOpen_RefusesNewerSchema(t *testing.T) {
 	_, err = Open(context.Background(), path)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "newer")
+	assert.Contains(t, err.Error(), path, "the error names the database")
 }
 
 func TestAppendOnlyTablesRefuseRawWrites(t *testing.T) {
