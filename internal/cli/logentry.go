@@ -800,6 +800,62 @@ func stringsOf(v any) []string {
 	}
 }
 
+// unattendedText is an unattended sign-off's line on where the run stops
+// for a person: nowhere, or at each stop in run order, with its note as the
+// reason (its text, what the person does, when it has none) and readiness's
+// finding when readiness judged the stop needless.
+func unattendedText(stops []map[string]any) string {
+	if len(stops) == 0 {
+		return "Unattended: this run will not stop for a person."
+	}
+
+	at := func(s map[string]any) string {
+		out := "at " + str(s["id"]) + ", "
+
+		if note := strings.TrimSpace(str(s["note"])); note != "" {
+			out += "because " + sentence(note)
+		} else {
+			out += "for this step: " + sentence(str(s["text"]))
+		}
+
+		if needless := strings.TrimSpace(str(s["needless"])); needless != "" {
+			out += " Readiness judged this stop needless: " + sentence(needless)
+		}
+
+		return out
+	}
+
+	if len(stops) == 1 {
+		return "Unattended: this run will stop once, " + at(stops[0])
+	}
+
+	var b strings.Builder
+
+	times := "twice"
+	if len(stops) > 2 {
+		times = fmt.Sprintf("%d times", len(stops))
+	}
+
+	b.WriteString("Unattended: this run will stop " + times + ":")
+
+	for _, s := range stops {
+		b.WriteString("\n- " + at(s))
+	}
+
+	return b.String()
+}
+
+// sentence is s trimmed, ending in a full stop unless it ends a sentence
+// already.
+func sentence(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.ContainsAny(s[len(s)-1:], ".!?") {
+		return s
+	}
+
+	return s + "."
+}
+
 // signoffText renders the sign-off: the body (readiness's findings across
 // the blueprint, the entries in playbook order, the playbook and the
 // preflight result) and the reply line that decides it, which starts with
@@ -891,6 +947,11 @@ func signoffText(p map[string]any, sliced bool) (body, reply string) {
 		for _, id := range ids {
 			fmt.Fprintf(&b, "- %s: %s\n", id, manual[id])
 		}
+	}
+
+	// Only an unattended blueprint's sign-off carries stops.
+	if stops, ok := p["stops"]; ok {
+		b.WriteString("\n" + unattendedText(anyMaps(stops)) + "\n")
 	}
 
 	if title := str(p["title"]); title != "" && len(cards) > 1 {
@@ -1688,8 +1749,8 @@ func plainGateText(p map[string]any, sliced bool) string {
 // plainSignoffText is what a person reads of the sign-off: cards readiness
 // did not pass, or a critical finding across the blueprint, are the moments
 // the architect is stuck (the open cards win), setup steps are named
-// whenever the sign-off carries any, and notices say the work settles some
-// setup itself.
+// whenever the sign-off carries any, notices say the work settles some
+// setup itself, and an unattended run's stops are counted.
 func plainSignoffText(p map[string]any) string {
 	var text string
 
@@ -1710,13 +1771,26 @@ func plainSignoffText(p map[string]any) string {
 		text += plainNoticesSentence
 	}
 
-	return text
+	return text + plainStopsSentence(len(anyMaps(p["stops"])))
 }
 
 const (
 	plainStepsSentence   = " Some setup needs someone technical before the work can run; the steps are below."
 	plainNoticesSentence = " The work will settle some technical setup on its own; a technical helper can read how below."
 )
+
+// plainStopsSentence counts the steps an unattended run waits for a person
+// at; the technical text below says where and why. With none it is empty.
+func plainStopsSentence(n int) string {
+	switch {
+	case n == 1:
+		return " When the work runs, it will wait for you at 1 step only a person can take; where and why are below."
+	case n > 1:
+		return fmt.Sprintf(" When the work runs, it will wait for you at %d steps only a person can take; where and why are below.", n)
+	default:
+		return ""
+	}
+}
 
 // plainEmittedText is what a person reads above the announcement of the
 // emitted cards, which stays technical below it.

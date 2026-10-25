@@ -60,7 +60,9 @@ type outcome struct {
 // the pipeline or re-runs its target, cards accepted with findings end it,
 // and otherwise the next step of the blueprint's pipeline follows. A loop
 // stage's verdict that sends cards back runs the earliest slice holding a
-// failing card, and every later slice's after it (the chain). Its last
+// failing card, and every later slice's after it (the chain); on an
+// unattended blueprint a run stop it judged needless counts as a failing
+// card of the slice whose order holds it, below the cap only. Its last
 // round's verdict goes to the sign-off with the cards it did not pass, and
 // ends the pipeline on a pack with no stage that checks cards. A verdict the
 // sign-off rejected runs the step the rejection named, a typed one's or a
@@ -105,7 +107,7 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 				return outcome{}, fmt.Errorf("blueprint: after %s: the pipeline has no %s", completed, pack.StageName(st.LoopsTo, false))
 			}
 
-			drafts, ids, err := c.targetCards(ctx, bp.ID, targets)
+			drafts, ids, stops, err := c.targetCards(ctx, bp.ID, targets)
 			if err != nil {
 				return outcome{}, fmt.Errorf("blueprint: after %s: the judged %s: %w", completed, st.LoopsTo, err)
 			}
@@ -113,10 +115,25 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 			findings, failing := cardVerdicts(art, ids)
 			ready := len(findings) == 0
 
+			// On an unattended blueprint a stop readiness judged needless
+			// sends the step that holds it back while rounds remain, as a
+			// failing card does. It never joins findings, so at the cap it
+			// stops no sign-off, which names it instead.
+			var needless bool
+
+			if bp.Unattended {
+				for _, s := range needlessStops(art, stops) {
+					failing = append(failing, s.ID)
+					needless = true
+				}
+			}
+
 			base, rejected, err := c.rejection(ctx, bp.ID, art.Version)
 			if err != nil {
 				return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
 			}
+
+			capped := art.Version-base >= st.MaxRounds
 
 			switch {
 			case rejected:
@@ -133,11 +150,11 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 				}
 
 				return outcome{stage: targets[0].ID, chain: true}, nil
-			case ready:
+			case ready && (!needless || capped):
 				return outcome{end: true, ready: true, art: art, round: art.Version - base}, nil
-			case art.Version-base >= st.MaxRounds && c.cardsStage() != "":
+			case capped && c.cardsStage() != "":
 				return outcome{end: true, ready: true, findings: findings, art: art, round: art.Version - base}, nil
-			case art.Version-base >= st.MaxRounds:
+			case capped:
 				return outcome{end: true, findings: findings, art: art, round: art.Version - base}, nil
 			default:
 				return outcome{stage: owningTarget(targets, drafts, failing), chain: true}, nil
@@ -1810,25 +1827,38 @@ func cardVerdicts(a store.Artifact, draft []string) (findings, failing []string)
 	return findings, failing
 }
 
-// targetCards reads the card ids of every target step's latest artifact:
-// by step key, and all of them in step order.
-func (c *Controller) targetCards(ctx context.Context, id string, targets []pipelineStep) (map[string][]string, []string, error) {
-	by := map[string][]string{}
-
-	var all []string
+// targetCards reads every target step's latest artifact: by step key, its
+// card ids and the manual entries in its order, so a verdict on either
+// finds the step that holds it; every card id in step order; and every
+// manual entry in the order, the run's stops, in step order. Targets that
+// hold fewer than two cards in all make no playbook, so nothing stops the
+// run: there are no stops, and each step keys its card ids only.
+func (c *Controller) targetCards(ctx context.Context, id string, targets []pipelineStep) (byKey map[string][]string, cards, stops []string, err error) {
+	byKey = map[string][]string{}
+	manual := map[string][]string{}
 
 	for _, t := range targets {
 		art, err := c.opts.Store.LatestArtifact(ctx, id, t.ID)
 		if err != nil {
-			return nil, nil, fmt.Errorf("read %s: %w", t.ID, err)
+			return nil, nil, nil, fmt.Errorf("read %s: %w", t.ID, err)
 		}
 
 		ids := cardIDs(art)
-		by[t.ID] = ids
-		all = append(all, ids...)
+		byKey[t.ID] = ids
+		cards = append(cards, ids...)
+		manual[t.ID] = manualInOrder(art)
 	}
 
-	return by, all, nil
+	if len(cards) < 2 {
+		return byKey, cards, nil, nil
+	}
+
+	for _, t := range targets {
+		byKey[t.ID] = append(slices.Clone(byKey[t.ID]), manual[t.ID]...)
+		stops = append(stops, manual[t.ID]...)
+	}
+
+	return byKey, cards, stops, nil
 }
 
 // trailingFollowups moves every manual entry after the draft's last card in

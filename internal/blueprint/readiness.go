@@ -14,12 +14,14 @@ import (
 
 // readinessValidator refuses a readiness verdict that does not stand, as
 // boundedValidator bounds it: the draft is every card of the stage it loops
-// to, read at each submit.
+// to, read at each submit. On an unattended blueprint its needless stops
+// are checked against the manual entries in that draft's order; on any
+// other the field is ignored.
 func (c *Controller) readinessValidator(bp store.Blueprint, key string) (func(context.Context, stage.Artifact) error, *validatorState) {
 	st, _ := c.stepAt(key)
 
 	return boundedValidator("readiness verdict", func(ctx context.Context, a stage.Artifact) ([]string, error) {
-		var draft []string
+		var draft, stops []string
 
 		if st.LoopsTo != "" {
 			steps, _, err := c.steps(ctx, bp.ID)
@@ -27,12 +29,17 @@ func (c *Controller) readinessValidator(bp store.Blueprint, key string) (func(co
 				return nil, err
 			}
 
-			if _, draft, err = c.targetCards(ctx, bp.ID, loopTargets(steps, st.LoopsTo)); err != nil {
+			if _, draft, stops, err = c.targetCards(ctx, bp.ID, loopTargets(steps, st.LoopsTo)); err != nil {
 				return nil, err
 			}
 		}
 
-		return readinessProblems(a.Data, draft), nil
+		out := readinessProblems(a.Data, draft)
+		if bp.Unattended {
+			out = append(out, stopProblems(a.Data["needless_stops"], stops)...)
+		}
+
+		return out, nil
 	})
 }
 

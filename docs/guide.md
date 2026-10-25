@@ -84,6 +84,7 @@ recipe-box. The rest of the dialog:
 | Projects | The ContextMatrix projects the work goes into. Tick at least one. | recipe-box, a new project whose repository holds only a short description file |
 | Mode | How much the architect does without you. In **Default** you answer its questions and decide the **gates** that need you, the stops where a step's result is approved. In **Auto**, **Auto + emit** and **Yolo** an AI answers for you. See [Modes](reference.md#modes). | Default |
 | Plain language | Asks you only what you want and how it should look and work; the architect makes the technical decisions and tells you what they mean for you. Set here, and kept. See [Plain language](reference.md#plain-language). | Off |
+| Unattended | Plans the cards so their run does not stop to wait for you, except at a step only you can take that a later card needs; checks come after the run. ContextMatrix switches it on when you pick Yolo, until you switch it yourself, and you can switch it in any mode. Set here, and kept. See [Unattended](reference.md#unattended). | Off |
 | Model | The AI model the architect uses: one as capable as Claude Sonnet. See [Models](reference.md#models). | A Claude Sonnet model |
 | Cost cap | The most the architect may spend on this blueprint, in US dollars: $1, $2, $5, $10 or No cap. See [The cost cap](reference.md#the-cost-cap). | $10 |
 

@@ -502,6 +502,18 @@ Every stage is a model run, except a shared stage that collapses with one slice,
   `cross_severity`, `cross_text`, `cross_refs`); bounded, never fatal. With
   two or more slices it reads each slice's grounding as a digest of its
   project facts and verdicts.
+- On an unattended blueprint readiness also judges every manual entry still
+  in a draft's `order`, where the run stops, and reports each one that is no
+  real gate in its data's `needless_stops`, `[{id, text}]` (see
+  Unattended). Below the last round a needless stop sends the loop back as a
+  failing card does, to the decomposition of the slice whose order holds
+  it and every later slice's; it is never a card finding, so it never
+  reaches `not_ready`, and after the last round it only shows at the
+  sign-off. The `readiness` check refuses there a `needless_stops` of
+  another shape (`stop_shape`), an id that is not a manual entry in the
+  order or is named twice (`stop_id`), and an entry without its text
+  (`stop_text`); cards that number fewer than two in all make no playbook,
+  so no id is a stop. On any other blueprint the field is ignored.
 - Solution design's submit is checked: it has slices, every slice of slicing
   among them, or a per-slice design's own slice alone (`slice_missing`,
   `slice_extra`); every decision has a chosen option, a rejected option and
@@ -655,7 +667,7 @@ pack.yaml          stage order; per stage: persona, consumes,
                    (the stage whose data states whether the need has a screen)
                    and `mockup` (the stage that draws the mockups)
 personas/*.md      role text, one file per persona
-stages/*.md        instructions, one file per stage, review.md for every reviewer run, responder.md for every responder run, mockup_responder.md for every mockup responder run and plain.md (optional) for every run of a plain-language blueprint
+stages/*.md        instructions, one file per stage, review.md for every reviewer run, responder.md for every responder run, mockup_responder.md for every mockup responder run, plain.md (optional) for every run of a plain-language blueprint and unattended.md (optional) for every stage run of an unattended blueprint
 card.md            the card body template
 lists.yaml         data for mechanical checks: required sections, stripped headings,
                    defect phrases, maintenance labels and verbs, forbidden content,
@@ -673,8 +685,9 @@ lists.yaml         data for mechanical checks: required sections, stripped headi
   gate to fold into, a loop stage takes no gate, and a pack with a reviewer
   carries `stages/review.md`. A reviewer's tool groups are `code` and
   `research` only, and `research` gives it `web_fetch` alone. No stage id
-  is `review`, `responder`, `plain`, `mockup_responder` or `retrospective`, the
-  reserved instruction ids, or holds a dot, which names a stage's review.
+  is `review`, `responder`, `plain`, `unattended`, `mockup_responder` or
+  `retrospective`, the reserved instruction ids, or holds a dot, which names
+  a stage's review.
   `stages/retrospective.md` is optional; a pack that carries it carries
   `personas/reviewer.md`, the persona its runs play (see Learning).
   Per-slice stages are contiguous, follow the stage that checks slices and
@@ -1214,17 +1227,18 @@ rest of the sign-off work as without it.
 When the architect cannot settle something on its own, the person reads it
 plainly with the technical text folded underneath for a technical helper
 (`detail` on the prompt): every stage gate, the sign-off (which adds a
-sentence when setup needs someone technical, and another when the work settles
-some setup on its own) and a stopped emission or run start. The same choices
-are worded plainly ("Continue anyway", "Try again") and send the same replies.
-The setup note the code checkout posts opens with a plain sentence that names
-someone technical only when a gap needs a person before the cards run (a
-repository with no commits, or a missing verify command outside yolo), and
-otherwise says the work settles them on its own; its technical list is
-unchanged below. The announcement of the emitted cards opens with a plain
-sentence, its technical text unchanged below. An ended pipeline's `end_reason`
-is plain and its technical reason is `end_detail`. The wording is fixed per
-situation, in the server.
+sentence when setup needs someone technical, another when the work settles
+some setup on its own, and one that counts the run's stops when an
+unattended blueprint's run stops for the person) and a stopped emission or run
+start. The same choices are worded plainly ("Continue anyway", "Try again") and
+send the same replies. The setup note the code checkout posts opens with a
+plain sentence that names someone technical only when a gap needs a person
+before the cards run (a repository with no commits, or a missing verify command
+outside yolo), and otherwise says the work settles them on its own; its
+technical list is unchanged below. The announcement of the emitted cards opens
+with a plain sentence, its technical text unchanged below. An ended pipeline's
+`end_reason` is plain and its technical reason is `end_detail`. The wording is
+fixed per situation, in the server.
 
 ### Unattended
 
@@ -1232,6 +1246,45 @@ A blueprint started with the unattended toggle (`unattended` on the start,
 stored at creation and never changed by a later start or a mode switch) is
 carried in the store, echoed as `unattended` on the view and named in the
 export's summary. The `created` event carries `unattended` only when it is on.
+
+Its playbook's run should never stop for a person except at a real gate:
+a step only a person can take that a later card cannot work without. CM's
+runner stops at every manual entry in the playbook order until a person
+ticks it, so the plan keeps manual entries out of the order.
+
+- In every mode, unattended or not, the controller moves the manual entries
+  after the playbook's last card from `order` into `followups` (see
+  Emission). That move is mechanical; telling a gate from a check is
+  judgement, and lives in the prompt.
+- Every stage run of an unattended blueprint gets the pack's
+  `stages/unattended.md` after its own instructions (and after
+  `stages/plain.md` on a plain-language blueprint); reviewer, responder and
+  mockup responder runs never do. For decomposition it replaces the rules
+  that order projects through manual entries and make a gate between
+  projects a manual entry, and the example order: order between projects
+  comes from `order` alone, a manual entry never only orders projects,
+  setting a secret and every check that only confirms the result go in
+  `followups` wherever they would sit, and a manual entry, a real gate
+  between projects included, stays in `order` only as a last resort, with
+  a `note` saying why the run waits there. For readiness it adds the
+  judgement of every manual entry still in `order`: one that is no real
+  gate goes in `needless_stops`, never in a card's findings or `cross`; and
+  of every follow-up: one a card cannot work without is a finding on that
+  card, so it sends the slice back and, left open, stops an automatic
+  sign-off.
+- A needless stop sends its slice back while readiness rounds remain (see
+  the readiness loop under Stages). After the last round it never stops an
+  emitting mode's automatic sign-off: the entry stays a run stop, and the
+  sign-off names it with readiness's finding.
+- The sign-off's data on an unattended blueprint carries `stops`, `[{id,
+  text, note?, needless?}]`: each manual id still in the order, in run
+  order, with its note when it has one and readiness's finding from the
+  verdict the sign-off ends on when that verdict judged it needless; `[]`
+  when the run never stops, as for one card, which has no playbook. Any
+  other blueprint's sign-off has no `stops`. The sign-off's text adds an
+  Unattended line after the follow-ups: that the run will not stop for a
+  person, or where it stops, each stop with its note as the reason (its
+  text when it has no note) and readiness's finding.
 
 ## Tools
 
@@ -1253,45 +1306,46 @@ finds not ready after its last round, with those card findings (`not_ready`,
 in `D<n>: <finding>` form, an empty list when every card passed). When
 decomposition ran per slice, the sign-off, preflight and emission read one
 draft: every slice's latest cards, manual entries, order and follow-ups in
-slice order (only the last slice's trailing manual entries are follow-ups;
-an earlier slice's stay run steps), with each project's setup as the earliest
-slice that sets it gives it and
-the last slice's title, so the blueprint ends in one playbook across every
-project. Default and `auto` modes show the sign-off (the entries in playbook
-order with the card that also writes `AGENTS.md` marked, the follow-ups
-(`followups`, manual ids listed after the run order, apart from it), the playbook title,
-the assumptions, the preflight result and, at the top, the cards readiness
-did not pass and readiness's findings across the blueprint, critical first
-and, on a plain-language blueprint, the plain summary) and wait: `approve`
-emits (over a critical finding, or over cards readiness did not pass, it
-takes a reason, `approve <reason>`, which the button asks for: recorded as
-the approval's feedback and the decided event's `override_reason`, served in
-the sign-off's data and kept by the export; a bare `approve` is then a note
-asking for it), and `reject <feedback>` stores the feedback and runs the
-blueprint again from its first decisions: the shared decisions when they
-ran, else the first slice's design, with everything after it, as the typed
-rejection of that step does. On a record whose steps have no such step, it
-re-runs decomposition, every slice's in slice order. Every stage that runs
-after a sign-off rejection is given its feedback, and so are its reviewer
-and its auto responder, and the three readiness rounds count again from the
-rejection. `reject slicing <feedback>` runs slicing and everything after it
-again, `reject SL<n> <feedback>` slice n's design and everything after it,
-earlier slices staying, and `reject shared_decisions <feedback>` the shared
-decisions and every slice. Those are
-typed and never offered as buttons; the sign-off's text lists `reject
-slicing` always and the others with two or more slices; one that names no
-step of the blueprint is a note with a hint. `auto+emit`
-and `yolo` approve on their own when preflight runs and finds nothing
-blocking and no warning, never over a critical finding across the blueprint
-or over cards readiness did not pass, and stop for a human otherwise. The
-sign-off reads the mode as it stands when it decides, under a lock a `mode`
-reply shares, so a switch lands before an approval or is refused after it; a
-switch into `auto+emit` or `yolo` while a sign-off waits for a human runs it
-again, preflight included, and when the mode approves a sign-off or a stage
-gate that was shown, that decision's transcript row carries a `decision`
-marker (the stage, its slice and the version; a folded stage's row carries
-none) that closes the shown prompt in the panel. Every decision is a row in
-`gates`.
+slice order (only the last slice's trailing manual entries move to follow-ups;
+an earlier slice's trailing ones stay run steps, and a manual entry a draft
+lists in `followups` itself, as the Unattended instructions allow, is a
+follow-up wherever its slice sits), with each project's setup as the earliest
+slice that sets it gives it and the last slice's title, so the blueprint ends
+in one playbook across every project. Default and `auto` modes show the
+sign-off (the entries in playbook order with the card that also writes
+`AGENTS.md` marked, the follow-ups (`followups`, manual ids listed after the
+run order, apart from it), the playbook title, the assumptions, the preflight
+result and, at the top, the cards readiness did not pass and readiness's
+findings across the blueprint, critical first and, on a plain-language
+blueprint, the plain summary and, on an unattended blueprint, where the run
+stops (`stops`, see Unattended)) and wait: `approve` emits (over a critical
+finding, or over cards readiness did not pass, it takes a reason, `approve
+<reason>`, which the button asks for: recorded as the approval's feedback and
+the decided event's `override_reason`, served in the sign-off's data and kept
+by the export; a bare `approve` is then a note asking for it), and `reject
+<feedback>` stores the feedback and runs the blueprint again from its first
+decisions: the shared decisions when they ran, else the first slice's design,
+with everything after it, as the typed rejection of that step does. On a record
+whose steps have no such step, it re-runs decomposition, every slice's in slice
+order. Every stage that runs after a sign-off rejection is given its feedback,
+and so are its reviewer and its auto responder, and the three readiness rounds
+count again from the rejection. `reject slicing <feedback>` runs slicing and
+everything after it again, `reject SL<n> <feedback>` slice n's design and
+everything after it, earlier slices staying, and `reject shared_decisions
+<feedback>` the shared decisions and every slice. Those are typed and never
+offered as buttons; the sign-off's text lists `reject slicing` always and the
+others with two or more slices; one that names no step of the blueprint is a
+note with a hint. `auto+emit` and `yolo` approve on their own when preflight
+runs and finds nothing blocking and no warning, never over a critical finding
+across the blueprint or over cards readiness did not pass, and stop for a human
+otherwise; an unattended blueprint's needless stop is neither and stops
+nothing. The sign-off reads the mode as it stands when it decides, under a lock
+a `mode` reply shares, so a switch lands before an approval or is refused after
+it; a switch into `auto+emit` or `yolo` while a sign-off waits for a human runs
+it again, preflight included, and when the mode approves a sign-off or a stage
+gate that was shown, that decision's transcript row carries a `decision` marker
+(the stage, its slice and the version; a folded stage's row carries none) that
+closes the shown prompt in the panel. Every decision is a row in `gates`.
 Then, in order:
 
 1. **Preflight**, at sign-off and again at the start of every emission
@@ -1933,7 +1987,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Pin protocol v0.35.0 (`MessagePayload.Mockup`, `MockupReply`); panel: the mockup sheet while `mockup:<n>` is open, the source sealed in CM's mockup frame (no access to CM or the session; network blocked by policy; see CM's trust model) with `window.mockupSettings` set before its first script and a `mockup:settings` event on every flip, the suggestions as switches and choices that flip it with no message, a chat box that sends `chat` with the settings shown, "Use this design" sending `use` with every setting of the revision shown, and "Skip mockups" sending `skip`; a card's fenced `mockup` block shown sealed the same way behind "Show mockup"; `create_card` and `update_card`'s lint skipping a mockup block's content by the shared grammar | mockups |
 | Panel: board cards take their colours from the board's `cards[].type` and `priority`, as the Cards sheet does; a board without them stays grey | board colours |
 | Panel: the sign-off and board sheets show `notices` in a box of their own, apart from the steps, with no check-off | emission notices |
-| Pin protocol v0.38.0; the new-blueprint dialog's Unattended switch, stored on the session row and sent as `ArchitectStart.Unattended` on every start; playbooks gain follow-ups (`create_playbook` takes `followups`, `get_playbook` returns them, the runner never reads them); panel: the sign-off and cards sheets show the manual ids in `followups` as after the run | unattended |
+| Pin protocol v0.38.0; the new-blueprint dialog's Unattended switch, stored on the session row and sent as `ArchitectStart.Unattended` on every start; playbooks gain follow-ups (`create_playbook` takes `followups`, `get_playbook` returns them, the runner never reads them); panel: the sign-off and cards sheets show the manual ids in `followups` as after the run, and the sign-off sheet shows one Unattended line from the sign-off data's `stops` (that the run will not stop for a person when it is `[]`, else each stop with its note as the reason and its `needless` finding; none without `stops`) | unattended |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

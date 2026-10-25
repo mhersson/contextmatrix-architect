@@ -2,6 +2,7 @@ package blueprint
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -60,6 +61,157 @@ func TestReadinessProblems(t *testing.T) {
 			for i, name := range tt.want {
 				assert.Contains(t, got[i], ": "+name+": ")
 			}
+		})
+	}
+}
+
+func TestStopProblems(t *testing.T) {
+	stop := func(id, text string) map[string]any { return map[string]any{"id": id, "text": text} }
+
+	// M1 and M3 stop the run; M2 is a follow-up, D1 a card.
+	stops := []string{"M1", "M3"}
+
+	tests := []struct {
+		name string
+		v    any
+		want []string // check names, in order
+	}{
+		{name: "absent is none", v: nil},
+		{name: "an empty list is none", v: []any{}},
+		{name: "not a list", v: "M1", want: []string{"stop_shape"}},
+		{name: "an entry that is no object", v: []any{"M1"}, want: []string{"stop_shape"}},
+		{name: "a card id", v: []any{stop("D1", "x")}, want: []string{"stop_id"}},
+		{name: "a follow-up id", v: []any{stop("M2", "x")}, want: []string{"stop_id"}},
+		{name: "empty text", v: []any{stop("M1", " ")}, want: []string{"stop_text"}},
+		{name: "a stop named twice", v: []any{stop("M1", "x"), stop("M1", "y")}, want: []string{"stop_id"}},
+		{name: "valid", v: []any{stop("M1", "the next card reads the key from the environment"), stop("M3", "it only confirms the result")}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stopProblems(tt.v, stops)
+			require.Len(t, got, len(tt.want), "%v", got)
+
+			for i, name := range tt.want {
+				assert.Contains(t, got[i], ": "+name+": ")
+			}
+		})
+	}
+}
+
+// needlessSL2 is the sliced script with M1 a run stop between SL2's cards,
+// D2 and D3, and readiness passing every card; needless says on which
+// rounds it names M1 in needless_stops.
+func needlessSL2(needless func(round int32) bool) stageScript {
+	var rounds atomic.Int32
+
+	script := slicedScript()
+	script["decomposition"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		if sliceOf(in) == "SL1" {
+			return done("# Cards SL1", draftOf("", cardFor("D1", nil))), nil
+		}
+
+		d := draftOf("Export the reports", cardFor("D2", nil, "D1"), cardFor("D3", nil, "D1"))
+		d["manual"] = []any{map[string]any{"id": "M1", "text": "Open an exported report"}}
+		d["order"] = []any{"D2", "M1", "D3"}
+
+		return done("# Cards SL2", d), nil
+	}
+	script["readiness"] = func(context.Context, stage.Input) (stage.Output, error) {
+		v := readinessFor(true, "D1", "D2", "D3")
+		if needless(rounds.Add(1)) {
+			v["needless_stops"] = []any{map[string]any{"id": "M1", "text": "Only confirms the export; no later card needs it."}}
+		}
+
+		return done("# Ready", v), nil
+	}
+
+	return script
+}
+
+func TestReadiness_ANeedlessStopSendsItsSliceBack(t *testing.T) {
+	c, _, runner, rec := newSliced(t, needlessSL2(func(round int32) bool { return round == 1 }))
+
+	in := autoStart("BP1")
+	in.Unattended = true
+	driveIn(t, c, in)
+
+	assert.Equal(t, []string{
+		"decomposition@SL1", "decomposition@SL2", "readiness",
+		"decomposition@SL2", "readiness",
+	}, stepRuns(runner, "decomposition", "readiness"), "the slice that holds the stop runs again, not the first")
+	assert.True(t, rec.has(EventSignOff))
+}
+
+func TestReadiness_ANeedlessStopIsIgnoredWithoutUnattended(t *testing.T) {
+	c, _, runner, rec := newSliced(t, needlessSL2(func(int32) bool { return true }))
+	driveIn(t, c, autoStart("BP1"))
+
+	assert.Equal(t, []string{"decomposition@SL1", "decomposition@SL2", "readiness"}, stepRuns(runner, "decomposition", "readiness"))
+
+	so, ok := rec.first(EventSignOff)
+	require.True(t, ok)
+	assert.NotContains(t, so.Payload, "stops")
+}
+
+func TestReadiness_TheVerdictsStopsAreCheckedOnlyWhenUnattended(t *testing.T) {
+	// oneCard has a manual entry before its only card: with one card there
+	// is no playbook, so nothing stops the run.
+	oneCard := goodCards()
+	oneCard["manual"] = []any{map[string]any{"id": "M1", "text": "Check the dashboard"}}
+	oneCard["order"] = []any{"M1", "D1"}
+
+	tests := []struct {
+		name       string
+		draft      map[string]any // nil is twoCards, M1 between D1 and D2
+		cards      []string       // nil is D1 and D2
+		stop       string
+		unattended bool
+		refused    bool
+	}{
+		{name: "a card is no stop", stop: "D1", unattended: true, refused: true},
+		{name: "without unattended the field is ignored", stop: "D1"},
+		{name: "a follow-up is no stop", draft: followupCards(""), stop: "M1", unattended: true, refused: true},
+		{name: "one card has no stops", draft: oneCard, cards: []string{"D1"}, stop: "M1", unattended: true, refused: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			script := twoCardScript()
+			if tc.draft != nil {
+				script["decomposition"] = submitting(tc.draft)
+			}
+
+			cards := tc.cards
+			if cards == nil {
+				cards = []string{"D1", "D2"}
+			}
+
+			var got error
+
+			script["readiness"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+				v := readinessFor(true, cards...)
+				v["needless_stops"] = []any{map[string]any{"id": tc.stop, "text": "the run need not stop there"}}
+				got = in.Validate(ctx, stage.Artifact{Body: "# Ready", Data: v})
+
+				return done("# Ready", readinessFor(true, cards...)), nil
+			}
+
+			c, _, _, _, _ := newPipeline(t, script)
+			c.opts.Pack = withCheck(c.opts.Pack, "readiness", pack.CheckReadiness)
+
+			in := startInput("BP1")
+			in.Unattended = tc.unattended
+			driveIn(t, c, in)
+
+			if !tc.refused {
+				assert.NoError(t, got)
+
+				return
+			}
+
+			require.Error(t, got)
+			assert.Contains(t, got.Error(), ": stop_id: ")
 		})
 	}
 }

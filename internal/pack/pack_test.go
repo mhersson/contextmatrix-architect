@@ -404,6 +404,24 @@ func TestLoadEmbedded_HasPlainInstructions(t *testing.T) {
 	assert.NotEmpty(t, p.PlainInstructions())
 }
 
+func TestPack_UnattendedIsOptionalAndReserved(t *testing.T) {
+	p, err := load(packFS("", nil))
+	require.NoError(t, err)
+	assert.Empty(t, p.UnattendedInstructions())
+
+	p, err = load(packFS("", map[string]string{"stages/unattended.md": "never stop the run"}))
+	require.NoError(t, err)
+	assert.Equal(t, "never stop the run", p.UnattendedInstructions())
+
+	_, err = load(packFS("  - id: unattended\n    persona: po\n", map[string]string{"stages/unattended.md": "x"}))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reserved")
+
+	p, err = LoadEmbedded()
+	require.NoError(t, err)
+	assert.NotEmpty(t, p.UnattendedInstructions())
+}
+
 func TestStageName(t *testing.T) {
 	t.Parallel()
 

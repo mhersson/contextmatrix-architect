@@ -80,7 +80,8 @@ word "slicing" as its feedback.
 ### At the sign-off
 
 The sign-off lists the cards in order, any checks left for you after the run
-(**follow-ups**, kept in the playbook and not run steps), the assumptions the
+(**follow-ups**, kept in the playbook and not run steps), where the run will
+stop for you on an [Unattended](#unattended) blueprint, the assumptions the
 plan rests on, and the result of a last check against ContextMatrix (the **preflight**: does every
 card's project exist and have a repository, and is there anything to warn
 about). In Default and Auto mode it waits for you.
@@ -348,7 +349,8 @@ again. After a reopen, as after a restart, nothing finished is lost:
   an emitted blueprint's cards starts again.
 - A retrospective that was cut short is not run again: the chat says so, and
   you reply `retrospective`.
-- The mode, the cost cap and plain language stay as the blueprint stored them.
+- The mode, the cost cap, plain language and Unattended stay as the blueprint
+  stored them.
 
 A lesson round is not shown again: scroll back to it in the chat and answer it
 there.
@@ -384,6 +386,34 @@ technical helper can read every folded detail. The stages, the reviewers and
 the cost cap work as always, and the sign-off follows the mode. Plain language
 works with every mode; in the Auto modes you read the plain wording but answer
 nothing.
+
+## Unattended
+
+Unattended is for a blueprint you start and walk away from: the cards' run in
+ContextMatrix should not stop to wait for you. Switch on "Unattended" in the
+New blueprint dialog. ContextMatrix switches it on when you pick Yolo and off
+for the other modes, until you switch it yourself, and you can switch it
+either way in any mode. It is set when the blueprint is created and never
+changes after: a reopen or a mode switch keeps it.
+
+A playbook's run stops at every **manual entry**, a step for a person, in its
+run order until someone ticks it off in ContextMatrix. With Unattended on, the
+architect plans so the run stops only where it must:
+
+| What | With Unattended |
+|---|---|
+| Checks that only confirm the result | Go after the run as follow-ups, wherever they would otherwise sit, so the run never waits for them. |
+| A secret the cards need, such as an API key | The cards read it from the environment or the project's config and are tested with a stand-in, so "Add `WEATHER_API_KEY` to the environment" is a follow-up too. |
+| Order between projects | Comes from the playbook's run order alone, never from a manual entry that only orders the projects. A real gate between projects stays, as below. |
+| A real gate | A step only you can take that a later card cannot work without stays a manual entry in the run order, as a last resort, with a note saying why. |
+| Readiness | Also judges every manual entry left in the run order. One that is no real gate sends its slice's cards back to be planned again while rounds remain. It never counts as a card finding, so after the last round it never stops Auto + emit or Yolo approving the sign-off on its own. A follow-up that a card cannot work without is a finding on that card, like any other, since the card would fail. |
+| The sign-off | Adds an Unattended line after the follow-ups: that the run will not stop for you, or where it stops and why, with Readiness's finding when Readiness still judged a stop needless. |
+
+What stays the same: in every mode, checks the architect plans after the last
+card are follow-ups, not run steps, and without Unattended a check between
+cards stays a manual entry in the run order. In no mode does the architect ask
+you for a secret's value. The stages, gates, reviewers, modes and the cost cap
+work as always, and Unattended starts nothing: only Yolo starts the run.
 
 ## The research setting
 

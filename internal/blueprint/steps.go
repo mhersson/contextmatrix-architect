@@ -278,7 +278,9 @@ func loopTargets(steps []pipelineStep, stageID string) []pipelineStep {
 // owningTarget is where a not-ready verdict sends the loop: the earliest
 // target whose cards include a failing one, or the first target when none
 // does, as for a verdict that judged no card. drafts holds each target's
-// card ids by its key.
+// card ids, and the manual entries in its order, by its key; targetCards
+// keys card ids only when the targets hold fewer than two cards in all,
+// since no playbook then makes a stop.
 func owningTarget(targets []pipelineStep, drafts map[string][]string, failing []string) string {
 	for _, t := range targets {
 		if slices.ContainsFunc(drafts[t.ID], func(card string) bool { return slices.Contains(failing, card) }) {

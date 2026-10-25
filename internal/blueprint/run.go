@@ -582,6 +582,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	}
 
 	instructions := withPlain(bp, c.opts.Pack.Instructions(st.Stage.ID), c.opts.Pack.PlainInstructions())
+	instructions = withUnattended(bp, instructions, c.opts.Pack.UnattendedInstructions())
 
 	if c.lessonsReach(st) {
 		lessons, err := c.opts.Store.BlueprintLessons(context.WithoutCancel(ctx), bp.ID)
