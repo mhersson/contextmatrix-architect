@@ -55,14 +55,14 @@ func TestExportTree_WritesEachBlobWithItsModeAndNoSymlink(t *testing.T) {
 	type entry struct {
 		name, content string
 		mode          filemode.FileMode
-		perm          fs.FileMode // 0: not written
+		written, exec bool
 	}
 
 	// Sorted by name, as git orders a tree.
 	entries := []entry{
 		{name: "link", content: "plain.txt", mode: filemode.Symlink},
-		{name: "plain.txt", content: "plain\n", mode: filemode.Regular, perm: 0o644},
-		{name: "run.sh", content: "#!/bin/sh\n", mode: filemode.Executable, perm: 0o755},
+		{name: "plain.txt", content: "plain\n", mode: filemode.Regular, written: true},
+		{name: "run.sh", content: "#!/bin/sh\n", mode: filemode.Executable, written: true, exec: true},
 	}
 
 	mirror := t.TempDir()
@@ -85,7 +85,7 @@ func TestExportTree_WritesEachBlobWithItsModeAndNoSymlink(t *testing.T) {
 			path := filepath.Join(dir, e.name)
 
 			info, err := os.Lstat(path)
-			if e.perm == 0 {
+			if !e.written {
 				require.ErrorIs(t, err, fs.ErrNotExist, "a symlink is never written")
 
 				return
@@ -93,7 +93,13 @@ func TestExportTree_WritesEachBlobWithItsModeAndNoSymlink(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.True(t, info.Mode().IsRegular())
-			assert.Equal(t, e.perm, info.Mode().Perm())
+
+			// The exec bits, not the whole mode: the umask narrows 0755 and 0644.
+			if e.exec {
+				assert.NotZero(t, info.Mode().Perm()&0o100, "the owner may run it")
+			} else {
+				assert.Zero(t, info.Mode().Perm()&0o111, "no one may run it")
+			}
 
 			got, err := os.ReadFile(path)
 			require.NoError(t, err)
