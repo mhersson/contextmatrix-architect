@@ -618,9 +618,12 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 	}
 
 	instructions := withPlain(bp, c.opts.Pack.Instructions(st.Stage.ID), c.opts.Pack.PlainInstructions())
-	instructions = withUnattended(bp, instructions, c.opts.Pack.UnattendedInstructions())
 
+	// The overlay changes how cards are written and judged, so it reaches the
+	// same two stages the lessons do.
 	if c.lessonsReach(st) {
+		instructions = withUnattended(bp, instructions, c.opts.Pack.UnattendedInstructions())
+
 		lessons, err := c.opts.Store.BlueprintLessons(context.WithoutCancel(ctx), bp.ID)
 		if err != nil {
 			return stage.Input{}, stageChecks{}, nil, fmt.Errorf("read the lesson set: %w", err)

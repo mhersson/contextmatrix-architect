@@ -38,7 +38,8 @@ func (c *Controller) listsFor(ctx context.Context, bp store.Blueprint) (contract
 	return lists, nil
 }
 
-// lessonsReach reports whether a run of st gets the blueprint's lessons: st is
+// lessonsReach reports whether a run of st gets the blueprint's lessons and
+// the Unattended overlay: st is
 // the stage that checks cards or the one that checks readiness. Stages are
 // found by their checks, as everywhere else, never by id.
 func (c *Controller) lessonsReach(st pipelineStep) bool {
@@ -57,7 +58,7 @@ func withLessons(instructions string, lessons []store.Lesson) string {
 	var b strings.Builder
 
 	b.WriteString(instructions)
-	b.WriteString("\n\n## Lessons from earlier blueprints\n\n")
+	b.WriteString("\n\n# Lessons from earlier blueprints\n\n")
 	b.WriteString("The operator approved these lessons from cards of earlier blueprints that struggled. Apply each where it fits these cards.\n\n")
 
 	for _, l := range lessons {

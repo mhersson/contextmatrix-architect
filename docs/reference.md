@@ -400,6 +400,9 @@ for the other modes, until you switch it yourself, and you can switch it
 either way in any mode. It is set when the blueprint is created and never
 changes after: a reopen or a mode switch keeps it.
 
+The instructions for this go only to the runs that write the cards and the
+run that judges Readiness; no other stage changes.
+
 A playbook's run stops at every **manual entry**, a step for a person, in its
 run order until someone ticks it off in ContextMatrix. With Unattended on, the
 architect plans so the run stops only where it must:

@@ -12,8 +12,9 @@ import (
 
 // withUnattended adds the pack's unattended instructions after a stage run's
 // own when the blueprint is unattended; otherwise the instructions are
-// unchanged. Only stage runs take them: decomposition writes the manual
-// entries and readiness judges them, and neither has a reviewer.
+// unchanged. Only the stage that writes the cards and the one that judges
+// readiness take them: decomposition writes the manual entries and readiness
+// judges them, and neither has a reviewer.
 func withUnattended(bp store.Blueprint, instructions, overlay string) string {
 	if !bp.Unattended || overlay == "" {
 		return instructions
