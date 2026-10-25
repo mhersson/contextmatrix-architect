@@ -516,6 +516,7 @@ func TestAssumptionsValidator_Basis(t *testing.T) {
 		{"a source basis", map[string]any{"text": "The cache stays.", "basis": "S1"}, false},
 		{"a basis that is not text", map[string]any{"text": "The cache stays.", "basis": 1}, false},
 		{"a text naming an answered question", "As the user chose in Q1, the API keeps its routes.", false},
+		{"a quarter that reads as an answered question's tag", "Figures are reported per quarter, Q1 to Q3.", false},
 		{"a basis entry whose text names one", map[string]any{"text": "Per Q3, the cache stays.", "basis": "Q3"}, false},
 		{"a basis entry without text", map[string]any{"basis": "Q1"}, false},
 	}

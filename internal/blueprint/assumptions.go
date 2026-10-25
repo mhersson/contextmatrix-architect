@@ -1008,11 +1008,21 @@ func assumptionProblems(data map[string]any, lists contract.Lists, bases map[str
 		}
 
 		for _, named := range basisTags.FindAllString(text, -1) {
-			if tag := normalTag(named); bases[tag] {
-				out = append(out, fmt.Sprintf(`assumption %d names %s; give it as the basis ({"text": "<sentence>", "basis": %q}) and state the fact itself`, i+1, named, tag))
-
-				break
+			tag := normalTag(named)
+			if !bases[tag] {
+				continue
 			}
+
+			problem := fmt.Sprintf(`assumption %d names %s; give it as the basis ({"text": "<sentence>", "basis": %q}) and state the fact itself`, i+1, named, tag)
+
+			// A sentence may mean a calendar quarter or a version by Q<n>.
+			if strings.HasPrefix(tag, "Q") {
+				problem += fmt.Sprintf("; if %s means something else there, such as a quarter or a version, spell that out another way", named)
+			}
+
+			out = append(out, problem)
+
+			break
 		}
 	}
 
