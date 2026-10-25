@@ -60,7 +60,9 @@ type outcome struct {
 // the pipeline or re-runs its target, cards accepted with findings end it,
 // and otherwise the next step of the blueprint's pipeline follows. A loop
 // stage's verdict that sends cards back runs the earliest slice holding a
-// failing card, and every later slice's after it (the chain). Its last
+// failing card, and every later slice's after it (the chain); on an
+// unattended blueprint a run stop it judged needless counts as a failing
+// card of the slice whose order holds it, below the cap only. Its last
 // round's verdict goes to the sign-off with the cards it did not pass, and
 // ends the pipeline on a pack with no stage that checks cards. A verdict the
 // sign-off rejected runs the step the rejection named, a typed one's or a
@@ -105,7 +107,7 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 				return outcome{}, fmt.Errorf("blueprint: after %s: the pipeline has no %s", completed, pack.StageName(st.LoopsTo, false))
 			}
 
-			drafts, ids, err := c.targetCards(ctx, bp.ID, targets)
+			drafts, ids, stops, err := c.targetCards(ctx, bp.ID, targets)
 			if err != nil {
 				return outcome{}, fmt.Errorf("blueprint: after %s: the judged %s: %w", completed, st.LoopsTo, err)
 			}
@@ -113,10 +115,25 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 			findings, failing := cardVerdicts(art, ids)
 			ready := len(findings) == 0
 
+			// On an unattended blueprint a stop readiness judged needless
+			// sends the step that holds it back while rounds remain, as a
+			// failing card does. It never joins findings, so at the cap it
+			// stops no sign-off, which names it instead.
+			var needless bool
+
+			if bp.Unattended {
+				for _, s := range needlessStops(art, stops) {
+					failing = append(failing, s.ID)
+					needless = true
+				}
+			}
+
 			base, rejected, err := c.rejection(ctx, bp.ID, art.Version)
 			if err != nil {
 				return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
 			}
+
+			capped := art.Version-base >= st.MaxRounds
 
 			switch {
 			case rejected:
@@ -133,11 +150,11 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 				}
 
 				return outcome{stage: targets[0].ID, chain: true}, nil
-			case ready:
+			case ready && (!needless || capped):
 				return outcome{end: true, ready: true, art: art, round: art.Version - base}, nil
-			case art.Version-base >= st.MaxRounds && c.cardsStage() != "":
+			case capped && c.cardsStage() != "":
 				return outcome{end: true, ready: true, findings: findings, art: art, round: art.Version - base}, nil
-			case art.Version-base >= st.MaxRounds:
+			case capped:
 				return outcome{end: true, findings: findings, art: art, round: art.Version - base}, nil
 			default:
 				return outcome{stage: owningTarget(targets, drafts, failing), chain: true}, nil
@@ -1304,6 +1321,18 @@ type validatorState struct {
 	mu       sync.Mutex
 	rounds   int
 	findings []string
+	ends     bool
+}
+
+// endsOrder reports whether the step the latest submit was for ends the
+// playbook: an unsliced step, or the last slice. Only its draft's trailing
+// manual entries are follow-ups; an earlier slice's sit before the next
+// slice's cards and stay run stops.
+func (s *validatorState) endsOrder() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.ends
 }
 
 // last returns the problems of the latest submit.
@@ -1337,7 +1366,9 @@ func (s *validatorState) round() int {
 // without one, and its body holds no mockup block. A draft that does not decode is refused without spending a
 // round. A per-slice step's submit is checked inside the draft of every
 // earlier slice and itself, and must take no id an earlier slice holds; the
-// last slice's draft carries the playbook's title.
+// last slice's draft carries the playbook's title. The state records whether
+// the step's draft ends the playbook (endsOrder), which the run reads to
+// move the trailing manual entries into followups on the stored draft.
 func (c *Controller) cardsValidator(sess *session, bp store.Blueprint, st pipelineStep) (func(context.Context, stage.Artifact) error, *validatorState) {
 	state := &validatorState{}
 
@@ -1361,6 +1392,10 @@ func (c *Controller) cardsValidator(sess *session, bp store.Blueprint, st pipeli
 		if err != nil {
 			return fmt.Errorf("the cards were not judged (%w); submit the same draft again", err)
 		}
+
+		state.mu.Lock()
+		state.ends = last
+		state.mu.Unlock()
 
 		drafts := make([]contract.Draft, 0, len(earlier)+1)
 		for _, e := range earlier {
@@ -1460,10 +1495,11 @@ func (c *Controller) freshView(ctx context.Context, sess *session, bp store.Blue
 
 // draftProblems are the faults of the draft as a whole: it holds no cards,
 // several cards come without a playbook title, or its order does not list
-// every card and manual entry exactly once and nothing else; emission walks
-// the order as given. needsTitle is set for a draft that carries the
-// playbook's title: an unsliced one with two or more cards (a slice's draft
-// is judged for the title in cardsValidator).
+// every card exactly once and nothing else, or a manual entry is not in
+// exactly one of order and followups, or followups hold an id that is not a
+// manual entry; emission walks the order as given. needsTitle is set for a
+// draft that carries the playbook's title: an unsliced one with two or more
+// cards (a slice's draft is judged for the title in cardsValidator).
 func draftProblems(d contract.Draft, needsTitle bool) []string {
 	if len(d.Cards) == 0 {
 		return []string{"the draft has no cards"}
@@ -1475,28 +1511,59 @@ func draftProblems(d contract.Draft, needsTitle bool) []string {
 		problems = append(problems, "the draft has several cards, so it needs a playbook title")
 	}
 
-	seen := map[string]int{}
+	inOrder := map[string]int{}
 	for _, id := range d.Order {
-		seen[id]++
+		inOrder[id]++
 	}
 
-	for _, id := range draftIDs(d) {
-		switch seen[id] {
+	inFollowups := map[string]int{}
+	for _, id := range d.Followups {
+		inFollowups[id]++
+	}
+
+	for _, card := range d.Cards {
+		switch inOrder[card.ID] {
 		case 0:
-			problems = append(problems, id+" is missing from order")
+			problems = append(problems, card.ID+" is missing from order")
 		case 1:
 		default:
-			problems = append(problems, id+" appears more than once in order")
+			problems = append(problems, card.ID+" appears more than once in order")
 		}
 
-		delete(seen, id)
+		delete(inOrder, card.ID)
+	}
+
+	for _, m := range d.Manual {
+		o, f := inOrder[m.ID], inFollowups[m.ID]
+
+		switch {
+		case o > 0 && f > 0:
+			problems = append(problems, m.ID+" is in both order and followups; list it in one")
+		case o == 0 && f == 0:
+			problems = append(problems, m.ID+" is in neither order nor followups; list it in one")
+		case o > 1:
+			problems = append(problems, m.ID+" appears more than once in order")
+		case f > 1:
+			problems = append(problems, m.ID+" appears more than once in followups")
+		}
+
+		delete(inOrder, m.ID)
+		delete(inFollowups, m.ID)
 	}
 
 	for _, id := range d.Order {
-		if _, stray := seen[id]; stray {
+		if _, stray := inOrder[id]; stray {
 			problems = append(problems, id+" in order is not a card or a manual entry")
 
-			delete(seen, id)
+			delete(inOrder, id)
+		}
+	}
+
+	for _, id := range d.Followups {
+		if _, stray := inFollowups[id]; stray {
+			problems = append(problems, id+" in followups is not a manual entry; followups hold manual entry ids only")
+
+			delete(inFollowups, id)
 		}
 	}
 
@@ -1609,10 +1676,10 @@ func collisions(earlier []sliceDraft, d contract.Draft) []string {
 }
 
 // mergeDrafts is the one playbook the slices' drafts make, in slice order:
-// their cards, manual entries and order one after another; for each project
-// and each setup field, the earliest slice's value that sets it, with
-// replaces taken from the slice whose verify command it goes with; and the
-// last draft's title.
+// their cards, manual entries, order and followups one after another; for
+// each project and each setup field, the earliest slice's value that sets
+// it, with replaces taken from the slice whose verify command it goes with;
+// and the last draft's title.
 func mergeDrafts(ds []contract.Draft) contract.Draft {
 	var out contract.Draft
 
@@ -1620,6 +1687,7 @@ func mergeDrafts(ds []contract.Draft) contract.Draft {
 		out.Cards = append(out.Cards, d.Cards...)
 		out.Manual = append(out.Manual, d.Manual...)
 		out.Order = append(out.Order, d.Order...)
+		out.Followups = append(out.Followups, d.Followups...)
 
 		for name, s := range d.Setup {
 			if out.Setup == nil {
@@ -1759,23 +1827,86 @@ func cardVerdicts(a store.Artifact, draft []string) (findings, failing []string)
 	return findings, failing
 }
 
-// targetCards reads the card ids of every target step's latest artifact:
-// by step key, and all of them in step order.
-func (c *Controller) targetCards(ctx context.Context, id string, targets []pipelineStep) (map[string][]string, []string, error) {
-	by := map[string][]string{}
-
-	var all []string
+// targetCards reads every target step's latest artifact: by step key, its
+// card ids and the manual entries in its order, so a verdict on either
+// finds the step that holds it; every card id in step order; and every
+// manual entry in the order, the run's stops, in step order. Targets that
+// hold fewer than two cards in all make no playbook, so nothing stops the
+// run: there are no stops, and each step keys its card ids only.
+func (c *Controller) targetCards(ctx context.Context, id string, targets []pipelineStep) (byKey map[string][]string, cards, stops []string, err error) {
+	byKey = map[string][]string{}
+	manual := map[string][]string{}
 
 	for _, t := range targets {
 		art, err := c.opts.Store.LatestArtifact(ctx, id, t.ID)
 		if err != nil {
-			return nil, nil, fmt.Errorf("read %s: %w", t.ID, err)
+			return nil, nil, nil, fmt.Errorf("read %s: %w", t.ID, err)
 		}
 
 		ids := cardIDs(art)
-		by[t.ID] = ids
-		all = append(all, ids...)
+		byKey[t.ID] = ids
+		cards = append(cards, ids...)
+		manual[t.ID] = manualInOrder(art)
 	}
 
-	return by, all, nil
+	if len(cards) < 2 {
+		return byKey, cards, nil, nil
+	}
+
+	for _, t := range targets {
+		byKey[t.ID] = append(slices.Clone(byKey[t.ID]), manual[t.ID]...)
+		stops = append(stops, manual[t.ID]...)
+	}
+
+	return byKey, cards, stops, nil
+}
+
+// trailingFollowups moves every manual entry after the draft's last card in
+// Order to the end of Followups, in their order, after the followups the
+// draft already lists. The playbook runner stops at each manual entry in
+// Order, so an entry nothing follows would leave a finished run waiting.
+// Nothing else changes, and d is not modified.
+func trailingFollowups(d contract.Draft) contract.Draft {
+	cards := make(map[string]bool, len(d.Cards))
+	for _, card := range d.Cards {
+		cards[card.ID] = true
+	}
+
+	manual := make(map[string]bool, len(d.Manual))
+	for _, m := range d.Manual {
+		manual[m.ID] = true
+	}
+
+	lastCard := -1
+
+	for i, id := range d.Order {
+		if cards[id] {
+			lastCard = i
+		}
+	}
+
+	if lastCard < 0 {
+		return d
+	}
+
+	var moved, kept []string
+
+	kept = slices.Clone(d.Order[:lastCard+1])
+
+	for _, id := range d.Order[lastCard+1:] {
+		if manual[id] {
+			moved = append(moved, id)
+		} else {
+			kept = append(kept, id)
+		}
+	}
+
+	if len(moved) == 0 {
+		return d
+	}
+
+	d.Order = kept
+	d.Followups = append(slices.Clone(d.Followups), moved...)
+
+	return d
 }

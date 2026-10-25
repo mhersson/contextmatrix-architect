@@ -2,6 +2,7 @@ package blueprint
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -185,6 +186,103 @@ func TestCards_ASliceIsCheckedInsideTheEarlierSlicesCards(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.names)
 		})
 	}
+}
+
+// storedDraft is the data a step's latest artifact holds.
+func storedDraft(t *testing.T, st *store.Store, key string) map[string]any {
+	t.Helper()
+
+	art, err := st.LatestArtifact(context.Background(), "BP1", key)
+	require.NoError(t, err)
+
+	var data map[string]any
+	require.NoError(t, json.Unmarshal(art.Data, &data))
+
+	return data
+}
+
+// submitted is done, after the submit check ran on data as the harness
+// runs it.
+func submitted(ctx context.Context, in stage.Input, body string, data map[string]any) (stage.Output, error) {
+	if err := in.Validate(ctx, stage.Artifact{Body: body, Data: data}); err != nil {
+		return stage.Output{}, err
+	}
+
+	return done(body, data), nil
+}
+
+func TestCards_OnlyTheLastSliceStoresItsTrailingEntriesAsFollowups(t *testing.T) {
+	script := slicedScript()
+	script["acceptance"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		return done("# Acceptance", sliceCriteria(sliceOf(in), "AC"+strings.TrimPrefix(sliceOf(in), "SL"))), nil
+	}
+	script["decomposition"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if sliceOf(in) == "SL1" {
+			return submitted(ctx, in, "# Cards SL1", withManual(draftOf("", cardFor("D1", []any{"AC1"})), "M1"))
+		}
+
+		return submitted(ctx, in, "# Cards SL2", withManual(draftOf("Export the reports", cardFor("D2", []any{"AC2"}, "D1")), "M2"))
+	}
+
+	c, st, _, _ := newSliced(t, script)
+	driveIn(t, c, autoStart("BP1"))
+
+	first := storedDraft(t, st, "decomposition@SL1")
+	assert.Equal(t, []any{"D1", "M1"}, first["order"], "an earlier slice's entry stays a run stop")
+	assert.Equal(t, []any{}, first["followups"])
+
+	last := storedDraft(t, st, "decomposition@SL2")
+	assert.Equal(t, []any{"D2"}, last["order"])
+	assert.Equal(t, []any{"M2"}, last["followups"])
+
+	merged, err := c.draft(context.Background(), "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"D1", "M1", "D2"}, merged.Order)
+	assert.Equal(t, []string{"M2"}, merged.Followups)
+}
+
+func TestCards_AnEarlierSliceKeepsTheFollowupsItLists(t *testing.T) {
+	script := slicedScript()
+	script["acceptance"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+		return done("# Acceptance", sliceCriteria(sliceOf(in), "AC"+strings.TrimPrefix(sliceOf(in), "SL"))), nil
+	}
+	script["decomposition"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if sliceOf(in) == "SL1" {
+			sl1 := draftOf("", cardFor("D1", []any{"AC1"}))
+			sl1["manual"] = []any{map[string]any{"id": "M1", "text": "open an exported report"}}
+			sl1["followups"] = []any{"M1"}
+
+			return submitted(ctx, in, "# Cards SL1", sl1)
+		}
+
+		return submitted(ctx, in, "# Cards SL2", draftOf("Export the reports", cardFor("D2", []any{"AC2"}, "D1")))
+	}
+
+	c, st, _, _ := newSliced(t, script)
+	driveIn(t, c, autoStart("BP1"))
+
+	first := storedDraft(t, st, "decomposition@SL1")
+	assert.Equal(t, []any{"D1"}, first["order"])
+	assert.Equal(t, []any{"M1"}, first["followups"], "an earlier slice's own follow-ups are kept")
+
+	merged, err := c.draft(context.Background(), "BP1")
+	require.NoError(t, err)
+	assert.Contains(t, merged.Followups, "M1")
+	assert.NotContains(t, merged.Order, "M1")
+}
+
+func TestCards_AnUnslicedDraftStoresItsTrailingEntriesAsFollowups(t *testing.T) {
+	script := happyScript()
+	script["decomposition"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		return submitted(ctx, in, "# Cards", withManual(goodCards(), "M1"))
+	}
+
+	c, st, _, _, _ := newPipeline(t, script)
+	drive(t, c, "BP1")
+
+	data := storedDraft(t, st, "decomposition")
+	assert.Equal(t, []any{"D1"}, data["order"])
+	assert.Equal(t, []any{"M1"}, data["followups"])
 }
 
 func TestCards_TheSignoffAndTheEmissionAreOnePlaybook(t *testing.T) {

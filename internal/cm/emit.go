@@ -70,12 +70,27 @@ type PlaybookEntryInput struct {
 	Note    string `json:"note,omitempty"`
 }
 
-// PlaybookInput is the create_playbook argument set.
+// PlaybookCardRef names a card of a playbook by project and id.
+type PlaybookCardRef struct {
+	Project string `json:"project"`
+	Card    string `json:"card"`
+}
+
+// PlaybookFollowupInput is one follow-up of a playbook being created: a
+// check a person makes after the run, which the runner never reads.
+type PlaybookFollowupInput struct {
+	Text  string            `json:"text"`
+	Cards []PlaybookCardRef `json:"cards,omitempty"`
+}
+
+// PlaybookInput is the create_playbook argument set. Followups is omitted
+// when empty: an older ContextMatrix's schema refuses the key.
 type PlaybookInput struct {
-	Title       string               `json:"title"`
-	Description string               `json:"description,omitempty"`
-	Entries     []PlaybookEntryInput `json:"entries"`
-	AgentID     string               `json:"agent_id"`
+	Title       string                  `json:"title"`
+	Description string                  `json:"description,omitempty"`
+	Entries     []PlaybookEntryInput    `json:"entries"`
+	Followups   []PlaybookFollowupInput `json:"followups,omitempty"`
+	AgentID     string                  `json:"agent_id"`
 }
 
 // PlaybookRun is a playbook's current run state.
@@ -105,16 +120,28 @@ type PlaybookEntry struct {
 	Complete  bool   `json:"complete"`
 }
 
-// Playbook is the part of get_playbook's reply the run watch reads.
+// PlaybookFollowup is one follow-up get_playbook returns: a check a person
+// makes after the run, which people may add, change or remove in
+// ContextMatrix while the run goes on.
+type PlaybookFollowup struct {
+	ID    string            `json:"id"`
+	Text  string            `json:"text"`
+	Cards []PlaybookCardRef `json:"cards"`
+	Done  bool              `json:"done"`
+}
+
+// Playbook is the part of get_playbook's reply the run watch reads. An older
+// ContextMatrix returns no followups.
 type Playbook struct {
-	ID       string          `json:"id"`
-	Title    string          `json:"title"`
-	Runnable bool            `json:"runnable"`
-	Run      *PlaybookRun    `json:"run"`
-	Repos    []PlaybookRepo  `json:"repos"`
-	Complete int             `json:"complete"`
-	Total    int             `json:"total"`
-	Entries  []PlaybookEntry `json:"entries"`
+	ID        string             `json:"id"`
+	Title     string             `json:"title"`
+	Runnable  bool               `json:"runnable"`
+	Run       *PlaybookRun       `json:"run"`
+	Repos     []PlaybookRepo     `json:"repos"`
+	Complete  int                `json:"complete"`
+	Total     int                `json:"total"`
+	Entries   []PlaybookEntry    `json:"entries"`
+	Followups []PlaybookFollowup `json:"followups"`
 }
 
 // PlaybookSummary is one row of list_playbooks.

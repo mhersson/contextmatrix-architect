@@ -1863,3 +1863,250 @@ func TestLogEntryFor_ASignoffNamesTheCardsReadinessDidNotPass(t *testing.T) {
 		}
 	})
 }
+
+func TestLogEntryFor_ASignoffListsTheFollowupsAfterTheRunOrder(t *testing.T) {
+	payload := func(extra map[string]any) map[string]any {
+		p := map[string]any{
+			"version": 1,
+			"cards": []any{
+				map[string]any{"id": "D1", "project": "alpha", "title": "Add the parser", "type": "feature", "priority": "medium"},
+				map[string]any{"id": "D2", "project": "alpha", "title": "Wire the parser", "type": "feature", "priority": "medium"},
+			},
+			"order":  []any{"D1", "D2"},
+			"manual": []any{map[string]any{"id": "M1", "text": "Check the dashboard"}},
+			"title":  "Ship the parser",
+		}
+		maps.Copy(p, extra)
+
+		return p
+	}
+
+	t.Run("a follow-up sits under its heading after the last order line", func(t *testing.T) {
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: payload(map[string]any{"followups": []any{"M1"}})})
+		require.True(t, ok)
+
+		heading := strings.Index(entry.Content, "After the run (follow-ups):")
+		require.GreaterOrEqual(t, heading, 0)
+		assert.Greater(t, heading, strings.Index(entry.Content, "2. D2"))
+
+		line := strings.Index(entry.Content, "M1")
+		assert.Greater(t, line, heading)
+		assert.Greater(t, strings.Index(entry.Content, "Check the dashboard"), heading)
+	})
+
+	t.Run("a follow-up is not a numbered step", func(t *testing.T) {
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: payload(map[string]any{"followups": []any{"M1"}})})
+		require.True(t, ok)
+		assert.NotContains(t, entry.Content, "3. M1")
+	})
+
+	t.Run("no follow-ups, no heading", func(t *testing.T) {
+		for _, extra := range []map[string]any{nil, {"followups": []any{}}} {
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: payload(extra)})
+			require.True(t, ok)
+			assert.NotContains(t, entry.Content, "After the run (follow-ups):")
+		}
+	})
+}
+
+func TestLogEntryFor_TheClosingSummaryPointsToTheFollowups(t *testing.T) {
+	end := func(extra map[string]any) blueprint.Event {
+		p := map[string]any{
+			"playbook": "ship-the-parser", "repos": []any{},
+			"cards":  []any{map[string]any{"card": "ALPHA-001", "state": "done", "pr": ""}},
+			"manual": []any{},
+		}
+		maps.Copy(p, extra)
+
+		return blueprint.Event{Kind: blueprint.EventWatchEnded, BlueprintID: "S1", Payload: p}
+	}
+
+	t.Run("a playbook with follow-ups names itself and lists none", func(t *testing.T) {
+		entry, ok := logEntryFor(end(map[string]any{"followups": 2}))
+		require.True(t, ok)
+
+		_, after, found := strings.Cut(entry.Content, "ALPHA-001 is done")
+		require.True(t, found)
+		assert.Contains(t, after, "ship-the-parser", "a line after the cards names the playbook")
+		assert.Contains(t, after, "2")
+		assert.NotContains(t, entry.Content, "Check the dashboard")
+	})
+
+	t.Run("without follow-ups there is no such line", func(t *testing.T) {
+		with, ok := logEntryFor(end(map[string]any{"followups": 1}))
+		require.True(t, ok)
+
+		without, ok := logEntryFor(end(nil))
+		require.True(t, ok)
+		assert.Less(t, len(without.Content), len(with.Content))
+
+		_, after, found := strings.Cut(without.Content, "ALPHA-001 is done")
+		require.True(t, found)
+		assert.NotContains(t, after, "ship-the-parser")
+	})
+}
+
+func TestLogEntryFor_AnUnattendedSignoffNamesEachStop(t *testing.T) {
+	const (
+		note     = "The vendor's sandbox needs a signed agreement before D2 can call it"
+		needless = "D3 does not read the report, so the run need not wait"
+	)
+
+	card := func(id, title string) map[string]any {
+		return map[string]any{"id": id, "project": "alpha", "title": title, "type": "feature", "priority": "medium"}
+	}
+
+	signoff := func(t *testing.T, stops any) string {
+		t.Helper()
+
+		p := map[string]any{
+			"version": 1,
+			"cards":   []any{card("D1", "Add the parser"), card("D2", "Call the vendor"), card("D3", "Show the report")},
+			"order":   []any{"D1", "M2", "D2", "M4", "D3"},
+			"manual": []any{
+				map[string]any{"id": "M2", "text": "Sign the vendor agreement"},
+				map[string]any{"id": "M3", "text": "Check the dashboard"},
+				map[string]any{"id": "M4", "text": "Open the first report"},
+			},
+			"followups": []any{"M3"},
+			"title":     "Ship the parser",
+		}
+
+		if stops != nil {
+			p["stops"] = stops
+		}
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: p})
+		require.True(t, ok)
+
+		return entry.Content
+	}
+
+	without := signoff(t, nil)
+
+	// added is the non-empty lines that with has and without lacks, in order.
+	added := func(with string) []string {
+		seen := map[string]int{}
+		for _, l := range strings.Split(without, "\n") {
+			seen[l]++
+		}
+
+		var out []string
+
+		for _, l := range strings.Split(with, "\n") {
+			if seen[l] > 0 {
+				seen[l]--
+
+				continue
+			}
+
+			if strings.TrimSpace(l) != "" {
+				out = append(out, l)
+			}
+		}
+
+		return out
+	}
+
+	t.Run("one stop is one line naming it with its note, after the follow-ups and before the playbook", func(t *testing.T) {
+		with := signoff(t, []any{map[string]any{"id": "M2", "text": "Sign the vendor agreement", "note": note}})
+
+		lines := added(with)
+		require.Len(t, lines, 1, "%q", lines)
+		assert.Contains(t, lines[0], "M2")
+		assert.Contains(t, lines[0], note)
+		assert.NotContains(t, lines[0], "M4")
+
+		at := strings.Index(with, lines[0])
+		assert.Greater(t, at, strings.Index(with, "Check the dashboard"), "after the follow-ups")
+		assert.Less(t, at, strings.Index(with, "Ship the parser"), "before the playbook's title")
+	})
+
+	t.Run("every stop is named with its reason, and readiness's finding", func(t *testing.T) {
+		with := signoff(t, []any{
+			map[string]any{"id": "M2", "text": "Sign the vendor agreement", "note": note, "needless": needless},
+			map[string]any{"id": "M4", "text": "Open the first report"},
+		})
+
+		lines := added(with)
+		require.NotEmpty(t, lines)
+
+		block := strings.Join(lines, "\n")
+		for _, want := range []string{"M2", note, needless, "M4", "Open the first report"} {
+			assert.Contains(t, block, want)
+		}
+
+		assert.Less(t, strings.Index(block, "M2"), strings.Index(block, "M4"), "in run order")
+
+		lineOf := func(id string) string {
+			for _, l := range lines {
+				if strings.Contains(l, id) {
+					return l
+				}
+			}
+
+			return ""
+		}
+
+		assert.Contains(t, lineOf("M2"), needless, "readiness's finding sits on its stop's line")
+		assert.NotContains(t, lineOf("M4"), needless)
+	})
+
+	t.Run("no stop still gets a line, naming no id", func(t *testing.T) {
+		lines := added(signoff(t, []any{}))
+		require.Len(t, lines, 1, "%q", lines)
+
+		for _, id := range []string{"M2", "M3", "M4", "D1", "D2", "D3"} {
+			assert.NotContains(t, lines[0], id)
+		}
+	})
+
+	t.Run("a payload without stops gets no such line", func(t *testing.T) {
+		assert.Less(t, strings.Count(without, "\n"), strings.Count(signoff(t, []any{}), "\n"))
+	})
+}
+
+func TestLogEntryFor_APlainUnattendedSignoffCountsItsStops(t *testing.T) {
+	stop := func(id string) map[string]any {
+		return map[string]any{"id": id, "text": "Sign the vendor agreement"}
+	}
+
+	// plain is a plain sign-off's plain part, the prompt's text.
+	plain := func(t *testing.T, stops any) string {
+		t.Helper()
+
+		p := map[string]any{
+			"version": 1, "cards": []any{}, "order": []any{},
+			"actions": []any{
+				map[string]any{"label": "Approve", "reply": "approve"},
+				map[string]any{"label": "Reject", "reply": "reject", "feedback": true},
+			},
+		}
+
+		if stops != nil {
+			p["stops"] = stops
+		}
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Plain: true, Payload: p})
+		require.True(t, ok)
+		require.NotNil(t, entry.Prompt)
+
+		return entry.Prompt.Text
+	}
+
+	without := plain(t, nil)
+	require.NotContains(t, without, "1")
+	require.NotContains(t, without, "3")
+
+	t.Run("one stop is counted", func(t *testing.T) {
+		assert.Contains(t, plain(t, []any{stop("M2")}), "1")
+	})
+
+	t.Run("several stops are counted", func(t *testing.T) {
+		assert.Contains(t, plain(t, []any{stop("M2"), stop("M4"), stop("M5")}), "3")
+	})
+
+	t.Run("no stop adds nothing", func(t *testing.T) {
+		assert.Equal(t, without, plain(t, []any{}))
+	})
+}

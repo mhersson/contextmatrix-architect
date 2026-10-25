@@ -28,9 +28,11 @@ type Blueprint struct {
 	ContextWindow int
 	// PlainLanguage is set once, at creation, and never changes.
 	PlainLanguage bool
-	State         string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// Unattended is set once, at creation, and never changes.
+	Unattended bool
+	State      string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // CreateBlueprint inserts a blueprint and fixes its lesson set: every active
@@ -60,9 +62,9 @@ func (s *Store) CreateBlueprint(ctx context.Context, b Blueprint) error {
 	defer func() { _ = tx.Rollback() }()
 
 	_, err = tx.ExecContext(ctx, `INSERT INTO blueprints
-		(id, title, projects, mode, cost_cap_usd, model, price, context_window, plain_language, state, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		b.ID, b.Title, string(projects), b.Mode, b.CostCapUSD, b.Model, price, b.ContextWindow, b.PlainLanguage, b.State,
+		(id, title, projects, mode, cost_cap_usd, model, price, context_window, plain_language, unattended, state, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		b.ID, b.Title, string(projects), b.Mode, b.CostCapUSD, b.Model, price, b.ContextWindow, b.PlainLanguage, b.Unattended, b.State,
 		b.CreatedAt.Unix(), b.UpdatedAt.Unix())
 	if err != nil {
 		return fmt.Errorf("store: insert blueprint %s: %w", b.ID, err)
@@ -103,9 +105,9 @@ func (s *Store) GetBlueprint(ctx context.Context, id string) (Blueprint, error) 
 		createdAt, updatedAt int64
 	)
 
-	err := s.db.QueryRowContext(ctx, `SELECT id, title, projects, mode, cost_cap_usd, model, price, context_window, plain_language, state, created_at, updated_at
+	err := s.db.QueryRowContext(ctx, `SELECT id, title, projects, mode, cost_cap_usd, model, price, context_window, plain_language, unattended, state, created_at, updated_at
 		FROM blueprints WHERE id = ?`, id).
-		Scan(&b.ID, &b.Title, &projects, &b.Mode, &b.CostCapUSD, &b.Model, &price, &b.ContextWindow, &b.PlainLanguage, &b.State, &createdAt, &updatedAt)
+		Scan(&b.ID, &b.Title, &projects, &b.Mode, &b.CostCapUSD, &b.Model, &price, &b.ContextWindow, &b.PlainLanguage, &b.Unattended, &b.State, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Blueprint{}, ErrNotFound
 	}

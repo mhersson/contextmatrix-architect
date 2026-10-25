@@ -416,6 +416,20 @@ func TestStart_CarriesPlainLanguage(t *testing.T) {
 	assert.True(t, ctl.starts[0].PlainLanguage)
 }
 
+func TestStart_CarriesUnattended(t *testing.T) {
+	ctl := &stubController{}
+	srv, _ := newTestServer(t, ctl)
+
+	payload := validStart()
+	payload.Architect.Unattended = true
+
+	w := do(srv, signed(t, http.MethodPost, "/chat/start", payload, nextTS()))
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+
+	require.Len(t, ctl.starts, 1)
+	assert.True(t, ctl.starts[0].Unattended)
+}
+
 func TestStart_CarriesTheResearchSettings(t *testing.T) {
 	ctl := &stubController{}
 	srv, _ := newTestServer(t, ctl)

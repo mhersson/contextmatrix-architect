@@ -86,6 +86,9 @@ type StartInput struct {
 	// PlainLanguage is the new-blueprint dialog's toggle; only the start that
 	// creates the blueprint sets it.
 	PlainLanguage bool
+	// Unattended is the new-blueprint dialog's toggle; like PlainLanguage,
+	// only the start that creates the blueprint is read.
+	Unattended bool
 	// MCPAPIKey lists CM's projects for the code stages.
 	MCPAPIKey string
 	// GitCredentialsToken is the bearer CM mints repository credentials for.
@@ -418,7 +421,7 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 		now := c.opts.Now().UTC()
 		bp = store.Blueprint{
 			ID: in.ID, Projects: in.Projects, Mode: in.Mode, CostCapUSD: in.CostCapUSD,
-			Model: in.Model, Price: in.Price, ContextWindow: in.ContextWindow, PlainLanguage: in.PlainLanguage, State: string(StateNew), CreatedAt: now, UpdatedAt: now,
+			Model: in.Model, Price: in.Price, ContextWindow: in.ContextWindow, PlainLanguage: in.PlainLanguage, Unattended: in.Unattended, State: string(StateNew), CreatedAt: now, UpdatedAt: now,
 		}
 
 		if err := c.opts.Store.CreateBlueprint(ctx, bp); err != nil {
@@ -431,6 +434,10 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 		}
 		if in.PlainLanguage {
 			created["plain_language"] = true
+		}
+
+		if in.Unattended {
+			created["unattended"] = true
 		}
 
 		au.event(ctx, Event{Kind: EventCreated, BlueprintID: in.ID, Payload: created})

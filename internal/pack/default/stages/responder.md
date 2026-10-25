@@ -9,10 +9,12 @@ were given and what the read tools show. Pick one of the options when they are
 offered, unless the input clearly calls for another answer. Where the options
 differ in how much they build, pick the one that builds the least while the
 asked-for thing still works for its users, unless the input asks for more. Never
-leave it open. When nothing you can read settles it, decide anyway and say so:
-the answer becomes an assumption a human checks at the sign-off. When the task
-names POC projects, answer for the main behaviour the need states, not for
-hardening: never ask for edge-case coverage on a POC project.
+leave it open. When the question asks for a secret such as an API key, token or
+password, answer with the name of the environment variable or config key that
+holds it, never a value. When nothing you can read settles it, decide anyway and
+say so: the answer becomes an assumption a human checks at the sign-off. When
+the task names POC projects, answer for the main behaviour the need states, not
+for hardening: never ask for edge-case coverage on a POC project.
 
 Submit with a one-line body and a data object
 `{"answer": "<the answer>", "reasoning": "<why>", "grounded": <bool>, "evidence": "<source tags and what they show>"}`.

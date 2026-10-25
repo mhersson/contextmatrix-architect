@@ -69,11 +69,13 @@ const (
 )
 
 // The instructions every reviewer, responder or plain-language run reads,
-// under stages/. No stage may take these ids.
+// and every stage run of an unattended blueprint, under stages/. No stage
+// may take these ids.
 const (
-	reviewInstructions    = "review"
-	responderInstructions = "responder"
-	plainInstructions     = "plain"
+	reviewInstructions     = "review"
+	responderInstructions  = "responder"
+	plainInstructions      = "plain"
+	unattendedInstructions = "unattended"
 	// mockupResponderInstructions is what every mockup responder run reads.
 	mockupResponderInstructions = "mockup_responder"
 	// retrospectiveInstructions is what every retrospective run reads.
@@ -196,6 +198,7 @@ type Pack struct {
 	responder    string
 	mockupResp   string
 	plain        string
+	unattended   string
 	retro        string
 }
 
@@ -358,6 +361,13 @@ func load(fsys fs.FS) (*Pack, error) {
 
 	p.plain = string(plain)
 
+	unattended, err := optionalFile(fsys, path.Join("stages", unattendedInstructions+".md"), "", "")
+	if err != nil {
+		return nil, err
+	}
+
+	p.unattended = string(unattended)
+
 	retro, err := optionalFile(fsys, path.Join("stages", retrospectiveInstructions+".md"), "", "")
 	if err != nil {
 		return nil, err
@@ -453,7 +463,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 		return fmt.Errorf("pack: stage needs an id: %+v", s)
 	}
 
-	if s.ID == reviewInstructions || s.ID == responderInstructions || s.ID == plainInstructions || s.ID == mockupResponderInstructions || s.ID == retrospectiveInstructions {
+	if slices.Contains([]string{reviewInstructions, responderInstructions, plainInstructions, unattendedInstructions, mockupResponderInstructions, retrospectiveInstructions}, s.ID) {
 		return fmt.Errorf("pack: stage id %q is reserved for the %s instructions", s.ID, s.ID)
 	}
 
@@ -822,6 +832,10 @@ func (p *Pack) MockupResponderInstructions() string { return p.mockupResp }
 // PlainInstructions are added to every stage, responder and reviewer run of a
 // plain-language blueprint; empty when the pack has none.
 func (p *Pack) PlainInstructions() string { return p.plain }
+
+// UnattendedInstructions are added to every stage run of an unattended
+// blueprint; empty when the pack has none.
+func (p *Pack) UnattendedInstructions() string { return p.unattended }
 
 // StageName is how a stage id or a step key reads to a person: underscores
 // become spaces and the first letter is upper case. A per-slice step names

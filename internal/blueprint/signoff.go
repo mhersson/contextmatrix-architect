@@ -215,7 +215,8 @@ func nonNil(list []string) []string {
 // the manual checks, the playbook title, what preflight found but its steps
 // and notices, which the caller adds under the mode lock, the card findings
 // readiness's last round left open (not_ready), readiness's findings across
-// the blueprint, critical first, and the assumptions, riskiest first.
+// the blueprint, critical first, the assumptions, riskiest first, and on an
+// unattended blueprint the manual entries the run stops at (stops).
 // Assumptions that cannot be read show as none, and the log says why; an
 // intake from before assumptions were data gives its section's text, which
 // the panel shows as it shows an older sign-off.
@@ -258,7 +259,7 @@ func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blue
 	}
 
 	payload := map[string]any{
-		"version": out.art.Version, "cards": cards, "order": draft.Order, "manual": manual, "title": draft.Title,
+		"version": out.art.Version, "cards": cards, "order": draft.Order, "manual": manual, "followups": nonNil(draft.Followups), "title": draft.Title,
 		"blocking": nonNil(pf.Blocking), "warnings": nonNil(pf.Warnings), "assumptions": assumptions,
 		"cross": crossPayload(crossOf(out.art)), "not_ready": nonNil(out.findings),
 	}
@@ -269,6 +270,10 @@ func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blue
 
 	if bp.PlainLanguage {
 		payload["plain_summary"] = c.plainSummary(ctx, bp, ordered, draft.Title)
+	}
+
+	if bp.Unattended {
+		payload["stops"] = stopsPayload(draft, out.art)
 	}
 
 	return payload

@@ -76,7 +76,7 @@ Below the title comes **Projects**, a list of your ContextMatrix projects, each
 with a tick box and the name of its code repository. The family ticked
 recipe-box. The rest of the dialog:
 
-![The rest of the New blueprint dialog: the four modes with Default chosen, Plain language off, the Model field, the cost cap presets with $10 picked, and the Create blueprint button](images/03b-new-blueprint-settings.png)
+![The rest of the New blueprint dialog: the four modes with Default chosen, Plain language and Unattended off, the Model field, the cost cap presets with $10 picked, and the Create blueprint button](images/03b-new-blueprint-settings.png)
 
 | Field | What it sets | In the example |
 |---|---|---|
@@ -84,6 +84,7 @@ recipe-box. The rest of the dialog:
 | Projects | The ContextMatrix projects the work goes into. Tick at least one. | recipe-box, a new project whose repository holds only a short description file |
 | Mode | How much the architect does without you. In **Default** you answer its questions and decide the **gates** that need you, the stops where a step's result is approved. In **Auto**, **Auto + emit** and **Yolo** an AI answers for you. See [Modes](reference.md#modes). | Default |
 | Plain language | Asks you only what you want and how it should look and work; the architect makes the technical decisions and tells you what they mean for you. Set here, and kept. See [Plain language](reference.md#plain-language). | Off |
+| Unattended | Plans the cards so their run does not stop to wait for you, except at a step only you can take that a later card needs; checks come after the run. ContextMatrix switches it on when you pick Yolo, until you switch it yourself, and you can switch it in any mode. Set here, and kept. See [Unattended](reference.md#unattended). | Off |
 | Model | The AI model the architect uses: one as capable as Claude Sonnet. See [Models](reference.md#models). | A Claude Sonnet model |
 | Cost cap | The most the architect may spend on this blueprint, in US dollars: $1, $2, $5, $10 or No cap. See [The cost cap](reference.md#the-cost-cap). | $10 |
 
@@ -157,6 +158,10 @@ foot of the chat and send it. The family wrote:
 
 Write it as you would to a person: who it is for and what they want to do. You
 need not know how it should be built; the interview asks for the rest.
+
+Never put a key, token or password in the need or the chat: the architect never
+asks for one. A card that needs one reads it from the environment, and setting
+it there is a check for you.
 
 A message in the message box holds up to 64 KiB (65,536 bytes): about 65,000
 characters of plain English text, fewer where a letter takes more than one byte,
@@ -524,8 +529,9 @@ criteria**: tests or commands the agent runs in the project's code, each naming
 its project and the measurable outcomes it proves. SL1 got four. A check only a
 person can make, such as trying the real app in a browser, or one that needs a
 live system, becomes a **manual check** instead (MC1 to MC4 here). The playbook
-will stop at each one until a person has tried it and ticked it off
-(chapter 15).
+will stop at each one that comes between cards until a person has tried it and
+ticked it off; one that comes after the last card is a **follow-up**, which the
+run does not wait for (chapter 15).
 
 Then comes the **edge-case sweep**. The architect keeps a list of the unusual
 cases software tends to meet: empty or missing input, a failure part way
@@ -578,15 +584,16 @@ Each card is listed with its project, kind and priority, how many places in the
 code it touches, how many criteria it carries and the card it comes after;
 **Card body** opens the full text.
 
-Each time the senior developer hands in the cards, the architect checks them
-against its own rules for cards, the **contract checks** ("Checked by Contract
-checks" in the title block). Every part is there. Every file named under Where
-exists in the code, and every file marked new does not yet. Each criterion sits
-on exactly one card, and each manual check has its place in the run order. No
-card points at text it does not carry, and no wording would make the agent take
-a new feature for a bug fix. A draft that breaks a rule goes back with the list
-of problems. If the cards still fail after three tries, the blueprint ends; see
-[When a blueprint stops](reference.md#when-a-blueprint-stops).
+Each time the senior developer hands in the cards, the architect checks
+them against its own rules for cards, the **contract checks** ("Checked by
+Contract checks" in the title block). Every part is there. Every file named
+under Where exists in the code, and every file marked new does not yet.
+Each criterion sits on exactly one card, and each manual check has its
+place in the run order or among the follow-ups. No card points at text it
+does not carry, and no wording would make the agent take a new feature for
+a bug fix. A draft that breaks a rule goes back with the list of problems.
+If the cards still fail after three tries, the blueprint ends;
+see [When a blueprint stops](reference.md#when-a-blueprint-stops).
 
 Cards that build a screen of the mockup you chose carry that mockup: when the
 cards go on the board, every card of such a slice gets it, with your settings,
@@ -628,19 +635,23 @@ This step is your last word before the cards go on the board.
 
 In Default mode the **sign-off** waits for you. Its message says what Readiness
 found ("Readiness passed the cards.") and lists the cards and manual checks in
-run order. **Read more** opens the rest: the playbook's title, the assumptions
-the plan rests on, riskiest first, and the result of the **preflight**, a last
-check that every card's project exists in ContextMatrix with a code repository.
+run order, then the checks for after the run under **After the run
+(follow-ups)**. **Read more** opens the rest: the playbook's title, the
+assumptions the plan rests on, riskiest first, and the result of the
+**preflight**, a last check that every card's project exists in ContextMatrix
+with a code repository.
 
-![The Sign-off sheet: Run order, 10 as playbook Recipe box, a table of steps 1 to 4 with D1 and D2 marked feature and M1 and M2 marked manual, each with what it does](images/26b-signoff-sheet.png)
+![The Sign-off sheet's run order: a table of steps 1 to 4 with D1 and D2 marked feature and M1 and M2 marked manual, each with what it does](images/26b-signoff-sheet.png)
 
-The **Sign-off** sheet shows the same. **Run order** lists the ten steps of the
-playbook "Recipe box": the four cards (feature) and the six manual checks
+The **Sign-off** sheet shows the same. **Run order** lists the eight steps of
+the playbook "Recipe box": the four cards (feature) and four manual checks
 (manual), in the order they run. Below it come the 20 assumptions, each with its
-status, such as confirmed by you or verified. The sign-off also listed one
-manual step for the family before the cards run: set the verify command
-`python3 -m unittest` on recipe-box in ContextMatrix. Nothing blocked and
-nothing warned, so the button reads plain **Approve**.
+status, such as confirmed by you or verified. The last two checks, M5 and M6,
+come after the last card, so the sheet lists them after the assumptions, under
+**After the run (follow-ups)**: the run does not wait for them. The sign-off
+also listed one manual step for the family before the cards run: set the verify
+command `python3 -m unittest` on recipe-box in ContextMatrix. Nothing blocked
+and nothing warned, so the button reads plain **Approve**.
 
 - **Approve** puts the cards on the board (next chapter).
 - **Reject** opens a box for what to change. The blueprint then runs again from
@@ -666,12 +677,13 @@ them.
 
 ### Emission
 
-![The chat after approve: Approved. Emission starts., Created RECIPEBO-001 (D1) to RECIPEBO-004 (D4) in recipe-box, Created playbook recipe-box with 10 entries, the Emitted message with the manual step set verify command python3 -m unittest on project recipe-box, then a line per card ending in todo](images/27a-emitted-chat.png)
+![The chat after approve: Approved. Emission starts., then Created RECIPEBO-001 (D1) to RECIPEBO-004 (D4) in recipe-box](images/27a-emitted-chat.png)
 
 After **Approve**, the architect **emits** the plan: it creates each card on the
-recipe-box board, D1 as RECIPEBO-001 and so on, then the playbook with its ten
-entries. The chat ends with what it made and the manual steps for you before
-the cards run. From here on the mode is locked; the cost cap can still change.
+recipe-box board, D1 as RECIPEBO-001 and so on, then the playbook with its
+eight entries and two follow-ups. The chat ends with what it made and the manual
+steps for you before the cards run. From here on the mode is locked; the cost
+cap can still change.
 If emission stops part way, the cards already made are kept, and `approve`
 carries on where it stopped; see
 [When a blueprint stops](reference.md#when-a-blueprint-stops).
@@ -702,7 +714,10 @@ scope, and after those the mockup the family chose.
 Open the playbook from **Playbooks** in ContextMatrix's sidebar. "Recipe box"
 starts with a description, the need's problem and value and every assumption
 with its status, and then lists its entries in order: the cards with their
-state, and the manual checks, each with a box to tick.
+state, and the manual checks, each with a box to tick. Below the entries, under
+**How to verify what was built**, are the follow-ups, M5 and M6: the checks for
+after the run. A tick there is only your record; it changes nothing about the
+run.
 
 ### Before the run
 
@@ -722,7 +737,7 @@ recipe-box a POC. See ContextMatrix's
 
 ### Starting the run
 
-![The playbook's side panel: Overview, 0 of 10 complete, Manual gates 6, Next up RECIPEBO-001; and the Run box with Make runnable ticked, the branch playbook/recipe-box, Not started and a Run button](images/32-playbook-runnable.png)
+![The playbook's Run box with Make runnable ticked, the branch playbook/recipe-box, Not started and a Run button](images/32-playbook-runnable.png)
 
 A playbook starts out not runnable. Tick **Make runnable** in its **Run** box:
 a dialog lists what that changes. Every card then runs on its own, without
@@ -731,7 +746,7 @@ playbook's own, here playbook/recipe-box: a separate line of the code, kept
 apart until the end. Confirm, then click **Run**. See ContextMatrix's
 [Make runnable](https://github.com/mhersson/contextmatrix/blob/main/docs/playbooks.md#make-runnable).
 
-![The Run box during the run: running, Running RECIPEBO-001, 1 of 10, and a Stop button](images/33-playbook-running.png)
+![The Run box during the run: running, Running RECIPEBO-001, 1 of 8, and a Stop button](images/33-playbook-running.png)
 
 The playbook runs its entries one at a time, from the top. What the agent does
 with each card, from planning to merging its work, is described in
@@ -794,8 +809,10 @@ passed too.
 ![The playbook's entries M1 to M4 ticked, each stamped human:web, just now, and entry 7, RECIPEBO-003, next up with agent active](images/37-playbook-checks-ticked.png)
 
 The family ticked M1 to M4, and the run went on by itself to RECIPEBO-003. Each
-tick records who ticked it and when. After D3 and D4 the run waited at M5 and
-M6, the checks for the week and the shopping list:
+tick records who ticked it and when. After D3 and D4 the run was complete. M5
+and M6, the checks for the week and the shopping list, come after the last card,
+so they are follow-ups: the run did not wait for them, and they sit on the
+playbook page under **How to verify what was built**:
 
 ![The Recipes screen: Banana bread and Pancakes marked this week with Remove from week buttons, Tomato pasta with Add to week, and a badge of 2 on the This week tab](images/37a-app-week-picks.png)
 
@@ -816,7 +833,10 @@ to the bottom, as chosen on the mockup. A reload keeps the ticks and the picks.
 
 M6: on a phone the three tabs sit in a bar at the bottom, the change the family
 asked for on the mockup, and the picks and ticks survive a restart of the app.
-The family ticked M5 and M6.
+The family ticked M5 and M6 on the follow-up board. A tick there is only a
+record: the run had already completed.
+
+![The playbook's follow-up board, How to verify what was built, with the note that ticks are only your record: the checks M5 and M6, both ticked](images/37e-playbook-followups.png)
 
 ## 16. When it is finished
 
@@ -827,7 +847,8 @@ This step closes the run and keeps the record.
 When every entry is done, the run is complete, and the watch ends with a
 **closing summary**: each card done with its pull request, the link to the
 final pull request for each repository, and the architect's cost ("The
-architect's runs cost 3.16 USD.").
+architect's runs cost 3.16 USD."). For a playbook with follow-ups, a line also
+points to them on the playbook page.
 
 The cards' work has been collected on the playbook's branch. The final pull
 request brings it into your main code in one go: opening and merging it is up

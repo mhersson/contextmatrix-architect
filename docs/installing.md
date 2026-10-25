@@ -8,7 +8,10 @@ says what you need and how to get it running. The easy way is one installer.
 
 - **ContextMatrix** itself, the board where work is tracked as cards. Its
   [README](https://github.com/mhersson/contextmatrix/blob/main/README.md)
-  explains what it is and how to get it.
+  explains what it is and how to get it. It must be
+  a ContextMatrix whose playbooks take follow-ups (the release that carries
+  protocol v0.38.0). An older one refuses the playbook of a blueprint that has
+  follow-ups at emission.
 - **The agent backend**, the helper program (a **backend**) that lets an AI
   agent build a card. The architect only plans; the agent builds what the
   plan's cards ask for. Both are in ContextMatrix's README.

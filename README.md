@@ -12,7 +12,7 @@ approve each big decision before the next step builds on it. The cards go on
 an AI agent builds what each card describes, and you talk to the architect in
 ContextMatrix's chat panel.
 
-![The blueprint pane of an example blueprint at its sign-off: the scale bar with both slices done, the chat with the reviewers' verdicts and the sign-off waiting for approval, and the Sign-off sheet listing the four cards and six manual checks in the order they run](docs/images/00-blueprint-pane.png)
+![The blueprint pane of an example blueprint at its sign-off: the scale bar with both slices done, the chat with the readiness rounds and the sign-off waiting for approval, and the Sign-off sheet listing the six cards and two manual checks in the order they run](docs/images/00-blueprint-pane.png)
 
 - [Guide](docs/guide.md): one real blueprint, step by step, with pictures.
 - [Reference](docs/reference.md): every reply you can type, the modes, and the marks on the sheet.
