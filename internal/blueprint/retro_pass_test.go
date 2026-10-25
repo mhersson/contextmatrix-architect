@@ -501,6 +501,59 @@ func TestRetrospective_AnUnreadableCardStoresNothing(t *testing.T) {
 	assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
 }
 
+func TestRetrospective_SkipsADeletedCard(t *testing.T) {
+	script := twoCardScript()
+	script[RetroStage] = retroRun(retroFinding("ALPHA-001", "needs a key", nil))
+
+	c, st, runner, rec, fake := emitted(t, script)
+	fake.setEnded("ALPHA-001", parked("ALPHA-001", cardBody("needs a key"), "no key"))
+	fake.remove("ALPHA-002")
+
+	require.NoError(t, c.Retrospective(context.Background(), "BP1", "m-retro"))
+	c.Wait("BP1")
+
+	require.Len(t, inputsOf(runner, RetroStage), 1, "the pass runs on the cards still there")
+	assert.NotContains(t, inputsOf(runner, RetroStage)[0].Task, "ALPHA-002")
+
+	report := reportOf(t, st)
+	assert.Equal(t, 1, report.Read)
+	require.Len(t, report.Cards, 1)
+	assert.Equal(t, "ALPHA-001", report.Cards[0].Card)
+	assert.Empty(t, replies(rec))
+}
+
+func TestRetrospective_WithEveryCardDeletedSaysSo(t *testing.T) {
+	c, st, runner, rec, fake := emitted(t, twoCardScript())
+	fake.remove("ALPHA-001")
+	fake.remove("ALPHA-002")
+
+	require.NoError(t, c.Retrospective(context.Background(), "BP1", "m-retro"))
+	c.Wait("BP1")
+
+	got := replies(rec)
+	require.Len(t, got, 1)
+	assert.Equal(t, retroDeleted, got[0]["reason"])
+	assert.Contains(t, got[0]["message"], "ALPHA-001")
+	assert.Contains(t, got[0]["message"], "ALPHA-002")
+	assert.Empty(t, inputsOf(runner, RetroStage))
+	assert.Empty(t, lessons(t, st))
+	assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
+	assert.False(t, holdsSlot(c, "BP1"))
+}
+
+func TestRetrospective_NoStruggleCountsTheDeletedCards(t *testing.T) {
+	c, _, runner, rec, fake := emitted(t, twoCardScript())
+	fake.setEnded("ALPHA-001", finished("ALPHA-001", cardBody("Add the parser"), 0))
+	fake.remove("ALPHA-002")
+
+	require.NoError(t, c.Retrospective(context.Background(), "BP1", "m-retro"))
+	c.Wait("BP1")
+
+	assert.Equal(t, []string{retroNoStruggle}, reasonsOf(rec))
+	assert.Contains(t, replies(rec)[0]["message"], "1 deleted")
+	assert.Empty(t, inputsOf(runner, RetroStage))
+}
+
 func TestRetrospective_ACapThatRefusesThePassSaysRaiseItAndReplyAgain(t *testing.T) {
 	script := twoCardScript()
 	script[RetroStage] = retroRun(retroFinding("ALPHA-001", "needs a key", lessonFor("pack")))

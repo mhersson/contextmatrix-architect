@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/retro"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
@@ -24,6 +25,7 @@ const (
 	retroNotEmitted     = "not_emitted"
 	retroNoInstructions = "no_instructions"
 	retroNoStruggle     = "no_struggle"
+	retroDeleted        = "deleted"
 	retroUnread         = "unread"
 	retroStopped        = "stopped"
 	retroCapped         = "cap"
@@ -132,10 +134,11 @@ func (c *Controller) Retrospective(ctx context.Context, id, msgID string) error 
 }
 
 // retroPass judges the emitted cards that struggled, on the run slot r its
-// caller claimed: it reads every emitted card once, has one retro run write
-// a finding per struggled card, stores each at-fault finding's lesson as
-// proposed and posts the findings message, then the lesson round when there
-// are lessons. A pass that does not complete stores nothing and says why.
+// caller claimed: it reads every emitted card still in ContextMatrix once,
+// has one retro run write a finding per struggled card, stores each at-fault
+// finding's lesson as proposed and posts the findings message, then the
+// lesson round when there are lessons. A pass that does not complete stores
+// nothing and says why.
 // Either way the state is then settled (see settleAfterPass), unless
 // Shutdown cut the pass short, which writes nothing, as the store may be
 // closing; the restart says so (see retroInterrupted).
@@ -154,7 +157,7 @@ func (c *Controller) retroPass(runCtx context.Context, r *run, sess *session, bp
 		c.settleAfterPass(bg, bp.ID)
 	}
 
-	signals, err := c.readEmitted(runCtx, sess, bp.ID)
+	signals, deleted, err := c.readEmitted(runCtx, sess, bp.ID)
 
 	switch {
 	case err != nil && runCtx.Err() != nil:
@@ -165,11 +168,20 @@ func (c *Controller) retroPass(runCtx context.Context, r *run, sess *session, bp
 		stop(retroUnread, fmt.Sprintf("The retrospective could not read the emitted cards: %s. Nothing is stored; reply `retrospective` to try again.", err))
 
 		return
+	case len(signals) == 0 && len(deleted) > 0:
+		stop(retroDeleted, fmt.Sprintf("Every emitted card was deleted in ContextMatrix (%s), so the retrospective has nothing to judge.", strings.Join(deleted, ", ")))
+
+		return
 	}
 
 	struggled := retro.Struggled(signals)
 	if len(struggled) == 0 {
-		stop(retroNoStruggle, fmt.Sprintf("No emitted card struggled (%d read), so the retrospective has nothing to judge.", len(signals)))
+		read := fmt.Sprintf("%d read", len(signals))
+		if len(deleted) > 0 {
+			read += fmt.Sprintf(", %d deleted in ContextMatrix", len(deleted))
+		}
+
+		stop(retroNoStruggle, fmt.Sprintf("No emitted card struggled (%s), so the retrospective has nothing to judge.", read))
 
 		return
 	}
@@ -276,21 +288,26 @@ func (c *Controller) postLessons(ctx context.Context, au audit, id, msgID string
 }
 
 // readEmitted reads every emitted card once, as its run left it, in emission
-// order; an error names the card whose read failed.
-func (c *Controller) readEmitted(ctx context.Context, sess *session, id string) ([]retro.Signals, error) {
+// order. A card ContextMatrix answers is not found was deleted there: it is
+// skipped and returned in deleted. Any other error names the card whose read
+// failed.
+func (c *Controller) readEmitted(ctx context.Context, sess *session, id string) ([]retro.Signals, []string, error) {
 	client, err := c.connectCM(ctx, sess)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	defer func() { _ = client.Close() }()
 
 	recs, err := c.opts.Store.ListEmissions(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("blueprint: list emissions: %w", err)
+		return nil, nil, fmt.Errorf("blueprint: list emissions: %w", err)
 	}
 
-	var signals []retro.Signals
+	var (
+		signals []retro.Signals
+		deleted []string
+	)
 
 	for _, e := range recs {
 		if e.Kind != store.EmitCard {
@@ -298,14 +315,18 @@ func (c *Controller) readEmitted(ctx context.Context, sess *session, id string) 
 		}
 
 		card, err := client.GetEndedCard(ctx, e.Project, e.CMID)
-		if err != nil {
-			return nil, fmt.Errorf("blueprint: read %s: %w", e.CMID, err)
-		}
 
-		signals = append(signals, retro.SignalsOf(card, e.Project))
+		switch {
+		case cm.CardNotFound(err):
+			deleted = append(deleted, e.CMID)
+		case err != nil:
+			return nil, nil, fmt.Errorf("blueprint: read %s: %w", e.CMID, err)
+		default:
+			signals = append(signals, retro.SignalsOf(card, e.Project))
+		}
 	}
 
-	return signals, nil
+	return signals, deleted, nil
 }
 
 // proposals are the lessons of the at-fault findings, in finding order,

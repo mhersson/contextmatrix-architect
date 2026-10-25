@@ -883,7 +883,8 @@ write better ones.
 ![The chat after the summary: the reply retrospective, the answer No emitted card struggled (4 read), so the retrospective has nothing to judge., then the reply lessons and the answer There are no lessons yet.](images/39b-retrospective-lessons.png)
 
 Reply `retrospective` once the cards are on the board, and the architect reads
-every card it emitted and how its run went. A card **struggled** when its work
+every card it emitted and how its run went, skipping any deleted in
+ContextMatrix. A card **struggled** when its work
 went through two or more review rounds, when it got stuck in ContextMatrix
 (stalled, blocked, or **parked**: set aside by the agent for a person) or was
 dropped (not planned), or when it cost at least three times what a typical card
