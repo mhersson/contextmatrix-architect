@@ -753,14 +753,38 @@ func changedSince(a assumption, versions []store.Artifact) bool {
 		return true
 	}
 
-	// A plain round's tag is the basis of one decision per version, so it
-	// names the decision across versions. Several can rest on one answer's
-	// Q<n>, so there the decision is also its sentence, which a version states
-	// once.
-	tagged := plainTagForm.MatchString(a.Basis)
-	same := func(s stated) bool {
-		return s.Basis == a.Basis && (tagged || normalText(s.Text) == normalText(a.Text))
+	norm := normalText(a.Text)
+
+	// own holds, per version of a's stage, the entries resting on its basis.
+	var own [][]stated
+
+	for _, art := range versions {
+		if art.Stage != a.Stage {
+			continue
+		}
+
+		var entries []stated
+
+		for _, s := range statedAssumptions(art) {
+			if s.Basis == a.Basis {
+				entries = append(entries, s)
+			}
+		}
+
+		own = append(own, entries)
 	}
+
+	if len(own) == 0 {
+		return false
+	}
+
+	// A plain round's tag names the decision across versions, so a revised
+	// sentence is a change: a version's entry is the one with a's sentence,
+	// else the one at a's place among the tag's entries in the latest version.
+	// Several can rest on one answer's Q<n>, so there the decision is its
+	// sentence alone.
+	tagged := plainTagForm.MatchString(a.Basis)
+	at := slices.IndexFunc(own[len(own)-1], func(s stated) bool { return normalText(s.Text) == norm })
 
 	var (
 		first                   stated
@@ -768,31 +792,30 @@ func changedSince(a assumption, versions []store.Artifact) bool {
 		firstGiven, latestGiven string
 	)
 
-	for _, art := range versions {
-		if art.Stage != a.Stage {
+	for _, entries := range own {
+		i := slices.IndexFunc(entries, func(s stated) bool { return normalText(s.Text) == norm })
+		if i < 0 && tagged && at >= 0 && at < len(entries) {
+			i = at
+		}
+
+		if i < 0 {
 			continue
 		}
 
-		for _, s := range statedAssumptions(art) {
-			if !same(s) {
-				continue
+		s := entries[i]
+
+		if !found {
+			first, found = s, true
+		}
+
+		if s.Consequence != "" {
+			if firstGiven == "" {
+				firstGiven = s.Consequence
 			}
 
-			if !found {
-				first, found = s, true
-			}
-
-			if s.Consequence != "" {
-				if firstGiven == "" {
-					firstGiven = s.Consequence
-				}
-
-				latestGiven = s.Consequence
-			}
-
-			break
+			latestGiven = s.Consequence
 		}
 	}
 
-	return found && (normalText(first.Text) != normalText(a.Text) || normalText(firstGiven) != normalText(latestGiven))
+	return found && (normalText(first.Text) != norm || normalText(firstGiven) != normalText(latestGiven))
 }
