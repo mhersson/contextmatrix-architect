@@ -100,6 +100,10 @@ type Output struct {
 	// Asked is set when the run ended by posting a round or answering its
 	// chat; Artifact is then empty.
 	Asked bool
+	// SourceTags are the source tags this run's tool results led with, kept
+	// as each result was handed back: a compaction can summarize a result out
+	// of Result.Messages, never out of SourceTags.
+	SourceTags []string
 }
 
 // Transient marks a tool whose results the model reads in its run but the
@@ -140,8 +144,11 @@ func NewRunner(effort string, replay bool, base http.RoundTripper) *Runner {
 // Run executes one stage and returns its artifact. On every return its
 // messages are as the record keeps them: see Transient.
 func (r *Runner) Run(ctx context.Context, in Input) (Output, error) {
-	out, err := r.run(ctx, in)
+	tags := &returnedTags{}
+
+	out, err := r.run(ctx, in, tags)
 	out.Result.Messages = recorded(out.Result.Messages, in.Tools)
+	out.SourceTags = tags.list()
 
 	return out, err
 }
@@ -202,8 +209,9 @@ func recorded(msgs []llm.Message, ts []tools.Tool) []llm.Message {
 	return out
 }
 
-// run is Run before the record's view of the messages.
-func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
+// run is Run before the record's view of the messages; tags collects what
+// the run's tool results led with.
+func (r *Runner) run(ctx context.Context, in Input, tags *returnedTags) (Output, error) {
 	// The registry keeps the last tool under a name, so a clash would silently
 	// replace a built-in.
 	for _, t := range in.Tools {
@@ -264,7 +272,7 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 	mark := &terminalMark{}
 	builtins := builtinTools(in, mark, drafts)
 
-	reg := tools.NewRegistry(append(builtins, in.Tools...)...)
+	reg := tools.NewRegistry(append(builtins, tags.watch(in.Tools)...)...)
 
 	watch := &replyWatch{LLM: r.NewLLM(in.Endpoint), submits: !in.Chat && in.Designer == nil}
 

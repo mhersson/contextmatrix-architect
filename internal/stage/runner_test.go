@@ -468,6 +468,65 @@ func TestRun_CompactsALongConversationInsteadOfStopping(t *testing.T) {
 	assert.Contains(t, events.String(), `"phase":"compaction"`, "the summarize call is accounted as compaction")
 }
 
+func TestRun_KeepsTheSourceTagsToolResultsLedWithAcrossACompaction(t *testing.T) {
+	echo := func(id, text string) llm.Response {
+		return llm.Response{ToolCalls: []llm.ToolCall{toolCall(id, "echo", `{"text":"`+text+`"}`)}, FinishReason: "tool_calls"}
+	}
+
+	near := echo("c6", "more")
+	near.Usage = llm.Usage{PromptTokens: 120000}
+
+	f := &fakeLLM{responses: []llm.Response{
+		echo("c1", "[S3] the chart is in charts/"),
+		echo("c2", "[S2, S4] both trees"),
+		echo("c3", "no tag [S7] here"),
+		echo("c4", "[S3] again"),
+		echo("c5", "more"),
+		near, // the older turns, c1 among them, are summarized
+		{Content: "the briefing", FinishReason: "stop"},
+		{ToolCalls: []llm.ToolCall{toolCall("c7", "submit_artifact", `{"body":"# Need"}`)}, FinishReason: "tool_calls"},
+	}}
+
+	in := baseInput(&bytes.Buffer{})
+	in.MaxTurns = 20
+	in.Tools = []tools.Tool{echoTool{}}
+
+	out, err := runnerWith(f).Run(context.Background(), in)
+	require.NoError(t, err)
+
+	for _, m := range out.Result.Messages {
+		require.NotContains(t, m.Content, "the chart is in charts/", "the compaction summarized the first result away")
+	}
+
+	assert.Equal(t, []string{"S3", "S2", "S4"}, out.SourceTags, "only a leading tag counts, once")
+}
+
+func TestReturnedTags_CollectsResultsHandedBackAtOnce(t *testing.T) {
+	r := &returnedTags{}
+
+	var wg sync.WaitGroup
+
+	for i := range 16 {
+		wg.Go(func() { r.add(fmt.Sprintf("[S%d] result", i%4+1)) })
+	}
+
+	wg.Wait()
+
+	assert.ElementsMatch(t, []string{"S1", "S2", "S3", "S4"}, r.list())
+}
+
+func TestWatchTags_KeepsWhetherAToolIsReadOnly(t *testing.T) {
+	watched := (&returnedTags{}).watch([]tools.Tool{echoTool{}, lookupTool{}})
+	require.Len(t, watched, 2)
+
+	ro, ok := watched[0].(tools.ReadOnly)
+	require.True(t, ok)
+	assert.True(t, ro.ReadOnly())
+
+	ro, ok = watched[1].(tools.ReadOnly)
+	assert.False(t, ok && ro.ReadOnly(), "a tool that changes state is not made read-only")
+}
+
 // streamingLLM streams each scripted response's tool-call arguments as
 // deltas of chunk bytes before returning it.
 type streamingLLM struct {
