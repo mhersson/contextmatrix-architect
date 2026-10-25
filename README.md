@@ -85,8 +85,8 @@ journalctl --user -u contextmatrix-architect -f
 ```
 
 The unit runs `serve --config ${XDG_CONFIG_HOME:-~/.config}/contextmatrix-architect/config.yaml`
-from this checkout, sandboxed like the sibling backends, with `~/.contextmatrix`
-and the resolved `state_dir` writable. `install` creates that directory,
+from this checkout, sandboxed like the sibling backends, with only the resolved
+`state_dir` writable. `install` creates that directory,
 because the sandbox only lets the service write directories that exist when it
 starts, and pins `XDG_STATE_HOME` in the unit so the service resolves the same
 default as the script. It warns about a missing config, an explicit
