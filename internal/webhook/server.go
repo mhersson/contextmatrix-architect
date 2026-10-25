@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/mhersson/contextmatrix-backendkit/logbridge"
-	"github.com/mhersson/contextmatrix-backendkit/metrics"
 	"github.com/mhersson/contextmatrix-backendkit/webhookcore"
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
@@ -44,15 +43,13 @@ type Controller interface {
 
 // Config wires a Server. Replay, Dedup and Draining default when nil.
 type Config struct {
-	APIKey       string
-	MetricsToken string
-	Skew         time.Duration
-	Replay       *webhookcore.ReplayCache
-	Dedup        *webhookcore.DedupCache
-	Draining     *atomic.Bool
-	Hub          *logbridge.Hub
-	Logger       *slog.Logger
-	Metrics      *metrics.Metrics
+	APIKey   string
+	Skew     time.Duration
+	Replay   *webhookcore.ReplayCache
+	Dedup    *webhookcore.DedupCache
+	Draining *atomic.Bool
+	Hub      *logbridge.Hub
+	Logger   *slog.Logger
 	// Build is the build every /health answer reports.
 	Build      protocol.BuildInfo
 	Controller Controller
@@ -86,11 +83,9 @@ func NewServer(cfg Config) *Server {
 
 	core := webhookcore.NewCore(webhookcore.CoreConfig{
 		APIKey:          cfg.APIKey,
-		MetricsToken:    cfg.MetricsToken,
 		Skew:            cfg.Skew,
 		Replay:          cfg.Replay,
 		Draining:        cfg.Draining,
-		Metrics:         cfg.Metrics,
 		Logger:          logger,
 		Hub:             cfg.Hub,
 		LogsFilterParam: "session_id",
@@ -107,15 +102,15 @@ func NewServer(cfg Config) *Server {
 func (s *Server) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("POST /chat/start", s.RecordMetrics(s.Auth(s.DrainGate(s.handleStart))))
-	mux.HandleFunc("POST /chat/end", s.RecordMetrics(s.Auth(s.handleEnd)))
-	mux.HandleFunc("POST /message", s.RecordMetrics(s.Auth(s.DrainGate(s.handleMessage))))
-	mux.HandleFunc("GET /logs", s.RecordMetrics(s.Auth(s.HandleLogs)))
-	mux.HandleFunc("GET /blueprints/{id}", s.RecordMetrics(s.Auth(s.handleView)))
-	mux.HandleFunc("GET /blueprints/{id}/artifacts/{stage}/{version}", s.RecordMetrics(s.Auth(s.handleArtifact)))
-	mux.HandleFunc("GET /blueprints/{id}/live", s.RecordMetrics(s.Auth(s.handleLive)))
-	mux.HandleFunc("GET /health", s.RecordMetrics(s.HandleHealth))
-	mux.HandleFunc("GET /readyz", s.RecordMetrics(s.HandleReadyz))
+	mux.HandleFunc("POST /chat/start", s.Auth(s.DrainGate(s.handleStart)))
+	mux.HandleFunc("POST /chat/end", s.Auth(s.handleEnd))
+	mux.HandleFunc("POST /message", s.Auth(s.DrainGate(s.handleMessage)))
+	mux.HandleFunc("GET /logs", s.Auth(s.HandleLogs))
+	mux.HandleFunc("GET /blueprints/{id}", s.Auth(s.handleView))
+	mux.HandleFunc("GET /blueprints/{id}/artifacts/{stage}/{version}", s.Auth(s.handleArtifact))
+	mux.HandleFunc("GET /blueprints/{id}/live", s.Auth(s.handleLive))
+	mux.HandleFunc("GET /health", s.HandleHealth)
+	mux.HandleFunc("GET /readyz", s.HandleReadyz)
 
 	return mux
 }
