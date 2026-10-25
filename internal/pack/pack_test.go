@@ -324,6 +324,8 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "the reserved retrospective id", stage: "  - id: retrospective\n    persona: po\n", files: map[string]string{"stages/retrospective.md": "x", "personas/reviewer.md": "x"}, want: "reserved"},
 		{name: "retrospective instructions without the reviewer persona", files: map[string]string{"stages/retrospective.md": "x"}, want: `persona "reviewer"`},
 		{name: "a dot in a stage id", stage: "  - id: s1.review\n    persona: po\n", files: map[string]string{"stages/s1.review.md": "x"}, want: "dot"},
+		{name: "a space in a stage id", stage: "  - id: \"s 1\"\n    persona: po\n", want: "must be"},
+		{name: "a stage id over 64 characters", stage: "  - id: " + strings.Repeat("a", 65) + "\n    persona: po\n", want: "must be"},
 	}
 
 	for _, tt := range tests {

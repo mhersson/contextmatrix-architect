@@ -3,16 +3,13 @@ version: "1"
 stages:
   - id: intake
     persona: product_owner
-    produces: need
     policy: human
   - id: shape
     persona: product_owner
-    produces: shape
     consumes: [intake]
     policy: human
     gate: true
     reviewer: {persona: reviewer, threshold: 4}
   - id: plan
     persona: senior_developer
-    produces: plan
     consumes: [intake, shape]

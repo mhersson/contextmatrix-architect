@@ -131,9 +131,8 @@ type Reviewer struct {
 // Stage is one unit of work in the pipeline: one model run, and the gate
 // after it when it has one.
 type Stage struct {
-	ID       string `yaml:"id"`
-	Persona  string `yaml:"persona"`
-	Produces string `yaml:"produces"`
+	ID      string `yaml:"id"`
+	Persona string `yaml:"persona"`
 	// Policy is who answers the stage's questions, "human" or "auto", and
 	// decides its gate unless GatePolicy says otherwise; a model stage
 	// without one is auto. The mode and the blueprint's gate replies
@@ -459,6 +458,9 @@ func parseLists(raw []byte) (contract.Lists, error) {
 	return lists, nil
 }
 
+// stageIDPattern is the artifact route's stage rule in internal/webhook.
+var stageIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
 func validateStage(s Stage, seen map[string]Stage) error {
 	if s.ID == "" {
 		return fmt.Errorf("pack: stage needs an id: %+v", s)
@@ -468,13 +470,11 @@ func validateStage(s Stage, seen map[string]Stage) error {
 		return fmt.Errorf("pack: stage id %q is reserved for the %s instructions", s.ID, s.ID)
 	}
 
-	// A reviewer's verdicts are artifacts of <stage>.review.
-	if strings.Contains(s.ID, ".") {
-		return fmt.Errorf("pack: stage id %q has a dot, which names a stage's review", s.ID)
-	}
-
-	if strings.Contains(s.ID, stepSeparator) {
-		return fmt.Errorf("pack: stage id %q has an %s, which joins a per-slice stage's id and its slice", s.ID, stepSeparator)
+	// A stage id is an artifact's route segment. A dot is reserved for a
+	// reviewer's verdicts, artifacts of <stage>.review, and an "@" for the
+	// slice a per-slice stage's step joins to its id.
+	if !stageIDPattern.MatchString(s.ID) {
+		return fmt.Errorf("pack: stage id %q must be 1 to 64 letters, digits, underscores or hyphens: a dot names a stage's review and an %s joins a per-slice stage's id and its slice", s.ID, stepSeparator)
 	}
 
 	if _, dup := seen[s.ID]; dup {

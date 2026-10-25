@@ -3,24 +3,20 @@ version: "1"
 stages:
   - id: intake
     persona: product_owner
-    produces: need
     policy: human
     max_questions: 3
     checks: [assumptions]
   - id: grounding
     persona: senior_developer
-    produces: grounding
     consumes: [intake]
     tools: [code, cm]
   - id: decomposition
     persona: senior_developer
-    produces: cards
     consumes: [intake, grounding]
     tools: [code]
     checks: [cards]
   - id: readiness
     persona: reviewer
-    produces: readiness
     consumes: [intake, grounding, decomposition]
     tools: [code, cm]
     loops_to: decomposition
