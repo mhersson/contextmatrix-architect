@@ -1310,6 +1310,16 @@ func TestPrepareCode_ChecksOutWithTheSessionsGitCredentials(t *testing.T) {
 	for _, call := range calls {
 		assert.Equal(t, fakeCreds{token: testGitToken}, call.creds, "the credential built from the session's git token")
 	}
+
+	ws.mu.Lock()
+	heads := slices.Clone(ws.headCreds)
+	ws.mu.Unlock()
+
+	require.NotEmpty(t, heads, "the sign-off read the default branches")
+
+	for _, creds := range heads {
+		assert.Equal(t, fakeCreds{token: testGitToken}, creds)
+	}
 }
 
 func TestPrepareCode_WithoutGitCredentialsTheCodeStageFails(t *testing.T) {
@@ -1351,6 +1361,26 @@ func TestPrepareCode_WithoutGitCredentialsTheCodeStageFails(t *testing.T) {
 			assert.Equal(t, store.RunFailed, runs[1].Status)
 		})
 	}
+}
+
+func TestPrepareCode_AProjectWithoutARepositoryNeedsNoGitCredentials(t *testing.T) {
+	c, st, _, _, ws := newPipeline(t, happyScript())
+	c.opts.Projects = func(context.Context, string) ([]cm.Project, error) {
+		return []cm.Project{{Name: "alpha", Verify: &cm.Verify{Command: "make test"}}}, nil
+	}
+
+	ctx := context.Background()
+	in := startInput("BP1")
+	in.GitCredentialsToken = ""
+	require.NoError(t, c.Start(ctx, in))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	facts, err := c.prepareCode(ctx, sessionOf(t, c, "BP1"), bp, "grounding")
+	require.NoError(t, err, "nothing to fetch, so nothing needs the credentials")
+	assert.Empty(t, facts.repos)
+	assert.Zero(t, ws.checkouts())
 }
 
 func TestPipeline_ProjectLookupFailureFailsTheRunAndIsRetried(t *testing.T) {

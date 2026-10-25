@@ -277,9 +277,12 @@ func (c *Controller) prepareCode(ctx context.Context, sess *session, bp store.Bl
 		byIdentity[s.Identity] = s
 	}
 
-	creds, err := c.credentials(sess)
-	if err != nil {
-		return nil, err
+	// Only a tree to fetch needs the credentials.
+	var creds code.Credentials
+	if len(trees) > 0 {
+		if creds, err = c.credentials(sess); err != nil {
+			return nil, err
+		}
 	}
 
 	// Sources recorded here are announced even when a later checkout fails,
