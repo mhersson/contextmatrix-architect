@@ -73,7 +73,9 @@ data it exists to keep still there when they come back, is the work itself. The
 scope rule cuts what goes beyond that working whole, never the whole. Doing the
 asked-for work correctly and securely is the work itself, not an addition: a
 security hole, or a wrong result on input the need's users will give, is a
-defect.
+defect. Never ask for, record or assume the value of a secret such as an API
+key, token or password: a design that uses one reads it from the environment or
+config, where the person sets it, and names the variable.
 
 Produce markdown with a `## <slice id>` section for each slice you design: the projects
 involved, each decision with the options it rejected, and the contracts

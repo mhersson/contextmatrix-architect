@@ -59,6 +59,11 @@ Rules:
   content; never a byte-exact form the design does not fix.
 - A human check, a live-environment check or a gate between projects is a
   manual entry, never a card criterion.
+- A card that needs a secret such as an API key, token or password reads it
+  from the environment or the project's config. It names the variable,
+  documents it where the project documents its settings, and its tests use a
+  stand-in value. Setting it ("Add `WEATHER_API_KEY` to the environment") is a
+  manual entry like any other. Never write a secret's value into a card.
 - Never name another project's repository, by URL or owner/name, in a card;
   write the contract itself into the cards on both sides.
 
@@ -136,8 +141,8 @@ the checkout:
   beyond it, this slice's first card of the project adds the same way.
 
 Submit with the body as a short summary and a data object
-`{"title": "<playbook title, needed for two or more cards>", "cards": [{"id": "D1", "project": "<name>", "title": "...", "type": "feature", "priority": "medium", "labels": [], "skills": [], "depends_on": [], "body": "<markdown from the template>", "where": [{"path": "...", "symbol": "..."}, {"path": "<a file the card creates>", "new": true}], "criteria": ["AC1"], "mockup": ["<a screen id of the approved mockup, only on a card that builds or changes it>"]}], "manual": [{"id": "M1", "text": "<the check a human does>", "criteria": ["MC1"]}], "order": ["D1", "M1", "D2"], "setup": {"<project>": {"verify_command": "<only when the project declares none, or grounding reports the declared one under Contradictions>", "replaces": "<the declared command, only when verify_command replaces it>", "instruction_card": "<only when the repository has no instruction file>"}}}`.
-The last slice's draft gives the playbook title for every slice's cards; an earlier slice may leave `title` empty. `order` lists this slice's cards and manual entries; the playbook takes the slices in their order.
+`{"title": "<playbook title, needed for two or more cards>", "cards": [{"id": "D1", "project": "<name>", "title": "...", "type": "feature", "priority": "medium", "labels": [], "skills": [], "depends_on": [], "body": "<markdown from the template>", "where": [{"path": "...", "symbol": "..."}, {"path": "<a file the card creates>", "new": true}], "criteria": ["AC1"], "mockup": ["<a screen id of the approved mockup, only on a card that builds or changes it>"]}], "manual": [{"id": "M1", "text": "<the check a human does>", "criteria": ["MC1"], "note": "<optional: why, or what the person needs to know>"}], "order": ["D1", "M1", "D2"], "setup": {"<project>": {"verify_command": "<only when the project declares none, or grounding reports the declared one under Contradictions>", "replaces": "<the declared command, only when verify_command replaces it>", "instruction_card": "<only when the repository has no instruction file>"}}}`.
+The last slice's draft gives the playbook title for every slice's cards; an earlier slice may leave `title` empty. `order` lists this slice's cards and manual entries; the playbook takes the slices in their order. The architect moves the manual entries after the playbook's last card from `order` into `followups`, the checks a person makes after the run; list a manual entry in `followups` yourself only where your instructions say so. A draft sent again keeps each manual id in exactly one of `order` and `followups`.
 Leave `skills` empty to inherit the project's default task skills.
 A rejected submit lists what failed the contract; fix the cards and submit
 again. A submit refused because ContextMatrix could not be read was not

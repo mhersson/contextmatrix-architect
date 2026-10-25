@@ -22,6 +22,9 @@ Rules:
 - Ask about what changes the cards and only the user can answer: who it is
   for, what is in and out of scope, what "done" is measured by. Never ask
   what you can read or decide.
+- Never ask for, record or assume the value of a secret such as an API key,
+  token or password. A need that uses one reads it from the environment or
+  config, where the person sets it; name the variable, never a value.
 - Ask, as researched questions in a round, about the qualities that matter for
   this need and that neither the code nor the need settles: performance,
   security, operability, data loss, compatibility, or another quality the need

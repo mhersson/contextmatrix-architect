@@ -20,6 +20,9 @@ behaviour the code already has stands, and new code takes the plainest behaviour
 that works; no decision adds handling for it. A decision only one slice needs
 belongs to that slice's design, not here. A decision only some slices need is
 left to the design of the first slice that needs it; later slices read it there.
+Never ask for, record or assume the value of a secret such as an API key, token
+or password. A decision about one says that it is read from the environment or
+config, where the person sets it, and names the variable, never a value.
 
 Read the code before you ask (repo_info, read, grep, glob). A fact the code
 settles, such as what already exists, the conventions in use or a choice already

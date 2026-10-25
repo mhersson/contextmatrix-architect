@@ -343,7 +343,13 @@ asked, answer given, assumption recorded, check passed or failed, reviewer
 score, gate decided, artifact version stored, emission call and CM's response,
 export written, playbook run started, retrospective reported, lesson proposed,
 decided or retired. Tables marked append-only have no update or delete path in code, and
-tests prove it. Secrets are redacted before anything is stored.
+tests prove it. Secrets are redacted before anything is stored. The default
+pack's intake, shared decisions and solution design instructions never ask for,
+record or assume a secret's value and name the variable instead, and the
+responder, asked for one, answers with the variable's name, never a value;
+decomposition's cards read one from the environment or the project's config,
+document the variable and never hold its value, and setting it is a manual
+entry.
 
 **Source tags.** Every tool result that reads something external is prefixed
 with its source id (`S7`). Claims in artifact sections the pack marks as
