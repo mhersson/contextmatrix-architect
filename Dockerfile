@@ -32,7 +32,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
       -ldflags="-X github.com/mhersson/contextmatrix-architect/internal/buildinfo.version=${VERSION} -X github.com/mhersson/contextmatrix-architect/internal/buildinfo.commit=${GIT_COMMIT} -X github.com/mhersson/contextmatrix-architect/internal/buildinfo.buildTime=${BUILD_TIME}" \
       -o /contextmatrix-architect ./cmd/contextmatrix-architect
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
 # The default state_dir is $XDG_STATE_HOME/contextmatrix-architect; this keeps
 # it on the volume below.
 ENV XDG_STATE_HOME=/var/lib
