@@ -68,6 +68,10 @@ need to build the architect from this repository (see
    The shared key is a password the architect and ContextMatrix both know. Make
    it at least 32 characters long.
 
+   If your LLM gateway, ContextMatrix or git host has a certificate from a
+   private certificate authority (CA), also set `ca_cert_file` to that CA's
+   certificate file (PEM); it adds to the system trust store.
+
 3. Check the file. This reads it exactly as the architect will, and prints the
    first problem it finds:
 

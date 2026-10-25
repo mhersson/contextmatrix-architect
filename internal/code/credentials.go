@@ -40,10 +40,12 @@ type CMCredentials struct {
 	bearer string
 }
 
-// NewCMCredentials builds a client for <baseURL>/api/worker/git-credentials.
-func NewCMCredentials(baseURL, bearer string) *CMCredentials {
+// NewCMCredentials builds a client for <baseURL>/api/worker/git-credentials
+// over base, the transport that trusts ca_cert_file; nil is
+// http.DefaultTransport.
+func NewCMCredentials(baseURL, bearer string, base http.RoundTripper) *CMCredentials {
 	return &CMCredentials{
-		client: &http.Client{Timeout: 15 * time.Second},
+		client: &http.Client{Timeout: 15 * time.Second, Transport: base},
 		url:    strings.TrimRight(baseURL, "/") + "/api/worker/git-credentials",
 		bearer: bearer,
 	}

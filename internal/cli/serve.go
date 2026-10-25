@@ -101,7 +101,7 @@ func buildServer(ctx context.Context, cfg *config.Config, deps *runtimeDeps, log
 
 	// One instance: its per-repository and per-blueprint locks only hold
 	// within it, so the code stages and the sweep share it.
-	workspace := code.NewWorkspace(filepath.Join(cfg.StateDir, "workspaces"), time.Now)
+	workspace := code.NewWorkspace(filepath.Join(cfg.StateDir, "workspaces"), time.Now, deps.caBundle)
 
 	ctl := blueprint.New(blueprint.Options{
 		Store:          st,
@@ -115,15 +115,15 @@ func buildServer(ctx context.Context, cfg *config.Config, deps *runtimeDeps, log
 		HarnessLine:    harnessForwarder(hub),
 		Workspace:      workspace,
 		ExportDir:      filepath.Join(cfg.StateDir, "exports"),
-		Projects:       cmProjects(cfg.ContextMatrixURL),
-		CMTools:        cmReadTools(cfg.ContextMatrixURL),
-		ConnectCM:      cmConnect(cfg.ContextMatrixURL),
+		Projects:       cmProjects(cfg.ContextMatrixURL, deps.transport),
+		CMTools:        cmReadTools(cfg.ContextMatrixURL, deps.transport),
+		ConnectCM:      cmConnect(cfg.ContextMatrixURL, deps.transport),
 		CallerIdentity: cfg.CallerIdentity,
 		WatchInterval:  cfg.WatchInterval,
 		Search:         research.NewSearcher,
 		Fetch:          research.NewFetcher(),
 		Credentials: func(gitToken string) code.Credentials {
-			return code.NewCMCredentials(cfg.ContextMatrixURL, gitToken)
+			return code.NewCMCredentials(cfg.ContextMatrixURL, gitToken, deps.transport)
 		},
 	})
 
@@ -174,10 +174,10 @@ func buildServer(ctx context.Context, cfg *config.Config, deps *runtimeDeps, log
 }
 
 // cmProjects lists CM's projects over one MCP session per call, keyed with
-// the session's MCP key.
-func cmProjects(baseURL string) func(ctx context.Context, mcpAPIKey string) ([]cm.Project, error) {
+// the session's MCP key. base is cm.Connect's.
+func cmProjects(baseURL string, base http.RoundTripper) func(ctx context.Context, mcpAPIKey string) ([]cm.Project, error) {
 	return func(ctx context.Context, mcpAPIKey string) ([]cm.Project, error) {
-		client, err := cm.Connect(ctx, baseURL, mcpAPIKey)
+		client, err := cm.Connect(ctx, baseURL, mcpAPIKey, base)
 		if err != nil {
 			return nil, err
 		}
@@ -189,9 +189,10 @@ func cmProjects(baseURL string) func(ctx context.Context, mcpAPIKey string) ([]c
 }
 
 // cmConnect opens one MCP session to ContextMatrix with the session's key.
-func cmConnect(baseURL string) func(ctx context.Context, mcpAPIKey string) (blueprint.CMClient, error) {
+// base is cm.Connect's.
+func cmConnect(baseURL string, base http.RoundTripper) func(ctx context.Context, mcpAPIKey string) (blueprint.CMClient, error) {
 	return func(ctx context.Context, mcpAPIKey string) (blueprint.CMClient, error) {
-		client, err := cm.Connect(ctx, baseURL, mcpAPIKey)
+		client, err := cm.Connect(ctx, baseURL, mcpAPIKey, base)
 		if err != nil {
 			// A nil *cm.Client in the interface would not compare equal to nil.
 			return nil, err
@@ -202,10 +203,10 @@ func cmConnect(baseURL string) func(ctx context.Context, mcpAPIKey string) (blue
 }
 
 // cmReadTools opens one MCP session per stage run with the session's MCP key
-// and offers the run CM's read tools.
-func cmReadTools(baseURL string) func(ctx context.Context, mcpAPIKey, tag string) ([]tools.Tool, func(), error) {
+// and offers the run CM's read tools. base is cm.Connect's.
+func cmReadTools(baseURL string, base http.RoundTripper) func(ctx context.Context, mcpAPIKey, tag string) ([]tools.Tool, func(), error) {
 	return func(ctx context.Context, mcpAPIKey, tag string) ([]tools.Tool, func(), error) {
-		client, err := cm.Connect(ctx, baseURL, mcpAPIKey)
+		client, err := cm.Connect(ctx, baseURL, mcpAPIKey, base)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -226,7 +227,7 @@ func runServe(ctx context.Context, cfg *config.Config, deps *runtimeDeps) error 
 	slog.SetDefault(logger)
 	warnMissingSearchTools(logger, exec.LookPath)
 
-	srv, cleanup, err := buildServer(ctx, cfg, deps, logger, stage.NewRunner(cfg.ReasoningEffort, cfg.ReplayReasoning), buildinfo.Info())
+	srv, cleanup, err := buildServer(ctx, cfg, deps, logger, stage.NewRunner(cfg.ReasoningEffort, cfg.ReplayReasoning, deps.transport), buildinfo.Info())
 	if err != nil {
 		return err
 	}

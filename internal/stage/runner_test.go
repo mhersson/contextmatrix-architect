@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,9 +69,9 @@ func baseInput(events *bytes.Buffer) Input {
 }
 
 // wireBodies runs in through r against an httptest endpoint of the given type
-// (r is built with NewLLM: ClientFor), and returns every request body in
-// order. The server makes no tool call, so the runner sends its forced
-// follow-up as well. The run's own error is ignored.
+// (r is built with NewRunner), and returns every request body in order. The
+// server makes no tool call, so the runner sends its forced follow-up as
+// well. The run's own error is ignored.
 func wireBodies(t *testing.T, endpointType string, r *Runner, in Input) []map[string]json.RawMessage {
 	t.Helper()
 
@@ -134,7 +136,7 @@ func TestRun_EffortOnTheWire(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.endpoint+"/"+tt.effort, func(t *testing.T) {
-			bodies := wireBodies(t, tt.endpoint, &Runner{NewLLM: ClientFor, Effort: tt.effort}, baseInput(&bytes.Buffer{}))
+			bodies := wireBodies(t, tt.endpoint, NewRunner(tt.effort, false, nil), baseInput(&bytes.Buffer{}))
 			require.GreaterOrEqual(t, len(bodies), 2, "the forced follow-up was sent too")
 
 			for i, b := range bodies {
@@ -226,7 +228,7 @@ func TestClientFor_BaseURLAndAPIKeyReachTheWire(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := ClientFor(protocol.LLMEndpoint{Type: "openai", BaseURL: srv.URL + "/v1", APIKey: "k"})
+	c := ClientFor(protocol.LLMEndpoint{Type: "openai", BaseURL: srv.URL + "/v1", APIKey: "k"}, nil)
 
 	_, err := c.Send(context.Background(), llm.Request{
 		Model:    "m",
@@ -235,6 +237,37 @@ func TestClientFor_BaseURLAndAPIKeyReachTheWire(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/v1/chat/completions", gotPath)
 	assert.Equal(t, "Bearer k", gotAuth)
+}
+
+func TestClientFor_RequestsGoThroughTheBaseTransport(t *testing.T) {
+	var reached atomic.Int32
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached.Add(1)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`))
+	}))
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	ep := protocol.LLMEndpoint{Type: "openai", BaseURL: srv.URL + "/v1", APIKey: "k"}
+	req := llm.Request{Model: "m", Messages: []llm.Message{{Role: "user", Content: "ping"}}}
+
+	// The test server's own client trusts its certificate.
+	resp, err := ClientFor(ep, srv.Client().Transport).Send(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, "hi", resp.Content)
+
+	// Without it the system trust store refuses the certificate; the deadline
+	// ends the retries.
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	_, err = ClientFor(ep, nil).Send(ctx, req)
+	require.Error(t, err)
+	assert.Equal(t, int32(1), reached.Load(), "only the request over the base transport reached the server")
 }
 
 func TestRun_SecretInToolResultIsRedactedFromEventsAndConversation(t *testing.T) {
@@ -1110,7 +1143,7 @@ func TestRun_ReplayOnTheWire(t *testing.T) {
 	for _, endpoint := range []string{"openrouter", "openai"} {
 		for _, replay := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/replay=%t", endpoint, replay), func(t *testing.T) {
-				bodies := wireBodies(t, endpoint, NewRunner("", replay), baseInput(&bytes.Buffer{}))
+				bodies := wireBodies(t, endpoint, NewRunner("", replay, nil), baseInput(&bytes.Buffer{}))
 				require.GreaterOrEqual(t, len(bodies), 2, "the forced follow-up was sent too")
 
 				var msgs []map[string]json.RawMessage

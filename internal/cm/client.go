@@ -40,10 +40,15 @@ func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(r)
 }
 
-// Connect dials <baseURL>/mcp with apiKey as the bearer. Errors never carry
-// the key.
-func Connect(ctx context.Context, baseURL, apiKey string) (*Client, error) {
-	httpClient := &http.Client{Transport: &bearerTransport{key: apiKey, base: http.DefaultTransport}}
+// Connect dials <baseURL>/mcp with apiKey as the bearer over base, the
+// transport that trusts ca_cert_file; nil is http.DefaultTransport. Errors
+// never carry the key.
+func Connect(ctx context.Context, baseURL, apiKey string, base http.RoundTripper) (*Client, error) {
+	if base == nil {
+		base = http.DefaultTransport
+	}
+
+	httpClient := &http.Client{Transport: &bearerTransport{key: apiKey, base: base}}
 	endpoint := strings.TrimRight(baseURL, "/") + "/mcp"
 
 	dial := func(ctx context.Context) (*mcp.ClientSession, error) {

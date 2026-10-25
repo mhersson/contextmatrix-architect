@@ -147,7 +147,8 @@ checkout. A plain `docker build .` reports no commit or build time on
 The image sets `XDG_STATE_HOME=/var/lib`, so the default `state_dir` is the
 volume. The state volume must be writable by uid 65532 (the distroless
 `nonroot` user). A fresh named volume inherits that ownership from the image; a
-bind mount must be chowned by hand. The mounted `config.yaml` must be readable by uid 65532.
+bind mount must be chowned by hand. The mounted `config.yaml`, and a
+`ca_cert_file` when one is set, must be readable by uid 65532.
 `config.yaml.example` documents every key.
 
 The image ships ripgrep for the read tools. A local run or the user service

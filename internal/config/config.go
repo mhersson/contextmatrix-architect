@@ -67,6 +67,11 @@ type Config struct {
 	// ReplayReasoning sends each reply's reasoning back with every later request
 	// of its conversation, resumes included.
 	ReplayReasoning bool
+
+	// CACertFile is a PEM file of CA certificates trusted with the system
+	// store by the LLM, ContextMatrix and git clients; "" trusts the system
+	// store alone.
+	CACertFile string
 }
 
 // raw is the koanf wire shape; second-granularity durations are ints here and
@@ -90,6 +95,7 @@ type raw struct {
 	WatchIntervalSeconds   int               `koanf:"watch_interval_seconds"`
 	ReasoningEffort        string            `koanf:"reasoning_effort"`
 	ReplayReasoning        bool              `koanf:"replay_reasoning"`
+	CACertFile             string            `koanf:"ca_cert_file"`
 }
 
 func defaults() raw {
@@ -108,6 +114,7 @@ func defaults() raw {
 		WatchIntervalSeconds:   60,
 		ReasoningEffort:        "",
 		ReplayReasoning:        true,
+		CACertFile:             "",
 	}
 }
 
@@ -131,6 +138,7 @@ func (r raw) toConfig() *Config {
 		WatchInterval:         time.Duration(r.WatchIntervalSeconds) * time.Second,
 		ReasoningEffort:       r.ReasoningEffort,
 		ReplayReasoning:       r.ReplayReasoning,
+		CACertFile:            r.CACertFile,
 	}
 }
 

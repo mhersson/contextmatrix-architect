@@ -134,6 +134,24 @@ func TestLoad_ReasoningEffort(t *testing.T) {
 	assert.Equal(t, "medium", cfg.ReasoningEffort, "env wins over the default")
 }
 
+func TestLoad_CACertFile(t *testing.T) {
+	cfg, err := Load("")
+	require.NoError(t, err)
+	assert.Empty(t, cfg.CACertFile, "empty by default: the system trust store alone")
+
+	p := writeFile(t, "ca_cert_file: /etc/ssl/private-ca.pem\n")
+
+	cfg, err = Load(p)
+	require.NoError(t, err)
+	assert.Equal(t, "/etc/ssl/private-ca.pem", cfg.CACertFile)
+
+	t.Setenv("CONTEXTMATRIX_ARCHITECT_CA_CERT_FILE", "/srv/ca.pem")
+
+	cfg, err = Load(p)
+	require.NoError(t, err)
+	assert.Equal(t, "/srv/ca.pem", cfg.CACertFile, "env wins over the file")
+}
+
 func TestDefaultsYAMLRoundTrips(t *testing.T) {
 	out, err := DefaultsYAML()
 	require.NoError(t, err)

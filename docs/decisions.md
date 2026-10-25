@@ -262,6 +262,9 @@ HEAD.
   bought.
 - web_fetch dials directly, never through a proxy. Why: its public-address
   check must see the page's own address.
+- web_search and web_fetch trust the system store alone, never
+  `ca_cert_file`, which the LLM, ContextMatrix and git clients add to it.
+  Why: research reaches public hosts only.
 - The leak guard refuses paths, file names, code punctuation, declared
   identifiers, module, project and repository names, card ids, and more than
   160 characters, in queries and URL parts; plain words and technology names

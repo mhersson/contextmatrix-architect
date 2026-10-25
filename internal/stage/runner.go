@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"slices"
 	"time"
 
@@ -128,9 +129,12 @@ type Runner struct {
 	draftEvery time.Duration
 }
 
-// NewRunner returns a Runner that talks to the provisioned endpoint.
-func NewRunner(effort string, replay bool) *Runner {
-	return &Runner{NewLLM: ClientFor, Effort: effort, Replay: replay}
+// NewRunner returns a Runner that talks to the provisioned endpoint over
+// base; nil keeps the harness's own client (see ClientFor).
+func NewRunner(effort string, replay bool, base http.RoundTripper) *Runner {
+	newLLM := func(ep protocol.LLMEndpoint) llm.LLM { return ClientFor(ep, base) }
+
+	return &Runner{NewLLM: newLLM, Effort: effort, Replay: replay}
 }
 
 // Run executes one stage and returns its artifact. On every return its

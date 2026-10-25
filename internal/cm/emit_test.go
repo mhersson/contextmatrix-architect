@@ -70,7 +70,7 @@ func newEmitServer(t *testing.T, withRunPlaybook bool) (*emitServer, string) {
 func connectTo(t *testing.T, url string) *Client {
 	t.Helper()
 
-	c, err := Connect(context.Background(), url, "")
+	c, err := Connect(context.Background(), url, "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 

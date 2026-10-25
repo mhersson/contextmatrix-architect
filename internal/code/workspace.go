@@ -39,6 +39,10 @@ type Workspace struct {
 	root string
 	now  func() time.Time
 
+	// caBundle is ca_cert_file's PEM, trusted with the system pool on every
+	// fetch and list; nil trusts the system pool alone.
+	caBundle []byte
+
 	// allowLocal admits every scheme, not only https; only the package's
 	// tests set it, for filesystem and plain-http fixtures.
 	allowLocal bool
@@ -75,9 +79,11 @@ func (s slot) tryLock() bool {
 
 func (s slot) unlock() { <-s }
 
-// NewWorkspace returns a workspace under root. now is injectable for the sweep.
-func NewWorkspace(root string, now func() time.Time) *Workspace {
-	return &Workspace{root: root, now: now, repos: map[string]slot{}, blueprints: map[string]slot{}}
+// NewWorkspace returns a workspace under root. now is injectable for the
+// sweep; caBundle is extra PEM CA certificates for the git hosts, nil for
+// none.
+func NewWorkspace(root string, now func() time.Time, caBundle []byte) *Workspace {
+	return &Workspace{root: root, now: now, caBundle: caBundle, repos: map[string]slot{}, blueprints: map[string]slot{}}
 }
 
 // Checkout is a blueprint's tree of one repository at the commit it records.
@@ -197,7 +203,7 @@ func (w *Workspace) RemoteHead(ctx context.Context, repoURL string, creds Creden
 
 	remote := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{Name: "origin", URLs: []string{repoURL}})
 
-	refs, err := remote.ListContext(listCtx, &git.ListOptions{Auth: auth})
+	refs, err := remote.ListContext(listCtx, &git.ListOptions{Auth: auth, CABundle: w.caBundle})
 
 	switch {
 	case errors.Is(err, transport.ErrEmptyRemoteRepository):
@@ -301,6 +307,7 @@ func (w *Workspace) fetchMirror(ctx context.Context, mirror, repoURL string, aut
 		RemoteName: "origin",
 		RefSpecs:   []config.RefSpec{"+refs/heads/*:refs/heads/*"},
 		Auth:       authMethod,
+		CABundle:   w.caBundle,
 		Tags:       git.NoTags,
 		Force:      true,
 		Prune:      true,
@@ -319,7 +326,7 @@ func (w *Workspace) fetchMirror(ctx context.Context, mirror, repoURL string, aut
 		return "", "", fmt.Errorf("code: mirror remote: %w", err)
 	}
 
-	refs, err := remote.ListContext(fetchCtx, &git.ListOptions{Auth: authMethod})
+	refs, err := remote.ListContext(fetchCtx, &git.ListOptions{Auth: authMethod, CABundle: w.caBundle})
 	if err != nil {
 		return "", "", fmt.Errorf("code: list %s: %w", repoURL, err)
 	}

@@ -88,6 +88,7 @@ func TestConfigValidate_NamesTheFailingKey(t *testing.T) {
 		"relative state_dir": {validRequired + "state_dir: ./state\n", "state_dir"},
 		"missing pack":       {validConfig + "pack: /typo\n", "/typo"},
 		"unknown persona":    {validConfig + "models:\n  designr: x/y\n", "designr"},
+		"missing CA file":    {validConfig + "ca_cert_file: /nonexistent/ca.pem\n", "ca_cert_file"},
 	}
 
 	for name, c := range cases {
@@ -99,6 +100,18 @@ func TestConfigValidate_NamesTheFailingKey(t *testing.T) {
 			assert.Contains(t, err.Error(), c.key)
 		})
 	}
+}
+
+func TestConfigValidate_RefusesACAFileWithoutACertificate(t *testing.T) {
+	dir := t.TempDir()
+	notPEM := filepath.Join(dir, "ca.pem")
+	require.NoError(t, os.WriteFile(notPEM, []byte("not a certificate\n"), 0o600))
+
+	p := writeConfig(t, dir, validConfig+"ca_cert_file: "+notPEM+"\n")
+
+	_, err := runCLI(t, "config", "validate", p)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ca_cert_file")
 }
 
 func TestConfigValidate_UnknownPersonaListsThePacksPersonas(t *testing.T) {
@@ -128,6 +141,7 @@ func TestServe_RefusesWhatValidateRefuses(t *testing.T) {
 	cases := map[string]struct{ body, key string }{
 		"missing pack":    {base + "pack: /typo\n", "/typo"},
 		"unknown persona": {base + "models:\n  designr: x/y\n", "designr"},
+		"missing CA file": {base + "ca_cert_file: /nonexistent/ca.pem\n", "ca_cert_file"},
 	}
 
 	for name, c := range cases {
