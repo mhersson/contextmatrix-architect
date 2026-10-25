@@ -608,16 +608,11 @@ func (c *Controller) closeRound(ctx context.Context, au audit, bp store.Blueprin
 	}
 
 	for _, q := range s.Frame.Questions {
-		// The responder's runs write the rows of its answers; one it could not
-		// give on a handed-over round is the stage's to decide, as on an auto
-		// round.
+		// The responder's runs write the rows of its answers, and one it could
+		// not give on a handed-over round is the stage's to decide, as on an
+		// auto round: every row written here is a human's.
 		if have[q.Number] || (s.HandedOver != nil && !s.HandedOver.humanAnswered(q.Number)) {
 			continue
-		}
-
-		responder := store.ResponderHuman
-		if s.responderAnswered(q.Number) {
-			responder = store.ResponderAuto
 		}
 
 		options := make([]string, 0, len(q.Options))
@@ -628,8 +623,8 @@ func (c *Controller) closeRound(ctx context.Context, au audit, bp store.Blueprin
 		if err := c.opts.Store.AddQuestion(ctx, store.Question{
 			BlueprintID: bp.ID, RunID: s.PostedBy, Stage: s.Frame.Stage, Number: q.Number,
 			Text: au.text(q.Text), Options: au.texts(options), Context: au.text(q.Why),
-			Answer: au.text(AnswerText(q, answers[q.Number])), Responder: responder,
-			Assumption: responder == store.ResponderAuto, MessageID: msgID, AnsweredAt: c.opts.Now().UTC(),
+			Answer: au.text(AnswerText(q, answers[q.Number])), Responder: store.ResponderHuman,
+			MessageID: msgID, AnsweredAt: c.opts.Now().UTC(),
 		}); err != nil {
 			return roundState{}, fmt.Errorf("blueprint: close round %d: record Q%d: %w", s.Number, q.Number, err)
 		}

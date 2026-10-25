@@ -2,7 +2,6 @@ package blueprint
 
 import (
 	"context"
-	"encoding/json"
 	"slices"
 	"testing"
 
@@ -133,13 +132,7 @@ func TestOutcomes_AStageThatChecksThemIsRefusedItsFaults(t *testing.T) {
 
 	art, err := st.LatestArtifact(context.Background(), "BP1", "intake")
 	require.NoError(t, err)
-
-	var data struct {
-		Outcomes []outcomeEntry `json:"outcomes"`
-	}
-
-	require.NoError(t, json.Unmarshal(art.Data, &data))
-	assert.Equal(t, []outcomeEntry{{ID: "O1", Text: "x"}}, data.Outcomes)
+	assert.Equal(t, []outcomeEntry{{ID: "O1", Text: "x"}}, outcomesOf(art))
 }
 
 // withCheck adds check to the stages ids name, in memory.

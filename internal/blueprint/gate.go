@@ -278,7 +278,7 @@ func (c *Controller) autoApproves(ctx context.Context, bp store.Blueprint, out o
 		return false, nil, err
 	}
 
-	return auto && found && st.Reviewer != nil && v.passes(st.Reviewer.Threshold), folded, nil
+	return auto && found && v.passes(st.Reviewer.Threshold), folded, nil
 }
 
 // approveAuto records the auto policy's approval of every stage folded into
@@ -362,7 +362,7 @@ func (c *Controller) showGate(ctx context.Context, au audit, bp store.Blueprint,
 	switch {
 	case err != nil:
 		c.opts.Logger.Warn("blueprint: gate shown without its verdict", "blueprint", bp.ID, "stage", out.stage, "error", au.text(err.Error()))
-	case found && st.Reviewer != nil:
+	case found:
 		threshold := st.Reviewer.Threshold
 
 		payload["review"] = map[string]any{

@@ -643,7 +643,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		return stage.Input{}, stageChecks{}, nil, err
 	}
 
-	reads, err := c.readsArtifacts(ctx, bp.ID, steps, pieces, st)
+	reads, err := c.readsArtifacts(ctx, bp.ID, steps, len(pieces) > 1, st)
 	if err != nil {
 		return stage.Input{}, stageChecks{}, nil, err
 	}

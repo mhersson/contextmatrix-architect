@@ -103,9 +103,6 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 			// The loop stage judges every target step's cards; its round is its
 			// artifact version less the version the sign-off last rejected.
 			targets := loopTargets(steps, st.LoopsTo)
-			if len(targets) == 0 {
-				return outcome{}, fmt.Errorf("blueprint: after %s: the pipeline has no %s", completed, pack.StageName(st.LoopsTo, false))
-			}
 
 			drafts, ids, stops, err := c.targetCards(ctx, bp.ID, targets)
 			if err != nil {
@@ -214,7 +211,7 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 					break
 				}
 
-				before, err := c.predatesGate(ctx, bp.ID, st, art)
+				before, err := c.predatesGate(ctx, bp.ID, steps, st, art)
 				if err != nil {
 					return outcome{}, fmt.Errorf("blueprint: after %s: %w", completed, err)
 				}
@@ -283,20 +280,11 @@ func (c *Controller) after(ctx context.Context, bp store.Blueprint, completed st
 // predatesGate reports a record written before the pack gave st a gate: a
 // later stage's run follows st's latest completed run, which under a gate
 // only an approval or a fold allows. A shown gate stays with its human.
-func (c *Controller) predatesGate(ctx context.Context, id string, st pipelineStep, art store.Artifact) (bool, error) {
+// steps is the blueprint's pipeline, which holds st.
+func (c *Controller) predatesGate(ctx context.Context, id string, steps []pipelineStep, st pipelineStep, art store.Artifact) (bool, error) {
 	shown, err := c.gateShown(ctx, id, st.ID, art.Version)
 	if err != nil || shown {
 		return false, err
-	}
-
-	steps, _, err := c.steps(ctx, id)
-	if err != nil {
-		return false, err
-	}
-
-	i := stepIndex(steps, st.ID)
-	if i < 0 {
-		return false, nil
 	}
 
 	runs, err := c.opts.Store.ListRuns(ctx, id)
@@ -304,7 +292,7 @@ func (c *Controller) predatesGate(ctx context.Context, id string, st pipelineSte
 		return false, fmt.Errorf("blueprint: list runs: %w", err)
 	}
 
-	later := steps[i+1:]
+	later := steps[stepIndex(steps, st.ID)+1:]
 	built := -1
 
 	for j, r := range runs {
@@ -486,7 +474,9 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 	}
 
 	if atRound {
-		return c.atRound(ctx, runCtx, r, sess, bp, place, text, msgID)
+		c.atRound(ctx, runCtx, r, sess, bp, place, text, msgID)
+
+		return nil
 	}
 
 	_, err = c.opts.Store.LatestArtifact(ctx, id, c.opts.Pack.Stages[0].ID)
@@ -533,7 +523,9 @@ func (c *Controller) input(ctx, runCtx context.Context, r *run, sess *session, i
 	}
 
 	if offer || (pending && skipsMockup(text)) {
-		return c.atOffer(ctx, runCtx, r, sess, bp, text, msgID)
+		c.atOffer(ctx, runCtx, r, sess, bp, text, msgID)
+
+		return nil
 	}
 
 	if out.gate && out.critique {
@@ -624,7 +616,6 @@ type stopPoint struct {
 	stage    string
 	critique bool
 	round    *roundPlace
-	need     bool
 	fold     *folding
 	byCap    bool
 	capUSD   float64
@@ -664,7 +655,7 @@ func (c *Controller) stoppedAt(ctx context.Context, bp store.Blueprint) (stopPoi
 				return stopPoint{}, false, fmt.Errorf("blueprint: read the need: %w", err)
 			}
 
-			p = stopPoint{stage: first, need: true}
+			p = stopPoint{stage: first}
 		case err != nil:
 			return stopPoint{}, false, fmt.Errorf("blueprint: read %s's artifact: %w", pack.StageName(first, false), err)
 		default:

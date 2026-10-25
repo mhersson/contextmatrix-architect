@@ -643,16 +643,14 @@ func (c *Controller) plainSummary(ctx context.Context, bp store.Blueprint, list 
 
 	canDo := []any{}
 
-	if len(c.opts.Pack.Stages) > 0 {
-		art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, c.opts.Pack.Stages[0].ID)
+	art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, c.opts.Pack.Stages[0].ID)
 
-		switch {
-		case err != nil && !errors.Is(err, store.ErrNotFound):
-			c.opts.Logger.Warn("blueprint: plain summary outcomes", "blueprint", bp.ID, "error", err.Error())
-		case err == nil:
-			for _, o := range outcomesOf(art) {
-				canDo = append(canDo, o.Text)
-			}
+	switch {
+	case err != nil && !errors.Is(err, store.ErrNotFound):
+		c.opts.Logger.Warn("blueprint: plain summary outcomes", "blueprint", bp.ID, "error", err.Error())
+	case err == nil:
+		for _, o := range outcomesOf(art) {
+			canDo = append(canDo, o.Text)
 		}
 	}
 
@@ -662,7 +660,6 @@ func (c *Controller) plainSummary(ctx context.Context, bp store.Blueprint, list 
 	var versions []store.Artifact
 
 	if slices.ContainsFunc(list, func(a assumption) bool { return a.ConsequenceAccepted > 0 }) {
-		var err error
 		if versions, err = c.opts.Store.ListArtifacts(ctx, bp.ID); err != nil {
 			c.opts.Logger.Warn("blueprint: plain summary changes", "blueprint", bp.ID, "error", err.Error())
 		}

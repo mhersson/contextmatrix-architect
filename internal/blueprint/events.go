@@ -206,12 +206,9 @@ func (a audit) texts(ss []string) []string {
 	return out
 }
 
-// event stores e, then hands it to the sink.
+// event stamps e with the time, stores it, then hands it to the sink.
 func (a audit) event(ctx context.Context, e Event) {
-	if e.Time.IsZero() {
-		e.Time = a.c.opts.Now().UTC()
-	}
-
+	e.Time = a.c.opts.Now().UTC()
 	e.Payload = a.maskFields(e.Payload)
 
 	payload, err := marshalPayload(e.Payload)

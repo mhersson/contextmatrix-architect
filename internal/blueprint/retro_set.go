@@ -39,13 +39,13 @@ func (c *Controller) listsFor(ctx context.Context, bp store.Blueprint) (contract
 }
 
 // lessonsReach reports whether a run of st gets the blueprint's lessons and
-// the Unattended overlay: st is
-// the stage that checks cards or the one that checks readiness. Stages are
-// found by their checks, as everywhere else, never by id.
+// the Unattended overlay: st is the stage that checks cards or the one that
+// checks readiness. Stages are found by their checks, as everywhere else,
+// never by id.
 func (c *Controller) lessonsReach(st pipelineStep) bool {
 	id := st.Stage.ID
 
-	return id != "" && (id == c.cardsStage() || id == c.readinessStage())
+	return id == c.cardsStage() || id == c.readinessStage()
 }
 
 // withLessons is instructions with a section listing lessons, in id order;

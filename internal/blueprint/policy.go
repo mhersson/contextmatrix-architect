@@ -423,12 +423,12 @@ func (c *Controller) resolvePolicy(mode string, plain bool, events []store.Event
 	st, ok := c.opts.Pack.Stage(stageID)
 
 	switch {
-	case ok && gate && st.GatePolicy != "":
-		return st.GatePolicy, nil
-	case ok && st.Policy != "":
-		return st.Policy, nil
-	default:
+	case !ok:
 		return pack.PolicyAuto, nil
+	case gate && st.GatePolicy != "":
+		return st.GatePolicy, nil
+	default:
+		return st.Policy, nil
 	}
 }
 

@@ -800,13 +800,9 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipe
 
 	writePOC(&b, poc)
 
-	var given []string
-
-	if st.Gate {
-		var err error
-		if given, err = c.writeGateFeedback(ctx, &b, bp, st, attempt); err != nil {
-			return "", err
-		}
+	given, err := c.writeGateFeedback(ctx, &b, bp, st, attempt)
+	if err != nil {
+		return "", err
 	}
 
 	if err := c.writeSignoffFeedback(ctx, &b, bp.ID, given); err != nil {
@@ -888,7 +884,7 @@ func (c *Controller) reviewerTools(ctx context.Context, sess *session, bp store.
 		return nil, "", err
 	}
 
-	reads, err := c.readsArtifacts(ctx, bp.ID, steps, pieces, st)
+	reads, err := c.readsArtifacts(ctx, bp.ID, steps, len(pieces) > 1, st)
 	if err != nil {
 		return nil, "", err
 	}

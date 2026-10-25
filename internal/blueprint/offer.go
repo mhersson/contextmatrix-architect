@@ -224,7 +224,7 @@ func skipsMockup(text string) bool {
 // acceptance and runs the mockup step, skip mockup records the decline,
 // which collapses the step, and runs what follows it, and any other text is
 // a note that leaves the offer open. The caller holds the run slot.
-func (c *Controller) atOffer(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, text, msgID string) error {
+func (c *Controller) atOffer(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, text, msgID string) {
 	mockup := c.opts.Pack.MockupStage()
 
 	action, _, ok := matchAction(text, offerActions())
@@ -234,7 +234,7 @@ func (c *Controller) atOffer(ctx, runCtx context.Context, r *run, sess *session,
 		sess.audit.event(ctx, note)
 		c.release(bp.ID, r)
 
-		return nil
+		return
 	}
 
 	sess.audit.event(ctx, c.offerEvent(bp.ID, action.Decision, map[string]any{"message_id": msgID}))
@@ -242,7 +242,7 @@ func (c *Controller) atOffer(ctx, runCtx context.Context, r *run, sess *session,
 	if action.Decision == offerAccepted {
 		c.launch(runCtx, r, sess, bp, mockup)
 
-		return nil
+		return
 	}
 
 	out, _, err := c.position(ctx, bp)
@@ -250,18 +250,16 @@ func (c *Controller) atOffer(ctx, runCtx context.Context, r *run, sess *session,
 		c.unreadable(ctx, sess.audit, bp.ID, err)
 		c.release(bp.ID, r)
 
-		return nil
+		return
 	}
 
 	if out.stage == "" || out.gate {
 		c.release(bp.ID, r)
 
-		return nil
+		return
 	}
 
 	c.launch(runCtx, r, sess, bp, out.stage)
-
-	return nil
 }
 
 // claimWaitingOffer takes the run slot while the offer is shown and

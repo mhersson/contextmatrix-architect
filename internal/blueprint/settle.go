@@ -405,7 +405,7 @@ func (c *Controller) mockupChatSegment(ctx context.Context, bp store.Blueprint, 
 // after a closed round failed or was aborted, the note runs it again, on a
 // handed-over round the responder answers what is left, and on a mockup the
 // auto responder steers it takes its turn.
-func (c *Controller) atRound(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, place roundPlace, text, msgID string) error {
+func (c *Controller) atRound(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, place roundPlace, text, msgID string) {
 	s := place.state
 
 	note := noteEvent(bp.ID, text, msgID, s.Frame.Stage, false)
@@ -417,8 +417,6 @@ func (c *Controller) atRound(ctx, runCtx context.Context, r *run, sess *session,
 
 	sess.audit.event(ctx, note)
 	c.follow(context.WithoutCancel(ctx), runCtx, r, sess, bp, true)
-
-	return nil
 }
 
 // resumeRound acts on the round a reopened blueprint stands at, on slot r,

@@ -70,7 +70,6 @@ type tree struct {
 	project string
 	name    string
 	url     string
-	primary bool
 }
 
 // treesOf names a project's trees, primary first. The repository flagged
@@ -88,7 +87,7 @@ func treesOf(p cm.Project) ([]tree, error) {
 			return nil, nil
 		}
 
-		return []tree{{project: p.Name, name: p.Name, url: p.Repo, primary: true}}, nil
+		return []tree{{project: p.Name, name: p.Name, url: p.Repo}}, nil
 	}
 
 	var repos []cm.Repo
@@ -113,7 +112,7 @@ func treesOf(p cm.Project) ([]tree, error) {
 		}
 	}
 
-	out := []tree{{project: p.Name, name: p.Name, url: repos[primary].URL, primary: true}}
+	out := []tree{{project: p.Name, name: p.Name, url: repos[primary].URL}}
 
 	for i, r := range repos {
 		if i == primary {
@@ -371,7 +370,7 @@ func foreignRepos(projects []cm.Project, name string) []string {
 // and priorities each target project declares, since the card contract
 // accepts only those.
 func checkoutLines(facts *codeFacts) string {
-	if facts == nil || len(facts.repos) == 0 {
+	if len(facts.repos) == 0 {
 		return ""
 	}
 
