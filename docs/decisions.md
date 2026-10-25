@@ -6,8 +6,10 @@ HEAD.
 ## Boundaries
 
 - After emission ContextMatrix is the source of truth for the cards, and
-  corrections are made there: the architect has no call that changes a card
-  it created. Why: the architect's record is the plan, not the board.
+  corrections are made there: the architect never edits a card it created,
+  and its only later calls on one are reads and the run start, whose
+  run_card or run_playbook sets the run flags. Why: the architect's record is
+  the plan, not the board.
 - The core is methodology-neutral: BDD, Gherkin, sizing schemes and
   compliance lists belong in a pack, and Given/When/Then in a card body is
   acceptance-criteria text. Why: the core encodes no one team's process.
@@ -144,10 +146,10 @@ HEAD.
 ## Card contract
 
 - A card is one deliverable sized for one pull request and at most two
-  planner subtasks, with an acceptance-criteria section and a verify command.
-  Why: across 341 and 161 agent-run cards on two instances, struggle rose
-  from 6% to 26% at two or more subtasks, and from 8% to 25% when the
-  criteria or the verify command was missing.
+  planner subtasks, with an acceptance-criteria section and a project verify
+  command. Why: across 341 and 161 agent-run cards on two instances,
+  struggle rose from 6% to 26% at two or more subtasks, and from 8% to 25%
+  when the criteria or the project verify command was missing.
 - The agent facts the contract rests on (stripped headings, routing phrases
   and verbs, maintenance labels) are data in lists.yaml, re-checked on every
   agent release. Why: the agent's prompts are the ground truth.
@@ -160,7 +162,8 @@ HEAD.
 - A contract between two cards is written into both, word for word. Why: each
   agent run sees only its own card.
 - The architect never sets a project's verify command; a proposed one is a
-  setup step at the sign-off, or a notice when yolo starts the run at once.
+  setup step at the sign-off, or, for a project that declares none, a notice
+  when yolo starts the run at once.
   Why: create_card has no verify field, and the project's command stays the
   operator's (the architect never calls update_project).
 - A proposal replaces a declared verify command only through a `replaces`
@@ -254,8 +257,9 @@ HEAD.
 ## Research
 
 - Search result lists are never stored, and there is no switch to store
-  them; only pages read with web_fetch are sources. Why: the search
-  provider's terms forbid storing results, and no storage rights are bought.
+  them; of web research, only the pages web_fetch reads are sources. Why: the
+  search provider's terms forbid storing results, and no storage rights are
+  bought.
 - web_fetch dials directly, never through a proxy. Why: its public-address
   check must see the page's own address.
 - The leak guard refuses paths, file names, code punctuation, declared
@@ -271,12 +275,14 @@ HEAD.
 - ContextMatrix reads strip `agent_id` and never attach images. Why:
   ContextMatrix then treats the caller as an agent and keeps redacting
   unvetted imported text.
-- Credentials embedded in URLs are scrubbed from every ContextMatrix result
-  and error. Why: ContextMatrix returns project config as stored, and the
-  record is append-only.
-- Every tool result passes the redactor for every secret the process holds,
-  and live drafts are redacted with a held-back tail. Why: a secret never
-  reaches a model-visible or stored text.
+- Credentials embedded in URLs are scrubbed from every result and error of a
+  stage's ContextMatrix read tools, and repository URLs are used and recorded
+  without their userinfo. Why: ContextMatrix returns project config as
+  stored, and the record is append-only.
+- Every tool result passes the redactor for every secret the session holds
+  (the LLM key, MCP key, git token and search key), and live drafts are
+  redacted with a held-back tail. Why: a secret never reaches a
+  model-visible or stored text.
 
 ## Runtime and build
 
