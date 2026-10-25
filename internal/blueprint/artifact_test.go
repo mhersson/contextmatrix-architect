@@ -131,6 +131,41 @@ func TestArtifact_TheBoard(t *testing.T) {
 	assert.NotContains(t, string(art.Data), "null")
 }
 
+// A card the watch first saw deleted has no state of its own, so the board
+// keeps the one it had; a card seen before it was deleted shows that.
+func TestArtifact_TheBoardKeepsTheStateOfACardDeletedUnseen(t *testing.T) {
+	c, st := newViewController(t, "default", 0)
+
+	through(t, c, st, "readiness")
+	appendEvent(t, st, EventEmitted, map[string]any{
+		"cards": []any{
+			map[string]any{"draft": "D1", "project": "alpha", "card": "ALPHA-1", "title": "One", "state": "todo"},
+			map[string]any{"draft": "D2", "project": "alpha", "card": "ALPHA-2", "title": "Two", "state": "todo"},
+		},
+		"playbook": "PB-1", "manual": nil, "steps": []any{},
+	})
+	appendEvent(t, st, EventWatchState, map[string]any{
+		"cards": []any{
+			map[string]any{"draft": "D1", "id": "ALPHA-1", "state": "", "gone": true},
+			map[string]any{"draft": "D2", "id": "ALPHA-2", "state": "review", "pr": "https://example.com/pr/2", "gone": true},
+		},
+		"playbook": "PB-1", "playbook_gone": true,
+	})
+
+	art, err := c.Artifact(context.Background(), viewID, emissionStage, "", 1)
+	require.NoError(t, err)
+
+	var b struct {
+		Cards []struct{ Card, State, PR string } `json:"cards"`
+	}
+
+	require.NoError(t, json.Unmarshal(art.Data, &b))
+	require.Len(t, b.Cards, 2)
+	assert.Equal(t, "todo", b.Cards[0].State)
+	assert.Equal(t, "review", b.Cards[1].State)
+	assert.Equal(t, "https://example.com/pr/2", b.Cards[1].PR)
+}
+
 func TestArtifact_ABoardFromBeforeCardColoursHasNoTypeOrPriority(t *testing.T) {
 	c, st := newViewController(t, "default", 0)
 
