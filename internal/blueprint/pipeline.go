@@ -1285,7 +1285,7 @@ func (c *Controller) writeLoopFindings(ctx context.Context, b *strings.Builder, 
 		}
 
 		writeArtifact(b, fmt.Sprintf("%s version %d, which %s judged", st.ID, judged.Version, other.ID), judged)
-		writeArtifact(b, fmt.Sprintf("%s findings (round %d)", other.ID, verdict.Version), verdict)
+		writeArtifact(b, fmt.Sprintf("%s findings (version %d)", other.ID, verdict.Version), verdict)
 	}
 
 	return nil
