@@ -309,7 +309,7 @@ SQLite (`modernc.org/sqlite`), one file. Append-only where marked.
 
 | Table         | Holds                                                                                                                        |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price and context window as CM sent them, and whether it runs in plain language |
+| blueprints    | id, title, target CM projects, pack name and version, state, cost cap, model price and context window as CM sent them, whether it runs in plain language and whether it is unattended |
 | stage_runs    | blueprint, stage, kind (`stage`, `reviewer`, `responder`, `retro`; a retro run judges emitted cards; only stage runs place the pipeline), attempt, round, status (running, done, asked, failed, interrupted, canceled), model, started, ended, cost, token buckets; a mockup's settle run has no model and costs nothing (see Mockups) |
 | artifacts     | append-only: blueprint, stage, version, markdown body, structured yaml block, check results; a reviewer's verdict (score, whether it passed, its summary when it gave one, its findings ledger with ids, severities, statuses and the reviewer's notes, the judged version, attempt and round) is an artifact of the pseudo-stage `<stage>.review` |
 | questions     | append-only: blueprint, run, stage, number (`Q<n>` per blueprint), text, options, context, answer, responder (`human`, `auto`), assumption flag, grounded flag (the checked result: the responder's claim and a source tag its own tool calls returned), the answering message, answered at; written once: when its round closes, or at the responder's answer under auto, or at the answer for one asked alone before rounds, or, one per suggestion, when a mockup closes on a use; an assumption a human accepted on a tab is recorded on its round, not here |
@@ -1219,6 +1219,13 @@ unchanged below. The announcement of the emitted cards opens with a plain
 sentence, its technical text unchanged below. An ended pipeline's `end_reason`
 is plain and its technical reason is `end_detail`. The wording is fixed per
 situation, in the server.
+
+### Unattended
+
+A blueprint started with the unattended toggle (`unattended` on the start,
+stored at creation and never changed by a later start or a mode switch) is
+carried in the store, echoed as `unattended` on the view and named in the
+export's summary. The `created` event carries `unattended` only when it is on.
 
 ## Tools
 

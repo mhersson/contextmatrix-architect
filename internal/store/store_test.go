@@ -536,6 +536,7 @@ func TestOpen_MigratesV2(t *testing.T) {
 		`ALTER TABLE stage_runs DROP COLUMN kind`,
 		`ALTER TABLE blueprints DROP COLUMN context_window`,
 		`ALTER TABLE blueprints DROP COLUMN plain_language`,
+		`ALTER TABLE blueprints DROP COLUMN unattended`,
 		`PRAGMA user_version = 2`,
 	} {
 		_, err := s.db.Exec(stmt)
@@ -635,6 +636,7 @@ func TestOpen_MigratesV3(t *testing.T) {
 		`ALTER TABLE stage_runs DROP COLUMN kind`,
 		`ALTER TABLE blueprints DROP COLUMN context_window`,
 		`ALTER TABLE blueprints DROP COLUMN plain_language`,
+		`ALTER TABLE blueprints DROP COLUMN unattended`,
 		`PRAGMA user_version = 3`,
 	} {
 		_, err := s.db.Exec(stmt)
@@ -781,6 +783,62 @@ func TestCreateBlueprint_KeepsPlainLanguage(t *testing.T) {
 	assert.False(t, got.PlainLanguage)
 }
 
+func TestCreateBlueprint_KeepsUnattended(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: "BP1", Mode: "default", Unattended: true, State: "new", CreatedAt: now, UpdatedAt: now}))
+	require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: "BP2", Mode: "default", State: "new", CreatedAt: now, UpdatedAt: now}))
+
+	got, err := s.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+	assert.True(t, got.Unattended)
+
+	got, err = s.GetBlueprint(ctx, "BP2")
+	require.NoError(t, err)
+	assert.False(t, got.Unattended)
+}
+
+func TestOpen_MigratesV7(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "architect.db")
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	s, err := Open(ctx, path)
+	require.NoError(t, err)
+	require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: "BP1", Mode: "default", State: "new", CreatedAt: now, UpdatedAt: now}))
+
+	// A v7 file: blueprints without unattended.
+	for _, stmt := range []string{
+		`ALTER TABLE blueprints DROP COLUMN unattended`,
+		`PRAGMA user_version = 7`,
+	} {
+		_, err := s.db.Exec(stmt)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, s.Close())
+
+	s, err = Open(ctx, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	var version int
+	require.NoError(t, s.db.QueryRow("PRAGMA user_version").Scan(&version))
+	assert.Equal(t, 8, version)
+
+	got, err := s.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+	assert.False(t, got.Unattended, "a blueprint stored before the flag is not unattended")
+
+	require.NoError(t, s.CreateBlueprint(ctx, Blueprint{ID: "BP2", Mode: "default", Unattended: true, State: "new", CreatedAt: now, UpdatedAt: now}))
+
+	got, err = s.GetBlueprint(ctx, "BP2")
+	require.NoError(t, err)
+	assert.True(t, got.Unattended)
+}
+
 func TestOpen_MigratesV5(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "architect.db")
 	ctx := context.Background()
@@ -793,6 +851,7 @@ func TestOpen_MigratesV5(t *testing.T) {
 	// A v5 file: blueprints without plain_language.
 	for _, stmt := range []string{
 		`ALTER TABLE blueprints DROP COLUMN plain_language`,
+		`ALTER TABLE blueprints DROP COLUMN unattended`,
 		`PRAGMA user_version = 5`,
 	} {
 		_, err := s.db.Exec(stmt)
@@ -833,6 +892,7 @@ func TestOpen_MigratesV6(t *testing.T) {
 	for _, stmt := range []string{
 		`DROP TABLE lessons`,
 		`DROP TABLE blueprint_lessons`,
+		`ALTER TABLE blueprints DROP COLUMN unattended`,
 		`PRAGMA user_version = 6`,
 	} {
 		_, err := s.db.Exec(stmt)

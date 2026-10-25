@@ -101,6 +101,24 @@ func TestWrite_NamesAStepsSliceOnlyWithTwoOrMoreSlices(t *testing.T) {
 	}
 }
 
+func TestWrite_NamesUnattended(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		dir := t.TempDir()
+
+		_, err := Write(dir, Bundle{Blueprint: store.Blueprint{ID: "BP1", Unattended: on}})
+		require.NoError(t, err)
+
+		raw, err := os.ReadFile(filepath.Join(dir, "blueprint.md"))
+		require.NoError(t, err)
+
+		if on {
+			assert.Contains(t, string(raw), "- Unattended: on\n")
+		} else {
+			assert.NotContains(t, string(raw), "Unattended")
+		}
+	}
+}
+
 func TestWrite_NamesPlainLanguage(t *testing.T) {
 	for _, plain := range []bool{true, false} {
 		dir := t.TempDir()

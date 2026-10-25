@@ -77,6 +77,10 @@ func blueprintMD(b Bundle) string {
 		sb.WriteString("- Plain language: on\n")
 	}
 
+	if b.Blueprint.Unattended {
+		sb.WriteString("- Unattended: on\n")
+	}
+
 	fmt.Fprintf(&sb, "- State: %s\n- Cost cap: %.2f USD\n- Created: %s\n\n",
 		b.Blueprint.State, b.Blueprint.CostCapUSD, b.Blueprint.CreatedAt.Format("2006-01-02 15:04 UTC"))
 
