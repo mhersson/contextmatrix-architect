@@ -17,7 +17,7 @@ ContextMatrix's chat panel.
 - [Guide](docs/guide.md): one real blueprint, step by step, with pictures.
 - [Reference](docs/reference.md): every reply you can type, the modes, and the marks on the sheet.
 - [Installing](docs/installing.md): what to set up before the first blueprint.
-- [Design](docs/design.md): how it works inside, for developers.
+- [Decisions](docs/decisions.md): the decisions the code keeps and why, for developers.
 
 The sections below are for whoever runs the architect. It runs as a third
 ContextMatrix backend next to the agent and chat backends, and ContextMatrix's
@@ -41,7 +41,7 @@ file. On macOS write the file to that directory instead of `~/.config`, or
 pass `--config`. `config validate <file>` loads a file exactly as `serve`
 would and exits 1 on the first error.
 
-Configure it in ContextMatrix as `backends.architect` with the same `api_key`.
+Configure it in ContextMatrix as `backends.architect` (url, the same api_key, default_model); see [docs/installing.md](docs/installing.md) step 4.
 
 An empty `state_dir`, the default, resolves to
 `$XDG_STATE_HOME/contextmatrix-architect`, else

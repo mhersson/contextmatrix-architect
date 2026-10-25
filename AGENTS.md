@@ -6,8 +6,8 @@ contextmatrix-architect turns a stated need into a blueprint: research,
 decisions and a set of ContextMatrix (CM) cards written so an autonomous
 contextmatrix-agent run completes each one first time. It is a third CM
 backend speaking the chat-backend protocol: CM's chat panel is its only
-client. Read `docs/design.md` before changing anything; it is the
-specification and must stay true at HEAD.
+client. Read `docs/decisions.md` before changing anything: it records the
+decisions the code keeps and why, and must stay true at HEAD.
 
 ## Boundaries
 
@@ -53,7 +53,7 @@ specification and must stay true at HEAD.
 
 ### Documentation
 
-- Every statement matches the code at HEAD, in `README.md`, `docs/guide.md`, `docs/reference.md`, `docs/installing.md` and `docs/design.md` alike; a change that makes a doc line false updates it in the same commit.
+- Every statement matches the code at HEAD, in `README.md`, `docs/guide.md`, `docs/reference.md`, `docs/installing.md` and `docs/decisions.md` alike; a change that makes a doc line false updates it in the same commit.
 - A screenshot in `docs/images/` is replaced when the behaviour it shows changes, not for cosmetic drift.
 - Comments explain non-obvious decisions and invariants only. No em-dashes; use hyphens.
 - Never reference plan phases, task numbers or private card IDs.

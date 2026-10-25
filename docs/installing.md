@@ -98,7 +98,8 @@ need to build the architect from this repository (see
    `./contextmatrix-architect serve --config ~/.config/contextmatrix-architect/config.yaml`.
    To keep it
    running in the background, the architect's [README](../README.md) shows how
-   to run it as a service or in Docker, and lists every other setting.
+   to run it as a service or in Docker.
+   [config.yaml.example](../config.yaml.example) documents every other setting.
 
 ## Check that it works
 
@@ -118,4 +119,5 @@ message: the interview starts.
 - [Architect reference](reference.md) for what you can type, the modes, the cost
   cap and what to do when a blueprint stops.
 - [Models](reference.md#models) for more on choosing a model.
-- [design.md](design.md) for how the architect works inside.
+- [decisions.md](decisions.md) for the decisions the architect's code keeps,
+  and why.

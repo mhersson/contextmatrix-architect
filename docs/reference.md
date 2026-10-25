@@ -3,8 +3,8 @@
 This page is for looking things up while you work out a blueprint with the
 architect: what you can type, the modes and settings, the cost cap, what to do
 when a blueprint stops, and what the marks on the sheet mean. The table below
-explains these words. Developers will find how the architect works inside in
-[design.md](design.md).
+explains these words. Developers will find the decisions the architect's code
+keeps, and why, in [decisions.md](decisions.md).
 
 | Word | Meaning |
 |---|---|
