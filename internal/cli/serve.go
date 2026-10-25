@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -55,7 +56,10 @@ func newServeCmd() *cobra.Command {
 				return fmt.Errorf("config %s: %w", path, err)
 			}
 
-			return runServe(cmd.Context(), cfg, deps)
+			logger := newLogger(cfg.LogLevel)
+			slog.SetDefault(logger)
+
+			return runServe(cmd.Context(), cfg, deps, logger)
 		},
 	}
 	cmd.Flags().StringVar(&path, "config", defaultConfigPath(), "config file path")
@@ -222,9 +226,7 @@ func cmReadTools(baseURL string, base http.RoundTripper) func(ctx context.Contex
 	}
 }
 
-func runServe(ctx context.Context, cfg *config.Config, deps *runtimeDeps) error {
-	logger := newLogger(cfg.LogLevel)
-	slog.SetDefault(logger)
+func runServe(ctx context.Context, cfg *config.Config, deps *runtimeDeps, logger *slog.Logger) error {
 	warnMissingSearchTools(logger, exec.LookPath)
 
 	srv, cleanup, err := buildServer(ctx, cfg, deps, logger, stage.NewRunner(cfg.ReasoningEffort, cfg.ReplayReasoning, deps.transport), buildinfo.Info())
@@ -241,7 +243,6 @@ func runServe(ctx context.Context, cfg *config.Config, deps *runtimeDeps) error 
 	}()
 
 	httpServer := &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           srv.Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -251,19 +252,26 @@ func runServe(ctx context.Context, cfg *config.Config, deps *runtimeDeps) error 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Bound before the log line, so the log never claims a port the server
+	// could not take.
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", fmt.Sprintf(":%d", cfg.Port))
+	if err != nil {
+		return fmt.Errorf("listen: %w", err)
+	}
+
+	logger.Info("architect listening", "addr", ln.Addr().String(), "pack", cfg.Pack)
+
 	serverErr := make(chan error, 1)
 
 	go func() {
-		logger.Info("architect listening", "addr", httpServer.Addr, "pack", cfg.Pack)
-
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 		}
 	}()
 
 	select {
 	case err := <-serverErr:
-		return fmt.Errorf("listen: %w", err)
+		return fmt.Errorf("serve: %w", err)
 	case <-ctx.Done():
 	}
 

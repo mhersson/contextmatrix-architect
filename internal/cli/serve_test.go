@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -224,6 +226,112 @@ func TestServe_EndToEnd(t *testing.T) {
 
 	// The record survives on disk.
 	assert.FileExists(t, filepath.Join(cfg.StateDir, "architect.db"))
+}
+
+// lockedBuffer is a log sink a test reads while the server writes it.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.String()
+}
+
+// serveConfig is a config runServe starts with on port, over a fresh state
+// directory.
+func serveConfig(t *testing.T, port int) *config.Config {
+	t.Helper()
+
+	return &config.Config{
+		ContextMatrixURL: "http://cm.invalid", APIKey: e2eKey, Port: port, LogLevel: "info",
+		StateDir: t.TempDir(), MaxRunCostUSD: 1, MaxTurns: 5, WorkspaceMaxAgeDays: 7, WatchInterval: time.Minute,
+		ReplaySkew: 5 * time.Minute, ReplayCacheSize: 100, MessageDedupTTL: time.Minute, MessageDedupCacheSize: 100,
+	}
+}
+
+func TestRunServe_ABindFailureIsTheListenErrorAndNeverLogsListening(t *testing.T) {
+	taken, err := net.Listen("tcp", ":0") //nolint:gosec // serve binds every interface; only the same bind is sure to collide on every OS
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = taken.Close() })
+
+	cfg := serveConfig(t, taken.Addr().(*net.TCPAddr).Port)
+
+	deps, err := loadRuntime(cfg)
+	require.NoError(t, err)
+
+	var logs lockedBuffer
+
+	err = runServe(context.Background(), cfg, deps, slog.New(slog.NewJSONHandler(&logs, nil)))
+	require.ErrorIs(t, err, syscall.EADDRINUSE)
+	assert.Contains(t, err.Error(), "listen")
+	assert.NotContains(t, logs.String(), "architect listening")
+}
+
+func TestRunServe_LogsTheBoundAddressThenServes(t *testing.T) {
+	cfg := serveConfig(t, 0)
+
+	deps, err := loadRuntime(cfg)
+	require.NoError(t, err)
+
+	var logs lockedBuffer
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+
+	go func() { done <- runServe(ctx, cfg, deps, slog.New(slog.NewJSONHandler(&logs, nil))) }()
+
+	var addr string
+
+	require.Eventually(t, func() bool {
+		for line := range strings.Lines(logs.String()) {
+			var entry struct {
+				Msg  string `json:"msg"`
+				Addr string `json:"addr"`
+			}
+
+			if json.Unmarshal([]byte(line), &entry) == nil && entry.Msg == "architect listening" {
+				addr = entry.Addr
+
+				return true
+			}
+		}
+
+		return false
+	}, 5*time.Second, 10*time.Millisecond)
+
+	_, port, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	assert.NotEqual(t, "0", port, "the log names the port the listener took")
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://127.0.0.1:"+port+"/health", nil)
+	require.NoError(t, err)
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	cancel()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("runServe did not return after its context ended")
+	}
 }
 
 func testLogger(t *testing.T) *slog.Logger {
