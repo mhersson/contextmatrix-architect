@@ -261,7 +261,7 @@ func (c *Controller) retroPass(runCtx context.Context, r *run, sess *session, bp
 
 	au.event(bg, Event{
 		Kind: EventRetroReport, BlueprintID: bp.ID, RunID: runID,
-		Payload: retroReport(runID, len(signals), struggled, findings, proposed),
+		Payload: retroReport(runID, len(signals), deleted, struggled, findings, proposed),
 	})
 
 	if len(proposed) > 0 {
@@ -359,10 +359,11 @@ func (c *Controller) proposals(au audit, id string, runID int64, struggled []ret
 	return out, nil
 }
 
-// retroReport is the findings message's payload: each struggled card in
-// order with its signals and finding, and its stored lesson when it was at
-// fault. lessons are the at-fault findings' lessons, in finding order.
-func retroReport(runID int64, read int, struggled []retro.Struggle, findings []retro.Finding, lessons []store.Lesson) map[string]any {
+// retroReport is the findings message's payload: the cards read and those
+// skipped as deleted, each struggled card in order with its signals and
+// finding, and its stored lesson when it was at fault. lessons are the
+// at-fault findings' lessons, in finding order.
+func retroReport(runID int64, read int, deleted []string, struggled []retro.Struggle, findings []retro.Finding, lessons []store.Lesson) map[string]any {
 	cards := make([]any, 0, len(struggled))
 	next := 0
 
@@ -388,7 +389,7 @@ func retroReport(runID int64, read int, struggled []retro.Struggle, findings []r
 		cards = append(cards, card)
 	}
 
-	return map[string]any{"run": runID, "read": read, "struggled": len(struggled), "cards": cards}
+	return map[string]any{"run": runID, "read": read, "deleted": nonNil(deleted), "struggled": len(struggled), "cards": cards}
 }
 
 // retroReply posts a retro_reply. duringRun tells the panel a run goes on

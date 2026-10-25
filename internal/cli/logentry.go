@@ -1275,6 +1275,10 @@ func retroReportText(p map[string]any) string {
 
 	fmt.Fprintf(&b, "**Retrospective**: %.0f of %.0f emitted card(s) struggled.", num(p["struggled"]), num(p["read"]))
 
+	if deleted := stringsOf(p["deleted"]); len(deleted) > 0 {
+		fmt.Fprintf(&b, " Skipped %d card(s) deleted in ContextMatrix: %s.", len(deleted), strings.Join(deleted, ", "))
+	}
+
 	for _, card := range anyMaps(p["cards"]) {
 		fmt.Fprintf(&b, "\n\n**%s** (%s): %s", str(card["card"]), str(card["project"]), str(card["title"]))
 		fmt.Fprintf(&b, "\n- State %s", str(card["state"]))

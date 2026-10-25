@@ -167,9 +167,10 @@ func stopWatch(t *testing.T, c *Controller, id string) {
 
 // storedReport is a stored retro_report payload.
 type storedReport struct {
-	Run       int64 `json:"run"`
-	Read      int   `json:"read"`
-	Struggled int   `json:"struggled"`
+	Run       int64    `json:"run"`
+	Read      int      `json:"read"`
+	Deleted   []string `json:"deleted"`
+	Struggled int      `json:"struggled"`
 	Cards     []struct {
 		Card      string   `json:"card"`
 		Project   string   `json:"project"`
@@ -517,6 +518,7 @@ func TestRetrospective_SkipsADeletedCard(t *testing.T) {
 
 	report := reportOf(t, st)
 	assert.Equal(t, 1, report.Read)
+	assert.Equal(t, []string{"ALPHA-002"}, report.Deleted, "the findings name the card skipped")
 	require.Len(t, report.Cards, 1)
 	assert.Equal(t, "ALPHA-001", report.Cards[0].Card)
 	assert.Empty(t, replies(rec))
