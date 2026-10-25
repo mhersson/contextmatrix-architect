@@ -708,3 +708,47 @@ func TestWatch_AFailedReadIsNoDeletion(t *testing.T) {
 		})
 	}
 }
+
+// The run line follows the run's status, reason and waiting text; the run
+// moving from one entry to the next is no news.
+func TestWatch_TheRunLineIsPostedOnlyWhenTheRunChanges(t *testing.T) {
+	_, _, _, rec, _, fake := startWatchedTwoCards(t)
+
+	entries := []cm.PlaybookEntry{
+		{ID: "e1", Type: "card", Project: "alpha", Card: "ALPHA-001"},
+		{ID: "e2", Type: "manual", Text: "Check the dashboard"},
+		{ID: "e3", Type: "manual", Text: "Check the report"},
+		{ID: "e4", Type: "card", Project: "alpha", Card: "ALPHA-002"},
+	}
+	book := func(run cm.PlaybookRun) cm.Playbook {
+		return cm.Playbook{ID: "ship-the-parser", Entries: entries, Total: 4, Run: &run}
+	}
+
+	fake.setBooks("ship-the-parser",
+		book(cm.PlaybookRun{Status: "running", Entry: "e1"}),
+		book(cm.PlaybookRun{Status: "waiting", Entry: "e2", Reason: "awaiting check-off"}),
+		book(cm.PlaybookRun{Status: "waiting", Entry: "e3", Reason: "awaiting check-off"}),
+		book(cm.PlaybookRun{Status: "running", Entry: "e4"}),
+		book(cm.PlaybookRun{Status: "running", Entry: "e1"}),
+		book(cm.PlaybookRun{Status: "running", Entry: "e4"}),
+		book(cm.PlaybookRun{Status: "waiting", Entry: "e4", Reason: "ALPHA-002 worker failed"}),
+		cm.Playbook{ID: "ship-the-parser", Entries: entries, Total: 4, Complete: 4, Run: &cm.PlaybookRun{Status: "completed"}},
+	)
+	rec.waitFor(t, EventWatchEnded)
+
+	var runLines []string
+
+	for _, line := range watchLines(rec) {
+		if strings.HasPrefix(line, "Playbook ") {
+			runLines = append(runLines, line)
+		}
+	}
+
+	assert.Equal(t, []string{
+		"Playbook ship-the-parser is running.",
+		"Playbook ship-the-parser waits for a human to check off: Check the dashboard",
+		"Playbook ship-the-parser waits for a human to check off: Check the report",
+		"Playbook ship-the-parser is running.",
+		"Playbook ship-the-parser needs a human: ALPHA-002 worker failed. Fix it, then Stop and Run the playbook in ContextMatrix.",
+	}, runLines)
+}

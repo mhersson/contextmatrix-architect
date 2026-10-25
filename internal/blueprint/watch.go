@@ -452,12 +452,22 @@ func (s snapshot) changes(prev *snapshot) []string {
 		}
 	}
 
-	var oldRun runView
-	if prev != nil && prev.Run != nil {
-		oldRun = *prev.Run
+	var (
+		oldRun     runView
+		oldWaiting string
+	)
+
+	if prev != nil {
+		if prev.Run != nil {
+			oldRun = *prev.Run
+		}
+
+		oldWaiting = prev.Waiting
 	}
 
-	if s.Run != nil && *s.Run != oldRun {
+	// The run moving from one entry to the next is no news: the cards'
+	// lines say which one works.
+	if s.Run != nil && (s.Run.Status != oldRun.Status || s.Run.Reason != oldRun.Reason || s.Waiting != oldWaiting) {
 		if line := s.runLine(); line != "" {
 			lines = append(lines, line)
 		}
