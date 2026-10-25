@@ -136,3 +136,39 @@ func TestWrite_NamesPlainLanguage(t *testing.T) {
 		}
 	}
 }
+
+func TestWrite_ListsTheLessonSet(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		lessons []store.Lesson
+		want    []string
+	}{
+		{
+			name: "with lessons",
+			lessons: []store.Lesson{
+				{ID: 3, State: store.LessonActive, Text: "Name where the key comes from"},
+				{ID: 7, State: store.LessonRetired, Text: "Say which | file\nholds it"},
+			},
+			want: []string{"## Lessons\n", "| L3 | Name where the key comes from |\n", `| L7 | Say which \| file holds it |` + "\n"},
+		},
+		{name: "none"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			_, err := Write(dir, Bundle{Blueprint: store.Blueprint{ID: "BP1"}, Lessons: tc.lessons})
+			require.NoError(t, err)
+
+			raw, err := os.ReadFile(filepath.Join(dir, "blueprint.md"))
+			require.NoError(t, err)
+
+			for _, w := range tc.want {
+				assert.Contains(t, string(raw), w)
+			}
+
+			if len(tc.lessons) == 0 {
+				assert.NotContains(t, string(raw), "## Lessons")
+			}
+		})
+	}
+}

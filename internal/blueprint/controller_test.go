@@ -2453,6 +2453,33 @@ func TestExport_WritesTheBundleAndMasksSecrets(t *testing.T) {
 	assert.Contains(t, string(summary), "| Signoff | 1 | reject | human |")
 }
 
+func TestExport_CarriesTheLessonSet(t *testing.T) {
+	c, st, _, _ := newController(t, artifactRun("# Need"))
+	c.opts.ExportDir = t.TempDir()
+	ctx := context.Background()
+
+	added, err := st.AddLessons(ctx, []store.Lesson{{BlueprintID: "SRC", Scope: store.ScopePack, Text: "Name where the key comes from"}})
+	require.NoError(t, err)
+
+	ok, err := st.DecideLesson(ctx, added[0].ID, store.LessonDecision{
+		State: store.LessonActive, Scope: store.ScopePack, Text: "Name where the key comes from", By: "op", At: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	require.NoError(t, c.Start(ctx, startInput("BP1")))
+	c.Wait("BP1")
+	require.NoError(t, c.Export(ctx, "BP1", "m1"))
+
+	dirs, err := filepath.Glob(filepath.Join(c.opts.ExportDir, "BP1", "*", "blueprint.md"))
+	require.NoError(t, err)
+	require.Len(t, dirs, 1)
+
+	summary, err := os.ReadFile(dirs[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(summary), "| "+added[0].Tag()+" | Name where the key comes from |")
+}
+
 func TestExport_UnknownBlueprint(t *testing.T) {
 	c, _, _, _ := newController(t, artifactRun("# Need"))
 	c.opts.ExportDir = t.TempDir()
