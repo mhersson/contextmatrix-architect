@@ -213,6 +213,42 @@ func TestSlices_EverySliceGetsItsOwnAcceptance(t *testing.T) {
 	assert.Contains(t, acc2[0].Task, "# Acceptance SL1", "a later slice reads the earlier slices' acceptance")
 }
 
+func TestAssumptions_AVerdictOnAnAutoAnswerJudgesWhatLaterRestsOnIt(t *testing.T) {
+	c, st, _ := slicedBlueprint(t)
+	ctx := context.Background()
+
+	seedAnswer(t, st, 5, store.ResponderAuto, "")
+	putData(t, st, "shared_decisions", map[string]any{"assumptions": []any{"Every export is UTF-8."}})
+	putData(t, st, "solution_design@SL1", map[string]any{"assumptions": []any{"One file per report."}})
+	putData(t, st, "grounding@SL1", map[string]any{"verdicts": []any{
+		map[string]any{"id": "Q5", "status": "contradicted", "evidence": "[S1] exports stay local"},
+	}})
+
+	list, err := c.assumptions(ctx, "BP1")
+	require.NoError(t, err)
+	require.Equal(t, "contradicted", statuses(list)["Q5"])
+
+	putData(t, st, "solution_design@SL2", map[string]any{"assumptions": []any{
+		map[string]any{"text": "Exports go to the shared drive.", "basis": "Q5"},
+	}})
+
+	list, err = c.assumptions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"A1": "unverified", "A2": "unverified", "A3": "contradicted"}, statuses(list),
+		"the entry resting on Q5 holds Q5 now, and its verdict")
+	assert.Equal(t, "[S1] exports stay local", byID(list)["A3"].Evidence)
+
+	putData(t, st, "grounding@SL2", map[string]any{"verdicts": []any{
+		map[string]any{"id": "A3", "status": "verified", "evidence": "[S2] the drive is mounted"},
+		map[string]any{"id": "Q5", "status": "contradicted", "evidence": "[S2] exports stay local"},
+	}})
+
+	list, err = c.assumptions(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, "verified", statuses(list)["A3"], "a verdict on its own id wins, as new as one on Q5 or newer")
+	assert.Equal(t, "[S2] the drive is mounted", byID(list)["A3"].Evidence)
+}
+
 func TestAssumptions_ACollapsedSharedStageStatesNone(t *testing.T) {
 	c, st, _ := slicedBlueprint(t)
 	ctx := context.Background()
