@@ -87,11 +87,12 @@ func newLogger(level string) *slog.Logger {
 }
 
 // buildServer wires store, controller and the webhook server over what
-// loadRuntime loaded. The runner is injected so tests can replace the model,
-// and the build so a test can tell a wired build from an unstamped test
-// binary's. The returned cleanup stops the replay janitor and the
-// controller's runs, then closes the store.
-func buildServer(ctx context.Context, cfg *config.Config, deps *runtimeDeps, logger *slog.Logger, runner blueprint.Runner, build protocol.BuildInfo) (*webhook.Server, func(context.Context) error, error) {
+// loadRuntime loaded; draining is the flag the server's drain gate and
+// /readyz read. The runner is injected so tests can replace the model, and
+// the build so a test can tell a wired build from an unstamped test binary's.
+// The returned cleanup stops the replay janitor and the controller's runs,
+// then closes the store.
+func buildServer(ctx context.Context, cfg *config.Config, deps *runtimeDeps, logger *slog.Logger, runner blueprint.Runner, build protocol.BuildInfo, draining *atomic.Bool) (*webhook.Server, func(context.Context) error, error) {
 	if err := os.MkdirAll(cfg.StateDir, 0o750); err != nil {
 		return nil, nil, fmt.Errorf("state dir: %w", err)
 	}
@@ -141,10 +142,6 @@ func buildServer(ctx context.Context, cfg *config.Config, deps *runtimeDeps, log
 		sweepWorkspaces(sweepCtx, workspace, time.Duration(cfg.WorkspaceMaxAgeDays)*24*time.Hour, sweepInterval, logger)
 	})
 
-	// Never set: the controller's Shutdown refuses new starts and runs itself,
-	// so the drain gate is wired but stays open.
-	var draining atomic.Bool
-
 	replay := webhookcore.NewReplayCache(cfg.ReplaySkew, cfg.ReplayCacheSize)
 	stopJanitor := replay.StartJanitor()
 
@@ -153,7 +150,7 @@ func buildServer(ctx context.Context, cfg *config.Config, deps *runtimeDeps, log
 		Skew:       cfg.ReplaySkew,
 		Replay:     replay,
 		Dedup:      webhookcore.NewDedupCache(cfg.MessageDedupTTL, cfg.MessageDedupCacheSize),
-		Draining:   &draining,
+		Draining:   draining,
 		Hub:        hub,
 		Logger:     logger,
 		Controller: ctl,
@@ -229,7 +226,11 @@ func cmReadTools(baseURL string, base http.RoundTripper) func(ctx context.Contex
 func runServe(ctx context.Context, cfg *config.Config, deps *runtimeDeps, logger *slog.Logger) error {
 	warnMissingSearchTools(logger, exec.LookPath)
 
-	srv, cleanup, err := buildServer(ctx, cfg, deps, logger, stage.NewRunner(cfg.ReasoningEffort, cfg.ReplayReasoning, deps.transport), buildinfo.Info())
+	// Flipped by shutdownHTTP when the shutdown signal arrives; the routes'
+	// drain gate and /readyz read it.
+	var draining atomic.Bool
+
+	srv, cleanup, err := buildServer(ctx, cfg, deps, logger, stage.NewRunner(cfg.ReasoningEffort, cfg.ReplayReasoning, deps.transport), buildinfo.Info(), &draining)
 	if err != nil {
 		return err
 	}
@@ -277,19 +278,32 @@ func runServe(ctx context.Context, cfg *config.Config, deps *runtimeDeps, logger
 
 	logger.Info("architect shutting down")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	if err := shutdownHTTP(httpServer, &draining); err != nil {
+		return err
+	}
+
+	stopped = true
+
+	return stopRuns(cleanup)
+}
+
+// shutdownHTTP drains httpServer, bounded by shutdownTimeout. draining flips
+// first, so /readyz and the mutating routes answer draining while Shutdown
+// waits for the requests in flight.
+func shutdownHTTP(httpServer *http.Server, draining *atomic.Bool) error {
+	draining.Store(true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
-	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+	if err := httpServer.Shutdown(ctx); err != nil {
 		// Lingering connections must not hold the process.
 		_ = httpServer.Close()
 
 		return fmt.Errorf("shutdown: %w", err)
 	}
 
-	stopped = true
-
-	return stopRuns(cleanup)
+	return nil
 }
 
 // stopRuns runs cleanup bounded by shutdownTimeout.
