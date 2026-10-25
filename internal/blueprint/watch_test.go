@@ -736,15 +736,16 @@ func TestWatch_AFailedReadIsNoDeletion(t *testing.T) {
 	}
 }
 
-// The run line follows the run's status, reason and waiting text; the run
-// moving from one entry to the next is no news.
+// The run line follows the run's status and reason, and the entry it waits
+// at; the run moving from one card to the next is no news. Two check-offs in
+// a row may read the same.
 func TestWatch_TheRunLineIsPostedOnlyWhenTheRunChanges(t *testing.T) {
 	_, _, _, rec, _, fake := startWatchedTwoCards(t)
 
 	entries := []cm.PlaybookEntry{
 		{ID: "e1", Type: "card", Project: "alpha", Card: "ALPHA-001"},
 		{ID: "e2", Type: "manual", Text: "Check the dashboard"},
-		{ID: "e3", Type: "manual", Text: "Check the report"},
+		{ID: "e3", Type: "manual", Text: "Check the dashboard"},
 		{ID: "e4", Type: "card", Project: "alpha", Card: "ALPHA-002"},
 	}
 	book := func(run cm.PlaybookRun) cm.Playbook {
@@ -774,7 +775,7 @@ func TestWatch_TheRunLineIsPostedOnlyWhenTheRunChanges(t *testing.T) {
 	assert.Equal(t, []string{
 		"Playbook ship-the-parser is running.",
 		"Playbook ship-the-parser waits for a human to check off: Check the dashboard",
-		"Playbook ship-the-parser waits for a human to check off: Check the report",
+		"Playbook ship-the-parser waits for a human to check off: Check the dashboard",
 		"Playbook ship-the-parser is running.",
 		"Playbook ship-the-parser needs a human: ALPHA-002 worker failed. Fix it, then Stop and Run the playbook in ContextMatrix.",
 	}, runLines)

@@ -474,11 +474,16 @@ func (s snapshot) changes(prev *snapshot) []string {
 		oldWaiting = prev.Waiting
 	}
 
-	// The run moving from one entry to the next is no news: the cards'
-	// lines say which one works.
-	if s.Run != nil && (s.Run.Status != oldRun.Status || s.Run.Reason != oldRun.Reason || s.Waiting != oldWaiting) {
-		if line := s.runLine(); line != "" {
-			lines = append(lines, line)
+	// The run moving from one card to the next is no news: the cards' lines
+	// say which one works. A wait at another entry is, even when two
+	// check-offs read the same.
+	if s.Run != nil {
+		moved := s.Run.Status == "waiting" && s.Run.Entry != oldRun.Entry
+
+		if s.Run.Status != oldRun.Status || s.Run.Reason != oldRun.Reason || s.Waiting != oldWaiting || moved {
+			if line := s.runLine(); line != "" {
+				lines = append(lines, line)
+			}
 		}
 	}
 
