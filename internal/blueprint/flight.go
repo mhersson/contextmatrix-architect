@@ -1,14 +1,11 @@
 package blueprint
 
 import (
-	"encoding/json"
 	"slices"
 	"sync"
 	"time"
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
-
-	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
 // flight is a run in flight as the view shows it: who runs it and under
@@ -60,37 +57,23 @@ func (f *flight) count(line []byte) {
 		return
 	}
 
-	var ev struct {
-		Kind string `json:"kind"`
-		Data struct {
-			Turn       int     `json:"turn"`
-			Prompt     int64   `json:"prompt_tokens"`
-			Completion int64   `json:"completion_tokens"`
-			CacheRead  int64   `json:"cache_read_tokens"`
-			CacheWrite int64   `json:"cache_creation_tokens"`
-			Cost       float64 `json:"cost_usd"`
-		} `json:"data"`
-	}
-
-	if json.Unmarshal(line, &ev) != nil {
+	l, ok := parseHarnessLine(line)
+	if !ok {
 		return
 	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	switch ev.Kind {
+	switch l.Kind {
 	case "model_request":
-		f.turns = max(f.turns, ev.Data.Turn)
+		f.turns = max(f.turns, l.Data.Turn)
 	case "tool_call":
 		f.toolCalls++
 	case "usage":
-		u := store.RunUsage{
-			PromptTokens: ev.Data.Prompt, CompletionTokens: ev.Data.Completion,
-			CacheReadTokens: ev.Data.CacheRead, CacheWriteTokens: ev.Data.CacheWrite,
-		}
+		u, _ := l.usage(f.price)
 		f.tokens += u.PromptTokens + u.CompletionTokens + u.CacheReadTokens + u.CacheWriteTokens
-		f.spent += max(ev.Data.Cost, priced(f.price, u))
+		f.spent += u.CostUSD
 	}
 }
 

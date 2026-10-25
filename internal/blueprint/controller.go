@@ -502,7 +502,12 @@ func (c *Controller) interruptedStage(ctx context.Context, au audit, bp store.Bl
 	}
 
 	for _, r := range left {
-		if err := c.opts.Store.EndRun(ctx, r.ID, store.RunInterrupted, "process restarted", store.RunUsage{}, c.opts.Now().UTC()); err != nil {
+		usage, err := c.spentBefore(ctx, bp, r)
+		if err != nil {
+			return "", err
+		}
+
+		if err := c.opts.Store.EndRun(ctx, r.ID, store.RunInterrupted, "process restarted", usage, c.opts.Now().UTC()); err != nil {
 			return "", fmt.Errorf("blueprint: mark interrupted: %w", err)
 		}
 	}
@@ -517,6 +522,40 @@ func (c *Controller) interruptedStage(ctx context.Context, au audit, bp store.Bl
 	}
 
 	return stageID, nil
+}
+
+// spentBefore is what r's stored usage lines add up to, as its sink counted
+// them while it ran. The blueprint's stored price prices them on the model it
+// belongs to; a run on another model ran unpriced (see modelFor).
+func (c *Controller) spentBefore(ctx context.Context, bp store.Blueprint, r store.Run) (store.RunUsage, error) {
+	events, err := c.opts.Store.ListRunEventsOfKind(ctx, bp.ID, r.ID, EventHarness)
+	if err != nil {
+		return store.RunUsage{}, fmt.Errorf("blueprint: read the usage of interrupted run %d: %w", r.ID, err)
+	}
+
+	var price *protocol.ModelPrice
+	if r.Model == bp.Model {
+		price = effectivePrice(bp.Price)
+	}
+
+	var sum store.RunUsage
+
+	for _, e := range events {
+		l, ok := parseHarnessLine(e.Payload)
+		if !ok {
+			continue
+		}
+
+		if u, ok := l.usage(price); ok {
+			sum.PromptTokens += u.PromptTokens
+			sum.CompletionTokens += u.CompletionTokens
+			sum.CacheReadTokens += u.CacheReadTokens
+			sum.CacheWriteTokens += u.CacheWriteTokens
+			sum.CostUSD += u.CostUSD
+		}
+	}
+
+	return sum, nil
 }
 
 // leftRunning returns every run a crash left in "running", oldest first.

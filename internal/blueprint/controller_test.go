@@ -849,6 +849,90 @@ func TestStart_RerunsAStageInterruptedByACrash(t *testing.T) {
 	assert.Equal(t, 2, runs[1].Attempt)
 }
 
+func TestStart_AnInterruptedRunKeepsWhatItsUsageLinesSpent(t *testing.T) {
+	// At testPrice the first line's tokens cost 0.20 USD, above the 0.05 it
+	// reports; the second reports 0.15 USD for no tokens.
+	lines := []string{
+		`{"seq":1,"kind":"usage","data":{"prompt_tokens":100000,"completion_tokens":10000,"cost_usd":0.05}}`,
+		`{"seq":2,"kind":"tool_call","data":{"name":"read"}}`,
+		`{"seq":3,"kind":"usage","data":{"cost_usd":0.15}}`,
+	}
+
+	tests := []struct {
+		name     string
+		runModel string
+		capUSD   float64
+		want     float64
+		reruns   bool
+	}{
+		{name: "each line at the higher of reported and priced", runModel: "session/model", want: 0.35, reruns: true},
+		{name: "the cap counts it", runModel: "session/model", capUSD: 0.30, want: 0.35},
+		{name: "a run on another model counts what was reported", runModel: "other/model", want: 0.20, reruns: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, runner, rec := newController(t, artifactRun("# Need"))
+			ctx := context.Background()
+			now := time.Now().UTC()
+
+			require.NoError(t, st.CreateBlueprint(ctx, store.Blueprint{
+				ID: "BP1", Projects: []string{"alpha"}, CostCapUSD: tt.capUSD,
+				Model: "session/model", Price: testPrice(), State: string(StateRunning), CreatedAt: now, UpdatedAt: now,
+			}))
+			_, err := st.PutArtifact(ctx, store.Artifact{BlueprintID: "BP1", Stage: "need", Body: "the stored need"})
+			require.NoError(t, err)
+			oldRun, err := st.StartRun(ctx, store.Run{
+				BlueprintID: "BP1", Stage: "intake", Attempt: 1, Round: 1,
+				Status: store.RunRunning, Model: tt.runModel, StartedAt: now,
+			})
+			require.NoError(t, err)
+
+			for _, line := range lines {
+				require.NoError(t, st.AppendEvent(ctx, store.Event{
+					Time: now, BlueprintID: "BP1", RunID: oldRun, Kind: EventHarness, Payload: []byte(line),
+				}))
+			}
+
+			// Another run's line is not this run's spend.
+			require.NoError(t, st.AppendEvent(ctx, store.Event{
+				Time: now, BlueprintID: "BP1", RunID: oldRun + 100, Kind: EventHarness, Payload: []byte(`{"kind":"usage","data":{"cost_usd":9}}`),
+			}))
+
+			require.NoError(t, c.Start(ctx, startInput("BP1")))
+			c.Wait("BP1")
+
+			runs, err := st.ListRuns(ctx, "BP1")
+			require.NoError(t, err)
+			require.NotEmpty(t, runs)
+			assert.Equal(t, store.RunInterrupted, runs[0].Status)
+			assert.InDelta(t, tt.want, runs[0].Usage.CostUSD, 1e-9)
+			assert.Equal(t, int64(100000), runs[0].Usage.PromptTokens)
+			assert.Equal(t, int64(10000), runs[0].Usage.CompletionTokens)
+
+			if tt.reruns {
+				assert.Equal(t, 1, runner.calls())
+
+				return
+			}
+
+			assert.Equal(t, 0, runner.calls(), "the spent cap refuses the re-run")
+
+			spent, err := st.BlueprintCost(ctx, "BP1")
+			require.NoError(t, err)
+			assert.InDelta(t, tt.want, spent, 1e-9)
+
+			stop, ok := rec.first(EventError)
+			require.True(t, ok)
+			assert.InDelta(t, tt.want, stop.Payload["blueprint_spent_usd"], 1e-9)
+
+			v, err := c.View(ctx, "BP1")
+			require.NoError(t, err)
+			assert.InDelta(t, tt.want, v.Cost.SpentUSD, 1e-9, "the spend reported to ContextMatrix")
+		})
+	}
+}
+
 func TestStart_RecoveryWithoutANeedClosesTheRun(t *testing.T) {
 	c, st, runner, _ := newController(t, artifactRun("# Need"))
 	ctx := context.Background()

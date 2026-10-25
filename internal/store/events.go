@@ -46,6 +46,12 @@ func (s *Store) ListEventsOfKind(ctx context.Context, blueprintID, kind string) 
 		FROM events WHERE blueprint_id = ? AND kind = ? ORDER BY id`, blueprintID, kind)
 }
 
+// ListRunEventsOfKind returns one run's events of kind, oldest first.
+func (s *Store) ListRunEventsOfKind(ctx context.Context, blueprintID string, runID int64, kind string) ([]Event, error) {
+	return s.listEvents(ctx, `SELECT id, ts, blueprint_id, run_id, kind, payload
+		FROM events WHERE blueprint_id = ? AND run_id = ? AND kind = ? ORDER BY id`, blueprintID, runID, kind)
+}
+
 func (s *Store) listEvents(ctx context.Context, query string, args ...any) ([]Event, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

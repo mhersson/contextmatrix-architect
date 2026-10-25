@@ -53,6 +53,42 @@ func usageOf(p *protocol.ModelPrice, res harness.Result) store.RunUsage {
 	return u
 }
 
+// harnessLine is what the ledger and the view read of a harness JSONL line.
+type harnessLine struct {
+	Kind string `json:"kind"`
+	Data struct {
+		Turn       int     `json:"turn"`
+		Prompt     int64   `json:"prompt_tokens"`
+		Completion int64   `json:"completion_tokens"`
+		CacheRead  int64   `json:"cache_read_tokens"`
+		CacheWrite int64   `json:"cache_creation_tokens"`
+		Cost       float64 `json:"cost_usd"`
+	} `json:"data"`
+}
+
+// parseHarnessLine decodes line; ok is false for a line that is not JSON.
+func parseHarnessLine(line []byte) (harnessLine, bool) {
+	var l harnessLine
+
+	return l, json.Unmarshal(line, &l) == nil
+}
+
+// usage is a usage line's token buckets, costed at the higher of its
+// reported and priced cost under p; ok is false for any other line.
+func (l harnessLine) usage(p *protocol.ModelPrice) (store.RunUsage, bool) {
+	if l.Kind != "usage" {
+		return store.RunUsage{}, false
+	}
+
+	u := store.RunUsage{
+		PromptTokens: l.Data.Prompt, CompletionTokens: l.Data.Completion,
+		CacheReadTokens: l.Data.CacheRead, CacheWriteTokens: l.Data.CacheWrite,
+	}
+	u.CostUSD = max(l.Data.Cost, priced(p, u))
+
+	return u, true
+}
+
 // stageEnd is how a step of the pipeline ended.
 type stageEnd int
 
@@ -917,25 +953,15 @@ func (s *harnessSink) account(line []byte) {
 		return
 	}
 
-	var ev struct {
-		Kind string `json:"kind"`
-		Data struct {
-			Prompt     int64   `json:"prompt_tokens"`
-			Completion int64   `json:"completion_tokens"`
-			CacheRead  int64   `json:"cache_read_tokens"`
-			CacheWrite int64   `json:"cache_creation_tokens"`
-			Cost       float64 `json:"cost_usd"`
-		} `json:"data"`
-	}
-
-	if json.Unmarshal(line, &ev) != nil || ev.Kind != "usage" {
+	l, ok := parseHarnessLine(line)
+	if !ok {
 		return
 	}
 
-	cost := max(ev.Data.Cost, priced(s.price, store.RunUsage{
-		PromptTokens: ev.Data.Prompt, CompletionTokens: ev.Data.Completion,
-		CacheReadTokens: ev.Data.CacheRead, CacheWriteTokens: ev.Data.CacheWrite,
-	}))
+	u, ok := l.usage(s.price)
+	if !ok {
+		return
+	}
 
 	// Read before mu: read locks the cell and the parent sink.
 	now := s.limit.read()
@@ -943,7 +969,7 @@ func (s *harnessSink) account(line []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.spent += cost
+	s.spent += u.CostUSD
 	s.cutAt(now)
 }
 
