@@ -96,9 +96,11 @@ func parseAnswer(data map[string]any) (answer, error) {
 // responderTask, never the asker's transcript. The answer is recorded as an
 // assumption, grounded only when its evidence cites a tool result of its
 // own run. A responder that fails leaves the stage to decide; a cancel ends
-// the asking run too. The responder spends from the asking run's cap. When q
-// asks the turned-down answer to question reasks again, 0 for none, the
-// responder is told the person's concern and the answer supersedes that one.
+// the asking run too. The responder spends from the asking run's cap; on a
+// handed-over round, which no stage run asks, it is capped as a run of its
+// own. When q asks the turned-down answer to question reasks again, 0 for
+// none, the responder is told the person's concern and the answer
+// supersedes that one.
 func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion, reasks int) (protocol.RoundAnswer, error) {
 	c, au, stageID := iv.c, iv.sess.audit, iv.st.ID
 	bg := context.WithoutCancel(ctx)

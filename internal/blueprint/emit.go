@@ -437,7 +437,7 @@ func (c *Controller) emitError(ctx context.Context, au audit, id string, err err
 // emitCards creates the draft's missing cards in playbook order, which the
 // contract keeps dependency-first, then the playbook for two or more cards,
 // recording each CM id as soon as it exists. A card CM warns about is kept and
-// its warnings reported: readiness mirrors CM's lint, and the outcomes stage
+// its warnings reported: readiness mirrors CM's lint, and the retrospective
 // learns from what slips through. The steps and notices preflight found at this
 // attempt, by the stored mode, are announced with the cards, and the run start
 // is said to follow unless a repository has no commits. The trees go once

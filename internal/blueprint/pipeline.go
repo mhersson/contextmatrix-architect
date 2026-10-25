@@ -17,18 +17,20 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-// maxContractRounds is how many submits of failing cards one decomposition
-// run gets: the last is accepted with its findings and stops the pipeline.
+// maxContractRounds is how many submits one run gets that its checks refuse:
+// the last is accepted with its problems unless a fatal check refuses it
+// (fatalValidator), and cards accepted so stop the pipeline.
 const maxContractRounds = 3
 
 // outcome is what follows a stage: a model stage to run, the open gate of
 // the stage that completed (gate, with stage and art the artifact that
 // waits), or the pipeline's end with the artifact it ended on. critique
 // marks a gate whose artifact still needs its reviewer, or a builder round
-// after a verdict that does not settle it. On an end, ready means it stands
-// at the sign-off, which only a pack with a stage that checks cards has;
-// findings are what stopped an end that is not ready or, on a ready end, the
-// card findings a loop stage's last round left open.
+// after a verdict that does not settle it. On an end, ready means nothing
+// stopped the pipeline, and the end stands at the sign-off when the pack has
+// a stage that checks cards; findings are what stopped an end that is not
+// ready or, on a ready end, the card findings a loop stage's last round left
+// open.
 // fold, on an outcome that passes a stage, is the fold the caller records.
 type outcome struct {
 	stage    string

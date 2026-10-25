@@ -25,8 +25,8 @@ type addressed struct {
 
 // addressedValidator refuses a builder round's submit whose addressed list
 // is malformed or names a finding the round was not given; ids are the
-// findings it was given. It is bounded like every other check, so a third
-// failing submit is accepted with its problems kept.
+// findings it was given. It is bounded, so a third failing submit is
+// accepted with its problems kept.
 func addressedValidator(ids []string) (func(context.Context, stage.Artifact) error, *validatorState) {
 	return boundedValidator("addressed findings", func(_ context.Context, a stage.Artifact) ([]string, error) {
 		return addressedProblems(a.Data, ids), nil

@@ -136,8 +136,9 @@ const (
 	// it, and by "mode" when a mode switch took it. The newest one is the
 	// offer.
 	EventMockupOffer = "mockup_offer"
-	// EventRetroReply answers a retrospective reply that starts no pass, or
-	// ends a pass that did not complete: the reason code, the message, the
+	// EventRetroReply answers a retrospective reply that starts no pass, ends
+	// a pass that did not complete, or says why a pass that stored its
+	// lessons posted no lesson round: the reason code, the message, the
 	// reply's message id and whether a run goes on working after it.
 	EventRetroReply = "retro_reply"
 	// EventRetroReport is a pass's findings message: every struggled card

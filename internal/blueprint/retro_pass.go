@@ -18,8 +18,9 @@ import (
 // RetroStage is the stage id of a retrospective's run; no pack stage has it.
 const RetroStage = "retrospective"
 
-// Retro reply reasons: why a retrospective reply started no pass, or why a
-// pass did not complete.
+// Retro reply reasons: why a retrospective reply started no pass, why a
+// pass did not complete, or why a pass that stored its lessons posted no
+// lesson round (round_too_big, or stopped when the post failed).
 const (
 	retroRunning        = "running"
 	retroNotEmitted     = "not_emitted"

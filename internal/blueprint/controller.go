@@ -89,7 +89,8 @@ type StartInput struct {
 	// Unattended is the new-blueprint dialog's toggle; like PlainLanguage,
 	// only the start that creates the blueprint is read.
 	Unattended bool
-	// MCPAPIKey lists CM's projects for the code stages.
+	// MCPAPIKey is the session's ContextMatrix MCP key: it lists CM's
+	// projects, opens a stage run's cm tools and connects (ConnectCM).
 	MCPAPIKey string
 	// GitCredentialsToken is the bearer CM mints repository credentials for.
 	GitCredentialsToken string
@@ -117,7 +118,8 @@ type Workspace interface {
 }
 
 // CMClient is the ContextMatrix surface emission, its preflight, the run
-// start and the watch use. internal/cm's Client implements it; tests fake it.
+// start, the watch and the retrospective use. internal/cm's Client
+// implements it; tests fake it.
 type CMClient interface {
 	ListProjects(ctx context.Context) ([]cm.Project, error)
 	ListPlaybooks(ctx context.Context) ([]cm.PlaybookSummary, error)
@@ -143,7 +145,8 @@ type Options struct {
 	Models map[string]string
 	// Sink receives every controller event after it is stored. nil discards.
 	Sink func(Event)
-	// HarnessLine receives every raw harness JSONL line. nil discards.
+	// HarnessLine receives each harness JSONL line once masked, but for those
+	// a run keeps off the panel. nil discards.
 	HarnessLine func(blueprintID string, line []byte)
 	Now         func() time.Time
 	// Workspace holds the read-only trees code stages read. nil disables
@@ -171,8 +174,8 @@ type Options struct {
 	// blueprint and time; empty refuses export.
 	ExportDir string
 	// ConnectCM opens a ContextMatrix MCP session with the session's key for
-	// emission, its preflight, the run start and the watch. nil refuses
-	// emission with a clear error.
+	// emission, its preflight, the run start, the watch and the
+	// retrospective. nil refuses emission with a clear error.
 	ConnectCM func(ctx context.Context, mcpAPIKey string) (CMClient, error)
 	// CallerIdentity is the agent_id every ContextMatrix write passes. It is
 	// a human: id, because run_card and run_playbook are human-gated; stage
@@ -583,10 +586,10 @@ func (c *Controller) leftRunning(ctx context.Context, id string) ([]store.Run, e
 }
 
 // Message handles one user message: chat about the round a human answers
-// while it waits, the need while the first stage has no artifact, the
-// sign-off decision (approve or reject <feedback>) at a ready end, or a
-// note. The abort and export
-// commands are parsed by the webhook and reach Abort and Export instead.
+// while it waits, a note while a run is in flight, and otherwise what input
+// makes of it, such as the need, a reply to the mockup offer, or a decision
+// at an open gate or the sign-off. The abort and export commands are parsed
+// by the webhook and reach Abort and Export instead.
 func (c *Controller) Message(ctx context.Context, id, text, msgID string) error {
 	trimmed := strings.TrimSpace(text)
 
@@ -1194,7 +1197,7 @@ func (c *Controller) closingDown() bool {
 }
 
 // Wait blocks until no run is in flight for id, including a run whose
-// session has ended. For tests and shutdown.
+// session has ended. For tests: Shutdown waits on the runs itself.
 func (c *Controller) Wait(id string) {
 	for {
 		c.mu.Lock()

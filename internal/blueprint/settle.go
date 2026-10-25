@@ -172,11 +172,9 @@ func (c *Controller) settleOn(ctx context.Context, r *run, id string) {
 }
 
 // follow runs what follows the round the pipeline stands at on slot r,
-// which the caller holds: the continuation once the round is answered, the
-// responder for a handed-over round, a chat run for chat its stage has not
-// seen, else nothing and the slot is released. wake runs a stalled round again: a
-// message arrived. A round that cannot be read or closed fails the
-// blueprint.
+// which the caller holds: the step nextSegment names, else nothing and the
+// slot is released. wake runs a stalled round again: a message arrived. A
+// round that cannot be read or closed fails the blueprint.
 func (c *Controller) follow(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, wake bool) {
 	step, err := c.nextSegment(ctx, sess, bp, wake)
 	if err != nil {
