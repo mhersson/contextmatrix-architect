@@ -14,9 +14,12 @@ import (
 )
 
 // validConfig passes Validate: the three keys without a usable default.
-const validConfig = "contextmatrix_url: http://localhost:18080\n" +
-	"api_key: 0123456789abcdef0123456789abcdef\n" +
-	"state_dir: /tmp/architect-state\n"
+// validRequired is it without state_dir, for a case that sets its own.
+const (
+	validRequired = "contextmatrix_url: http://localhost:18080\n" +
+		"api_key: 0123456789abcdef0123456789abcdef\n"
+	validConfig = validRequired + "state_dir: /tmp/architect-state\n"
+)
 
 // runCLI runs the command tree with args and returns stdout and the error
 // main would print.
@@ -76,8 +79,9 @@ func TestConfigValidate_MissingFileFailsWhateverTheEnv(t *testing.T) {
 
 func TestConfigValidate_NamesTheFailingKey(t *testing.T) {
 	cases := map[string]struct{ body, key string }{
-		"invalid value": {"contextmatrix_url: http://localhost:18080\napi_key: short\n", "api_key"},
-		"unknown key":   {validConfig + "prot: 1\n", "prot"},
+		"invalid value":      {"contextmatrix_url: http://localhost:18080\napi_key: short\n", "api_key"},
+		"unknown key":        {validConfig + "prot: 1\n", "prot"},
+		"relative state_dir": {validRequired + "state_dir: ./state\n", "state_dir"},
 	}
 
 	for name, c := range cases {

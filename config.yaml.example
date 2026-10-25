@@ -17,7 +17,7 @@ api_key: ""
 # Default: human:architect. Env: CONTEXTMATRIX_ARCHITECT_CALLER_IDENTITY
 caller_identity: "human:architect"
 
-# Base URL of the ContextMatrix instance. Required.
+# Base URL of the ContextMatrix instance, an http or https URL. Required.
 # Env: CONTEXTMATRIX_ARCHITECT_CONTEXTMATRIX_URL
 contextmatrix_url: "http://localhost:8080"
 
