@@ -61,6 +61,25 @@ func TestLoadEmbedded_ReferencesResolve(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestPersonas_NamesEveryPersonaARunCanUse(t *testing.T) {
+	p, err := LoadEmbedded()
+	require.NoError(t, err)
+
+	want := []string{RetroPersona}
+
+	for _, s := range p.Stages {
+		want = append(want, s.Persona)
+
+		if s.Reviewer != nil {
+			want = append(want, s.Reviewer.Persona)
+		}
+	}
+
+	slices.Sort(want)
+
+	assert.Equal(t, slices.Compact(want), p.Personas())
+}
+
 func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	p, err := LoadEmbedded()
 	require.NoError(t, err)

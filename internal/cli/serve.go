@@ -26,7 +26,6 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/code"
 	"github.com/mhersson/contextmatrix-architect/internal/config"
-	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/research"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
@@ -51,7 +50,12 @@ func newServeCmd() *cobra.Command {
 				return fmt.Errorf("config %s: %w", path, err)
 			}
 
-			return runServe(cmd.Context(), cfg)
+			deps, err := loadRuntime(cfg)
+			if err != nil {
+				return fmt.Errorf("config %s: %w", path, err)
+			}
+
+			return runServe(cmd.Context(), cfg, deps)
 		},
 	}
 	cmd.Flags().StringVar(&path, "config", defaultConfigPath(), "config file path")
@@ -78,31 +82,18 @@ func newLogger(level string) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
 }
 
-// buildServer wires store, pack, controller and the webhook server. The
-// runner is injected so tests can replace the model, and the build so a test
-// can tell a wired build from an unstamped test binary's. The returned cleanup
-// stops the replay janitor and the controller's runs, then closes the store.
-func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, runner blueprint.Runner, build protocol.BuildInfo) (*webhook.Server, func(context.Context) error, error) {
+// buildServer wires store, controller and the webhook server over what
+// loadRuntime loaded. The runner is injected so tests can replace the model,
+// and the build so a test can tell a wired build from an unstamped test
+// binary's. The returned cleanup stops the replay janitor and the
+// controller's runs, then closes the store.
+func buildServer(ctx context.Context, cfg *config.Config, deps *runtimeDeps, logger *slog.Logger, runner blueprint.Runner, build protocol.BuildInfo) (*webhook.Server, func(context.Context) error, error) {
 	if err := os.MkdirAll(cfg.StateDir, 0o750); err != nil {
 		return nil, nil, fmt.Errorf("state dir: %w", err)
 	}
 
 	st, err := store.Open(ctx, filepath.Join(cfg.StateDir, "architect.db"))
 	if err != nil {
-		return nil, nil, err
-	}
-
-	var pk *pack.Pack
-
-	if cfg.Pack == "" {
-		pk, err = pack.LoadEmbedded()
-	} else {
-		pk, err = pack.LoadDir(cfg.Pack)
-	}
-
-	if err != nil {
-		_ = st.Close()
-
 		return nil, nil, err
 	}
 
@@ -114,7 +105,7 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 
 	ctl := blueprint.New(blueprint.Options{
 		Store:          st,
-		Pack:           pk,
+		Pack:           deps.pack,
 		Runner:         runner,
 		Logger:         logger,
 		MaxRunCostUSD:  cfg.MaxRunCostUSD,
@@ -230,12 +221,12 @@ func cmReadTools(baseURL string) func(ctx context.Context, mcpAPIKey, tag string
 	}
 }
 
-func runServe(ctx context.Context, cfg *config.Config) error {
+func runServe(ctx context.Context, cfg *config.Config, deps *runtimeDeps) error {
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
 	warnMissingSearchTools(logger, exec.LookPath)
 
-	srv, cleanup, err := buildServer(ctx, cfg, logger, stage.NewRunner(cfg.ReasoningEffort, cfg.ReplayReasoning), buildinfo.Info())
+	srv, cleanup, err := buildServer(ctx, cfg, deps, logger, stage.NewRunner(cfg.ReasoningEffort, cfg.ReplayReasoning), buildinfo.Info())
 	if err != nil {
 		return err
 	}

@@ -108,7 +108,10 @@ func TestServe_EndToEnd(t *testing.T) {
 	runner := &stage.Runner{NewLLM: func(protocol.LLMEndpoint) llm.LLM { return model }}
 
 	build := protocol.BuildInfo{Commit: strings.Repeat("a", 40), BuildTime: "2026-10-21T08:00:00Z", Changes: []protocol.Change{}}
-	srv, cleanup, err := buildServer(context.Background(), cfg, testLogger(t), runner, build)
+	deps, err := loadRuntime(cfg)
+	require.NoError(t, err)
+
+	srv, cleanup, err := buildServer(context.Background(), cfg, deps, testLogger(t), runner, build)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cleanup(context.Background()) })
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"regexp"
@@ -746,6 +747,10 @@ func (p *Pack) Stage(id string) (Stage, bool) {
 
 // Persona returns a persona's text; empty when unknown.
 func (p *Pack) Persona(name string) string { return p.personas[name] }
+
+// Personas returns the names of every persona a run can use, sorted: each
+// stage's, each reviewer's and the retrospective's.
+func (p *Pack) Personas() []string { return slices.Sorted(maps.Keys(p.personas)) }
 
 // Instructions returns a stage's instructions; empty when unknown.
 func (p *Pack) Instructions(stageID string) string { return p.instructions[stageID] }

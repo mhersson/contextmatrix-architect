@@ -53,7 +53,9 @@ message_dedup_cache_size: 1000
 message_dedup_ttl_seconds: 600
 
 # Per-persona model overrides (slugs only); the session's model is the default
-# for every persona not listed. Default: none.
+# for every persona not listed. Each key must name a persona of the pack; an
+# unknown one stops serve and config validate, whose error lists the pack's
+# personas. Default: none.
 # Env: CONTEXTMATRIX_ARCHITECT_MODELS__<persona>
 models: {}
 
