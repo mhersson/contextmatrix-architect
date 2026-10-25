@@ -229,7 +229,10 @@ type snapshot struct {
 	Repos   []cm.PlaybookRepo `json:"repos"`
 	// Manual is a single card's manual checks.
 	Manual []string `json:"manual"`
-	done   bool
+	// Followups counts the follow-ups the playbook holds in ContextMatrix,
+	// where people may add or remove them during the run.
+	Followups int `json:"followups"`
+	done      bool
 }
 
 // reportSnapshot stores snap as what the watch has reported. The payload is
@@ -327,6 +330,7 @@ func (c *Controller) snapshot(ctx context.Context, client CMClient, id string) (
 	}
 
 	snap.Repos = pb.Repos
+	snap.Followups = len(pb.Followups)
 
 	if pb.Run != nil {
 		snap.Run = &runView{Status: pb.Run.Status, Entry: pb.Run.Entry, Reason: pb.Run.Reason}
@@ -430,5 +434,11 @@ func (s snapshot) endPayload() map[string]any {
 		cards = append(cards, map[string]any{"card": cv.ID, "state": cv.State, "pr": cv.PR})
 	}
 
-	return map[string]any{"playbook": s.Playbook, "repos": repos, "cards": cards, "manual": s.Manual}
+	end := map[string]any{"playbook": s.Playbook, "repos": repos, "cards": cards, "manual": s.Manual}
+
+	if s.Playbook != "" && s.Followups > 0 {
+		end["followups"] = s.Followups
+	}
+
+	return end
 }

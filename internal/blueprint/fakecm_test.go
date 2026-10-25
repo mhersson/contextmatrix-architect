@@ -166,7 +166,15 @@ func (f *fakeCM) CreatePlaybook(_ context.Context, in cm.PlaybookInput) (string,
 
 	id := strings.ReplaceAll(strings.ToLower(in.Title), " ", "-")
 	f.playbooks = append(f.playbooks, in)
-	f.bookSeq[id] = []cm.Playbook{{ID: id, Title: in.Title, Total: len(in.Entries)}}
+
+	// The playbook serves the follow-ups it was created with, numbered as
+	// ContextMatrix numbers them.
+	var followups []cm.PlaybookFollowup
+	for i, fu := range in.Followups {
+		followups = append(followups, cm.PlaybookFollowup{ID: fmt.Sprintf("f%d", i+1), Text: fu.Text, Cards: fu.Cards})
+	}
+
+	f.bookSeq[id] = []cm.Playbook{{ID: id, Title: in.Title, Total: len(in.Entries), Followups: followups}}
 
 	return id, nil
 }

@@ -1985,3 +1985,36 @@ func TestSignoffActions_TheCriticalApproveWinsOverWarnings(t *testing.T) {
 		})
 	}
 }
+
+func TestSignoff_ThePayloadCarriesTheFollowups(t *testing.T) {
+	script := twoCardScript()
+	data := followupCards("")
+	data["manual"] = []any{
+		map[string]any{"id": "M1", "text": "Check the dashboard"},
+		map[string]any{"id": "M2", "text": "Look at the report"},
+	}
+	data["order"] = []any{"D1", "M1", "D2", "M2"}
+	script["decomposition"] = submitting(data)
+
+	c, _, _, rec, _ := newPipeline(t, script)
+	c.opts.ConnectCM = newFakeCM().connect
+
+	drive(t, c, "BP1")
+
+	so, ok := rec.first(EventSignOff)
+	require.True(t, ok)
+	assert.Equal(t, []string{"M2"}, so.Payload["followups"])
+	assert.Equal(t, []string{"D1", "M1", "D2"}, so.Payload["order"], "a follow-up is no run step")
+	assert.Len(t, so.Payload["manual"], 2, "manual still holds every entry")
+}
+
+func TestSignoff_APayloadWithoutFollowupsHasAnEmptyList(t *testing.T) {
+	c, _, _, rec, _ := newPipeline(t, twoCardScript())
+	c.opts.ConnectCM = newFakeCM().connect
+
+	drive(t, c, "BP1")
+
+	so, ok := rec.first(EventSignOff)
+	require.True(t, ok)
+	assert.Equal(t, []string{}, so.Payload["followups"])
+}

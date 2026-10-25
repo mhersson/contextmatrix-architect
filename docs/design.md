@@ -71,7 +71,7 @@ Settled during design. Each has its reason so it is not re-litigated.
 | SQLite is the record; markdown is a rendering             | One store for artifacts, gates, transcripts, audit and cost. Committing per-stage markdown into code repos bloats them fast; an opt-in automatic export serves teams that review in pull requests. |
 | Everything is logged                                      | Every run's full transcript (less web search result lists and `read_artifact` results, whose artifacts the record holds, and reasoning details that redaction would change, dropped whole) and an append-only event log. The append-only tables are never updated or deleted. The export is a complete audit record, less the web search result lists the next row keeps out. |
 | Search result lists are never stored                      | The search provider's terms forbid storing or caching results beyond transient use, and no storage rights are bought. The model sees a list in the run that searched; transcripts, events and exports keep the query and the result count. The pages `web_fetch` reads are the recorded sources, so a claim cites a page the architect read itself. A deliberate, permanent exception, with no switch to record lists. |
-| A playbook for several cards, a bare card for one         | Manual entries are the only way to express human and live checks across cards. A one-card playbook would end in a merged PR on a playbook branch plus a second PR to main; a bare card ends in one PR to the default branch. The `emissions` table is the blueprint's handle in CM either way. |
+| A playbook for several cards, a bare card for one         | Manual entries are the way to express a human or live check that holds the run between cards; a check after the last card is a follow-up of the playbook, which the runner never reads. A one-card playbook would end in a merged PR on a playbook branch plus a second PR to main; a bare card ends in one PR to the default branch. The `emissions` table is the blueprint's handle in CM either way. |
 | Fixed stage list, repeated per slice; no composer; size is never estimated | Every stage earns its place for any need. Stages the pack marks per slice repeat once per slice, so slicing's count decides how much runs. A stage with nothing to do collapses: it is recorded but not run, as the shared decisions stage is for one slice. Gates fold and the playbook decision falls out of counts in the artifacts (slices, cards), so a need is never classified small or big up front. Evidence for skippable stages would come from the retrospective's findings. |
 | Personas attached to stages, no agent system              | Roles are prompt text in the pack. The composer-and-agents machinery of AI-DLC is a second decision engine the first one has not earned.                         |
 | Reviewers read from the next role's seat and keep a findings ledger | A reviewer that trusts the builder's notes passes artifacts the next role cannot use. Each gated artifact is judged by the role that works from it next, with the code and the pages it cites to check claims, and told to refute rather than confirm. Findings keep their id through the attempt and every revision is reviewed again, so a finding is fixed only when the reviewer sees it fixed in the artifact, never on the builder's word; an open critical finding fails the review whatever the score. |
@@ -1252,7 +1252,8 @@ an earlier slice's stay run steps), with each project's setup as the earliest
 slice that sets it gives it and
 the last slice's title, so the blueprint ends in one playbook across every
 project. Default and `auto` modes show the sign-off (the entries in playbook
-order with the card that also writes `AGENTS.md` marked, the playbook title,
+order with the card that also writes `AGENTS.md` marked, the follow-ups
+(`followups`, manual ids listed after the run order, apart from it), the playbook title,
 the assumptions, the preflight result and, at the top, the cards readiness
 did not pass and readiness's findings across the blueprint, critical first
 and, on a plain-language blueprint, the plain summary) and wait: `approve`
@@ -1342,12 +1343,15 @@ Then, in order:
    readiness checks mirror its lint, and the retrospective learns from
    what slips through.
 3. **Playbook**, for two or more cards: card and manual entries in draft
-   order, the draft's title, and a description with intake's problem and
+   order (the follow-ups are not entries), the follow-ups as `followups`
+   (each manual entry's text, with `" - "` and its note when it has one, and
+   no cards, as a manual entry names none; the key is left out when there are
+   none, since an older ContextMatrix refuses it), the draft's title, and a description with intake's problem and
    value and every assumption with its latest status, with a Sources
    section naming the repositories of every project its cards are in. A
    single card carries the problem and the assumptions with their status
-   in its Context section, and its manual checks are listed in the
-   session.
+   in its Context section, and its manual checks, follow-ups included, are
+   listed in the session.
 4. The blueprint's trees are removed and its state is `emitted`. Running is
    a human action in CM, or in yolo mode `run_card` for one card and
    `run_playbook` for several, started once and recorded in `emissions`.
@@ -1364,13 +1368,14 @@ Then, in order:
    once as waiting for a human. The watch ends when the single card is done
    or not planned, or the playbook run completes or every entry is complete,
    with a closing summary: each card's state and pull request, the playbook
-   and one compare link per repository, the architect's total cost, and
-   "Reply export for the bundle, retrospective to learn from the cards that
-   struggled, or end the session." A card the watch first sees parked,
-   stalled or blocked brings the retrospective's offer, once (see Learning).
-   Then the blueprint's
-   state is `done`. The summary is posted once: a restart between the two
-   finds it stored and only sets the state, and a reopen of a `done`
+   and one compare link per repository, a line pointing to the playbook's
+   follow-ups in ContextMatrix with the count the playbook then holds (not
+   their text), the architect's total cost, and "Reply export for the bundle,
+   retrospective to learn from the cards that struggled, or end the session."
+   A card the watch first sees parked, stalled or blocked brings the
+   retrospective's offer, once (see Learning). Then the blueprint's state is
+   `done`. The summary is posted once: a restart between the two finds it
+   stored and only sets the state, and a reopen of a `done`
    blueprint posts nothing. Ending the session stays with the user.
 
 The architect does not use CM's Jira import for cards. Its traps hit exactly
@@ -1922,6 +1927,7 @@ internal/webhook     CM-facing chat-backend protocol on backendkit webhookcore a
 | Pin protocol v0.35.0 (`MessagePayload.Mockup`, `MockupReply`); panel: the mockup sheet while `mockup:<n>` is open, the source sealed in CM's mockup frame (no access to CM or the session; network blocked by policy; see CM's trust model) with `window.mockupSettings` set before its first script and a `mockup:settings` event on every flip, the suggestions as switches and choices that flip it with no message, a chat box that sends `chat` with the settings shown, "Use this design" sending `use` with every setting of the revision shown, and "Skip mockups" sending `skip`; a card's fenced `mockup` block shown sealed the same way behind "Show mockup"; `create_card` and `update_card`'s lint skipping a mockup block's content by the shared grammar | mockups |
 | Panel: board cards take their colours from the board's `cards[].type` and `priority`, as the Cards sheet does; a board without them stays grey | board colours |
 | Panel: the sign-off and board sheets show `notices` in a box of their own, apart from the steps, with no check-off | emission notices |
+| Pin protocol v0.38.0; the new-blueprint dialog's Unattended switch, stored on the session row and sent as `ArchitectStart.Unattended` on every start; playbooks gain follow-ups (`create_playbook` takes `followups`, `get_playbook` returns them, the runner never reads them); panel: the sign-off and cards sheets show the manual ids in `followups` as after the run | unattended |
 | Panel: a gate inbox | later |
 | A card-creator field or creation log entry, so architect cards can be compared with human-written ones and flagged for vetting | later |
 | `source` input on `create_card` and `create_playbook`, validated against `project_map`              | Jira mirror (later) |

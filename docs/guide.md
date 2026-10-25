@@ -578,15 +578,16 @@ Each card is listed with its project, kind and priority, how many places in the
 code it touches, how many criteria it carries and the card it comes after;
 **Card body** opens the full text.
 
-Each time the senior developer hands in the cards, the architect checks them
-against its own rules for cards, the **contract checks** ("Checked by Contract
-checks" in the title block). Every part is there. Every file named under Where
-exists in the code, and every file marked new does not yet. Each criterion sits
-on exactly one card, and each manual check has its place in the run order. No
-card points at text it does not carry, and no wording would make the agent take
-a new feature for a bug fix. A draft that breaks a rule goes back with the list
-of problems. If the cards still fail after three tries, the blueprint ends; see
-[When a blueprint stops](reference.md#when-a-blueprint-stops).
+Each time the senior developer hands in the cards, the architect checks
+them against its own rules for cards, the **contract checks** ("Checked by
+Contract checks" in the title block). Every part is there. Every file named
+under Where exists in the code, and every file marked new does not yet.
+Each criterion sits on exactly one card, and each manual check has its
+place in the run order or among the follow-ups. No card points at text it
+does not carry, and no wording would make the agent take a new feature for
+a bug fix. A draft that breaks a rule goes back with the list of problems.
+If the cards still fail after three tries, the blueprint ends;
+see [When a blueprint stops](reference.md#when-a-blueprint-stops).
 
 Cards that build a screen of the mockup you chose carry that mockup: when the
 cards go on the board, every card of such a slice gets it, with your settings,

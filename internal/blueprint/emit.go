@@ -588,6 +588,21 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 			}
 		}
 
+		// A follow-up's card list stays empty: a manual entry names no cards,
+		// so nothing attributes it reliably.
+		var followups []cm.PlaybookFollowupInput
+
+		for _, id := range draft.Followups {
+			if m, ok := manual[id]; ok {
+				text := m.Text
+				if note := strings.TrimSpace(m.Note); note != "" {
+					text += " - " + note
+				}
+
+				followups = append(followups, cm.PlaybookFollowupInput{Text: text})
+			}
+		}
+
 		var own []string
 		for _, card := range draft.Cards {
 			own = append(own, ownRepos(projects, card.Project)...)
@@ -595,7 +610,8 @@ func (c *Controller) emitCards(ctx context.Context, au audit, bp store.Blueprint
 
 		wctx, cancel := writeContext(ctx)
 		id, err := client.CreatePlaybook(wctx, cm.PlaybookInput{
-			Title: draft.Title, Description: withSources(summary.description(bp.ID), sources, own), Entries: entries, AgentID: c.opts.CallerIdentity,
+			Title: draft.Title, Description: withSources(summary.description(bp.ID), sources, own), Entries: entries,
+			Followups: followups, AgentID: c.opts.CallerIdentity,
 		})
 
 		cancel()

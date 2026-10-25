@@ -2,6 +2,7 @@ package blueprint
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/contract"
+	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -920,4 +922,106 @@ func TestSourceLine(t *testing.T) {
 			assert.Equal(t, tt.want, sourceLine(tt.src, own))
 		})
 	}
+}
+
+// followupCards is twoCards with its manual check after the last card, so it
+// is stored as a follow-up.
+func followupCards(note string) map[string]any {
+	data := twoCards()
+	data["manual"] = []any{map[string]any{"id": "M1", "text": "Check the dashboard", "note": note}}
+	data["order"] = []any{"D1", "D2", "M1"}
+
+	return data
+}
+
+// submitting is a decomposition run that submits data through the checks, so
+// the manual entries after the last card are stored as follow-ups.
+func submitting(data map[string]any) func(context.Context, stage.Input) (stage.Output, error) {
+	return func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		return submitted(ctx, in, "# Cards", data)
+	}
+}
+
+func TestEmit_FollowupsGoToThePlaybookNotItsEntries(t *testing.T) {
+	script := twoCardScript()
+	script["decomposition"] = submitting(followupCards("n"))
+
+	c, st, _, _, _ := newPipeline(t, script)
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+
+	drive(t, c, "BP1")
+	emitNow(t, c, st, "BP1")
+
+	_, books := fake.inputs()
+	require.Len(t, books, 1)
+	assert.Equal(t, []cm.PlaybookEntryInput{
+		{Type: "card", Project: "alpha", Card: "ALPHA-001"},
+		{Type: "card", Project: "alpha", Card: "ALPHA-002"},
+	}, books[0].Entries, "a follow-up is no entry")
+	assert.Equal(t, []cm.PlaybookFollowupInput{{Text: "Check the dashboard - n"}}, books[0].Followups)
+}
+
+func TestEmit_AFollowupWithoutANoteIsItsText(t *testing.T) {
+	script := twoCardScript()
+	script["decomposition"] = submitting(followupCards("  "))
+
+	c, st, _, _, _ := newPipeline(t, script)
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+
+	drive(t, c, "BP1")
+	emitNow(t, c, st, "BP1")
+
+	_, books := fake.inputs()
+	require.Len(t, books, 1)
+	assert.Equal(t, []cm.PlaybookFollowupInput{{Text: "Check the dashboard"}}, books[0].Followups)
+}
+
+func TestEmit_APlaybookWithoutFollowupsSendsNone(t *testing.T) {
+	c, st, _, _, _ := newPipeline(t, twoCardScript())
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+
+	drive(t, c, "BP1")
+	emitNow(t, c, st, "BP1")
+
+	_, books := fake.inputs()
+	require.Len(t, books, 1)
+
+	raw, err := json.Marshal(books[0])
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `"followups"`, "an older ContextMatrix refuses the key")
+}
+
+func TestEmit_ASingleCardKeepsItsChecksInTheSession(t *testing.T) {
+	data := goodCards()
+	data["manual"] = []any{map[string]any{"id": "M1", "text": "Check the dashboard"}}
+	data["order"] = []any{"D1", "M1"}
+
+	script := happyScript()
+	script["decomposition"] = submitting(data)
+
+	c, st, _, rec, _ := newPipeline(t, script)
+	c.opts.WatchInterval = 5 * time.Millisecond
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+
+	drive(t, c, "BP1")
+	emitNow(t, c, st, "BP1")
+
+	_, books := fake.inputs()
+	assert.Empty(t, books, "one card, no playbook")
+
+	ev, ok := rec.first(EventEmitted)
+	require.True(t, ok)
+	assert.Equal(t, []string{"Check the dashboard"}, ev.Payload["manual"])
+
+	fake.setCards("ALPHA-001", cm.Card{ID: "ALPHA-001", State: "done", WorkerStatus: "completed"})
+	rec.waitFor(t, EventWatchEnded)
+
+	end, ok := rec.first(EventWatchEnded)
+	require.True(t, ok)
+	assert.Equal(t, []string{"Check the dashboard"}, end.Payload["manual"])
+	assert.NotContains(t, end.Payload, "followups")
 }

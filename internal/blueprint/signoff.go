@@ -258,7 +258,7 @@ func (c *Controller) signoffPayload(ctx context.Context, au audit, bp store.Blue
 	}
 
 	payload := map[string]any{
-		"version": out.art.Version, "cards": cards, "order": draft.Order, "manual": manual, "title": draft.Title,
+		"version": out.art.Version, "cards": cards, "order": draft.Order, "manual": manual, "followups": nonNil(draft.Followups), "title": draft.Title,
 		"blocking": nonNil(pf.Blocking), "warnings": nonNil(pf.Warnings), "assumptions": assumptions,
 		"cross": crossPayload(crossOf(out.art)), "not_ready": nonNil(out.findings),
 	}

@@ -1863,3 +1863,85 @@ func TestLogEntryFor_ASignoffNamesTheCardsReadinessDidNotPass(t *testing.T) {
 		}
 	})
 }
+
+func TestLogEntryFor_ASignoffListsTheFollowupsAfterTheRunOrder(t *testing.T) {
+	payload := func(extra map[string]any) map[string]any {
+		p := map[string]any{
+			"version": 1,
+			"cards": []any{
+				map[string]any{"id": "D1", "project": "alpha", "title": "Add the parser", "type": "feature", "priority": "medium"},
+				map[string]any{"id": "D2", "project": "alpha", "title": "Wire the parser", "type": "feature", "priority": "medium"},
+			},
+			"order":  []any{"D1", "D2"},
+			"manual": []any{map[string]any{"id": "M1", "text": "Check the dashboard"}},
+			"title":  "Ship the parser",
+		}
+		maps.Copy(p, extra)
+
+		return p
+	}
+
+	t.Run("a follow-up sits under its heading after the last order line", func(t *testing.T) {
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: payload(map[string]any{"followups": []any{"M1"}})})
+		require.True(t, ok)
+
+		heading := strings.Index(entry.Content, "After the run (follow-ups):")
+		require.GreaterOrEqual(t, heading, 0)
+		assert.Greater(t, heading, strings.Index(entry.Content, "2. D2"))
+
+		line := strings.Index(entry.Content, "M1")
+		assert.Greater(t, line, heading)
+		assert.Greater(t, strings.Index(entry.Content, "Check the dashboard"), heading)
+	})
+
+	t.Run("a follow-up is not a numbered step", func(t *testing.T) {
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: payload(map[string]any{"followups": []any{"M1"}})})
+		require.True(t, ok)
+		assert.NotContains(t, entry.Content, "3. M1")
+	})
+
+	t.Run("no follow-ups, no heading", func(t *testing.T) {
+		for _, extra := range []map[string]any{nil, {"followups": []any{}}} {
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventSignOff, BlueprintID: "S1", Payload: payload(extra)})
+			require.True(t, ok)
+			assert.NotContains(t, entry.Content, "After the run (follow-ups):")
+		}
+	})
+}
+
+func TestLogEntryFor_TheClosingSummaryPointsToTheFollowups(t *testing.T) {
+	end := func(extra map[string]any) blueprint.Event {
+		p := map[string]any{
+			"playbook": "ship-the-parser", "repos": []any{},
+			"cards":  []any{map[string]any{"card": "ALPHA-001", "state": "done", "pr": ""}},
+			"manual": []any{},
+		}
+		maps.Copy(p, extra)
+
+		return blueprint.Event{Kind: blueprint.EventWatchEnded, BlueprintID: "S1", Payload: p}
+	}
+
+	t.Run("a playbook with follow-ups names itself and lists none", func(t *testing.T) {
+		entry, ok := logEntryFor(end(map[string]any{"followups": 2}))
+		require.True(t, ok)
+
+		_, after, found := strings.Cut(entry.Content, "ALPHA-001 is done")
+		require.True(t, found)
+		assert.Contains(t, after, "ship-the-parser", "a line after the cards names the playbook")
+		assert.Contains(t, after, "2")
+		assert.NotContains(t, entry.Content, "Check the dashboard")
+	})
+
+	t.Run("without follow-ups there is no such line", func(t *testing.T) {
+		with, ok := logEntryFor(end(map[string]any{"followups": 1}))
+		require.True(t, ok)
+
+		without, ok := logEntryFor(end(nil))
+		require.True(t, ok)
+		assert.Less(t, len(without.Content), len(with.Content))
+
+		_, after, found := strings.Cut(without.Content, "ALPHA-001 is done")
+		require.True(t, found)
+		assert.NotContains(t, after, "ship-the-parser")
+	})
+}

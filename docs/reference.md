@@ -79,8 +79,9 @@ word "slicing" as its feedback.
 
 ### At the sign-off
 
-The sign-off lists the cards in order, the assumptions the plan rests on, and
-the result of a last check against ContextMatrix (the **preflight**: does every
+The sign-off lists the cards in order, any checks left for you after the run
+(**follow-ups**, kept in the playbook and not run steps), the assumptions the
+plan rests on, and the result of a last check against ContextMatrix (the **preflight**: does every
 card's project exist and have a repository, and is there anything to warn
 about). In Default and Auto mode it waits for you.
 

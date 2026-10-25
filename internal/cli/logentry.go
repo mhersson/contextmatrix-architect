@@ -427,6 +427,13 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 			}
 		}
 
+		switch n := int(num(p["followups"])); {
+		case n == 1:
+			fmt.Fprintf(&b, "\n\nPlaybook %s keeps 1 follow-up for you to check after the run; open it in ContextMatrix.", str(p["playbook"]))
+		case n > 1:
+			fmt.Fprintf(&b, "\n\nPlaybook %s keeps %d follow-ups for you to check after the run; open them in ContextMatrix.", str(p["playbook"]), n)
+		}
+
 		if manual := stringsOf(p["manual"]); len(manual) > 0 {
 			b.WriteString("\n\nChecks a human runs now:")
 
@@ -876,6 +883,14 @@ func signoffText(p map[string]any, sliced bool) (body, reply string) {
 		}
 
 		fmt.Fprintf(&b, "%d. %s manual: %s\n", i+1, id, manual[id])
+	}
+
+	if ids := stringsOf(p["followups"]); len(ids) > 0 {
+		b.WriteString("\nAfter the run (follow-ups):\n")
+
+		for _, id := range ids {
+			fmt.Fprintf(&b, "- %s: %s\n", id, manual[id])
+		}
 	}
 
 	if title := str(p["title"]); title != "" && len(cards) > 1 {

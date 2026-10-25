@@ -306,6 +306,7 @@ func TestWatch_StoresTheReportedStateUnderStableKeys(t *testing.T) {
 		"run": {"status": "waiting", "entry": "e3", "reason": "ALPHA-002 worker failed"},
 		"waiting": "",
 		"repos": [{"project": "alpha", "compare_url": "https://example.com/compare"}],
+		"followups": 0,
 		"manual": null
 	}`, string(ev.Payload))
 }
@@ -489,4 +490,57 @@ func TestWatch_ARunningCardIsNoStop(t *testing.T) {
 
 	require.Eventually(t, func() bool { return fake.getCount() > gets+6 }, time.Second, 5*time.Millisecond)
 	assert.Zero(t, rec.count(EventRetroStopOffered))
+}
+
+func TestWatch_TheEndCountsThePlaybooksFollowups(t *testing.T) {
+	script := twoCardScript()
+	script["decomposition"] = submitting(followupCards(""))
+
+	c, _, _, rec, _ := newPipeline(t, script)
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	c.opts.WatchInterval = 5 * time.Millisecond
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	// The draft held one follow-up; a person added a second in
+	// ContextMatrix during the run, so the end counts what the playbook holds.
+	fake.setBooks("ship-the-parser", cm.Playbook{
+		ID: "ship-the-parser", Total: 2, Complete: 2, Run: &cm.PlaybookRun{Status: "completed"},
+		Followups: []cm.PlaybookFollowup{{ID: "f1", Text: "Check the dashboard"}, {ID: "f2", Text: "Read the exported report"}},
+	})
+	rec.waitFor(t, EventWatchEnded)
+
+	end, ok := rec.first(EventWatchEnded)
+	require.True(t, ok)
+	assert.EqualValues(t, 2, end.Payload["followups"])
+	assert.Empty(t, end.Payload["manual"], "a playbook's follow-ups are not listed")
+}
+
+func TestWatch_AnEndWithoutFollowupsCountsNone(t *testing.T) {
+	// The draft holds a follow-up, but the playbook ContextMatrix serves has
+	// none: an older ContextMatrix returns no followups, or a person removed
+	// it.
+	script := twoCardScript()
+	script["decomposition"] = submitting(followupCards(""))
+
+	c, _, _, rec, _ := newPipeline(t, script)
+	fake := newFakeCM()
+	c.opts.ConnectCM = fake.connect
+	c.opts.WatchInterval = 5 * time.Millisecond
+	ctx := context.Background()
+
+	drive(t, c, "BP1")
+	require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+	c.Wait("BP1")
+
+	fake.setBooks("ship-the-parser", cm.Playbook{ID: "ship-the-parser", Total: 3, Complete: 3, Run: &cm.PlaybookRun{Status: "completed"}})
+	rec.waitFor(t, EventWatchEnded)
+
+	end, ok := rec.first(EventWatchEnded)
+	require.True(t, ok)
+	assert.NotContains(t, end.Payload, "followups")
 }
