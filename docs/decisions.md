@@ -285,8 +285,8 @@ HEAD.
   ContextMatrix then treats the caller as an agent and keeps redacting
   unvetted imported text.
 - Credentials embedded in URLs are scrubbed from every result and error of a
-  stage's ContextMatrix read tools, and repository URLs are used and recorded
-  without their userinfo. Why: ContextMatrix returns project config as
+  stage's ContextMatrix read tools, and repository URLs are checked out and
+  recorded without their userinfo. Why: ContextMatrix returns project config as
   stored, and the record is append-only.
 - Every tool result passes the redactor for every secret the session holds
   (the LLM key, MCP key, git token and search key), and live drafts are
