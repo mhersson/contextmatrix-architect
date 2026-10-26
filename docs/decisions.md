@@ -78,7 +78,9 @@ HEAD.
 - Assumptions are data: tab labels are per round and never reused, an
   accepted one is cited `round<n>.A<k>` and takes no `Q` number, a later step
   never restates one, and a grounding verdict counts only when it is newer
-  than the assumptions it judges. Why: a decision never lands on the wrong
+  than the assumptions it judges; one on an auto answer's `Q<n>` also reaches
+  an entry stated later that rests on it, unless a verdict at least as new
+  judges that entry's own id. Why: a decision never lands on the wrong
   assumption, and a re-run never hides behind an old verdict.
 - A responder answer reads "verified" only when its evidence cites a tag that
   a tool call of the same run returned. Why: tags in the task or in the
