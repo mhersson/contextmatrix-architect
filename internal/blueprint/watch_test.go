@@ -590,8 +590,26 @@ func goneIn(rec *recorder, id string) bool {
 	return ok && slices.ContainsFunc(snap.Cards, func(cv cardView) bool { return cv.ID == id && cv.Gone })
 }
 
+// naming counts the lines that name id.
+func naming(lines []string, id string) int {
+	n := 0
+
+	for _, line := range lines {
+		if strings.Contains(line, id) {
+			n++
+		}
+	}
+
+	return n
+}
+
 func TestWatch_ACardDeletedFromThePlaybookIsReportedOnceAndNoLongerRead(t *testing.T) {
 	_, st, _, rec, _, fake := startWatchedTwoCards(t)
+
+	// The first poll's lines are in once its state is stored.
+	require.Eventually(t, func() bool { return len(rec.all(EventWatchState)) > 0 }, time.Second, 5*time.Millisecond)
+
+	before := len(watchLines(rec))
 
 	// The project's get_card answer is not "card not found" (the project
 	// itself may be gone), so the entry's flag alone marks the card deleted.
@@ -606,13 +624,13 @@ func TestWatch_ACardDeletedFromThePlaybookIsReportedOnceAndNoLongerRead(t *testi
 
 	require.Eventually(t, func() bool { return goneIn(rec, "ALPHA-002") }, time.Second, 5*time.Millisecond)
 
-	posted := len(watchLines(rec))
 	reads := fake.cardReads("ALPHA-002")
 	gets := fake.getCount()
 
 	require.Eventually(t, func() bool { return fake.getCount() > gets+6 }, time.Second, 5*time.Millisecond)
 
-	assert.Len(t, watchLines(rec), posted, "the deletion and the run's wait are reported once")
+	// The deletion and the run's wait, whose reason names the card.
+	assert.Equal(t, 2, naming(watchLines(rec)[before:], "ALPHA-002"), "each is reported once")
 	assert.Equal(t, reads, fake.cardReads("ALPHA-002"), "a deleted card is not read again")
 
 	state, ok := watchedState(rec)
@@ -807,13 +825,5 @@ func TestWatch_TheRunLineIsPostedOnlyWhenTheRunChanges(t *testing.T) {
 
 	// The run's lines are the ones that name the playbook: running, the two
 	// check-offs, running again, and the failed card's wait.
-	runLines := 0
-
-	for _, line := range watchLines(rec) {
-		if strings.Contains(line, "ship-the-parser") {
-			runLines++
-		}
-	}
-
-	assert.Equal(t, 5, runLines)
+	assert.Equal(t, 5, naming(watchLines(rec), "ship-the-parser"))
 }
