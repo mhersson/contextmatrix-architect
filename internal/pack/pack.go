@@ -70,8 +70,8 @@ const (
 )
 
 // The instructions every reviewer, responder or plain-language run reads,
-// and every stage run of an unattended blueprint, under stages/. No stage
-// may take these ids.
+// and the runs of an unattended blueprint's stages that check cards and
+// readiness, under stages/. No stage may take these ids.
 const (
 	reviewInstructions     = "review"
 	responderInstructions  = "responder"
@@ -838,8 +838,9 @@ func (p *Pack) MockupResponderInstructions() string { return p.mockupResp }
 // plain-language blueprint; empty when the pack has none.
 func (p *Pack) PlainInstructions() string { return p.plain }
 
-// UnattendedInstructions are added to every stage run of an unattended
-// blueprint; empty when the pack has none.
+// UnattendedInstructions are added, on an unattended blueprint, to the runs
+// of the stage that checks cards and of the one that checks readiness; empty
+// when the pack has none.
 func (p *Pack) UnattendedInstructions() string { return p.unattended }
 
 // StageName is how a stage id or a step key reads to a person: underscores
