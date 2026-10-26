@@ -276,7 +276,9 @@ func (c *Controller) prepareCode(ctx context.Context, sess *session, bp store.Bl
 		byIdentity[s.Identity] = s
 	}
 
-	// Only a tree to fetch needs the credentials.
+	// A blueprint with any tree needs the credentials, even when every tree
+	// is already checked out, so nothing is fetched anonymously; one with no
+	// tree needs none.
 	var creds code.Credentials
 	if len(trees) > 0 {
 		if creds, err = c.credentials(sess); err != nil {
