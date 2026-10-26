@@ -2591,6 +2591,15 @@ func TestPlain_TheSummaryFollowsTheRecordsRules(t *testing.T) {
 			versions: [][]any{{statedUnderTag("Recipes are saved per household.")}, {statedUnderTag("Recipes are saved per household."), statedUnderTag("Lists are shared too.")}},
 			texts:    []string{"Recipes are saved per household.", "Lists are shared too."},
 		},
+		"an entry inserted ahead of one a version already states is unchanged": {
+			versions: [][]any{{statedUnderTag("Recipes are saved per household.")}, {statedUnderTag("Lists are shared too."), statedUnderTag("Recipes are saved per household.")}},
+			texts:    []string{"Lists are shared too.", "Recipes are saved per household."},
+		},
+		"a revised entry behind an inserted one is changed": {
+			versions:    [][]any{{statedUnderTag("Recipes are saved per household."), statedUnderTag("Lists are shared too.")}, {statedUnderTag("Meals are planned weekly."), statedUnderTag("Recipes are saved per household."), statedUnderTag("Lists are shared per person.")}},
+			texts:       []string{"Meals are planned weekly.", "Recipes are saved per household.", "Lists are shared per person."},
+			wantChanged: true,
+		},
 		"a revised entry among several on one tag is changed": {
 			versions:    [][]any{{statedUnderTag("Recipes are saved per household."), statedUnderTag("Lists are shared too.")}, {statedUnderTag("Recipes are saved per person."), statedUnderTag("Lists are shared too.")}},
 			texts:       []string{"Recipes are saved per person.", "Lists are shared too."},

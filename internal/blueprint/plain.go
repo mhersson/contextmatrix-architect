@@ -777,11 +777,10 @@ func changedSince(a assumption, versions []store.Artifact) bool {
 
 	// A plain round's tag names the decision across versions, so a revised
 	// sentence is a change: a version's entry is the one with a's sentence,
-	// else the one at a's place among the tag's entries in the latest version.
-	// Several can rest on one answer's Q<n>, so there the decision is its
-	// sentence alone.
+	// else the one pairedEntry pairs with it. Several can rest on one answer's
+	// Q<n>, so there the decision is its sentence alone.
 	tagged := plainTagForm.MatchString(a.Basis)
-	at := slices.IndexFunc(own[len(own)-1], func(s stated) bool { return normalText(s.Text) == norm })
+	latest := own[len(own)-1]
 
 	var (
 		first                   stated
@@ -791,8 +790,8 @@ func changedSince(a assumption, versions []store.Artifact) bool {
 
 	for _, entries := range own {
 		i := slices.IndexFunc(entries, func(s stated) bool { return normalText(s.Text) == norm })
-		if i < 0 && tagged && at >= 0 && at < len(entries) {
-			i = at
+		if i < 0 && tagged {
+			i = pairedEntry(entries, latest, norm)
 		}
 
 		if i < 0 {
@@ -815,4 +814,48 @@ func changedSince(a assumption, versions []store.Artifact) bool {
 	}
 
 	return found && (normalText(first.Text) != norm || normalText(firstGiven) != normalText(latestGiven))
+}
+
+// pairedEntry is the index in entries, one version's entries on a tag, of
+// the entry paired with latest's entry whose sentence is norm: by position
+// among the entries each states that the other does not, so an entry added
+// or dropped beside them shifts no pair. -1 when there is none.
+func pairedEntry(entries, latest []stated, norm string) int {
+	states := func(list []stated, s stated) bool {
+		return slices.ContainsFunc(list, func(o stated) bool { return normalText(o.Text) == normalText(s.Text) })
+	}
+
+	at, found := 0, false
+
+	for _, s := range latest {
+		if states(entries, s) {
+			continue
+		}
+
+		if normalText(s.Text) == norm {
+			found = true
+
+			break
+		}
+
+		at++
+	}
+
+	if !found {
+		return -1
+	}
+
+	for i, s := range entries {
+		if states(latest, s) {
+			continue
+		}
+
+		if at == 0 {
+			return i
+		}
+
+		at--
+	}
+
+	return -1
 }
