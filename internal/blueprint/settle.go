@@ -172,11 +172,9 @@ func (c *Controller) settleOn(ctx context.Context, r *run, id string) {
 }
 
 // follow runs what follows the round the pipeline stands at on slot r,
-// which the caller holds: the continuation once the round is answered, the
-// responder for a handed-over round, a chat run for chat its stage has not
-// seen, else nothing and the slot is released. wake runs a stalled round again: a
-// message arrived. A round that cannot be read or closed fails the
-// blueprint.
+// which the caller holds: the step nextSegment names, else nothing and the
+// slot is released. wake runs a stalled round again: a message arrived. A
+// round that cannot be read or closed fails the blueprint.
 func (c *Controller) follow(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, wake bool) {
 	step, err := c.nextSegment(ctx, sess, bp, wake)
 	if err != nil {
@@ -405,7 +403,7 @@ func (c *Controller) mockupChatSegment(ctx context.Context, bp store.Blueprint, 
 // after a closed round failed or was aborted, the note runs it again, on a
 // handed-over round the responder answers what is left, and on a mockup the
 // auto responder steers it takes its turn.
-func (c *Controller) atRound(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, place roundPlace, text, msgID string) error {
+func (c *Controller) atRound(ctx, runCtx context.Context, r *run, sess *session, bp store.Blueprint, place roundPlace, text, msgID string) {
 	s := place.state
 
 	note := noteEvent(bp.ID, text, msgID, s.Frame.Stage, false)
@@ -417,8 +415,6 @@ func (c *Controller) atRound(ctx, runCtx context.Context, r *run, sess *session,
 
 	sess.audit.event(ctx, note)
 	c.follow(context.WithoutCancel(ctx), runCtx, r, sess, bp, true)
-
-	return nil
 }
 
 // resumeRound acts on the round a reopened blueprint stands at, on slot r,

@@ -3,20 +3,27 @@ package cli
 import (
 	"bytes"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
+
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
 )
 
 // validConfig passes Validate: the three keys without a usable default.
-const validConfig = "contextmatrix_url: http://localhost:18080\n" +
-	"api_key: 0123456789abcdef0123456789abcdef\n" +
-	"state_dir: /tmp/architect-state\n"
+// validRequired is it without state_dir, for a case that sets its own.
+const (
+	validRequired = "contextmatrix_url: http://localhost:18080\n" +
+		"api_key: 0123456789abcdef0123456789abcdef\n"
+	validConfig = validRequired + "state_dir: /tmp/architect-state\n"
+)
 
 // runCLI runs the command tree with args and returns stdout and the error
 // main would print.
@@ -76,8 +83,12 @@ func TestConfigValidate_MissingFileFailsWhateverTheEnv(t *testing.T) {
 
 func TestConfigValidate_NamesTheFailingKey(t *testing.T) {
 	cases := map[string]struct{ body, key string }{
-		"invalid value": {"contextmatrix_url: http://localhost:18080\napi_key: short\n", "api_key"},
-		"unknown key":   {validConfig + "prot: 1\n", "prot"},
+		"invalid value":      {"contextmatrix_url: http://localhost:18080\napi_key: short\n", "api_key"},
+		"unknown key":        {validConfig + "prot: 1\n", "prot"},
+		"relative state_dir": {validRequired + "state_dir: ./state\n", "state_dir"},
+		"missing pack":       {validConfig + "pack: /typo\n", "/typo"},
+		"unknown persona":    {validConfig + "models:\n  designr: x/y\n", "designr"},
+		"missing CA file":    {validConfig + "ca_cert_file: /nonexistent/ca.pem\n", "ca_cert_file"},
 	}
 
 	for name, c := range cases {
@@ -85,6 +96,59 @@ func TestConfigValidate_NamesTheFailingKey(t *testing.T) {
 			p := writeConfig(t, t.TempDir(), c.body)
 
 			_, err := runCLI(t, "config", "validate", p)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), c.key)
+		})
+	}
+}
+
+func TestConfigValidate_RefusesACAFileWithoutACertificate(t *testing.T) {
+	dir := t.TempDir()
+	notPEM := filepath.Join(dir, "ca.pem")
+	require.NoError(t, os.WriteFile(notPEM, []byte("not a certificate\n"), 0o600))
+
+	p := writeConfig(t, dir, validConfig+"ca_cert_file: "+notPEM+"\n")
+
+	_, err := runCLI(t, "config", "validate", p)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ca_cert_file")
+}
+
+func TestConfigValidate_UnknownPersonaListsThePacksPersonas(t *testing.T) {
+	p := writeConfig(t, t.TempDir(), validConfig+"models:\n  designr: x/y\n  testr: x/z\n  reviewer: x/w\n")
+
+	_, err := runCLI(t, "config", "validate", p)
+	require.Error(t, err)
+
+	pk, err2 := pack.LoadEmbedded()
+	require.NoError(t, err2)
+
+	for _, name := range append([]string{"designr", "testr"}, pk.Personas()...) {
+		assert.Contains(t, err.Error(), name)
+	}
+}
+
+// serve refuses what validate refuses, before it listens: the port is taken,
+// so a regression that listened would fail on it instead.
+func TestServe_RefusesWhatValidateRefuses(t *testing.T) {
+	taken, err := net.Listen("tcp", ":0") //nolint:gosec // serve binds every interface; only the same bind is sure to collide on every OS
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = taken.Close() })
+
+	base := validRequired + "state_dir: " + t.TempDir() + "\n" +
+		"port: " + strconv.Itoa(taken.Addr().(*net.TCPAddr).Port) + "\n"
+
+	cases := map[string]struct{ body, key string }{
+		"missing pack":    {base + "pack: /typo\n", "/typo"},
+		"unknown persona": {base + "models:\n  designr: x/y\n", "designr"},
+		"missing CA file": {base + "ca_cert_file: /nonexistent/ca.pem\n", "ca_cert_file"},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := writeConfig(t, t.TempDir(), c.body)
+
+			_, err := runCLI(t, "serve", "--config", p)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), c.key)
 		})

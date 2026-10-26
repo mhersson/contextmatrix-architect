@@ -2,7 +2,10 @@ package code
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -50,7 +53,7 @@ func TestCMCredentials_Fetch(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewCMCredentials(srv.URL+"/", testBearer)
+	c := NewCMCredentials(srv.URL+"/", testBearer, nil)
 
 	user, token, err := c.Fetch(context.Background(), "github.com", "acme/alpha")
 	require.NoError(t, err)
@@ -91,4 +94,22 @@ func TestCMCredentials_Fetch(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.carries)
 		})
 	}
+}
+
+func TestCMCredentials_FetchesOverTheBaseTransport(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"username":"x-access-token","token":"ghs_abc"}`))
+	}))
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	// The test server's own client trusts its certificate.
+	_, token, err := NewCMCredentials(srv.URL, testBearer, srv.Client().Transport).Fetch(context.Background(), "github.com", "acme/alpha")
+	require.NoError(t, err)
+	assert.Equal(t, "ghs_abc", token)
+
+	_, _, err = NewCMCredentials(srv.URL, testBearer, nil).Fetch(context.Background(), "github.com", "acme/alpha")
+	require.ErrorAs(t, err, new(x509.UnknownAuthorityError), "the system trust store refuses the certificate")
+	assert.NotContains(t, err.Error(), testBearer)
 }

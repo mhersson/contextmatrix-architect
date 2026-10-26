@@ -42,7 +42,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err := ensureSchema(ctx, db); err != nil {
 		_ = db.Close()
 
-		return nil, err
+		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
 
 	return &Store{db: db}, nil

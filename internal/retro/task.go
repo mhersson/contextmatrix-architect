@@ -58,22 +58,21 @@ func TaskFor(struggled []Struggle, cardTemplate string, lists contract.Lists, ch
 }
 
 // LessonQuestion is the round question that asks the operator to decide one
-// proposed lesson.
+// proposed lesson; f is the at-fault finding it was proposed from, so its
+// Lesson is set.
 func LessonQuestion(l store.Lesson, f Finding) stage.RoundQuestion {
 	why := []string{l.Rationale, "Rule: " + f.Rule, "Evidence: " + f.Evidence}
 
-	if f.Lesson != nil {
-		for _, x := range f.Lesson.Overlay.EdgeCases {
-			why = append(why, "edge case: "+x)
-		}
+	for _, x := range f.Lesson.Overlay.EdgeCases {
+		why = append(why, "edge case: "+x)
+	}
 
-		for _, x := range f.Lesson.Overlay.DanglingReferences {
-			why = append(why, "dangling reference: "+x)
-		}
+	for _, x := range f.Lesson.Overlay.DanglingReferences {
+		why = append(why, "dangling reference: "+x)
+	}
 
-		for _, p := range f.Lesson.Overlay.ForbiddenReferences {
-			why = append(why, "forbidden reference "+p.Name+": "+p.Pattern)
-		}
+	for _, p := range f.Lesson.Overlay.ForbiddenReferences {
+		why = append(why, "forbidden reference "+p.Name+": "+p.Pattern)
 	}
 
 	recommended := 1

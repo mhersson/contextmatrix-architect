@@ -2,7 +2,11 @@ package code
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
+	"io"
+	"log"
 	"net/http"
 	"net/http/cgi" //nolint:gosec // test-only git http-backend fixture; httpoxy affects Go before 1.6.3 only
 	"net/http/httptest"
@@ -77,15 +81,7 @@ func emptyRepo(t *testing.T) string {
 func gitServer(t *testing.T, root string, held bool) (base string, entered <-chan struct{}, release func()) {
 	t.Helper()
 
-	gitBin, err := exec.LookPath("git")
-	if err != nil {
-		t.Skip("git binary required for git http-backend in tests")
-	}
-
-	backend := &cgi.Handler{
-		Path: gitBin, Args: []string{"http-backend"},
-		Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1", "HOME=" + t.TempDir()},
-	}
+	backend := gitBackend(t, root)
 
 	in := make(chan struct{}, 16)
 	gate := make(chan struct{})
@@ -116,6 +112,35 @@ func gitServer(t *testing.T, root string, held bool) (base string, entered <-cha
 	t.Cleanup(release)
 
 	return srv.URL, in, release
+}
+
+// gitBackend is git http-backend serving the repositories under root.
+func gitBackend(t *testing.T, root string) http.Handler {
+	t.Helper()
+
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git binary required for git http-backend in tests")
+	}
+
+	return &cgi.Handler{
+		Path: gitBin, Args: []string{"http-backend"},
+		Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1", "HOME=" + t.TempDir()},
+	}
+}
+
+// gitTLSServer serves the repositories under root over HTTPS with httptest's
+// own certificate, and returns that certificate as PEM: a host behind a
+// private CA.
+func gitTLSServer(t *testing.T, root string) (base string, caPEM []byte) {
+	t.Helper()
+
+	srv := httptest.NewUnstartedServer(gitBackend(t, root))
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	return srv.URL, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
 }
 
 // gateCreds parks every Fetch until the test lets it go, then refuses.
@@ -154,10 +179,36 @@ func (g *gateCreds) Fetch(ctx context.Context, _, _ string) (string, string, err
 }
 
 func newTestWorkspace(root string, now func() time.Time) *Workspace {
-	ws := NewWorkspace(root, now)
+	ws := NewWorkspace(root, now, nil)
 	ws.allowLocal = true
 
 	return ws
+}
+
+func TestWorkspace_FetchesAndListsTrustingTheCABundle(t *testing.T) {
+	src, sha := fixtureRepo(t, map[string]string{"a.txt": "a\n"})
+	base, caPEM := gitTLSServer(t, filepath.Dir(src))
+	repo := base + "/" + filepath.Base(src)
+	ctx := context.Background()
+
+	trusting := NewWorkspace(t.TempDir(), time.Now, caPEM)
+
+	_, head, err := trusting.RemoteHead(ctx, repo, nil)
+	require.NoError(t, err)
+	assert.Equal(t, sha, head)
+
+	co, err := trusting.Checkout(ctx, "BP1", "alpha", repo, nil)
+	require.NoError(t, err)
+	assert.Equal(t, sha, co.SHA)
+
+	// Without the bundle the system trust store refuses the certificate.
+	plain := NewWorkspace(t.TempDir(), time.Now, nil)
+
+	_, _, err = plain.RemoteHead(ctx, repo, nil)
+	require.ErrorAs(t, err, new(x509.UnknownAuthorityError))
+
+	_, err = plain.Checkout(ctx, "BP1", "alpha", repo, nil)
+	require.ErrorAs(t, err, new(x509.UnknownAuthorityError))
 }
 
 func TestWorkspace_CheckoutExportsTheTreeAtTheDefaultBranch(t *testing.T) {
@@ -442,7 +493,7 @@ func TestWorkspace_CheckoutStopsWaitingForTheRepoLockWithItsContext(t *testing.T
 }
 
 func TestWorkspace_CheckoutIsHTTPSOnly(t *testing.T) {
-	ws := NewWorkspace(t.TempDir(), time.Now)
+	ws := NewWorkspace(t.TempDir(), time.Now, nil)
 
 	for _, u := range []string{"ssh://git@github.com/acme/a", "git@github.com:acme/a", "http://github.com/acme/a", "/tmp/fixtures/a"} {
 		_, err := ws.Checkout(context.Background(), "BP", "alpha", u, nil)
@@ -546,7 +597,7 @@ func TestWorkspace_RemoteHeadFollowsTheDefaultBranch(t *testing.T) {
 }
 
 func TestWorkspace_RemoteHeadIsHTTPSOnly(t *testing.T) {
-	ws := NewWorkspace(t.TempDir(), time.Now)
+	ws := NewWorkspace(t.TempDir(), time.Now, nil)
 
 	_, _, err := ws.RemoteHead(context.Background(), "git@example.com:acme/alpha.git", nil)
 	require.Error(t, err)

@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,9 +70,9 @@ func baseInput(events *bytes.Buffer) Input {
 }
 
 // wireBodies runs in through r against an httptest endpoint of the given type
-// (r is built with NewLLM: ClientFor), and returns every request body in
-// order. The server makes no tool call, so the runner sends its forced
-// follow-up as well. The run's own error is ignored.
+// (r is built with NewRunner), and returns every request body in order. The
+// server makes no tool call, so the runner sends its forced follow-up as
+// well. The run's own error is ignored.
 func wireBodies(t *testing.T, endpointType string, r *Runner, in Input) []map[string]json.RawMessage {
 	t.Helper()
 
@@ -134,7 +137,7 @@ func TestRun_EffortOnTheWire(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.endpoint+"/"+tt.effort, func(t *testing.T) {
-			bodies := wireBodies(t, tt.endpoint, &Runner{NewLLM: ClientFor, Effort: tt.effort}, baseInput(&bytes.Buffer{}))
+			bodies := wireBodies(t, tt.endpoint, NewRunner(tt.effort, false, nil), baseInput(&bytes.Buffer{}))
 			require.GreaterOrEqual(t, len(bodies), 2, "the forced follow-up was sent too")
 
 			for i, b := range bodies {
@@ -226,7 +229,7 @@ func TestClientFor_BaseURLAndAPIKeyReachTheWire(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := ClientFor(protocol.LLMEndpoint{Type: "openai", BaseURL: srv.URL + "/v1", APIKey: "k"})
+	c := ClientFor(protocol.LLMEndpoint{Type: "openai", BaseURL: srv.URL + "/v1", APIKey: "k"}, nil)
 
 	_, err := c.Send(context.Background(), llm.Request{
 		Model:    "m",
@@ -235,6 +238,37 @@ func TestClientFor_BaseURLAndAPIKeyReachTheWire(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/v1/chat/completions", gotPath)
 	assert.Equal(t, "Bearer k", gotAuth)
+}
+
+func TestClientFor_RequestsGoThroughTheBaseTransport(t *testing.T) {
+	var reached atomic.Int32
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached.Add(1)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`))
+	}))
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	ep := protocol.LLMEndpoint{Type: "openai", BaseURL: srv.URL + "/v1", APIKey: "k"}
+	req := llm.Request{Model: "m", Messages: []llm.Message{{Role: "user", Content: "ping"}}}
+
+	// The test server's own client trusts its certificate.
+	resp, err := ClientFor(ep, srv.Client().Transport).Send(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, "hi", resp.Content)
+
+	// Without it the system trust store refuses the certificate; the deadline
+	// ends the retries.
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	_, err = ClientFor(ep, nil).Send(ctx, req)
+	require.Error(t, err)
+	assert.Equal(t, int32(1), reached.Load(), "only the request over the base transport reached the server")
 }
 
 func TestRun_SecretInToolResultIsRedactedFromEventsAndConversation(t *testing.T) {
@@ -435,6 +469,65 @@ func TestRun_CompactsALongConversationInsteadOfStopping(t *testing.T) {
 	assert.Contains(t, events.String(), `"phase":"compaction"`, "the summarize call is accounted as compaction")
 }
 
+func TestRun_KeepsTheSourceTagsToolResultsLedWithAcrossACompaction(t *testing.T) {
+	echo := func(id, text string) llm.Response {
+		return llm.Response{ToolCalls: []llm.ToolCall{toolCall(id, "echo", `{"text":"`+text+`"}`)}, FinishReason: "tool_calls"}
+	}
+
+	near := echo("c6", "more")
+	near.Usage = llm.Usage{PromptTokens: 120000}
+
+	f := &fakeLLM{responses: []llm.Response{
+		echo("c1", "[S3] the chart is in charts/"),
+		echo("c2", "[S2, S4] both trees"),
+		echo("c3", "no tag [S7] here"),
+		echo("c4", "[S3] again"),
+		echo("c5", "more"),
+		near, // the older turns, c1 among them, are summarized
+		{Content: "the briefing", FinishReason: "stop"},
+		{ToolCalls: []llm.ToolCall{toolCall("c7", "submit_artifact", `{"body":"# Need"}`)}, FinishReason: "tool_calls"},
+	}}
+
+	in := baseInput(&bytes.Buffer{})
+	in.MaxTurns = 20
+	in.Tools = []tools.Tool{echoTool{}}
+
+	out, err := runnerWith(f).Run(context.Background(), in)
+	require.NoError(t, err)
+
+	for _, m := range out.Result.Messages {
+		require.NotContains(t, m.Content, "the chart is in charts/", "the compaction summarized the first result away")
+	}
+
+	assert.Equal(t, []string{"S3", "S2", "S4"}, out.SourceTags, "only a leading tag counts, once")
+}
+
+func TestReturnedTags_CollectsResultsHandedBackAtOnce(t *testing.T) {
+	r := &returnedTags{}
+
+	var wg sync.WaitGroup
+
+	for i := range 16 {
+		wg.Go(func() { r.add(fmt.Sprintf("[S%d] result", i%4+1)) })
+	}
+
+	wg.Wait()
+
+	assert.ElementsMatch(t, []string{"S1", "S2", "S3", "S4"}, r.list())
+}
+
+func TestWatchTags_KeepsWhetherAToolIsReadOnly(t *testing.T) {
+	watched := (&returnedTags{}).watch([]tools.Tool{echoTool{}, lookupTool{}})
+	require.Len(t, watched, 2)
+
+	ro, ok := watched[0].(tools.ReadOnly)
+	require.True(t, ok)
+	assert.True(t, ro.ReadOnly())
+
+	ro, ok = watched[1].(tools.ReadOnly)
+	assert.False(t, ok && ro.ReadOnly(), "a tool that changes state is not made read-only")
+}
+
 // streamingLLM streams each scripted response's tool-call arguments as
 // deltas of chunk bytes before returning it.
 type streamingLLM struct {
@@ -607,51 +700,71 @@ func TestRun_AChatRunDraftsNothing(t *testing.T) {
 	assert.Empty(t, frames, "a chat run's refused submit never reaches the live view")
 }
 
-func TestRun_ACompactionDiscardVoidsTheDraft(t *testing.T) {
+func TestRun_ASubmitPastTheThresholdIsVoidedOnlyWhenTheWindowStopsIt(t *testing.T) {
 	ask := func(id string) llm.Response {
 		return llm.Response{ToolCalls: []llm.ToolCall{toolCall(id, "echo", `{"text":"more"}`)}, FinishReason: "tool_calls"}
 	}
 
-	near := llm.Response{
-		ToolCalls:    []llm.ToolCall{toolCall("c6", "submit_artifact", `{"body":"# Discarded draft"}`)},
+	crossing := llm.Response{
+		ToolCalls:    []llm.ToolCall{toolCall("c6", "submit_artifact", `{"body":"# Crossing"}`)},
 		FinishReason: "tool_calls",
 		Usage:        llm.Usage{PromptTokens: 120000},
 	}
 
-	f := &streamingLLM{chunk: 4, fakeLLM: fakeLLM{responses: []llm.Response{
-		ask("c1"), ask("c2"), ask("c3"), ask("c4"), ask("c5"),
-		near, // over the threshold: the turn is discarded and its submit never executes
-		{Content: "the briefing", FinishReason: "stop"},
-		{ToolCalls: []llm.ToolCall{toolCall("c7", "submit_artifact", `{"body":"# Kept"}`)}, FinishReason: "tool_calls"},
-	}}}
-
-	var frames []DraftFrame
-
-	in := baseInput(&bytes.Buffer{})
-	in.MaxTurns = 20
-	in.Tools = []tools.Tool{echoTool{}}
-	in.Draft = func(d DraftFrame) { frames = append(frames, d) }
-
-	out, err := (&Runner{NewLLM: func(protocol.LLMEndpoint) llm.LLM { return f }}).Run(context.Background(), in)
-	require.NoError(t, err)
-	assert.Equal(t, "# Kept", out.Artifact.Body)
-
-	voided := -1
-
-	for i, d := range frames {
-		if d.Void {
-			voided = i
-		}
+	tests := []struct {
+		name    string
+		earlier []llm.Response
+		stopped bool
+	}{
+		{"a compaction keeps the reply, so its submit is the artifact", []llm.Response{ask("c1"), ask("c2"), ask("c3"), ask("c4"), ask("c5")}, false},
+		{"a window compaction cannot shrink stops the run before the submit", nil, true},
 	}
 
-	require.GreaterOrEqual(t, voided, 1, "the discarded turn's draft was shown, then voided")
-	shown := applied(t, frames[:voided])
-	assert.NotEmpty(t, shown)
-	require.LessOrEqual(t, len(shown), len("# Discarded draft"))
-	assert.Equal(t, "# Discarded draft"[:len(shown)], shown, "what was shown is the discarded body so far")
-	require.Greater(t, len(frames), voided+1)
-	assert.Equal(t, 0, frames[voided+1].Offset, "the next attempt restarts at offset 0")
-	assert.Equal(t, "# Kept", applied(t, frames[voided+1:]))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			script := slices.Concat(tt.earlier, []llm.Response{crossing})
+			if !tt.stopped {
+				// The briefing answers the summarize call.
+				script = append(script, llm.Response{Content: "the briefing", FinishReason: "stop"})
+			}
+
+			f := &streamingLLM{chunk: 4, fakeLLM: fakeLLM{responses: script}}
+
+			var (
+				events bytes.Buffer
+				frames []DraftFrame
+			)
+
+			in := baseInput(&events)
+			in.MaxTurns = 20
+			in.Tools = []tools.Tool{echoTool{}}
+			in.Draft = func(d DraftFrame) { frames = append(frames, d) }
+
+			frozen := time.Unix(1000, 0)
+			r := &Runner{
+				NewLLM:   func(protocol.LLMEndpoint) llm.LLM { return f },
+				draftNow: func() time.Time { return frozen }, draftEvery: time.Hour,
+			}
+
+			out, err := r.Run(context.Background(), in)
+
+			require.Len(t, frames, 2, "the first fragment opens the draft and one frame closes it")
+
+			if tt.stopped {
+				var full *ContextFullError
+				require.ErrorAs(t, err, &full)
+				assert.True(t, frames[1].Void, "the stop voids the draft of a submit that never ran")
+
+				return
+			}
+
+			require.NoError(t, err)
+			require.Contains(t, events.String(), `"event":"compaction"`, "the history was summarized")
+			assert.Equal(t, "# Crossing", out.Artifact.Body)
+			assert.False(t, frames[1].Void, "a compaction voids nothing")
+			assert.Equal(t, "# Crossing", applied(t, frames), "the submit publishes the body it streamed")
+		})
+	}
 }
 
 // ghostLLM streams a submit_artifact fragment under id c1 at the end of its
@@ -1110,7 +1223,7 @@ func TestRun_ReplayOnTheWire(t *testing.T) {
 	for _, endpoint := range []string{"openrouter", "openai"} {
 		for _, replay := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/replay=%t", endpoint, replay), func(t *testing.T) {
-				bodies := wireBodies(t, endpoint, NewRunner("", replay), baseInput(&bytes.Buffer{}))
+				bodies := wireBodies(t, endpoint, NewRunner("", replay, nil), baseInput(&bytes.Buffer{}))
 				require.GreaterOrEqual(t, len(bodies), 2, "the forced follow-up was sent too")
 
 				var msgs []map[string]json.RawMessage

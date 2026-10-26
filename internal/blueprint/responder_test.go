@@ -45,7 +45,7 @@ func TestResponder_AnswersAnAutoQuestionAsAnAssumption(t *testing.T) {
 
 	script := happyScript()
 	script["intake"] = askingIntake(got)
-	script["intake.responder"] = reading("[S1] charts/app", map[string]any{"answer": "helm", "reasoning": "the repository ships a chart", "grounded": true, "evidence": "[S1] charts/app"})
+	script["intake.responder"] = reading([]string{"S1"}, map[string]any{"answer": "helm", "reasoning": "the repository ships a chart", "grounded": true, "evidence": "[S1] charts/app"})
 
 	c, st, runner, rec, _ := newPipeline(t, script)
 	ctx := context.Background()
@@ -415,13 +415,13 @@ func TestResponder_GetsTheGateFeedbackItsAttemptAddresses(t *testing.T) {
 	assert.Contains(t, responders[0].Task, "name the owner", "the feedback the asking attempt addresses")
 }
 
-// reading scripts a responder whose run carried the messages also and then
-// read a tool result with the given content before submitting.
-func reading(toolResult string, data map[string]any, also ...llm.Message) func(context.Context, stage.Input) (stage.Output, error) {
+// reading scripts a responder whose tool results led with tags before it
+// submitted, and whose record then holds msgs: what a compaction left.
+func reading(tags []string, data map[string]any, msgs ...llm.Message) func(context.Context, stage.Input) (stage.Output, error) {
 	return func(context.Context, stage.Input) (stage.Output, error) {
 		out := done("# Answer", data)
-		out.Result.Messages = append(out.Result.Messages, also...)
-		out.Result.Messages = append(out.Result.Messages, llm.Message{Role: "tool", Content: toolResult})
+		out.SourceTags = tags
+		out.Result.Messages = append(out.Result.Messages, msgs...)
 
 		return out, nil
 	}
@@ -437,11 +437,17 @@ func TestResponder_EvidenceVerifiesOnlyWithItsOwnToolResults(t *testing.T) {
 		responder func(context.Context, stage.Input) (stage.Output, error)
 		verified  bool
 	}{
-		{"cites a tag its tool result carried", reading("[S1] charts/ exists", answerWith(true, "[S1] the chart is in charts/")), true},
+		{"cites a tag its tool result carried", reading([]string{"S1"}, answerWith(true, "[S1] the chart is in charts/"),
+			llm.Message{Role: "tool", Content: "[S1] charts/ exists"}), true},
 		{"grounded with no tool call", returns("# Answer", answerWith(true, "[S1] the chart")), false},
-		{"cites a tag only the task carries", reading("[S1] charts/ exists", answerWith(true, "[S2] the task said so"),
-			llm.Message{Role: "user", Content: "[S2] charts/ holds the chart"}), false},
-		{"not grounded despite matching evidence", reading("[S1] charts/ exists", answerWith(false, "[S1] the chart")), false},
+		{"cites a tag only the task carries", reading([]string{"S1"}, answerWith(true, "[S2] the task said so"),
+			llm.Message{Role: "user", Content: "[S2] charts/ holds the chart"}, llm.Message{Role: "tool", Content: "[S1] charts/ exists"}), false},
+		{"not grounded despite matching evidence", reading([]string{"S1"}, answerWith(false, "[S1] the chart"),
+			llm.Message{Role: "tool", Content: "[S1] charts/ exists"}), false},
+		{"cites a tag a compaction summarized out of the record", reading([]string{"S3"}, answerWith(true, "[S3 charts/app] the chart"),
+			llm.Message{Role: "assistant", Content: "summary of the earlier turns"}), true},
+		{"cites a tag no tool returned", reading([]string{"S3"}, answerWith(true, "[S4] the chart"),
+			llm.Message{Role: "assistant", Content: "summary of the earlier turns"}), false},
 	}
 
 	for _, tt := range tests {
@@ -479,7 +485,7 @@ func TestResponder_EvidenceVerifiesOnlyWithItsOwnToolResults(t *testing.T) {
 
 			if tt.verified {
 				assert.Equal(t, assumptionVerified, list[0].Status)
-				assert.Equal(t, "[S1] the chart is in charts/", list[0].Evidence)
+				assert.Equal(t, ans.Payload["evidence"], list[0].Evidence)
 			} else {
 				assert.Equal(t, assumptionAssumed, list[0].Status)
 				assert.Empty(t, list[0].Evidence)
@@ -509,14 +515,9 @@ func TestAssumptions_AGroundedRowWithoutEvidenceIsNotVerified(t *testing.T) {
 }
 
 func TestCitesToolResult(t *testing.T) {
-	msgs := []llm.Message{
-		{Role: "user", Content: "[S9] in the task"},
-		{Role: "assistant", Content: "[S8] my own prose"},
-		{Role: "tool", Content: "[S1] one"},
-		{Role: "tool", Content: "[S2,S3] two and three"},
-		{Role: "tool", Content: "no tag [S7] here"},
-		{Role: "tool", Content: "[S40] forty"},
-	}
+	// What the run's tool results led with; S7, S8 and S9 appeared only
+	// deeper in a result, in the task or in the model's own text.
+	returned := []string{"S1", "S2", "S3", "S40"}
 
 	tests := []struct {
 		evidence string
@@ -543,7 +544,7 @@ func TestCitesToolResult(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.evidence, func(t *testing.T) {
-			assert.Equal(t, tt.want, citesToolResult(tt.evidence, msgs))
+			assert.Equal(t, tt.want, citesToolResult(tt.evidence, returned))
 		})
 	}
 }

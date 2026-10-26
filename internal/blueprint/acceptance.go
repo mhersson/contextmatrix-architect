@@ -176,9 +176,9 @@ func citedOutcomes(raw json.RawMessage) ([]string, bool) {
 // sweepProblems judges a slice that touches a POC project.
 func (c *Controller) traceProblems(ctx context.Context, bp store.Blueprint, key string, raw []byte, poc []string) ([]string, error) {
 	var d traces
-	if json.Unmarshal(raw, &d) != nil {
-		// acceptanceData decoded the same data; a trace cannot fail it.
-		return nil, nil
+	if err := json.Unmarshal(raw, &d); err != nil {
+		// acceptanceData decoded the same data, so this cannot fail.
+		return nil, fmt.Errorf("decode the traces: %w", err)
 	}
 
 	known, err := c.outcomesBefore(ctx, bp.ID, key)

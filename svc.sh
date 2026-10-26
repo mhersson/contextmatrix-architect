@@ -48,10 +48,9 @@
 #   MemoryMax, TasksMax, LimitNOFILE - bound resource usage.
 #   Restart=on-failure, RestartSec + RestartSteps + RestartMaxDelaySec
 #   - exponential backoff.
-#   ReadWritePaths - narrow the filesystem to %h/.contextmatrix and the
-#   resolved state_dir. Paths are prefixed with `-` so a missing dir does
-#   not block startup; systemd skips it, so install creates state_dir
-#   up front.
+#   ReadWritePaths - narrow the filesystem to the resolved state_dir. The
+#   path is prefixed with `-` so a missing dir does not block startup;
+#   systemd skips it, so install creates state_dir up front.
 #
 # Subcommands:
 #   install [--dry-run]  Write the unit file (or print to stdout), reload
@@ -181,11 +180,11 @@ warn_preflight() {
 
 # generate_unit emits the systemd unit file contents to stdout.
 generate_unit() {
-    local rw_paths="-%h/.contextmatrix"
+    local rw_paths=""
     local state_dir
     state_dir="$(resolve_state_dir)"
     case "${state_dir}" in
-        /*) rw_paths="${rw_paths} -${state_dir//[%]/%%}" ;;
+        /*) rw_paths="-${state_dir//[%]/%%}" ;;
     esac
 
     # Pin the base so the service resolves the same default as this script.
@@ -273,7 +272,7 @@ EXPECTED_DIRECTIVES=(
     "RestartSec=10"
     "RestartSteps=5"
     "RestartMaxDelaySec=300"
-    "ReadWritePaths=-%h/.contextmatrix"
+    "ReadWritePaths=-/"
     'Environment="XDG_STATE_HOME='
 )
 

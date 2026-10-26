@@ -21,6 +21,8 @@ var errNoCodeSupport = errors.New("blueprint: code stages need a workspace and t
 
 var errNoCMSupport = errors.New("blueprint: cm stages need the ContextMatrix tool source")
 
+var errNoGitCredentials = errors.New("blueprint: the session has no git credentials, so no repository is fetched")
+
 // cmSourceIdentity is the ContextMatrix board as a source: one per
 // blueprint, because CM state carries no version a read could cite.
 const cmSourceIdentity = "contextmatrix"
@@ -68,7 +70,6 @@ type tree struct {
 	project string
 	name    string
 	url     string
-	primary bool
 }
 
 // treesOf names a project's trees, primary first. The repository flagged
@@ -86,7 +87,7 @@ func treesOf(p cm.Project) ([]tree, error) {
 			return nil, nil
 		}
 
-		return []tree{{project: p.Name, name: p.Name, url: p.Repo, primary: true}}, nil
+		return []tree{{project: p.Name, name: p.Name, url: p.Repo}}, nil
 	}
 
 	var repos []cm.Repo
@@ -111,7 +112,7 @@ func treesOf(p cm.Project) ([]tree, error) {
 		}
 	}
 
-	out := []tree{{project: p.Name, name: p.Name, url: repos[primary].URL, primary: true}}
+	out := []tree{{project: p.Name, name: p.Name, url: repos[primary].URL}}
 
 	for i, r := range repos {
 		if i == primary {
@@ -186,6 +187,16 @@ func contractView(ctx context.Context, projects []cm.Project, targets []string, 
 	}
 
 	return out, nil
+}
+
+// credentials is the git credential source for sess's token. A missing
+// source or token is refused, so nothing is fetched anonymously.
+func (c *Controller) credentials(sess *session) (code.Credentials, error) {
+	if c.opts.Credentials == nil || sess.gitToken == "" {
+		return nil, errNoGitCredentials
+	}
+
+	return c.opts.Credentials(sess.gitToken), nil
 }
 
 // prepareCode makes sure every target project's repositories are checked
@@ -265,9 +276,14 @@ func (c *Controller) prepareCode(ctx context.Context, sess *session, bp store.Bl
 		byIdentity[s.Identity] = s
 	}
 
+	// A blueprint with any tree needs the credentials, even when every tree
+	// is already checked out, so nothing is fetched anonymously; one with no
+	// tree needs none.
 	var creds code.Credentials
-	if c.opts.Credentials != nil && sess.gitToken != "" {
-		creds = c.opts.Credentials(sess.gitToken)
+	if len(trees) > 0 {
+		if creds, err = c.credentials(sess); err != nil {
+			return nil, err
+		}
 	}
 
 	// Sources recorded here are announced even when a later checkout fails,
@@ -356,7 +372,7 @@ func foreignRepos(projects []cm.Project, name string) []string {
 // and priorities each target project declares, since the card contract
 // accepts only those.
 func checkoutLines(facts *codeFacts) string {
-	if facts == nil || len(facts.repos) == 0 {
+	if len(facts.repos) == 0 {
 		return ""
 	}
 

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"slices"
 	"time"
 
@@ -99,6 +100,10 @@ type Output struct {
 	// Asked is set when the run ended by posting a round or answering its
 	// chat; Artifact is then empty.
 	Asked bool
+	// SourceTags are the source tags this run's tool results led with, kept
+	// as each result was handed back: a compaction can summarize a result out
+	// of Result.Messages, never out of SourceTags.
+	SourceTags []string
 }
 
 // Transient marks a tool whose results the model reads in its run but the
@@ -128,16 +133,22 @@ type Runner struct {
 	draftEvery time.Duration
 }
 
-// NewRunner returns a Runner that talks to the provisioned endpoint.
-func NewRunner(effort string, replay bool) *Runner {
-	return &Runner{NewLLM: ClientFor, Effort: effort, Replay: replay}
+// NewRunner returns a Runner that talks to the provisioned endpoint over
+// base; nil keeps the harness's own client (see ClientFor).
+func NewRunner(effort string, replay bool, base http.RoundTripper) *Runner {
+	newLLM := func(ep protocol.LLMEndpoint) llm.LLM { return ClientFor(ep, base) }
+
+	return &Runner{NewLLM: newLLM, Effort: effort, Replay: replay}
 }
 
 // Run executes one stage and returns its artifact. On every return its
 // messages are as the record keeps them: see Transient.
 func (r *Runner) Run(ctx context.Context, in Input) (Output, error) {
-	out, err := r.run(ctx, in)
+	tags := &returnedTags{}
+
+	out, err := r.run(ctx, in, tags)
 	out.Result.Messages = recorded(out.Result.Messages, in.Tools)
+	out.SourceTags = tags.list()
 
 	return out, err
 }
@@ -198,8 +209,9 @@ func recorded(msgs []llm.Message, ts []tools.Tool) []llm.Message {
 	return out
 }
 
-// run is Run before the record's view of the messages.
-func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
+// run is Run before the record's view of the messages; tags collects what
+// the run's tool results led with.
+func (r *Runner) run(ctx context.Context, in Input, tags *returnedTags) (Output, error) {
 	// The registry keeps the last tool under a name, so a clash would silently
 	// replace a built-in.
 	for _, t := range in.Tools {
@@ -260,7 +272,7 @@ func (r *Runner) run(ctx context.Context, in Input) (Output, error) {
 	mark := &terminalMark{}
 	builtins := builtinTools(in, mark, drafts)
 
-	reg := tools.NewRegistry(append(builtins, in.Tools...)...)
+	reg := tools.NewRegistry(append(builtins, tags.watch(in.Tools)...)...)
 
 	watch := &replyWatch{LLM: r.NewLLM(in.Endpoint), submits: !in.Chat && in.Designer == nil}
 
@@ -354,10 +366,10 @@ func terminalTools(ts []tools.Tool) []tools.Tool {
 }
 
 // draftEvents passes the harness's event lines on and keeps the draft true
-// to them: a model call starts a fresh draft, an error or a compaction voids
-// it (a turn the harness abandons sends no reset; a compaction that made no
-// progress may leave the turn running, and its submit republishes the body),
-// and a repaired submit is marked refused, since it never executes.
+// to them: a model call starts a fresh draft, an error or a context-limit
+// stop voids it (the harness abandons that turn and sends no reset), and a
+// repaired submit is marked refused, since it never executes. A compaction
+// voids nothing: the harness runs the crossing reply's calls, its submit too.
 type draftEvents struct {
 	w      io.Writer
 	drafts *draftExtractor
@@ -373,8 +385,7 @@ func (v draftEvents) Write(p []byte) (int, error) {
 		switch {
 		case ev.Kind == events.ModelRequest:
 			v.drafts.newModelCall()
-		case ev.Kind == events.ErrorKind,
-			ev.Kind == events.StateChange && ev.Data["event"] == "compaction":
+		case ev.Kind == events.ErrorKind, ev.Kind == events.ContextLimit:
 			v.drafts.void()
 		case ev.Kind == events.ToolRepair && ev.Data["name"] == submitArtifactName:
 			id, _ := ev.Data["id"].(string)

@@ -29,6 +29,7 @@ func TestStruggled(t *testing.T) {
 		{"one review attempt is no struggle", []Signals{card("A", func(s *Signals) { s.ReviewAttempts = 1 })}, map[string][]string{}, 0},
 		{"two review attempts", []Signals{card("A", func(s *Signals) { s.ReviewAttempts = 2 })}, map[string][]string{"A": {WhyReviews}}, 0},
 		{"parked", []Signals{card("A", func(s *Signals) { s.Worker = "parked" })}, map[string][]string{"A": {WhyParked}}, 0},
+		{"a failed worker is no struggle", []Signals{card("A", func(s *Signals) { s.Worker = "failed" })}, map[string][]string{}, 0},
 		{
 			"stalled, blocked and not planned",
 			[]Signals{card("A", func(s *Signals) { s.State = "stalled" }), card("B", func(s *Signals) { s.State = "blocked" }), card("C", func(s *Signals) { s.State = "not_planned" })},

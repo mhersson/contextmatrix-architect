@@ -11,13 +11,23 @@
 # Required. Env: CONTEXTMATRIX_ARCHITECT_API_KEY
 api_key: ""
 
+# PEM file of extra CA certificates, for an LLM gateway, ContextMatrix or git
+# host behind a private CA. They are trusted in addition to the system trust
+# store by the LLM client, the ContextMatrix MCP and git-credentials clients
+# and the code stages' git fetches; web research reaches public hosts and
+# keeps the system store alone. A file that cannot be read, or holds no PEM
+# certificate, stops serve from starting and fails config validate.
+# Default: empty (the system trust store alone).
+# Env: CONTEXTMATRIX_ARCHITECT_CA_CERT_FILE
+ca_cert_file: ""
+
 # Caller identity the architect passes to ContextMatrix when it creates cards
 # and playbooks and starts runs. Must be a human: identity: ContextMatrix's
 # run_card and run_playbook are human-gated. Stage runs never get it.
 # Default: human:architect. Env: CONTEXTMATRIX_ARCHITECT_CALLER_IDENTITY
 caller_identity: "human:architect"
 
-# Base URL of the ContextMatrix instance. Required.
+# Base URL of the ContextMatrix instance, an http or https URL. Required.
 # Env: CONTEXTMATRIX_ARCHITECT_CONTEXTMATRIX_URL
 contextmatrix_url: "http://localhost:8080"
 
@@ -53,7 +63,9 @@ message_dedup_cache_size: 1000
 message_dedup_ttl_seconds: 600
 
 # Per-persona model overrides (slugs only); the session's model is the default
-# for every persona not listed. Default: none.
+# for every persona not listed. Each key must name a persona of the pack; an
+# unknown one stops serve and config validate, whose error lists the pack's
+# personas. Default: none.
 # Env: CONTEXTMATRIX_ARCHITECT_MODELS__<persona>
 models: {}
 

@@ -89,7 +89,8 @@ type StartInput struct {
 	// Unattended is the new-blueprint dialog's toggle; like PlainLanguage,
 	// only the start that creates the blueprint is read.
 	Unattended bool
-	// MCPAPIKey lists CM's projects for the code stages.
+	// MCPAPIKey is the session's ContextMatrix MCP key: it lists CM's
+	// projects, opens a stage run's cm tools and connects (ConnectCM).
 	MCPAPIKey string
 	// GitCredentialsToken is the bearer CM mints repository credentials for.
 	GitCredentialsToken string
@@ -117,7 +118,8 @@ type Workspace interface {
 }
 
 // CMClient is the ContextMatrix surface emission, its preflight, the run
-// start and the watch use. internal/cm's Client implements it; tests fake it.
+// start, the watch and the retrospective use. internal/cm's Client
+// implements it; tests fake it.
 type CMClient interface {
 	ListProjects(ctx context.Context) ([]cm.Project, error)
 	ListPlaybooks(ctx context.Context) ([]cm.PlaybookSummary, error)
@@ -143,7 +145,8 @@ type Options struct {
 	Models map[string]string
 	// Sink receives every controller event after it is stored. nil discards.
 	Sink func(Event)
-	// HarnessLine receives every raw harness JSONL line. nil discards.
+	// HarnessLine receives each harness JSONL line once masked, but for those
+	// a run keeps off the panel. nil discards.
 	HarnessLine func(blueprintID string, line []byte)
 	Now         func() time.Time
 	// Workspace holds the read-only trees code stages read. nil disables
@@ -153,7 +156,8 @@ type Options struct {
 	// need it for repository urls and verify commands. nil disables them.
 	Projects func(ctx context.Context, mcpAPIKey string) ([]cm.Project, error)
 	// Credentials builds the git credential source for a session's token.
-	// nil means repositories are fetched without auth.
+	// Without it, or without the session's token, a checkout or a sign-off
+	// that reads a repository fails: nothing is fetched anonymously.
 	Credentials func(gitToken string) code.Credentials
 	// CMTools opens one MCP session with the session's key for a run of a
 	// stage with the cm tools and returns them, each result tagged with tag,
@@ -170,8 +174,8 @@ type Options struct {
 	// blueprint and time; empty refuses export.
 	ExportDir string
 	// ConnectCM opens a ContextMatrix MCP session with the session's key for
-	// emission, its preflight, the run start and the watch. nil refuses
-	// emission with a clear error.
+	// emission, its preflight, the run start, the watch and the
+	// retrospective. nil refuses emission with a clear error.
 	ConnectCM func(ctx context.Context, mcpAPIKey string) (CMClient, error)
 	// CallerIdentity is the agent_id every ContextMatrix write passes. It is
 	// a human: id, because run_card and run_playbook are human-gated; stage
@@ -280,9 +284,9 @@ func New(opts Options) *Controller {
 	return c
 }
 
-// effectivePrice maps an all-zero price to nil. CM sends zero rates for a
-// model it cannot price; treating that as priced would make a cost cap that
-// can never bind.
+// effectivePrice maps an all-zero price to nil. CM sends no price for a model
+// it cannot price; an all-zero one, from an older CM, is unpriced too, since
+// counting it as priced would make a cost cap that can never bind.
 func effectivePrice(p *protocol.ModelPrice) *protocol.ModelPrice {
 	if p == nil || *p == (protocol.ModelPrice{}) {
 		return nil
@@ -375,7 +379,7 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 		}
 	}
 
-	next, err := c.resumePoint(ctx, sess.audit, bp)
+	next, err := c.resumePoint(ctx, sess, bp)
 	if err != nil {
 		c.release(in.ID, r)
 		c.detach(in.ID, sess)
@@ -457,8 +461,8 @@ func (c *Controller) openBlueprint(ctx context.Context, in StartInput, au audit)
 // itself. A builder round is not returned: the critique runs that round
 // again, in its attempt. A retro run is never re-run; marking it says the
 // pass was cut short (see retroInterrupted). Empty means no stage is re-run.
-// The caller holds the run slot.
-func (c *Controller) interruptedStage(ctx context.Context, au audit, bp store.Blueprint) (string, error) {
+// The caller holds the run slot; sess is the session that restarts it.
+func (c *Controller) interruptedStage(ctx context.Context, sess *session, bp store.Blueprint) (string, error) {
 	left, err := c.leftRunning(ctx, bp.ID)
 	if err != nil || len(left) == 0 {
 		return "", err
@@ -502,14 +506,19 @@ func (c *Controller) interruptedStage(ctx context.Context, au audit, bp store.Bl
 	}
 
 	for _, r := range left {
-		if err := c.opts.Store.EndRun(ctx, r.ID, store.RunInterrupted, "process restarted", store.RunUsage{}, c.opts.Now().UTC()); err != nil {
+		usage, err := c.spentBefore(ctx, sess, bp, r)
+		if err != nil {
+			return "", err
+		}
+
+		if err := c.opts.Store.EndRun(ctx, r.ID, store.RunInterrupted, "process restarted", usage, c.opts.Now().UTC()); err != nil {
 			return "", fmt.Errorf("blueprint: mark interrupted: %w", err)
 		}
 	}
 
 	// Said once: a later restart finds the retro run interrupted, not running.
 	if pass {
-		c.retroInterrupted(ctx, au, bp.ID)
+		c.retroInterrupted(ctx, sess.audit, bp.ID)
 	}
 
 	if noNeed {
@@ -517,6 +526,49 @@ func (c *Controller) interruptedStage(ctx context.Context, au audit, bp store.Bl
 	}
 
 	return stageID, nil
+}
+
+// spentBefore is what r's stored usage lines add up to, each at the higher
+// of its reported cost and its cost at a price: sess's when r ran on sess's
+// model, else the blueprint's stored one when r ran on the model that price
+// belongs to, else none. That is how r's sink counted them when r ran on that
+// model as its session's. It differs in two cases: a persona override on one
+// of those models while its session ran another ran unpriced (modelFor) and
+// is priced here, and a run on a session model that is neither of them was
+// priced while it ran and counts its reported cost only here.
+func (c *Controller) spentBefore(ctx context.Context, sess *session, bp store.Blueprint, r store.Run) (store.RunUsage, error) {
+	events, err := c.opts.Store.ListRunEventsOfKind(ctx, bp.ID, r.ID, EventHarness)
+	if err != nil {
+		return store.RunUsage{}, fmt.Errorf("blueprint: read the usage of interrupted run %d: %w", r.ID, err)
+	}
+
+	var price *protocol.ModelPrice
+
+	switch r.Model {
+	case sess.model:
+		price = sess.price
+	case bp.Model:
+		price = effectivePrice(bp.Price)
+	}
+
+	var sum store.RunUsage
+
+	for _, e := range events {
+		l, ok := parseHarnessLine(e.Payload)
+		if !ok {
+			continue
+		}
+
+		if u, ok := l.usage(price); ok {
+			sum.PromptTokens += u.PromptTokens
+			sum.CompletionTokens += u.CompletionTokens
+			sum.CacheReadTokens += u.CacheReadTokens
+			sum.CacheWriteTokens += u.CacheWriteTokens
+			sum.CostUSD += u.CostUSD
+		}
+	}
+
+	return sum, nil
 }
 
 // leftRunning returns every run a crash left in "running", oldest first.
@@ -538,10 +590,10 @@ func (c *Controller) leftRunning(ctx context.Context, id string) ([]store.Run, e
 }
 
 // Message handles one user message: chat about the round a human answers
-// while it waits, the need while the first stage has no artifact, the
-// sign-off decision (approve or reject <feedback>) at a ready end, or a
-// note. The abort and export
-// commands are parsed by the webhook and reach Abort and Export instead.
+// while it waits, a note while a run is in flight, and otherwise what input
+// makes of it, such as the need, a reply to the mockup offer, or a decision
+// at an open gate or the sign-off. The abort and export commands are parsed
+// by the webhook and reach Abort and Export instead.
 func (c *Controller) Message(ctx context.Context, id, text, msgID string) error {
 	trimmed := strings.TrimSpace(text)
 
@@ -700,6 +752,10 @@ func (c *Controller) Export(ctx context.Context, id, msgID string) error {
 	}
 
 	if bundle.Emissions, err = c.opts.Store.ListEmissions(ctx, id); err != nil {
+		return fmt.Errorf("blueprint: export: %w", err)
+	}
+
+	if bundle.Lessons, err = c.opts.Store.BlueprintLessons(ctx, id); err != nil {
 		return fmt.Errorf("blueprint: export: %w", err)
 	}
 
@@ -1145,7 +1201,7 @@ func (c *Controller) closingDown() bool {
 }
 
 // Wait blocks until no run is in flight for id, including a run whose
-// session has ended. For tests and shutdown.
+// session has ended. For tests: Shutdown waits on the runs itself.
 func (c *Controller) Wait(id string) {
 	for {
 		c.mu.Lock()

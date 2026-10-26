@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -26,7 +27,6 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/code"
 	"github.com/mhersson/contextmatrix-architect/internal/config"
-	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/research"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
@@ -51,7 +51,15 @@ func newServeCmd() *cobra.Command {
 				return fmt.Errorf("config %s: %w", path, err)
 			}
 
-			return runServe(cmd.Context(), cfg)
+			deps, err := loadRuntime(cfg)
+			if err != nil {
+				return fmt.Errorf("config %s: %w", path, err)
+			}
+
+			logger := newLogger(cfg.LogLevel)
+			slog.SetDefault(logger)
+
+			return runServe(cmd.Context(), cfg, deps, logger)
 		},
 	}
 	cmd.Flags().StringVar(&path, "config", defaultConfigPath(), "config file path")
@@ -78,11 +86,13 @@ func newLogger(level string) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
 }
 
-// buildServer wires store, pack, controller and the webhook server. The
-// runner is injected so tests can replace the model, and the build so a test
-// can tell a wired build from an unstamped test binary's. The returned cleanup
-// stops the replay janitor and the controller's runs, then closes the store.
-func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, runner blueprint.Runner, build protocol.BuildInfo) (*webhook.Server, func(context.Context) error, error) {
+// buildServer wires store, controller and the webhook server over what
+// loadRuntime loaded; draining is the flag the server's drain gate and
+// /readyz read. The runner is injected so tests can replace the model, and
+// the build so a test can tell a wired build from an unstamped test binary's.
+// The returned cleanup stops the replay janitor and the controller's runs,
+// then closes the store.
+func buildServer(ctx context.Context, cfg *config.Config, deps *runtimeDeps, logger *slog.Logger, runner blueprint.Runner, build protocol.BuildInfo, draining *atomic.Bool) (*webhook.Server, func(context.Context) error, error) {
 	if err := os.MkdirAll(cfg.StateDir, 0o750); err != nil {
 		return nil, nil, fmt.Errorf("state dir: %w", err)
 	}
@@ -92,29 +102,15 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 		return nil, nil, err
 	}
 
-	var pk *pack.Pack
-
-	if cfg.Pack == "" {
-		pk, err = pack.LoadEmbedded()
-	} else {
-		pk, err = pack.LoadDir(cfg.Pack)
-	}
-
-	if err != nil {
-		_ = st.Close()
-
-		return nil, nil, err
-	}
-
 	hub := logbridge.NewHub(func(e protocol.LogEntry) string { return e.SessionID }, nil)
 
 	// One instance: its per-repository and per-blueprint locks only hold
 	// within it, so the code stages and the sweep share it.
-	workspace := code.NewWorkspace(filepath.Join(cfg.StateDir, "workspaces"), time.Now)
+	workspace := code.NewWorkspace(filepath.Join(cfg.StateDir, "workspaces"), time.Now, deps.caBundle)
 
 	ctl := blueprint.New(blueprint.Options{
 		Store:          st,
-		Pack:           pk,
+		Pack:           deps.pack,
 		Runner:         runner,
 		Logger:         logger,
 		MaxRunCostUSD:  cfg.MaxRunCostUSD,
@@ -124,15 +120,15 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 		HarnessLine:    harnessForwarder(hub),
 		Workspace:      workspace,
 		ExportDir:      filepath.Join(cfg.StateDir, "exports"),
-		Projects:       cmProjects(cfg.ContextMatrixURL),
-		CMTools:        cmReadTools(cfg.ContextMatrixURL),
-		ConnectCM:      cmConnect(cfg.ContextMatrixURL),
+		Projects:       cmProjects(cfg.ContextMatrixURL, deps.transport),
+		CMTools:        cmReadTools(cfg.ContextMatrixURL, deps.transport),
+		ConnectCM:      cmConnect(cfg.ContextMatrixURL, deps.transport),
 		CallerIdentity: cfg.CallerIdentity,
 		WatchInterval:  cfg.WatchInterval,
 		Search:         research.NewSearcher,
 		Fetch:          research.NewFetcher(),
 		Credentials: func(gitToken string) code.Credentials {
-			return code.NewCMCredentials(cfg.ContextMatrixURL, gitToken)
+			return code.NewCMCredentials(cfg.ContextMatrixURL, gitToken, deps.transport)
 		},
 	})
 
@@ -146,10 +142,6 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 		sweepWorkspaces(sweepCtx, workspace, time.Duration(cfg.WorkspaceMaxAgeDays)*24*time.Hour, sweepInterval, logger)
 	})
 
-	// Never set: the controller's Shutdown refuses new starts and runs itself,
-	// so the drain gate is wired but stays open.
-	var draining atomic.Bool
-
 	replay := webhookcore.NewReplayCache(cfg.ReplaySkew, cfg.ReplayCacheSize)
 	stopJanitor := replay.StartJanitor()
 
@@ -158,7 +150,7 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 		Skew:       cfg.ReplaySkew,
 		Replay:     replay,
 		Dedup:      webhookcore.NewDedupCache(cfg.MessageDedupTTL, cfg.MessageDedupCacheSize),
-		Draining:   &draining,
+		Draining:   draining,
 		Hub:        hub,
 		Logger:     logger,
 		Controller: ctl,
@@ -183,10 +175,10 @@ func buildServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, r
 }
 
 // cmProjects lists CM's projects over one MCP session per call, keyed with
-// the session's MCP key.
-func cmProjects(baseURL string) func(ctx context.Context, mcpAPIKey string) ([]cm.Project, error) {
+// the session's MCP key. base is cm.Connect's.
+func cmProjects(baseURL string, base http.RoundTripper) func(ctx context.Context, mcpAPIKey string) ([]cm.Project, error) {
 	return func(ctx context.Context, mcpAPIKey string) ([]cm.Project, error) {
-		client, err := cm.Connect(ctx, baseURL, mcpAPIKey)
+		client, err := cm.Connect(ctx, baseURL, mcpAPIKey, base)
 		if err != nil {
 			return nil, err
 		}
@@ -198,9 +190,10 @@ func cmProjects(baseURL string) func(ctx context.Context, mcpAPIKey string) ([]c
 }
 
 // cmConnect opens one MCP session to ContextMatrix with the session's key.
-func cmConnect(baseURL string) func(ctx context.Context, mcpAPIKey string) (blueprint.CMClient, error) {
+// base is cm.Connect's.
+func cmConnect(baseURL string, base http.RoundTripper) func(ctx context.Context, mcpAPIKey string) (blueprint.CMClient, error) {
 	return func(ctx context.Context, mcpAPIKey string) (blueprint.CMClient, error) {
-		client, err := cm.Connect(ctx, baseURL, mcpAPIKey)
+		client, err := cm.Connect(ctx, baseURL, mcpAPIKey, base)
 		if err != nil {
 			// A nil *cm.Client in the interface would not compare equal to nil.
 			return nil, err
@@ -211,10 +204,10 @@ func cmConnect(baseURL string) func(ctx context.Context, mcpAPIKey string) (blue
 }
 
 // cmReadTools opens one MCP session per stage run with the session's MCP key
-// and offers the run CM's read tools.
-func cmReadTools(baseURL string) func(ctx context.Context, mcpAPIKey, tag string) ([]tools.Tool, func(), error) {
+// and offers the run CM's read tools. base is cm.Connect's.
+func cmReadTools(baseURL string, base http.RoundTripper) func(ctx context.Context, mcpAPIKey, tag string) ([]tools.Tool, func(), error) {
 	return func(ctx context.Context, mcpAPIKey, tag string) ([]tools.Tool, func(), error) {
-		client, err := cm.Connect(ctx, baseURL, mcpAPIKey)
+		client, err := cm.Connect(ctx, baseURL, mcpAPIKey, base)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -230,12 +223,14 @@ func cmReadTools(baseURL string) func(ctx context.Context, mcpAPIKey, tag string
 	}
 }
 
-func runServe(ctx context.Context, cfg *config.Config) error {
-	logger := newLogger(cfg.LogLevel)
-	slog.SetDefault(logger)
+func runServe(ctx context.Context, cfg *config.Config, deps *runtimeDeps, logger *slog.Logger) error {
 	warnMissingSearchTools(logger, exec.LookPath)
 
-	srv, cleanup, err := buildServer(ctx, cfg, logger, stage.NewRunner(cfg.ReasoningEffort, cfg.ReplayReasoning), buildinfo.Info())
+	// Flipped by shutdownHTTP when the shutdown signal arrives; the routes'
+	// drain gate and /readyz read it.
+	var draining atomic.Bool
+
+	srv, cleanup, err := buildServer(ctx, cfg, deps, logger, stage.NewRunner(cfg.ReasoningEffort, cfg.ReplayReasoning, deps.transport), buildinfo.Info(), &draining)
 	if err != nil {
 		return err
 	}
@@ -249,7 +244,6 @@ func runServe(ctx context.Context, cfg *config.Config) error {
 	}()
 
 	httpServer := &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           srv.Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -259,37 +253,57 @@ func runServe(ctx context.Context, cfg *config.Config) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Bound before the log line, so the log never claims a port the server
+	// could not take.
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", fmt.Sprintf(":%d", cfg.Port))
+	if err != nil {
+		return fmt.Errorf("listen: %w", err)
+	}
+
+	logger.Info("architect listening", "addr", ln.Addr().String(), "pack", cfg.Pack)
+
 	serverErr := make(chan error, 1)
 
 	go func() {
-		logger.Info("architect listening", "addr", httpServer.Addr, "pack", cfg.Pack)
-
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 		}
 	}()
 
 	select {
 	case err := <-serverErr:
-		return fmt.Errorf("listen: %w", err)
+		return fmt.Errorf("serve: %w", err)
 	case <-ctx.Done():
 	}
 
 	logger.Info("architect shutting down")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	if err := shutdownHTTP(httpServer, &draining); err != nil {
+		return err
+	}
+
+	stopped = true
+
+	return stopRuns(cleanup)
+}
+
+// shutdownHTTP drains httpServer, bounded by shutdownTimeout. draining flips
+// first, so /readyz and the mutating routes answer draining while Shutdown
+// waits for the requests in flight.
+func shutdownHTTP(httpServer *http.Server, draining *atomic.Bool) error {
+	draining.Store(true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
-	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+	if err := httpServer.Shutdown(ctx); err != nil {
 		// Lingering connections must not hold the process.
 		_ = httpServer.Close()
 
 		return fmt.Errorf("shutdown: %w", err)
 	}
 
-	stopped = true
-
-	return stopRuns(cleanup)
+	return nil
 }
 
 // stopRuns runs cleanup bounded by shutdownTimeout.

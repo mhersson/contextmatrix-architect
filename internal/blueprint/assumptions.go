@@ -75,13 +75,15 @@ type verdict struct {
 // do. Every auto answer follows as Q<n>, resting on itself, unless a stated
 // one rests on it and so carries its status and the answer. Each starts with
 // its basis's status (basisStatus). Verdicts come from every stage's latest
-// artifact, a later stage's winning; one naming no listed assumption is
-// ignored. A verdict applies only when its artifact was stored after the
-// latest artifact of every stating stage up to the assumption's own: ids are
-// positional, so an older verdict would judge whatever sentence holds the id
-// now. On a plain-language blueprint each also carries its consequence, the
-// round a person accepted that on and the answer that supersedes the one it
-// is or rests on (consequenceRecord).
+// artifact, a later stage's winning; one naming neither a listed assumption
+// nor an auto answer a stated one rests on is ignored. A verdict on an A<n>
+// applies only when its artifact was stored after the latest artifact of
+// every stating stage up to the assumption's own: ids are positional, so an
+// older verdict would judge whatever sentence holds the id now. One on an
+// auto answer's Q<n> also judges the stated ones resting on it, unless one on
+// their own id is as new. On a plain-language blueprint each also carries its
+// consequence, the round a person accepted that on and the answer that
+// supersedes the one it is or rests on (consequenceRecord).
 func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, error) {
 	// A record without its blueprint row reads as without the toggle.
 	bp, err := c.opts.Store.GetBlueprint(ctx, id)
@@ -221,18 +223,31 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 			c.opts.Logger.Warn("blueprint: verdicts skipped as malformed", "blueprint", id, "stage", st.ID, "version", all[i].Version, "skipped", skipped)
 		}
 
+		apply := func(j int, v verdict) {
+			// Not finding it in the code never hides what an answer
+			// settled, such as a human's confirmation.
+			if v.Status == assumptionUnverified {
+				out[j].Status, out[j].Evidence = basisStatus(answered, accepted, evidence, out[j].Basis)
+			} else {
+				out[j].Status, out[j].Evidence = v.Status, v.Evidence
+			}
+		}
+
+		// A verdict on an auto answer's Q<n> judges the stated entries that
+		// rest on it and so hold its entry; a Q<n> is stable, so it applies
+		// whenever stored. A verdict on their own id here comes after it.
 		for _, v := range verdicts {
 			for j := range out {
-				if out[j].ID != v.ID || i <= source[j] {
-					continue
+				if answered[v.ID].Assumption && out[j].Basis == v.ID && out[j].ID != v.ID {
+					apply(j, v)
 				}
+			}
+		}
 
-				// Not finding it in the code never hides what an answer
-				// settled, such as a human's confirmation.
-				if v.Status == assumptionUnverified {
-					out[j].Status, out[j].Evidence = basisStatus(answered, accepted, evidence, out[j].Basis)
-				} else {
-					out[j].Status, out[j].Evidence = v.Status, v.Evidence
+		for _, v := range verdicts {
+			for j := range out {
+				if out[j].ID == v.ID && i > source[j] {
+					apply(j, v)
 				}
 			}
 		}
@@ -1008,11 +1023,21 @@ func assumptionProblems(data map[string]any, lists contract.Lists, bases map[str
 		}
 
 		for _, named := range basisTags.FindAllString(text, -1) {
-			if tag := normalTag(named); bases[tag] {
-				out = append(out, fmt.Sprintf(`assumption %d names %s; give it as the basis ({"text": "<sentence>", "basis": %q}) and state the fact itself`, i+1, named, tag))
-
-				break
+			tag := normalTag(named)
+			if !bases[tag] {
+				continue
 			}
+
+			problem := fmt.Sprintf(`assumption %d names %s; give it as the basis ({"text": "<sentence>", "basis": %q}) and state the fact itself`, i+1, named, tag)
+
+			// A sentence may mean a calendar quarter or a version by Q<n>.
+			if strings.HasPrefix(tag, "Q") {
+				problem += fmt.Sprintf("; if %s means something else there, such as a quarter or a version, spell that out another way", named)
+			}
+
+			out = append(out, problem)
+
+			break
 		}
 	}
 

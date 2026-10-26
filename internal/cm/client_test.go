@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -29,6 +30,14 @@ func (s *testCM) dropSessions() {
 }
 
 func testServer(t *testing.T, wantKey string) *testCM {
+	t.Helper()
+
+	return newTestCM(t, wantKey, false)
+}
+
+// newTestCM is testServer, over TLS with httptest's own certificate when
+// overTLS is set.
+func newTestCM(t *testing.T, wantKey string, overTLS bool) *testCM {
 	t.Helper()
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "cm-test", Version: "0"}, nil)
@@ -67,7 +76,15 @@ func testServer(t *testing.T, wantKey string) *testCM {
 		cm.handler.Load().ServeHTTP(w, r)
 	}))
 
-	cm.Server = httptest.NewServer(mux)
+	cm.Server = httptest.NewUnstartedServer(mux)
+	cm.Config.ErrorLog = log.New(io.Discard, "", 0)
+
+	if overTLS {
+		cm.StartTLS()
+	} else {
+		cm.Start()
+	}
+
 	t.Cleanup(cm.Close)
 
 	return cm
@@ -76,7 +93,7 @@ func testServer(t *testing.T, wantKey string) *testCM {
 func TestListProjects(t *testing.T) {
 	srv := testServer(t, "mcp-key")
 
-	c, err := Connect(context.Background(), srv.URL, "mcp-key")
+	c, err := Connect(context.Background(), srv.URL, "mcp-key", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 
@@ -95,12 +112,29 @@ func TestListProjects(t *testing.T) {
 	assert.False(t, projects[1].POC, "an absent poc reads false, as from a ContextMatrix that predates it")
 }
 
+func TestConnect_DialsOverTheBaseTransport(t *testing.T) {
+	srv := newTestCM(t, "mcp-key", true)
+
+	// The test server's own client trusts its certificate.
+	c, err := Connect(context.Background(), srv.URL, "mcp-key", srv.Client().Transport)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+
+	projects, err := c.ListProjects(context.Background())
+	require.NoError(t, err)
+	assert.Len(t, projects, 2)
+
+	_, err = Connect(context.Background(), srv.URL, "mcp-key", nil)
+	require.Error(t, err, "the system trust store refuses the certificate")
+	assert.Equal(t, int32(1), srv.dials.Load(), "only the session over the base transport reached the server")
+}
+
 func TestConnect_WrongKeyFails(t *testing.T) {
 	const wrongKey = "sk-cm-9f8e7d6c5b4a39281706f5e4d3c2b1a0"
 
 	srv := testServer(t, "mcp-key")
 
-	_, err := Connect(context.Background(), srv.URL, wrongKey)
+	_, err := Connect(context.Background(), srv.URL, wrongKey, nil)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), wrongKey, "the key never reaches an error")
 }
@@ -108,7 +142,7 @@ func TestConnect_WrongKeyFails(t *testing.T) {
 func TestCallText_RedialsOnceWhenTheSessionIsGone(t *testing.T) {
 	srv := testServer(t, "mcp-key")
 
-	c, err := Connect(context.Background(), srv.URL, "mcp-key")
+	c, err := Connect(context.Background(), srv.URL, "mcp-key", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 
@@ -131,7 +165,7 @@ func TestCallText_RedialsOnceWhenTheSessionIsGone(t *testing.T) {
 func TestCallText_AfterCloseFailsWithoutRedialling(t *testing.T) {
 	srv := testServer(t, "mcp-key")
 
-	c, err := Connect(context.Background(), srv.URL, "mcp-key")
+	c, err := Connect(context.Background(), srv.URL, "mcp-key", nil)
 	require.NoError(t, err)
 	require.NoError(t, c.Close())
 

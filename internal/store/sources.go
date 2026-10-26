@@ -6,8 +6,9 @@ import (
 	"time"
 )
 
-// Source is something external a blueprint read: a repository at a sha, a
-// url, a file. Tool results carry its tag so claims can cite it.
+// Source is something external a blueprint read, by Kind: a repository at a
+// sha ("repo"), a web page ("url") or the ContextMatrix board ("cm"). Tool
+// results carry its tag so claims can cite it.
 type Source struct {
 	BlueprintID string
 	Number      int

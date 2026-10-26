@@ -136,8 +136,9 @@ const (
 	// it, and by "mode" when a mode switch took it. The newest one is the
 	// offer.
 	EventMockupOffer = "mockup_offer"
-	// EventRetroReply answers a retrospective reply that starts no pass, or
-	// ends a pass that did not complete: the reason code, the message, the
+	// EventRetroReply answers a retrospective reply that starts no pass, ends
+	// a pass that did not complete, or says why a pass that stored its
+	// lessons posted no lesson round: the reason code, the message, the
 	// reply's message id and whether a run goes on working after it.
 	EventRetroReply = "retro_reply"
 	// EventRetroReport is a pass's findings message: every struggled card
@@ -206,12 +207,9 @@ func (a audit) texts(ss []string) []string {
 	return out
 }
 
-// event stores e, then hands it to the sink.
+// event stamps e with the time, stores it, then hands it to the sink.
 func (a audit) event(ctx context.Context, e Event) {
-	if e.Time.IsZero() {
-		e.Time = a.c.opts.Now().UTC()
-	}
-
+	e.Time = a.c.opts.Now().UTC()
 	e.Payload = a.maskFields(e.Payload)
 
 	payload, err := marshalPayload(e.Payload)

@@ -35,7 +35,12 @@ type fakeCM struct {
 	bookSeq    map[string][]cm.Playbook
 	seq        map[string]int
 	gets       int
-	failGets   int // fail this many GetCard calls
+	failGets   int             // fail this many GetCard calls
+	failBooks  int             // fail this many GetPlaybook calls
+	cardGets   map[string]int  // GetCard calls by card id
+	deleted    map[string]bool // card or playbook ids deleted in ContextMatrix
+	torn       map[string]bool // projects deleted in ContextMatrix, their cards first
+	goneBooks  bool            // a playbook is deleted as soon as it is created
 	connects   int
 	closes     int
 }
@@ -49,6 +54,9 @@ func newFakeCM() *fakeCM {
 		ended:      map[string]cm.EndedCard{},
 		bookSeq:    map[string][]cm.Playbook{},
 		seq:        map[string]int{},
+		cardGets:   map[string]int{},
+		deleted:    map[string]bool{},
+		torn:       map[string]bool{},
 	}
 }
 
@@ -85,6 +93,16 @@ func (f *fakeCM) GetPlaybook(_ context.Context, id string) (cm.Playbook, error) 
 
 	f.gets++
 
+	if f.failBooks > 0 {
+		f.failBooks--
+
+		return cm.Playbook{}, errors.New("cm: get_playbook: remote unreachable")
+	}
+
+	if f.deleted[id] {
+		return cm.Playbook{}, &cm.ToolError{Tool: "get_playbook", Text: fmt.Sprintf("get playbook %s: playbook not found", id)}
+	}
+
 	seq := f.bookSeq[id]
 	if len(seq) == 0 {
 		return cm.Playbook{}, fmt.Errorf("cm: get_playbook: %s not found", id)
@@ -97,16 +115,21 @@ func (f *fakeCM) GetPlaybook(_ context.Context, id string) (cm.Playbook, error) 
 	return seq[0], nil
 }
 
-func (f *fakeCM) GetCard(_ context.Context, _, id string) (cm.Card, error) {
+func (f *fakeCM) GetCard(_ context.Context, project, id string) (cm.Card, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	f.gets++
+	f.cardGets[id]++
 
 	if f.failGets > 0 {
 		f.failGets--
 
 		return cm.Card{}, errors.New("cm: get_card: remote unreachable")
+	}
+
+	if err := f.goneCard(project, id); err != nil {
+		return cm.Card{}, err
 	}
 
 	seq := f.cardSeq[id]
@@ -121,7 +144,7 @@ func (f *fakeCM) GetCard(_ context.Context, _, id string) (cm.Card, error) {
 	return seq[0], nil
 }
 
-func (f *fakeCM) GetEndedCard(_ context.Context, _, id string) (cm.EndedCard, error) {
+func (f *fakeCM) GetEndedCard(_ context.Context, project, id string) (cm.EndedCard, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -132,6 +155,10 @@ func (f *fakeCM) GetEndedCard(_ context.Context, _, id string) (cm.EndedCard, er
 		f.failEnded--
 
 		return cm.EndedCard{}, errors.New("cm: get_card: remote unreachable")
+	}
+
+	if err := f.goneCard(project, id); err != nil {
+		return cm.EndedCard{}, err
 	}
 
 	card, ok := f.ended[id]
@@ -175,6 +202,7 @@ func (f *fakeCM) CreatePlaybook(_ context.Context, in cm.PlaybookInput) (string,
 	}
 
 	f.bookSeq[id] = []cm.Playbook{{ID: id, Title: in.Title, Total: len(in.Entries), Followups: followups}}
+	f.deleted[id] = f.goneBooks
 
 	return id, nil
 }
@@ -331,6 +359,47 @@ func (f *fakeCM) setBooks(id string, seq ...cm.Playbook) {
 	defer f.mu.Unlock()
 
 	f.bookSeq[id] = seq
+}
+
+// goneCard is ContextMatrix's answer to a read of a card deleted there, or
+// of one whose project was torn down; nil for a card that is there. The
+// caller holds mu.
+func (f *fakeCM) goneCard(project, id string) error {
+	switch {
+	case f.torn[project]:
+		return &cm.ToolError{Tool: "get_card", Text: fmt.Sprintf("get card %s: project not found", id)}
+	case f.deleted[id]:
+		return &cm.ToolError{Tool: "get_card", Text: fmt.Sprintf("get card %s: card not found", id)}
+	default:
+		return nil
+	}
+}
+
+// remove deletes a card or a playbook in ContextMatrix: every later read of
+// it is refused as not found.
+func (f *fakeCM) remove(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.deleted[id] = true
+}
+
+// tearDown deletes a project in ContextMatrix, which allows it only once
+// its cards are deleted: every later read of one of its cards is refused as
+// the project not found.
+func (f *fakeCM) tearDown(project string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.torn[project] = true
+}
+
+// cardReads is how many GetCard calls read card id.
+func (f *fakeCM) cardReads(id string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.cardGets[id]
 }
 
 func (f *fakeCM) getCount() int {

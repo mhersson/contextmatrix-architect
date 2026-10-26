@@ -15,7 +15,7 @@ import (
 
 func TestSweepWorkspaces_RemovesStaleTreesAndStopsOnCancel(t *testing.T) {
 	root := t.TempDir()
-	ws := code.NewWorkspace(root, time.Now)
+	ws := code.NewWorkspace(root, time.Now, nil)
 
 	stale := filepath.Join(ws.TreeRoot("OLD"), "alpha")
 	require.NoError(t, os.MkdirAll(stale, 0o750))

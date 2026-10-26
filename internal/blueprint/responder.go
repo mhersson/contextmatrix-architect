@@ -5,14 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
+	"slices"
 	"strings"
 
 	protocol "github.com/mhersson/contextmatrix-protocol"
 
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
-	"github.com/mhersson/contextmatrix-harness/llm"
 )
 
 // answer is a responder's reply: the answer, why, whether a tool result
@@ -26,30 +25,15 @@ type answer struct {
 	Consequence string `json:"consequence"`
 }
 
-var leadingTags = regexp.MustCompile(`^\s*\[\s*(S\d+(?:\s*,\s*S\d+)*)\s*\]`)
-
-// citesToolResult reports whether evidence cites a source tag that the
-// leading bracket of a tool message carries. Tags in other roles' text or
-// deeper in a result do not count: only a tool call of this run vouches.
-func citesToolResult(evidence string, msgs []llm.Message) bool {
-	returned := map[string]bool{}
-
-	for _, m := range msgs {
-		if m.Role != "tool" {
-			continue
-		}
-
-		if lead := leadingTags.FindStringSubmatch(m.Content); lead != nil {
-			for tag := range strings.SplitSeq(lead[1], ",") {
-				returned[strings.TrimSpace(tag)] = true
-			}
-		}
-	}
-
+// citesToolResult reports whether evidence cites a source tag one of the
+// run's tool results led with (stage.Output.SourceTags). Tags in the task, in
+// the model's own text or deeper in a result do not count: only a tool call
+// of this run vouches.
+func citesToolResult(evidence string, returned []string) bool {
 	// A citation may carry the place it points at, as [S3 internal/x.go:42].
 	for _, cited := range citation.FindAllString(evidence, -1) {
 		for _, m := range sourceTag.FindAllStringSubmatch(cited, -1) {
-			if returned["S"+m[1]] {
+			if slices.Contains(returned, "S"+m[1]) {
 				return true
 			}
 		}
@@ -112,9 +96,11 @@ func parseAnswer(data map[string]any) (answer, error) {
 // responderTask, never the asker's transcript. The answer is recorded as an
 // assumption, grounded only when its evidence cites a tool result of its
 // own run. A responder that fails leaves the stage to decide; a cancel ends
-// the asking run too. The responder spends from the asking run's cap. When q
-// asks the turned-down answer to question reasks again, 0 for none, the
-// responder is told the person's concern and the answer supersedes that one.
+// the asking run too. The responder spends from the asking run's cap; on a
+// handed-over round, which no stage run asks, it is capped as a run of its
+// own. When q asks the turned-down answer to question reasks again, 0 for
+// none, the responder is told the person's concern and the answer
+// supersedes that one.
 func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion, reasks int) (protocol.RoundAnswer, error) {
 	c, au, stageID := iv.c, iv.sess.audit, iv.st.ID
 	bg := context.WithoutCancel(ctx)
@@ -163,7 +149,7 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion, re
 		return protocol.RoundAnswer{}, undecided(err)
 	}
 
-	grounded := ans.Grounded && citesToolResult(ans.Evidence, out.Result.Messages)
+	grounded := ans.Grounded && citesToolResult(ans.Evidence, out.SourceTags)
 
 	evidence := ""
 	if grounded {

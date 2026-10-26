@@ -204,9 +204,13 @@ func (c *Controller) movedRepos(ctx context.Context, sess *session, bp store.Blu
 		latest[s.Identity] = s
 	}
 
-	var creds code.Credentials
-	if c.opts.Credentials != nil && sess.gitToken != "" {
-		creds = c.opts.Credentials(sess.gitToken)
+	if len(order) == 0 {
+		return nil, nil, nil
+	}
+
+	creds, err := c.credentials(sess)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read the default branches: %w", err)
 	}
 
 	var warnings, empty []string

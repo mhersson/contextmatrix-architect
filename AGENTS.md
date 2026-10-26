@@ -6,8 +6,8 @@ contextmatrix-architect turns a stated need into a blueprint: research,
 decisions and a set of ContextMatrix (CM) cards written so an autonomous
 contextmatrix-agent run completes each one first time. It is a third CM
 backend speaking the chat-backend protocol: CM's chat panel is its only
-client. Read `docs/design.md` before changing anything; it is the
-specification and must stay true at HEAD.
+client. Read `docs/decisions.md` before changing anything: it records the
+decisions the code keeps and why, and must stay true at HEAD.
 
 ## Boundaries
 
@@ -23,12 +23,12 @@ specification and must stay true at HEAD.
 ## Package map
 
 - `cmd/contextmatrix-architect` - entrypoint; `serve` is the only server command.
-- `internal/cli` - cobra commands: serve, config defaults, config validate.
+- `internal/cli` - cobra commands; serve's wiring, the panel rendering of controller events, the workspace sweeper and the search-tool check.
 - `internal/buildinfo` - the build's version, commit and build time, stamped by ldflags, and the merge history embedded at build.
 - `internal/config` - koanf config: file, then `CONTEXTMATRIX_ARCHITECT_*` env.
 - `internal/webhook` - CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, mode, resume, continue, retrospective, lessons and retire commands and the round and mockup replies that `internal/blueprint` recognises; serves the blueprint view, artifacts and live stream.
 - `internal/export` - renders a blueprint's stored record as a markdown bundle in the state directory.
-- `internal/blueprint` - controller: blueprint state machine, the step list that repeats per-slice stages once per slice, the digests of other slices' artifacts and `read_artifact`, stage chaining, responder policies, the gate reply and the mode switch, which hands a waiting round to the auto responder, the auto responder, gates at any stage and their folding, reviewer rounds and their findings ledger, code stage preparation, the readiness loop, reply handling (answers, the need, notes delivered to later runs), abort and export, question rounds (posting, replies, continuation, chat), assumptions, events, sign-off, emission and the run watch, the blueprint view and the runs in flight, the live stream of views and drafts, the research tools for research stages and reviewers, their ledger and the guard's terms, the proof-of-concept targets a run that writes or judges cards reads and is told, the checks over outcomes, acceptance traces and sweeps, restated assumptions and readiness's findings across the blueprint, the sign-off's override reason, the ended view, the plain stops for a run its context window refused or stopped, plain language (the audience split, consequences, the plain summary and wording), the mockup step (the offer, revisions as rounds inside the architect, the person's replies, the auto responder's turns and the hand-over and hand-back, the close and the settle, the approved design in words for later stages, and the mockup block on every card of a slice that builds its screens), each blueprint's lists, merged with its lesson set's overlays, the lesson set's text in decomposition's and readiness's instructions, the retrospective (the pass over the emitted cards on the run slot, its findings message and stored lessons, the lesson round with its own lookup, its answers and each lesson's decision, the `lessons` and `retire` replies and the first-stop offer), the follow-ups split (the manual entries after the playbook's last card), the Unattended overlay on every stage run, readiness's needless stops and the sign-off's stops, and the research-off notice.
+- `internal/blueprint` - the controller: the blueprint state machine and the pipeline of stage, reviewer and responder runs; the stage checks; question rounds, gates and their folding, assumptions, modes and plain language; the research tools; code stage preparation and the readiness loop; the mockup step; sign-off, emission and the run watch; the retrospective and lessons; the blueprint view and the live stream.
 - `internal/retro` - the retrospective's pure parts: a card's run signals and the struggle rules, the findings a retro run submits and their checks, the run's task and the lesson questions.
 - `internal/stage` - one harness run: persona + instructions + the round tools (ask_questions, answer_chat) and submit_artifact, `show_mockup` and the frame-contract check, plus per-run tool sets (the code tools and `repo_info`), submit validation and a check's refusal for good, which fails the run (`fatal_check`), the pre-flight size check against the model's window, the final-reply mark on the reply a run ends on, the draft of the artifact body as it streams, and transient tool results kept out of the record.
 - `internal/pack` - pipeline packs: stages, personas, instructions (`plain.md` for plain-language blueprints, `unattended.md` for the Unattended overlay, the mockup responder's instructions, `retrospective.md` for the retrospective), lists.yaml and card.md and their merge with lesson overlays, and the rules a pack's screen and mockup stages keep; the default pack is embedded.
@@ -53,10 +53,19 @@ specification and must stay true at HEAD.
 
 ### Documentation
 
-- Every statement matches the code at HEAD, in `README.md`, `docs/guide.md`, `docs/reference.md`, `docs/installing.md` and `docs/design.md` alike; a change that makes a doc line false updates it in the same commit.
+- Documentation must always be true: every statement matches the code at
+  HEAD, and a change that makes a doc line false updates it in the same
+  commit.
+- Document the current state - what exists now and why, not how it got here.
+- Comments explain only non-obvious decisions, constraints, safety invariants,
+  or workarounds. Do not narrate what code does or record change history; git
+  holds history. Keep comments to one or two tight lines unless a longer
+  explanation is genuinely necessary. Rewrite or delete if you find comments
+  that don't follow this rule.
+- Never use em-dashes; use hyphens (-).
+- Never reference plan phases, task numbers, or private card IDs in doc comments.
+- The docs held to this are `README.md`, `docs/guide.md`, `docs/reference.md`, `docs/installing.md` and `docs/decisions.md`.
 - A screenshot in `docs/images/` is replaced when the behaviour it shows changes, not for cosmetic drift.
-- Comments explain non-obvious decisions and invariants only. No em-dashes; use hyphens.
-- Never reference plan phases, task numbers or private card IDs.
 - Never put organisation-specific hosts, keys or IDs in repo files, and never name an LLM gateway operator.
 
 ## Running and verifying
@@ -77,6 +86,9 @@ Before any commit: `make fmt`, `make test`, `make lint`, `make build` clean.
 
 ## Commit discipline
 
-- Never commit to `main`; work on a feature branch. Never push without explicit approval.
+- **Never commit to `main`.** Work on a feature branch; tasks of a plan or
+  scope the user approved commit there without asking again. Never push
+  without explicit user approval.
 - Conventional commits: `type(scope): summary`, bullet-point body.
-- No card IDs, plan references or session links in commits or PRs.
+- No card IDs or plan references in commits or PRs.
+- No session links in commits or PRs.

@@ -11,3 +11,5 @@ docs/superpowers/
 # A developer's local workspace points outside the context.
 go.work
 go.work.sum
+.worktrees/
+.claude/

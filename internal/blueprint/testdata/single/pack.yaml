@@ -3,5 +3,4 @@ version: "1"
 stages:
   - id: intake
     persona: product_owner
-    produces: need
     policy: human

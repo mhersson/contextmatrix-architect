@@ -29,11 +29,8 @@ func (c *Controller) contextStop(ctx context.Context, au audit, id string, runID
 
 	what := c.stepName(ctx, id, key)
 
-	switch kind {
-	case store.RunKindReviewer:
+	if kind == store.RunKindReviewer {
 		what = "The review of " + what
-	case store.RunKindResponder:
-		what = "The responder for " + what
 	}
 
 	payload := map[string]any{"stage": key, "kind": kind}
@@ -61,7 +58,7 @@ func (c *Controller) contextStop(ctx context.Context, au audit, id string, runID
 			rest -= p.Tokens
 
 			parts = append(parts, map[string]any{"name": p.Name, "tokens": p.Tokens})
-			names = append(names, fmt.Sprintf("%s (about %d tokens)", c.partName(ctx, id, p.Name), p.Tokens))
+			names = append(names, fmt.Sprintf("%s (about %d tokens)", c.stepName(ctx, id, p.Name), p.Tokens))
 		}
 
 		rest = max(rest, 0)
@@ -133,13 +130,4 @@ func (c *Controller) inputSizes(ctx context.Context, id, key, kind string) ([]st
 	slices.SortStableFunc(parts, func(a, b stage.Part) int { return cmp.Compare(b.Tokens, a.Tokens) })
 
 	return parts, nil
-}
-
-// partName is a step key as text a person reads.
-func (c *Controller) partName(ctx context.Context, id, name string) string {
-	if _, ok := c.stepAt(name); ok {
-		return c.stepName(ctx, id, name)
-	}
-
-	return name
 }

@@ -283,18 +283,18 @@ func digested(st, in pipelineStep, sliced bool) bool {
 }
 
 // readsDigests reports whether st's task can hold a digest, so its run is
-// offered read_artifact.
-func readsDigests(steps []pipelineStep, pieces []piece, st pipelineStep) bool {
+// offered read_artifact; sliced is digested's.
+func readsDigests(steps []pipelineStep, sliced bool, st pipelineStep) bool {
 	return slices.ContainsFunc(consumedSteps(steps, st), func(in pipelineStep) bool {
-		return !in.Collapsed && digested(st, in, len(pieces) > 1)
+		return !in.Collapsed && digested(st, in, sliced)
 	})
 }
 
 // readsArtifacts reports whether st's run is offered read_artifact: its task
 // holds a digest, or describes the approved mockup, whose source only that
 // tool returns.
-func (c *Controller) readsArtifacts(ctx context.Context, id string, steps []pipelineStep, pieces []piece, st pipelineStep) (bool, error) {
-	if readsDigests(steps, pieces, st) {
+func (c *Controller) readsArtifacts(ctx context.Context, id string, steps []pipelineStep, sliced bool, st pipelineStep) (bool, error) {
+	if readsDigests(steps, sliced, st) {
 		return true, nil
 	}
 

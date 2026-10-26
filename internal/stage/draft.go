@@ -26,7 +26,8 @@ const minSecretLen = 6
 // follows the first Offset code points already published, and offset 0
 // replaces whatever was shown. Refused marks the body a check refused,
 // Reason saying why. Void says the draft so far is void: the harness
-// abandoned the turn that wrote it, so no draft is in progress.
+// abandoned the turn that wrote it, on an error or a stop at the context
+// limit, so no draft is in progress.
 type DraftFrame struct {
 	Offset  int
 	Text    string

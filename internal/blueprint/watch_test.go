@@ -2,6 +2,8 @@ package blueprint
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -543,4 +545,285 @@ func TestWatch_AnEndWithoutFollowupsCountsNone(t *testing.T) {
 	end, ok := rec.first(EventWatchEnded)
 	require.True(t, ok)
 	assert.NotContains(t, end.Payload, "followups")
+}
+
+// deletedCards are the end payload's cards flagged deleted.
+func deletedCards(t *testing.T, end Event) []string {
+	t.Helper()
+
+	var out []string
+
+	for _, raw := range anyList(end.Payload["cards"]) {
+		card, ok := raw.(map[string]any)
+		require.True(t, ok)
+
+		if deleted, _ := card["deleted"].(bool); deleted {
+			out = append(out, card["card"].(string))
+		}
+	}
+
+	return out
+}
+
+// watchedState is the state the watch stored last; false before it stored
+// one, or when it does not decode.
+func watchedState(rec *recorder) (snapshot, bool) {
+	states := rec.all(EventWatchState)
+	if len(states) == 0 {
+		return snapshot{}, false
+	}
+
+	b, err := json.Marshal(states[len(states)-1].Payload)
+	if err != nil {
+		return snapshot{}, false
+	}
+
+	var snap snapshot
+
+	return snap, json.Unmarshal(b, &snap) == nil
+}
+
+// goneIn reports whether the state the watch stored last has card id gone.
+func goneIn(rec *recorder, id string) bool {
+	snap, ok := watchedState(rec)
+
+	return ok && slices.ContainsFunc(snap.Cards, func(cv cardView) bool { return cv.ID == id && cv.Gone })
+}
+
+// naming counts the lines that name id.
+func naming(lines []string, id string) int {
+	n := 0
+
+	for _, line := range lines {
+		if strings.Contains(line, id) {
+			n++
+		}
+	}
+
+	return n
+}
+
+func TestWatch_ACardDeletedFromThePlaybookIsReportedOnceAndNoLongerRead(t *testing.T) {
+	_, st, _, rec, _, fake := startWatchedTwoCards(t)
+
+	// The first poll's lines are in once its state is stored.
+	require.Eventually(t, func() bool { return len(rec.all(EventWatchState)) > 0 }, time.Second, 5*time.Millisecond)
+
+	before := len(watchLines(rec))
+
+	// The project's get_card answer is not "card not found" (the project
+	// itself may be gone), so the entry's flag alone marks the card deleted.
+	entries := []cm.PlaybookEntry{
+		{ID: "e1", Type: "card", Project: "alpha", Card: "ALPHA-001", Complete: true},
+		{ID: "e2", Type: "card", Project: "alpha", Card: "ALPHA-002", Missing: true},
+	}
+	fake.setBooks("ship-the-parser", cm.Playbook{
+		ID: "ship-the-parser", Entries: entries, Total: 2, Complete: 1,
+		Run: &cm.PlaybookRun{Status: "waiting", Entry: "e2", Reason: "alpha/ALPHA-002 no longer exists"},
+	})
+
+	require.Eventually(t, func() bool { return goneIn(rec, "ALPHA-002") }, time.Second, 5*time.Millisecond)
+
+	reads := fake.cardReads("ALPHA-002")
+	gets := fake.getCount()
+
+	require.Eventually(t, func() bool { return fake.getCount() > gets+6 }, time.Second, 5*time.Millisecond)
+
+	// The deletion and the run's wait, whose reason names the card.
+	assert.Equal(t, 2, naming(watchLines(rec)[before:], "ALPHA-002"), "each is reported once")
+	assert.Equal(t, reads, fake.cardReads("ALPHA-002"), "a deleted card is not read again")
+
+	state, ok := watchedState(rec)
+	require.True(t, ok)
+	require.NotNil(t, state.Run)
+	assert.Equal(t, runView{Status: "waiting", Entry: "e2", Reason: "alpha/ALPHA-002 no longer exists"}, *state.Run,
+		"the run follows ContextMatrix's own status")
+
+	// A person removes the entry in ContextMatrix, and the run completes.
+	fake.setBooks("ship-the-parser", cm.Playbook{
+		ID: "ship-the-parser", Entries: entries[:1], Total: 1, Complete: 1, Run: &cm.PlaybookRun{Status: "completed"},
+	})
+	rec.waitFor(t, EventWatchEnded)
+
+	end, ok := rec.first(EventWatchEnded)
+	require.True(t, ok)
+	assert.Equal(t, []string{"ALPHA-002"}, deletedCards(t, end))
+	assert.NotContains(t, end.Payload, "playbook_deleted")
+	assert.Equal(t, reads, fake.cardReads("ALPHA-002"), "a card no longer in the playbook stays deleted")
+	assert.Equal(t, string(StateDone), stateOf(t, st, "BP1"))
+}
+
+func TestWatch_ADeletedCardStaysDeletedAcrossARestart(t *testing.T) {
+	c, st, _, rec, ws, fake := startWatchedTwoCards(t)
+
+	fake.remove("ALPHA-002")
+
+	require.Eventually(t, func() bool { return goneIn(rec, "ALPHA-002") }, time.Second, 5*time.Millisecond)
+
+	c2, rec2 := reopen(t, c, st, ws, twoCardScript(), fake, startInput("BP1"))
+	require.NotNil(t, watcherOf(c2, "BP1"), "the watch goes on")
+
+	reads, kept := fake.cardReads("ALPHA-002"), fake.cardReads("ALPHA-001")
+
+	require.Eventually(t, func() bool { return fake.cardReads("ALPHA-001") > kept+3 }, time.Second, 5*time.Millisecond)
+	assert.Equal(t, reads, fake.cardReads("ALPHA-002"), "the stored state keeps it deleted")
+	assert.Empty(t, watchLines(rec2), "nothing changed while nobody watched")
+}
+
+func TestWatch_ADeletedSingleCardEndsTheWatch(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		delete func(*fakeCM)
+	}{
+		{name: "the card", delete: func(f *fakeCM) { f.remove("ALPHA-001") }},
+		{name: "its project, the card first", delete: func(f *fakeCM) { f.tearDown("alpha") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, st, _, rec, _ := newPipeline(t, happyScript())
+			fake := newFakeCM()
+			c.opts.ConnectCM = fake.connect
+			c.opts.WatchInterval = 5 * time.Millisecond
+			ctx := context.Background()
+
+			drive(t, c, "BP1")
+			require.NoError(t, c.Message(ctx, "BP1", "approve", "m3"))
+			c.Wait("BP1")
+
+			tc.delete(fake)
+			rec.waitFor(t, EventWatchEnded)
+
+			assert.True(t, goneIn(rec, "ALPHA-001"), "the deletion was reported")
+
+			end, ok := rec.first(EventWatchEnded)
+			require.True(t, ok)
+			assert.Equal(t, []string{"ALPHA-001"}, deletedCards(t, end))
+			assert.Equal(t, string(StateDone), stateOf(t, st, "BP1"))
+			require.Eventually(t, func() bool { return watcherOf(c, "BP1") == nil }, time.Second, 5*time.Millisecond, "the watch ended")
+		})
+	}
+}
+
+// A deleted playbook ends its watch whatever its cards' reads would answer:
+// they are not read again.
+func TestWatch_ADeletedPlaybookEndsTheWatch(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cards func(*fakeCM) // run under the fake's lock, with the playbook's deletion
+	}{
+		{name: "its cards still there", cards: func(*fakeCM) {}},
+		{name: "its project torn down", cards: func(f *fakeCM) { f.torn["alpha"] = true }},
+		{name: "its cards unreadable", cards: func(f *fakeCM) { f.failGets = 1 << 30 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, st, _, rec, _, fake := startWatchedTwoCards(t)
+
+			fake.mu.Lock()
+			fake.deleted["ship-the-parser"] = true
+			tc.cards(fake)
+			fake.mu.Unlock()
+
+			rec.waitFor(t, EventWatchEnded)
+
+			state, ok := watchedState(rec)
+			require.True(t, ok)
+			assert.True(t, state.PlaybookGone, "the deletion was reported")
+
+			end, ok := rec.first(EventWatchEnded)
+			require.True(t, ok)
+			assert.Equal(t, true, end.Payload["playbook_deleted"])
+			assert.Empty(t, deletedCards(t, end), "the cards are as the watch last saw them")
+			assert.Equal(t, string(StateDone), stateOf(t, st, "BP1"))
+			require.Eventually(t, func() bool { return watcherOf(c, "BP1") == nil }, time.Second, 5*time.Millisecond, "the watch ended")
+		})
+	}
+}
+
+// A playbook deleted before the watch's first read, as when ContextMatrix
+// was down from emission until then, leaves every card unread: no status
+// line goes out for a card the watch never saw.
+func TestWatch_APlaybookDeletedBeforeTheFirstReadPostsNoBlankStatus(t *testing.T) {
+	c, _, _, rec, _ := newPipeline(t, twoCardScript())
+	fake := newFakeCM()
+	fake.goneBooks = true
+	c.opts.ConnectCM = fake.connect
+	c.opts.WatchInterval = 5 * time.Millisecond
+
+	drive(t, c, "BP1")
+	require.NoError(t, c.Message(context.Background(), "BP1", "approve", "m3"))
+	c.Wait("BP1")
+	rec.waitFor(t, EventWatchEnded)
+
+	assert.Len(t, watchLines(rec), 1, "the playbook's deletion alone is posted")
+
+	state, ok := watchedState(rec)
+	require.True(t, ok)
+	assert.True(t, state.PlaybookGone)
+}
+
+// A read that fails for any other reason, such as ContextMatrix being down,
+// is retried and never taken for a deletion.
+func TestWatch_AFailedReadIsNoDeletion(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fail func(*fakeCM)
+	}{
+		{name: "a card read", fail: func(f *fakeCM) { f.failGets = 3 }},
+		{name: "a playbook read", fail: func(f *fakeCM) { f.failBooks = 3 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, rec, _, fake := startWatchedTwoCards(t)
+
+			fake.mu.Lock()
+			tc.fail(fake)
+			fake.mu.Unlock()
+
+			require.Eventually(t, func() bool {
+				fake.mu.Lock()
+				defer fake.mu.Unlock()
+
+				return fake.failGets == 0 && fake.failBooks == 0
+			}, time.Second, 5*time.Millisecond, "every failure was served")
+
+			fake.setBooks("ship-the-parser", cm.Playbook{ID: "ship-the-parser", Total: 2, Complete: 2, Run: &cm.PlaybookRun{Status: "completed"}})
+			rec.waitFor(t, EventWatchEnded)
+
+			end, ok := rec.first(EventWatchEnded)
+			require.True(t, ok)
+			assert.NotContains(t, end.Payload, "playbook_deleted")
+			assert.Empty(t, deletedCards(t, end))
+		})
+	}
+}
+
+// The run line follows the run's status and reason, and the entry it waits
+// at; the run moving from one card to the next is no news. Two check-offs in
+// a row may read the same.
+func TestWatch_TheRunLineIsPostedOnlyWhenTheRunChanges(t *testing.T) {
+	_, _, _, rec, _, fake := startWatchedTwoCards(t)
+
+	entries := []cm.PlaybookEntry{
+		{ID: "e1", Type: "card", Project: "alpha", Card: "ALPHA-001"},
+		{ID: "e2", Type: "manual", Text: "Check the dashboard"},
+		{ID: "e3", Type: "manual", Text: "Check the dashboard"},
+		{ID: "e4", Type: "card", Project: "alpha", Card: "ALPHA-002"},
+	}
+	book := func(run cm.PlaybookRun) cm.Playbook {
+		return cm.Playbook{ID: "ship-the-parser", Entries: entries, Total: 4, Run: &run}
+	}
+
+	fake.setBooks("ship-the-parser",
+		book(cm.PlaybookRun{Status: "running", Entry: "e1"}),
+		book(cm.PlaybookRun{Status: "waiting", Entry: "e2", Reason: "awaiting check-off"}),
+		book(cm.PlaybookRun{Status: "waiting", Entry: "e3", Reason: "awaiting check-off"}),
+		book(cm.PlaybookRun{Status: "running", Entry: "e4"}),
+		book(cm.PlaybookRun{Status: "running", Entry: "e1"}),
+		book(cm.PlaybookRun{Status: "running", Entry: "e4"}),
+		book(cm.PlaybookRun{Status: "waiting", Entry: "e4", Reason: "ALPHA-002 worker failed"}),
+		cm.Playbook{ID: "ship-the-parser", Entries: entries, Total: 4, Complete: 4, Run: &cm.PlaybookRun{Status: "completed"}},
+	)
+	rec.waitFor(t, EventWatchEnded)
+
+	// The run's lines are the ones that name the playbook: running, the two
+	// check-offs, running again, and the failed card's wait.
+	assert.Equal(t, 5, naming(watchLines(rec), "ship-the-parser"))
 }

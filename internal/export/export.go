@@ -17,14 +17,17 @@ import (
 
 // Bundle is everything the store holds for one blueprint.
 type Bundle struct {
-	Blueprint   store.Blueprint
-	Runs        []store.Run
-	Artifacts   []store.Artifact
-	Events      []store.Event
-	Sources     []store.Source
-	Questions   []store.Question
-	Gates       []store.Gate
-	Emissions   []store.Emission
+	Blueprint store.Blueprint
+	Runs      []store.Run
+	Artifacts []store.Artifact
+	Events    []store.Event
+	Sources   []store.Source
+	Questions []store.Question
+	Gates     []store.Gate
+	Emissions []store.Emission
+	// Lessons is the lesson set the blueprint was created with, each in the
+	// state it has now.
+	Lessons     []store.Lesson
 	Transcripts map[int64]json.RawMessage
 	// Sliced says the blueprint runs per slice with two or more slices: a
 	// step's name in the bundle names its slice.
@@ -83,6 +86,16 @@ func blueprintMD(b Bundle) string {
 
 	fmt.Fprintf(&sb, "- State: %s\n- Cost cap: %.2f USD\n- Created: %s\n\n",
 		b.Blueprint.State, b.Blueprint.CostCapUSD, b.Blueprint.CreatedAt.Format("2006-01-02 15:04 UTC"))
+
+	if len(b.Lessons) > 0 {
+		sb.WriteString("## Lessons\n\n| Lesson | Text |\n|---|---|\n")
+
+		for _, l := range b.Lessons {
+			fmt.Fprintf(&sb, "| %s | %s |\n", l.Tag(), cell(l.Text))
+		}
+
+		sb.WriteString("\n")
+	}
 
 	sb.WriteString("## Runs\n\n| Run | Stage | Kind | Attempt | Round | Status | Model | Cost USD | Prompt | Completion |\n|---|---|---|---|---|---|---|---|---|---|\n")
 

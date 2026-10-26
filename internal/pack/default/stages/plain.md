@@ -17,21 +17,21 @@ Tag every question's `audience`:
 Never ask a technical question in everyday words. "Should data live on the
 device or a server?" is technical. "Should it work without internet?" is
 experience. Word experience questions, their options, pros and cons in
-everyday words, with examples from the person's own world: a shared shopping
-list, a salon's booking page, a tool that renames holiday photos, a club's
-member list, a recipe planner.
+everyday words, with examples from the need's own people, things and words,
+never from another kind of product.
 
 For each assumption whose effect a person using the result would notice, give
 `consequence`: one plain sentence on what it means for them, true to the
-decision. Give none when they would notice nothing. Example: for "bookings
-are stored per salon, not per stylist", the consequence is "Each stylist
-cannot keep a separate calendar."
+decision. Give none when they would notice nothing. For a booking page, say,
+with the assumption "bookings are stored per salon, not per stylist", the
+consequence is "Each stylist cannot keep a separate calendar."
 
 A consequence uses no technical word: no protocol, format or security term
 (such as HTTPS, token or JSON), no field, file, setting or command name, and
 no id the architect gives (such as DEC5, A4, Q2, D3 or X1). Say what the
 person will notice or have to do; the assumption's own text keeps the
-technical detail.
+technical detail. The examples here are one kind among many: for a booking
+page, say, they are about stylists and calendars; yours come from this need.
 
 The sign-off shows the person the slices' titles and values, the need's
 outcomes and the consequences they accepted: word those in everyday language
@@ -48,8 +48,8 @@ with `reasks`.
 
 With each answer whose effect a person using the result would notice, add
 `"consequence": "<one plain sentence on what it means for them>"` to the data.
-Leave it out otherwise. Example: for a club's member list answered with
-"members sign in with an emailed link", the consequence is "Members need
+Leave it out otherwise. For a club's member list answered with
+"members sign in with an emailed link", say, the consequence is "Members need
 access to their email to get in."
 
 ## Reviewer

@@ -270,6 +270,14 @@ func TestLogEntryFor(t *testing.T) {
 				},
 			},
 		}}, "text", []string{"ALPHA-001", "ALPHA-002", "needs a key", "go test passes", "L3"}, false},
+		{"a retrospective's findings with deleted cards skipped", blueprint.Event{Kind: blueprint.EventRetroReport, BlueprintID: "S1", Payload: map[string]any{
+			"run": 7, "read": 1, "struggled": 1, "deleted": []any{"ALPHA-002", "ALPHA-003"}, "cards": []any{
+				map[string]any{
+					"card": "ALPHA-001", "project": "alpha", "title": "Add the parser", "state": "in_progress", "worker": "parked",
+					"why": []any{"parked"}, "rule": "Where", "evidence": "needs a key", "at_fault": false,
+				},
+			},
+		}}, "text", []string{"ALPHA-002", "ALPHA-003"}, false},
 		{"a lesson approved", blueprint.Event{Kind: blueprint.EventLessonDecided, BlueprintID: "S1", Payload: map[string]any{
 			"lesson": 2, "state": "active", "scope": "project", "project": "alpha", "text": "Name where the key comes from", "message_id": "m1",
 		}}, "system", []string{"L2", "alpha"}, false},

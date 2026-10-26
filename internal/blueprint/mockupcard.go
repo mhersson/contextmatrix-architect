@@ -138,7 +138,7 @@ func withMockup(body string, m mockupResult, d mockupData, screens []string) str
 // bakeMockup is source with comment before it, as an HTML comment no text
 // can close early, and the chosen settings fixed in a script before the
 // source's first script element that runs as it loads, so that script
-// reads them. A source without one, or a nil chosen, gets no settings.
+// reads them. A source without one gets no settings.
 func bakeMockup(source string, chosen map[string]string, comment string) string {
 	for strings.Contains(comment, "--") {
 		comment = strings.ReplaceAll(comment, "--", "- -")
@@ -149,7 +149,7 @@ func bakeMockup(source string, chosen map[string]string, comment string) string 
 	b.WriteString("<!-- " + comment + " -->\n")
 
 	at := firstScript(source)
-	if chosen == nil || at < 0 {
+	if at < 0 {
 		b.WriteString(source)
 
 		return b.String()

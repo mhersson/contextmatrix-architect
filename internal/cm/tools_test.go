@@ -84,7 +84,7 @@ func newToolsServer(t *testing.T) *toolsServer {
 func TestReadTools_AllowlistedPrefixedAndReadOnly(t *testing.T) {
 	srv := newToolsServer(t)
 
-	c, err := Connect(context.Background(), srv.URL, "")
+	c, err := Connect(context.Background(), srv.URL, "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 
@@ -108,7 +108,7 @@ func TestReadTools_AllowlistedPrefixedAndReadOnly(t *testing.T) {
 func TestReadTools_SchemaHidesAgentIDAndImages(t *testing.T) {
 	srv := newToolsServer(t)
 
-	c, err := Connect(context.Background(), srv.URL, "")
+	c, err := Connect(context.Background(), srv.URL, "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 
@@ -141,7 +141,7 @@ func TestReadTools_SchemaHidesAgentIDAndImages(t *testing.T) {
 func TestReadTools_CallDropsAgentIDForcesNoImagesAndTagsTheResult(t *testing.T) {
 	srv := newToolsServer(t)
 
-	c, err := Connect(context.Background(), srv.URL, "")
+	c, err := Connect(context.Background(), srv.URL, "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 
@@ -181,7 +181,7 @@ func TestReadTools_ErrorResultIsAToolError(t *testing.T) {
 	hs := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
 	t.Cleanup(hs.Close)
 
-	c, err := Connect(context.Background(), hs.URL, "")
+	c, err := Connect(context.Background(), hs.URL, "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 
@@ -206,7 +206,7 @@ func TestReadTools_ErrorResultCarriesNoURLCredential(t *testing.T) {
 	hs := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
 	t.Cleanup(hs.Close)
 
-	c, err := Connect(context.Background(), hs.URL, "")
+	c, err := Connect(context.Background(), hs.URL, "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 
@@ -243,7 +243,7 @@ func offeredTool(t *testing.T, offered []tools.Tool, name string) tools.Tool {
 func TestReadTools_ResultCarriesNoURLCredential(t *testing.T) {
 	srv := newToolsServer(t)
 
-	c, err := Connect(context.Background(), srv.URL, "")
+	c, err := Connect(context.Background(), srv.URL, "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 
@@ -333,7 +333,7 @@ func listCards(t *testing.T, reply string, args map[string]any) string {
 
 	srv := newListCardsServer(t, reply)
 
-	c, err := Connect(context.Background(), srv.URL, "")
+	c, err := Connect(context.Background(), srv.URL, "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 

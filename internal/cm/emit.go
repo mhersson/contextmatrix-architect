@@ -108,6 +108,8 @@ type PlaybookRepo struct {
 }
 
 // PlaybookEntry is one playbook entry with the live state of its card.
+// Missing marks a card entry whose card or project was deleted: it stays in
+// the playbook, counts in the total and never completes.
 type PlaybookEntry struct {
 	ID        string `json:"id"`
 	Type      string `json:"type"`
@@ -117,6 +119,7 @@ type PlaybookEntry struct {
 	Done      bool   `json:"done"`
 	CardTitle string `json:"card_title"`
 	CardState string `json:"card_state"`
+	Missing   bool   `json:"missing"`
 	Complete  bool   `json:"complete"`
 }
 

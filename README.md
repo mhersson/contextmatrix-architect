@@ -17,7 +17,7 @@ ContextMatrix's chat panel.
 - [Guide](docs/guide.md): one real blueprint, step by step, with pictures.
 - [Reference](docs/reference.md): every reply you can type, the modes, and the marks on the sheet.
 - [Installing](docs/installing.md): what to set up before the first blueprint.
-- [Design](docs/design.md): how it works inside, for developers.
+- [Decisions](docs/decisions.md): the decisions the code keeps and why, for developers.
 
 The sections below are for whoever runs the architect. It runs as a third
 ContextMatrix backend next to the agent and chat backends, and ContextMatrix's
@@ -41,7 +41,7 @@ file. On macOS write the file to that directory instead of `~/.config`, or
 pass `--config`. `config validate <file>` loads a file exactly as `serve`
 would and exits 1 on the first error.
 
-Configure it in ContextMatrix as `backends.architect` with the same `api_key`.
+Configure it in ContextMatrix as `backends.architect` (url, the same api_key, default_model); see [docs/installing.md](docs/installing.md) step 4.
 
 An empty `state_dir`, the default, resolves to
 `$XDG_STATE_HOME/contextmatrix-architect`, else
@@ -85,8 +85,8 @@ journalctl --user -u contextmatrix-architect -f
 ```
 
 The unit runs `serve --config ${XDG_CONFIG_HOME:-~/.config}/contextmatrix-architect/config.yaml`
-from this checkout, sandboxed like the sibling backends, with `~/.contextmatrix`
-and the resolved `state_dir` writable. `install` creates that directory,
+from this checkout, sandboxed like the sibling backends, with only the resolved
+`state_dir` writable. `install` creates that directory,
 because the sandbox only lets the service write directories that exist when it
 starts, and pins `XDG_STATE_HOME` in the unit so the service resolves the same
 default as the script. It warns about a missing config, an explicit
@@ -108,12 +108,13 @@ mirrors stay.
 ## Export
 
 Reply `export` in the chat panel to write the blueprint's record as markdown
-under `<state_dir>/exports/<blueprint>/<time>`: a summary with the runs and
-their cost, the sign-off decisions and the ids emission created in
-ContextMatrix, every artifact version, the questions and answers, the
-sources, the event log and the run transcripts. It reads the store, which holds
-records with the session's secrets already masked, so a running stage is not
-disturbed. Committing the bundle to a repository is not built yet.
+under `<state_dir>/exports/<blueprint>/<time>`: a summary with the lessons the
+blueprint was created with, the runs and their cost, the sign-off decisions
+and the ids emission created in ContextMatrix, every artifact version, the
+questions and answers, the sources, the event log and the run transcripts. It
+reads the store, which holds records with the session's secrets already
+masked, so a running stage is not disturbed. Committing the bundle to a
+repository is not built yet.
 
 ## Cost caps
 
@@ -147,7 +148,8 @@ checkout. A plain `docker build .` reports no commit or build time on
 The image sets `XDG_STATE_HOME=/var/lib`, so the default `state_dir` is the
 volume. The state volume must be writable by uid 65532 (the distroless
 `nonroot` user). A fresh named volume inherits that ownership from the image; a
-bind mount must be chowned by hand. The mounted `config.yaml` must be readable by uid 65532.
+bind mount must be chowned by hand. The mounted `config.yaml`, and a
+`ca_cert_file` when one is set, must be readable by uid 65532.
 `config.yaml.example` documents every key.
 
 The image ships ripgrep for the read tools. A local run or the user service

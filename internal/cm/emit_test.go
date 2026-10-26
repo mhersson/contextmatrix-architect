@@ -3,6 +3,8 @@ package cm
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -37,7 +39,7 @@ func newEmitServer(t *testing.T, withRunPlaybook bool) (*emitServer, string) {
 		"create_card":     `{"id":"ALPHA-007","title":"Add the thing","state":"todo","warnings":["reference to another project's repo"]}`,
 		"create_playbook": `{"id":"ship-the-thing","title":"Ship the thing","complete":0,"total":3}`,
 		"get_card":        `{"id":"ALPHA-007","project":"alpha","state":"in_progress","phase":"pr_gates","worker_status":"running","pr_url":"https://example.com/pr/1","review_attempts":1,"body":"## Context\nwhy","subtasks":["ALPHA-008","ALPHA-009"],"token_usage":{"estimated_cost_usd":1.5},"subtask_cost_usd":0.25,"activity_log":[{"action":"parked","message":"needs a key"}]}`,
-		"get_playbook":    `{"id":"ship-the-thing","runnable":true,"run":{"status":"waiting","entry":"e2","reason":"awaiting check-off"},"repos":[{"project":"alpha","compare_url":"https://example.com/compare"}],"complete":1,"total":3,"entries":[{"id":"e1","type":"card","project":"alpha","card":"ALPHA-007","card_state":"done","complete":true},{"id":"e2","type":"manual","text":"check staging","complete":false}]}`,
+		"get_playbook":    `{"id":"ship-the-thing","runnable":true,"run":{"status":"waiting","entry":"e2","reason":"awaiting check-off"},"repos":[{"project":"alpha","compare_url":"https://example.com/compare"}],"complete":1,"total":3,"entries":[{"id":"e1","type":"card","project":"alpha","card":"ALPHA-007","card_state":"done","complete":true},{"id":"e2","type":"manual","text":"check staging","complete":false},{"id":"e3","type":"card","project":"alpha","card":"ALPHA-008","missing":true,"complete":false}]}`,
 		"list_playbooks":  `{"playbooks":[{"id":"other","title":"Other","runnable":true}]}`,
 		"run_card":        `{"id":"ALPHA-007","project":"alpha","state":"todo","worker_status":"queued"}`,
 	}
@@ -70,7 +72,7 @@ func newEmitServer(t *testing.T, withRunPlaybook bool) (*emitServer, string) {
 func connectTo(t *testing.T, url string) *Client {
 	t.Helper()
 
-	c, err := Connect(context.Background(), url, "")
+	c, err := Connect(context.Background(), url, "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 
@@ -137,8 +139,10 @@ func TestGetCardAndPlaybook_DecodeTheWatchFields(t *testing.T) {
 	assert.Equal(t, "waiting", pb.Run.Status)
 	assert.Equal(t, "awaiting check-off", pb.Run.Reason)
 	assert.Equal(t, []PlaybookRepo{{Project: "alpha", CompareURL: "https://example.com/compare"}}, pb.Repos)
-	require.Len(t, pb.Entries, 2)
+	require.Len(t, pb.Entries, 3)
 	assert.Equal(t, "check staging", pb.Entries[1].Text)
+	assert.False(t, pb.Entries[0].Missing)
+	assert.True(t, pb.Entries[2].Missing, "an entry whose card was deleted")
 
 	list, err := c.ListPlaybooks(ctx)
 	require.NoError(t, err)
@@ -229,4 +233,58 @@ func TestEmissionCalls_ReplyErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNotFound_IsOnlyContextMatrixsOwnAnswer(t *testing.T) {
+	tests := []struct {
+		name     string
+		tool     string
+		reply    string
+		canceled bool // the call never reaches ContextMatrix
+		card     bool
+		playbook bool
+	}{
+		{name: "a deleted card", tool: "get_card", reply: "get card ALPHA-007: card not found", card: true},
+		{name: "a card whose project was deleted", tool: "get_card", reply: "get card ALPHA-007: project not found", card: true},
+		{name: "a deleted playbook", tool: "get_playbook", reply: "get playbook ship-the-thing: playbook not found", playbook: true},
+		{name: "another refusal", tool: "get_card", reply: "get card ALPHA-007: read card file: permission denied"},
+		{name: "a call that never reached ContextMatrix", tool: "get_card", reply: "get card ALPHA-007: card not found", canceled: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := connectTo(t, serveReply(t, tt.tool, tt.reply, true))
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			if tt.canceled {
+				cancel()
+			}
+
+			var err error
+
+			if tt.tool == "get_card" {
+				_, err = c.GetCard(ctx, "alpha", "ALPHA-007")
+			} else {
+				_, err = c.GetPlaybook(ctx, "ship-the-thing")
+			}
+
+			require.Error(t, err)
+			assert.Equal(t, tt.card, CardNotFound(err), "card")
+			assert.Equal(t, tt.playbook, PlaybookNotFound(err), "playbook")
+		})
+	}
+
+	t.Run("an error that only carries the words", func(t *testing.T) {
+		err := fmt.Errorf("cm: call get_card: %w", errors.New("card not found"))
+		assert.False(t, CardNotFound(err))
+		assert.False(t, CardNotFound(nil))
+	})
+
+	t.Run("another tool's refusal", func(t *testing.T) {
+		assert.False(t, CardNotFound(&ToolError{Tool: "create_card", Text: "create card: parent card not found"}))
+		assert.False(t, CardNotFound(&ToolError{Tool: "get_playbook", Text: "get playbook ship-the-thing: project not found"}))
+		assert.False(t, PlaybookNotFound(&ToolError{Tool: "get_card", Text: "get card ALPHA-007: playbook not found"}))
+	})
 }

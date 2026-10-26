@@ -54,15 +54,29 @@ type fakeWorkspace struct {
 	shas    map[string]string
 	heads   map[string]string
 	headErr error
+	// headCreds are the credentials each RemoteHead was given.
+	headCreds []code.Credentials
 }
 
 type checkoutCall struct {
 	blueprintID, name, url string
+	creds                  code.Credentials
 }
 
-func (w *fakeWorkspace) Checkout(ctx context.Context, blueprintID, name, repoURL string, _ code.Credentials) (code.Checkout, error) {
+// fakeCreds is the credential source fakeCredentials builds: the token it
+// was built for, so a test sees which one reached the workspace.
+type fakeCreds struct{ token string }
+
+func (f fakeCreds) Fetch(context.Context, string, string) (string, string, error) {
+	return "x-access-token", f.token, nil
+}
+
+// fakeCredentials stands in for Options.Credentials.
+func fakeCredentials(gitToken string) code.Credentials { return fakeCreds{token: gitToken} }
+
+func (w *fakeWorkspace) Checkout(ctx context.Context, blueprintID, name, repoURL string, creds code.Credentials) (code.Checkout, error) {
 	w.mu.Lock()
-	w.calls = append(w.calls, checkoutCall{blueprintID: blueprintID, name: name, url: repoURL})
+	w.calls = append(w.calls, checkoutCall{blueprintID: blueprintID, name: name, url: repoURL, creds: creds})
 	w.mu.Unlock()
 
 	if name == w.failOn {
@@ -127,9 +141,11 @@ func (w *fakeWorkspace) Checkout(ctx context.Context, blueprintID, name, repoURL
 
 // RemoteHead reports the sha Checkout recorded, a moved sha from heads, or
 // headErr.
-func (w *fakeWorkspace) RemoteHead(_ context.Context, repoURL string, _ code.Credentials) (string, string, error) {
+func (w *fakeWorkspace) RemoteHead(_ context.Context, repoURL string, creds code.Credentials) (string, string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
+	w.headCreds = append(w.headCreds, creds)
 
 	if w.headErr != nil {
 		return "", "", w.headErr
@@ -269,7 +285,7 @@ func newPipelineOn(t *testing.T, st *store.Store, script stageScript, ws *fakeWo
 	c := New(Options{
 		Store: st, Pack: pk, Runner: runner, MaxRunCostUSD: 2, MaxTurns: 10,
 		Sink: rec.sink, HarnessLine: rec.line,
-		Workspace: ws, Projects: listAlpha, CMTools: (&fakeCMTools{}).open,
+		Workspace: ws, Projects: listAlpha, Credentials: fakeCredentials, CMTools: (&fakeCMTools{}).open,
 		ConnectCM: newFakeCM().connect, CallerIdentity: "human:architect",
 	})
 
@@ -1280,6 +1296,96 @@ func TestPipeline_CodeStageWithoutAWorkspaceFails(t *testing.T) {
 	require.Len(t, runs, 2)
 	assert.Equal(t, "grounding", runs[1].Stage)
 	assert.Equal(t, store.RunFailed, runs[1].Status)
+}
+
+func TestPrepareCode_ChecksOutWithTheSessionsGitCredentials(t *testing.T) {
+	c, _, _, rec, ws := newPipeline(t, happyScript())
+
+	drive(t, c, "BP1")
+	require.True(t, rec.has(EventReport))
+
+	calls := ws.recorded()
+	require.NotEmpty(t, calls)
+
+	for _, call := range calls {
+		assert.Equal(t, fakeCreds{token: testGitToken}, call.creds, "the credential built from the session's git token")
+	}
+
+	ws.mu.Lock()
+	heads := slices.Clone(ws.headCreds)
+	ws.mu.Unlock()
+
+	require.NotEmpty(t, heads, "the sign-off read the default branches")
+
+	for _, creds := range heads {
+		assert.Equal(t, fakeCreds{token: testGitToken}, creds)
+	}
+}
+
+func TestPrepareCode_WithoutGitCredentialsTheCodeStageFails(t *testing.T) {
+	tests := []struct {
+		name    string
+		noToken bool
+		noCreds bool
+	}{
+		{name: "a session without a git token", noToken: true},
+		{name: "a controller without a credential source", noCreds: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, runner, rec, ws := newPipeline(t, happyScript())
+			if tt.noCreds {
+				c.opts.Credentials = nil
+			}
+
+			in := startInput("BP1")
+			if tt.noToken {
+				in.GitCredentialsToken = ""
+			}
+
+			driveIn(t, c, in)
+
+			assert.Zero(t, ws.checkouts(), "nothing is fetched anonymously")
+			assert.Equal(t, 1, runner.calls(), "the code stage never calls the model")
+
+			ev, ok := rec.first(EventError)
+			require.True(t, ok)
+			assert.Equal(t, "prepare", ev.Payload["reason"])
+
+			runs, err := st.ListRuns(context.Background(), "BP1")
+			require.NoError(t, err)
+			require.Len(t, runs, 2)
+			assert.Equal(t, "grounding", runs[1].Stage)
+			assert.Equal(t, store.RunFailed, runs[1].Status)
+
+			bp, err := st.GetBlueprint(context.Background(), "BP1")
+			require.NoError(t, err)
+
+			_, err = c.prepareCode(context.Background(), sessionOf(t, c, "BP1"), bp, "grounding")
+			require.ErrorIs(t, err, errNoGitCredentials, "the stop is the missing credentials")
+		})
+	}
+}
+
+func TestPrepareCode_AProjectWithoutARepositoryNeedsNoGitCredentials(t *testing.T) {
+	c, st, _, _, ws := newPipeline(t, happyScript())
+	c.opts.Projects = func(context.Context, string) ([]cm.Project, error) {
+		return []cm.Project{{Name: "alpha", Verify: &cm.Verify{Command: "make test"}}}, nil
+	}
+
+	ctx := context.Background()
+	in := startInput("BP1")
+	in.GitCredentialsToken = ""
+	require.NoError(t, c.Start(ctx, in))
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	facts, err := c.prepareCode(ctx, sessionOf(t, c, "BP1"), bp, "grounding")
+	require.NoError(t, err, "nothing to fetch, so nothing needs the credentials")
+	assert.Empty(t, facts.repos)
+	assert.Zero(t, ws.checkouts())
 }
 
 func TestPipeline_ProjectLookupFailureFailsTheRunAndIsRetried(t *testing.T) {

@@ -44,7 +44,8 @@ func newResearchController(t *testing.T, ws *fakeWorkspace, projects func(contex
 	rec := newRecorder()
 	opts := Options{
 		Store: st, Pack: pk, MaxRunCostUSD: 2, MaxTurns: 10, Sink: rec.sink, HarnessLine: rec.line, Projects: projects,
-		Runner: &fakeRunner{fn: func(context.Context, stage.Input) (stage.Output, error) { return done("# Need", nil), nil }},
+		Credentials: fakeCredentials,
+		Runner:      &fakeRunner{fn: func(context.Context, stage.Input) (stage.Output, error) { return done("# Need", nil), nil }},
 	}
 
 	// Set only when given: a nil *fakeWorkspace in the interface is not nil.
@@ -307,7 +308,7 @@ func newResearchPipeline(t *testing.T, runner Runner, search func(string, string
 	c := New(Options{
 		Store: st, Pack: pk, Runner: runner, MaxRunCostUSD: 2, MaxTurns: 10,
 		Sink: rec.sink, HarnessLine: rec.line, ExportDir: t.TempDir(),
-		Workspace: &fakeWorkspace{root: t.TempDir()}, Projects: listAlpha,
+		Workspace: &fakeWorkspace{root: t.TempDir()}, Projects: listAlpha, Credentials: fakeCredentials,
 		Search: search, Fetch: fetch,
 	})
 	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })

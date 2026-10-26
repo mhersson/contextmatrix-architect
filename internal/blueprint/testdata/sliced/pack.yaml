@@ -3,11 +3,9 @@ version: "1"
 stages:
   - id: intake
     persona: product_owner
-    produces: need
     policy: human
   - id: slicing
     persona: product_owner
-    produces: slices
     consumes: [intake]
     checks: [slices]
     policy: human
@@ -16,7 +14,6 @@ stages:
     reviewer: {persona: system_designer, threshold: 4}
   - id: shared_decisions
     persona: system_designer
-    produces: shared_decisions
     consumes: [intake, slicing]
     policy: human
     gate: true
@@ -25,7 +22,6 @@ stages:
     reviewer: {persona: senior_developer, threshold: 4}
   - id: solution_design
     persona: system_designer
-    produces: design
     consumes: [intake, slicing, shared_decisions]
     policy: human
     gate: true
@@ -35,13 +31,11 @@ stages:
     earlier_slices: [solution_design]
   - id: grounding
     persona: senior_developer
-    produces: grounding
     consumes: [intake, slicing, shared_decisions, solution_design]
     per_slice: true
     earlier_slices: [solution_design]
   - id: acceptance
     persona: senior_developer
-    produces: acceptance
     consumes: [intake, slicing, shared_decisions, solution_design, grounding]
     checks: [criteria]
     policy: auto
@@ -51,7 +45,6 @@ stages:
     earlier_slices: [solution_design, acceptance]
   - id: decomposition
     persona: senior_developer
-    produces: cards
     consumes: [intake, slicing, shared_decisions, solution_design, grounding, acceptance]
     tools: [code]
     checks: [cards]
@@ -59,7 +52,7 @@ stages:
     earlier_slices: [solution_design, acceptance, decomposition]
   - id: readiness
     persona: reviewer
-    produces: readiness
     consumes: [intake, slicing, shared_decisions, solution_design, grounding, acceptance, decomposition]
     loops_to: decomposition
     max_rounds: 3
+    checks: [readiness]

@@ -53,6 +53,10 @@ func newConfigCmd() *cobra.Command {
 				return fmt.Errorf("invalid config: %w", err)
 			}
 
+			if _, err := loadRuntime(cfg); err != nil {
+				return fmt.Errorf("invalid config: %w", err)
+			}
+
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s: ok\n", path)
 
 			return err

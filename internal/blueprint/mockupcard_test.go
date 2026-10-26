@@ -105,7 +105,7 @@ func TestBakeMockup_FixesTheChosenSettings(t *testing.T) {
 	plain := "<!doctype html><p>no script</p>"
 	assert.NotContains(t, bakeMockup(plain, map[string]string{"sort": "joined"}, "x"), "window.mockupSettings")
 
-	assert.NotContains(t, bakeMockup(memberSource, nil, "words -- with --> in them"), "-->"+" in them", "the comment cannot close early")
+	assert.NotContains(t, bakeMockup(memberSource, map[string]string{}, "words -- with --> in them"), "-->"+" in them", "the comment cannot close early")
 }
 
 func TestBakeMockup_TheFirstScriptIsTheFirstElement(t *testing.T) {
@@ -124,7 +124,7 @@ func TestBakeMockup_TheFirstScriptIsTheFirstElement(t *testing.T) {
 
 func TestBakeMockup_TheCommentNeverCloses(t *testing.T) {
 	for _, words := range []string{"a -- b", "a --> b", "a ---> b", "a --!> b", "ends in -", "ends in --"} {
-		baked := bakeMockup("<p>x</p>", nil, words)
+		baked := bakeMockup("<p>x</p>", map[string]string{}, words)
 
 		end := strings.Index(baked, "-->")
 		require.GreaterOrEqual(t, end, 0, words)

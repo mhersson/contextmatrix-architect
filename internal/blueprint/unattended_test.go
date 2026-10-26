@@ -69,7 +69,7 @@ func TestUnattended_AReopenNeverSwitchesItOn(t *testing.T) {
 	assert.False(t, view.Unattended)
 }
 
-func TestUnattended_EveryStageRunGetsTheOverlay(t *testing.T) {
+func TestUnattended_OnlyTheCardsAndReadinessStagesGetTheOverlay(t *testing.T) {
 	run := func(t *testing.T, on bool) *fakeRunner {
 		t.Helper()
 
@@ -86,7 +86,12 @@ func TestUnattended_EveryStageRunGetsTheOverlay(t *testing.T) {
 
 	on, off := run(t, true), run(t, false)
 
-	for _, key := range []string{"intake", "decomposition@SL1", "decomposition@SL2", "readiness"} {
+	u, d := inputsOf(on, "intake"), inputsOf(off, "intake")
+	require.NotEmpty(t, u)
+	require.NotEmpty(t, d)
+	assert.Equal(t, d[0].Instructions, u[0].Instructions, "a stage that writes no cards never gets it")
+
+	for _, key := range []string{"decomposition@SL1", "decomposition@SL2", "readiness"} {
 		u, d := inputsOf(on, key), inputsOf(off, key)
 		require.NotEmpty(t, u, key)
 		require.NotEmpty(t, d, key)
@@ -95,7 +100,7 @@ func TestUnattended_EveryStageRunGetsTheOverlay(t *testing.T) {
 
 	assert.Equal(t, pk.Instructions("readiness"), inputsOf(off, "readiness")[0].Instructions, "off, the instructions are the pack's")
 
-	u, d := inputsOf(on, "slicing.review"), inputsOf(off, "slicing.review")
+	u, d = inputsOf(on, "slicing.review"), inputsOf(off, "slicing.review")
 	require.NotEmpty(t, u)
 	require.NotEmpty(t, d)
 	assert.Equal(t, d[0].Instructions, u[0].Instructions, "a reviewer run never gets it")

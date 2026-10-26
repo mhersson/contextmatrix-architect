@@ -3,6 +3,9 @@
 # Kept in sync with contextmatrix-agent so CI installs the same linter release.
 GOLANGCI_LINT_VERSION ?= v2.14.0
 
+# Pinned so CI scans with a known govulncheck release.
+GOVULNCHECK_VERSION ?= v1.9.0
+
 VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null)
 GIT_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -23,7 +26,7 @@ install: history
 test:
 	go test ./...
 test-race:
-	CGO_ENABLED=1 go test -race ./...
+	CGO_ENABLED=1 go test -race -timeout 20m ./...
 fmt:
 	gofumpt -w .
 lint:

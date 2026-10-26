@@ -663,8 +663,8 @@ func (c *Controller) writeNewNotes(ctx context.Context, b *strings.Builder, id s
 }
 
 // runReviewer judges a gated stage's artifact with the pack's reviewer: its
-// persona, the review instructions, the tool groups its pack entry names and
-// reviewTask, never the builder's transcript. The verdict, with its ledger,
+// persona, the review instructions, reviewerTools' tools and reviewTask,
+// never the builder's transcript. The verdict, with its ledger,
 // is stored as the next <stage>.review artifact and announced, and the
 // blueprint is idle until the next step sets its state. false when the run
 // did not complete, which is reported.
@@ -763,14 +763,15 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 }
 
 // reviewTask is what a reviewer judges: the stage's inputs, the questions
-// it got answered, the assumptions, the target projects that are proofs of
-// concept when the stage shapes cards, the gate feedback the attempt
-// addresses, after a sign-off rejection its feedback the gate feedback did
-// not already give, the artifacts folded into its gate, each with the gate
-// feedback its own attempt addresses, the artifact, whose data holds any
-// problems it was accepted with, the user's notes, and, from the attempt's
-// second round, every earlier finding with the builder's claim beside it,
-// and the score that passes.
+// it got answered, the assumptions, on a plain-language blueprint the
+// wording to judge, for a stage that checks criteria the edge cases, the
+// target projects that are proofs of concept when the stage shapes cards,
+// the gate feedback the attempt addresses, after a sign-off rejection its
+// feedback the gate feedback did not already give, the artifacts folded into
+// its gate, each with the gate feedback its own attempt addresses, the
+// artifact, whose data holds any problems it was accepted with, the user's
+// notes, and, from the attempt's second round, every earlier finding with
+// the builder's claim beside it, and the score that passes.
 func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipelineStep, art store.Artifact, attempt int, prior findingList, poc []string) (string, error) {
 	var b strings.Builder
 
@@ -800,13 +801,9 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipe
 
 	writePOC(&b, poc)
 
-	var given []string
-
-	if st.Gate {
-		var err error
-		if given, err = c.writeGateFeedback(ctx, &b, bp, st, attempt); err != nil {
-			return "", err
-		}
+	given, err := c.writeGateFeedback(ctx, &b, bp, st, attempt)
+	if err != nil {
+		return "", err
 	}
 
 	if err := c.writeSignoffFeedback(ctx, &b, bp.ID, given); err != nil {
@@ -864,7 +861,8 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipe
 // reviewerTools gives a reviewer run the tool groups its pack entry names:
 // the code tools over the blueprint's checkouts, and from the research
 // group web_fetch alone while the session has research on, behind the same
-// leak guard as the stage's research. The text returned opens its task.
+// leak guard as the stage's research; and read_artifact whenever the stage
+// is offered it (readsArtifacts). The text returned opens its task.
 // It never posts the research-off notice: the session's first stage does.
 func (c *Controller) reviewerTools(ctx context.Context, sess *session, bp store.Blueprint, st pipelineStep) ([]tools.Tool, string, error) {
 	var (
@@ -888,7 +886,7 @@ func (c *Controller) reviewerTools(ctx context.Context, sess *session, bp store.
 		return nil, "", err
 	}
 
-	reads, err := c.readsArtifacts(ctx, bp.ID, steps, pieces, st)
+	reads, err := c.readsArtifacts(ctx, bp.ID, steps, len(pieces) > 1, st)
 	if err != nil {
 		return nil, "", err
 	}

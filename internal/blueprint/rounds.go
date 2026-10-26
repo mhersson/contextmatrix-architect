@@ -38,14 +38,16 @@ const (
 	ChangeClosing = "closing"
 	// changeHandedOver: a mode switch handed a round waiting for a human to
 	// the auto responder; changeResponded: the responder answered one of its
-	// open questions.
+	// open questions, or accepted what its tab left undecided.
 	changeHandedOver = "handed_over"
 	changeResponded  = "responded"
 	// changeRevision: a designer's chat run showed the next revision on a
 	// mockup round.
 	changeRevision = "revision"
-	// changeHandedBack: the auto responder's turn found the mockup stage's
-	// policy no longer auto and gave the mockup back to the person.
+	// changeHandedBack: back in default mode with the mockup stage's policy
+	// not auto, the mockup the auto responder steered went back to the
+	// person, at the responder's turn or, after a chat run on it stalled, at
+	// the mode switch.
 	changeHandedBack = "handed_back"
 )
 
@@ -249,8 +251,9 @@ func (c *Controller) rounds(ctx context.Context, id string) ([]roundState, error
 	return out, nil
 }
 
-// putRound stores and publishes snapshot s; runID is the run that made the
-// change, 0 for a reply.
+// putRound stores and publishes snapshot s; runID is the stage run that
+// made the change, or the retrospective run whose lessons a lesson round
+// asks about, and 0 for any other change, a responder run's included.
 func (c *Controller) putRound(ctx context.Context, au audit, id string, runID int64, s roundState) {
 	au.event(ctx, Event{Kind: EventRound, BlueprintID: id, RunID: runID, Payload: s.payload()})
 }
@@ -608,16 +611,11 @@ func (c *Controller) closeRound(ctx context.Context, au audit, bp store.Blueprin
 	}
 
 	for _, q := range s.Frame.Questions {
-		// The responder's runs write the rows of its answers; one it could not
-		// give on a handed-over round is the stage's to decide, as on an auto
-		// round.
+		// The responder's runs write the rows of its answers, and one it could
+		// not give on a handed-over round is the stage's to decide, as on an
+		// auto round: every row written here is a human's.
 		if have[q.Number] || (s.HandedOver != nil && !s.HandedOver.humanAnswered(q.Number)) {
 			continue
-		}
-
-		responder := store.ResponderHuman
-		if s.responderAnswered(q.Number) {
-			responder = store.ResponderAuto
 		}
 
 		options := make([]string, 0, len(q.Options))
@@ -628,8 +626,8 @@ func (c *Controller) closeRound(ctx context.Context, au audit, bp store.Blueprin
 		if err := c.opts.Store.AddQuestion(ctx, store.Question{
 			BlueprintID: bp.ID, RunID: s.PostedBy, Stage: s.Frame.Stage, Number: q.Number,
 			Text: au.text(q.Text), Options: au.texts(options), Context: au.text(q.Why),
-			Answer: au.text(AnswerText(q, answers[q.Number])), Responder: responder,
-			Assumption: responder == store.ResponderAuto, MessageID: msgID, AnsweredAt: c.opts.Now().UTC(),
+			Answer: au.text(AnswerText(q, answers[q.Number])), Responder: store.ResponderHuman,
+			MessageID: msgID, AnsweredAt: c.opts.Now().UTC(),
 		}); err != nil {
 			return roundState{}, fmt.Errorf("blueprint: close round %d: record Q%d: %w", s.Number, q.Number, err)
 		}

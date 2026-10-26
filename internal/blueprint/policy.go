@@ -367,7 +367,8 @@ func (c *Controller) policy(ctx context.Context, bp store.Blueprint, stageID str
 }
 
 // gatePolicy is who decides stageID's gate for this blueprint: the same
-// reply and mode as policy, then the pack's gate policy.
+// reply and mode as policy, then plain language, which makes every gate
+// auto, then the pack's gate policy.
 func (c *Controller) gatePolicy(ctx context.Context, bp store.Blueprint, stageID string) (string, error) {
 	return c.policyFor(ctx, bp, stageID, true)
 }
@@ -423,12 +424,12 @@ func (c *Controller) resolvePolicy(mode string, plain bool, events []store.Event
 	st, ok := c.opts.Pack.Stage(stageID)
 
 	switch {
-	case ok && gate && st.GatePolicy != "":
-		return st.GatePolicy, nil
-	case ok && st.Policy != "":
-		return st.Policy, nil
-	default:
+	case !ok:
 		return pack.PolicyAuto, nil
+	case gate && st.GatePolicy != "":
+		return st.GatePolicy, nil
+	default:
+		return st.Policy, nil
 	}
 }
 

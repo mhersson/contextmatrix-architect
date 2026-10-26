@@ -15,13 +15,10 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
-// outcomeEntry is one measurable outcome a stage states: O<n>, its
-// sentence, and the quality it states, if any. It sits at the top level of
-// the data, beside the assumptions.
+// outcomeEntry is one measurable outcome a stage states: O<n> and its
+// sentence. It sits at the top level of the data, beside the assumptions.
 type outcomeEntry struct {
-	ID      string `json:"id"`
-	Text    string `json:"text"`
-	Quality string `json:"quality,omitempty"`
+	ID, Text string
 }
 
 var outcomeForm = regexp.MustCompile(`^O([1-9][0-9]*)$`)
@@ -65,10 +62,9 @@ func outcomesOf(art store.Artifact) []outcomeEntry {
 		// stray type still keeps its id reserved.
 		id, _ := e["id"].(string)
 		text, _ := e["text"].(string)
-		quality, _ := e["quality"].(string)
 
 		if id = strings.TrimSpace(id); id != "" {
-			out = append(out, outcomeEntry{ID: id, Text: strings.TrimSpace(text), Quality: strings.TrimSpace(quality)})
+			out = append(out, outcomeEntry{ID: id, Text: strings.TrimSpace(text)})
 		}
 	}
 

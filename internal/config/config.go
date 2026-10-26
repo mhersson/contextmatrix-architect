@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -35,7 +36,8 @@ type Config struct {
 	// StateDir is never empty after a successful Load unless no home
 	// directory could be found; an empty value resolves to
 	// $XDG_STATE_HOME/contextmatrix-architect, else
-	// ~/.local/state/contextmatrix-architect, on every OS.
+	// ~/.local/state/contextmatrix-architect, on every OS. Validate refuses a
+	// relative value, resolved or explicit.
 	StateDir string
 	// Pack is a pipeline pack directory; empty means the embedded default.
 	Pack string
@@ -65,6 +67,11 @@ type Config struct {
 	// ReplayReasoning sends each reply's reasoning back with every later request
 	// of its conversation, resumes included.
 	ReplayReasoning bool
+
+	// CACertFile is a PEM file of CA certificates trusted with the system
+	// store by the LLM, ContextMatrix and git clients; "" trusts the system
+	// store alone.
+	CACertFile string
 }
 
 // raw is the koanf wire shape; second-granularity durations are ints here and
@@ -88,6 +95,7 @@ type raw struct {
 	WatchIntervalSeconds   int               `koanf:"watch_interval_seconds"`
 	ReasoningEffort        string            `koanf:"reasoning_effort"`
 	ReplayReasoning        bool              `koanf:"replay_reasoning"`
+	CACertFile             string            `koanf:"ca_cert_file"`
 }
 
 func defaults() raw {
@@ -106,6 +114,7 @@ func defaults() raw {
 		WatchIntervalSeconds:   60,
 		ReasoningEffort:        "",
 		ReplayReasoning:        true,
+		CACertFile:             "",
 	}
 }
 
@@ -129,6 +138,7 @@ func (r raw) toConfig() *Config {
 		WatchInterval:         time.Duration(r.WatchIntervalSeconds) * time.Second,
 		ReasoningEffort:       r.ReasoningEffort,
 		ReplayReasoning:       r.ReplayReasoning,
+		CACertFile:            r.CACertFile,
 	}
 }
 
@@ -249,12 +259,24 @@ func (c *Config) Validate() error {
 		return errors.New("contextmatrix_url is required")
 	}
 
+	if u, err := url.Parse(c.ContextMatrixURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("contextmatrix_url must be an http or https URL with a host, got %q", c.ContextMatrixURL)
+	}
+
 	if len(c.APIKey) < 32 {
 		return fmt.Errorf("api_key must be at least 32 characters, got %d", len(c.APIKey))
 	}
 
+	if c.Port < 1 || c.Port > 65535 {
+		return fmt.Errorf("port must be between 1 and 65535, got %d", c.Port)
+	}
+
 	if c.StateDir == "" {
 		return errors.New("state_dir is required")
+	}
+
+	if !filepath.IsAbs(c.StateDir) {
+		return fmt.Errorf("state_dir must be an absolute path, got %q; ~ is not expanded", c.StateDir)
 	}
 
 	if c.MaxRunCostUSD < 0 {

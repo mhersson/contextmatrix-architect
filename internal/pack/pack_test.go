@@ -61,6 +61,25 @@ func TestLoadEmbedded_ReferencesResolve(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestPersonas_NamesEveryPersonaARunCanUse(t *testing.T) {
+	p, err := LoadEmbedded()
+	require.NoError(t, err)
+
+	want := []string{RetroPersona}
+
+	for _, s := range p.Stages {
+		want = append(want, s.Persona)
+
+		if s.Reviewer != nil {
+			want = append(want, s.Reviewer.Persona)
+		}
+	}
+
+	slices.Sort(want)
+
+	assert.Equal(t, slices.Compact(want), p.Personas())
+}
+
 func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 	p, err := LoadEmbedded()
 	require.NoError(t, err)
@@ -305,6 +324,8 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "the reserved retrospective id", stage: "  - id: retrospective\n    persona: po\n", files: map[string]string{"stages/retrospective.md": "x", "personas/reviewer.md": "x"}, want: "reserved"},
 		{name: "retrospective instructions without the reviewer persona", files: map[string]string{"stages/retrospective.md": "x"}, want: `persona "reviewer"`},
 		{name: "a dot in a stage id", stage: "  - id: s1.review\n    persona: po\n", files: map[string]string{"stages/s1.review.md": "x"}, want: "dot"},
+		{name: "a space in a stage id", stage: "  - id: \"s 1\"\n    persona: po\n", files: map[string]string{"stages/s 1.md": "x"}, want: `"s 1"`},
+		{name: "a stage id over 64 characters", stage: "  - id: " + strings.Repeat("a", 65) + "\n    persona: po\n", files: map[string]string{"stages/" + strings.Repeat("a", 65) + ".md": "x"}, want: strings.Repeat("a", 65)},
 	}
 
 	for _, tt := range tests {

@@ -226,7 +226,7 @@ func scanLesson(r rowScanner) (Lesson, error) {
 
 	if err := r.Scan(&l.ID, &l.BlueprintID, &l.RunID, &l.State, &l.Scope, &l.Project, &l.Text, &l.Rationale,
 		&evidence, &overlay, &createdAt, &decidedAt, &l.DecidedBy); err != nil {
-		return Lesson{}, err //nolint:wrapcheck // callers wrap with the operation
+		return Lesson{}, err
 	}
 
 	if err := json.Unmarshal([]byte(evidence), &l.Evidence); err != nil {

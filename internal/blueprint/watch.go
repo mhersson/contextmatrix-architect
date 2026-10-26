@@ -50,9 +50,11 @@ func (c *Controller) startWatch(sess *session, id string) {
 }
 
 // watchLoop polls until the run ends or ctx does. Read errors are logged and
-// retried on the next tick; a connection is redialled then. It starts from
-// the snapshot the blueprint's watch last reported, so after a reopen or a
-// restart it posts only what changed while nobody watched.
+// retried on the next tick; a connection is redialled then. Only
+// ContextMatrix's own answer that a card or the playbook is not found counts
+// as a deletion (see snapshot). It starts from the snapshot the blueprint's
+// watch last reported, so after a reopen or a restart it posts only what
+// changed while nobody watched.
 func (c *Controller) watchLoop(ctx context.Context, sess *session, id string) {
 	bg := context.WithoutCancel(ctx)
 
@@ -81,7 +83,7 @@ func (c *Controller) watchLoop(ctx context.Context, sess *session, id string) {
 		}
 
 		if client != nil {
-			snap, err := c.snapshot(ctx, client, id)
+			snap, err := c.snapshot(ctx, client, id, prev)
 
 			switch {
 			case err != nil && ctx.Err() == nil:
@@ -186,7 +188,9 @@ func (c *Controller) finish(ctx context.Context, sess *session, id string, snap 
 	c.setState(ctx, id, StateDone)
 }
 
-// cardView is what the watch tracks of one emitted card.
+// cardView is what the watch tracks of one emitted card. Gone marks a card
+// deleted in ContextMatrix: it keeps what the watch last saw of it and is
+// never read again.
 type cardView struct {
 	Draft   string `json:"draft"`
 	Project string `json:"project"`
@@ -196,6 +200,7 @@ type cardView struct {
 	Worker  string `json:"worker"`
 	Phase   string `json:"phase"`
 	PR      string `json:"pr"`
+	Gone    bool   `json:"gone,omitempty"`
 }
 
 // stopped lists the cards whose worker is parked or whose state is stalled or blocked.
@@ -219,11 +224,15 @@ type runView struct {
 }
 
 // snapshot is one poll of everything emitted. The watch_state event stores
-// it, so its JSON names are a stored format.
+// it, so its JSON names are a stored format: fields are only added, and an
+// added one is omitted while unset, so an older snapshot still decodes.
 type snapshot struct {
 	Cards    []cardView `json:"cards"`
 	Playbook string     `json:"playbook"`
-	Run      *runView   `json:"run"`
+	// PlaybookGone marks a playbook deleted in ContextMatrix, which ends the
+	// watch.
+	PlaybookGone bool     `json:"playbook_gone,omitempty"`
+	Run          *runView `json:"run"`
 	// Waiting is the manual entry's text when the run waits for a check-off.
 	Waiting string            `json:"waiting"`
 	Repos   []cm.PlaybookRepo `json:"repos"`
@@ -278,8 +287,12 @@ func (c *Controller) reportedSnapshot(ctx context.Context, au audit, id string) 
 	return &snap
 }
 
-// snapshot reads every emitted card and the playbook.
-func (c *Controller) snapshot(ctx context.Context, client CMClient, id string) (snapshot, error) {
+// snapshot reads every emitted card and the playbook. A card is gone when
+// its playbook entry is flagged missing or ContextMatrix answers that it, or
+// its project, is not found; prev's gone cards and playbook are not read
+// again. Once the playbook is gone no card is read either, so no card read
+// can hold the watch's end. Any other failed read fails the poll.
+func (c *Controller) snapshot(ctx context.Context, client CMClient, id string, prev *snapshot) (snapshot, error) {
 	recs, err := c.opts.Store.ListEmissions(ctx, id)
 	if err != nil {
 		return snapshot{}, fmt.Errorf("list emissions: %w", err)
@@ -295,22 +308,85 @@ func (c *Controller) snapshot(ctx context.Context, client CMClient, id string) (
 		titles[card.ID] = card.Title
 	}
 
+	before := map[string]cardView{}
+
+	if prev != nil {
+		for _, cv := range prev.Cards {
+			before[cv.ID] = cv
+		}
+	}
+
 	var snap snapshot
 
 	for _, e := range recs {
-		switch e.Kind {
-		case store.EmitCard:
-			card, err := client.GetCard(ctx, e.Project, e.CMID)
-			if err != nil {
-				return snapshot{}, fmt.Errorf("read %s: %w", e.CMID, err)
-			}
+		if e.Kind == store.EmitPlaybook {
+			snap.Playbook = e.CMID
+		}
+	}
 
+	// The playbook is read first: its entries flag the cards deleted in
+	// ContextMatrix.
+	var (
+		pb      cm.Playbook
+		missing = map[string]bool{}
+	)
+
+	if snap.Playbook != "" {
+		snap.PlaybookGone = prev != nil && prev.PlaybookGone
+
+		if !snap.PlaybookGone {
+			pb, err = client.GetPlaybook(ctx, snap.Playbook)
+
+			switch {
+			case cm.PlaybookNotFound(err):
+				snap.PlaybookGone = true
+			case err != nil:
+				return snapshot{}, fmt.Errorf("read playbook %s: %w", snap.Playbook, err)
+			}
+		}
+
+		for _, entry := range pb.Entries {
+			if entry.Type == "card" && entry.Missing {
+				missing[entry.Project+"/"+entry.Card] = true
+			}
+		}
+	}
+
+	for _, e := range recs {
+		if e.Kind != store.EmitCard {
+			continue
+		}
+
+		// A card that is not read keeps what the watch last saw of it.
+		last := before[e.CMID]
+		last.Draft, last.Project, last.ID, last.Title = e.DraftID, e.Project, e.CMID, titles[e.DraftID]
+
+		if last.Gone || snap.PlaybookGone {
+			snap.Cards = append(snap.Cards, last)
+
+			continue
+		}
+
+		if missing[e.Project+"/"+e.CMID] {
+			last.Gone = true
+			snap.Cards = append(snap.Cards, last)
+
+			continue
+		}
+
+		card, err := client.GetCard(ctx, e.Project, e.CMID)
+
+		switch {
+		case cm.CardNotFound(err):
+			last.Gone = true
+			snap.Cards = append(snap.Cards, last)
+		case err != nil:
+			return snapshot{}, fmt.Errorf("read %s: %w", e.CMID, err)
+		default:
 			snap.Cards = append(snap.Cards, cardView{
 				Draft: e.DraftID, Project: e.Project, ID: e.CMID, Title: titles[e.DraftID],
 				State: card.State, Worker: card.WorkerStatus, Phase: card.Phase, PR: card.PRURL,
 			})
-		case store.EmitPlaybook:
-			snap.Playbook = e.CMID
 		}
 	}
 
@@ -319,14 +395,15 @@ func (c *Controller) snapshot(ctx context.Context, client CMClient, id string) (
 			snap.Manual = append(snap.Manual, m.Text)
 		}
 
-		snap.done = len(snap.Cards) == 1 && (snap.Cards[0].State == "done" || snap.Cards[0].State == "not_planned")
+		snap.done = len(snap.Cards) == 1 && (snap.Cards[0].Gone || snap.Cards[0].State == "done" || snap.Cards[0].State == "not_planned")
 
 		return snap, nil
 	}
 
-	pb, err := client.GetPlaybook(ctx, snap.Playbook)
-	if err != nil {
-		return snapshot{}, fmt.Errorf("read playbook %s: %w", snap.Playbook, err)
+	if snap.PlaybookGone {
+		snap.done = true
+
+		return snap, nil
 	}
 
 	snap.Repos = pb.Repos
@@ -345,7 +422,8 @@ func (c *Controller) snapshot(ctx context.Context, client CMClient, id string) (
 	}
 
 	// Every entry complete also ends the watch: a human may stop the run and
-	// finish the entries by hand.
+	// finish the entries by hand. A missing entry never completes, so a
+	// playbook with a deleted card ends as ContextMatrix's run does.
 	snap.done = (pb.Run != nil && pb.Run.Status == "completed") || (pb.Total > 0 && pb.Complete == pb.Total)
 
 	return snap, nil
@@ -366,7 +444,17 @@ func (s snapshot) changes(prev *snapshot) []string {
 	for _, cv := range s.Cards {
 		old, seen := before[cv.ID]
 
-		if !seen || old.State != cv.State || old.Worker != cv.Worker || old.Phase != cv.Phase {
+		if cv.Gone {
+			if !seen || !old.Gone {
+				lines = append(lines, cv.ID+" was deleted in ContextMatrix")
+			}
+
+			continue
+		}
+
+		// A card read from ContextMatrix always has a state; one without was
+		// never read, behind a playbook deleted before the first read.
+		if cv.State != "" && (!seen || old.State != cv.State || old.Worker != cv.Worker || old.Phase != cv.Phase) {
 			lines = append(lines, cv.statusLine())
 		}
 
@@ -375,15 +463,34 @@ func (s snapshot) changes(prev *snapshot) []string {
 		}
 	}
 
-	var oldRun runView
-	if prev != nil && prev.Run != nil {
-		oldRun = *prev.Run
+	var (
+		oldRun     runView
+		oldWaiting string
+	)
+
+	if prev != nil {
+		if prev.Run != nil {
+			oldRun = *prev.Run
+		}
+
+		oldWaiting = prev.Waiting
 	}
 
-	if s.Run != nil && *s.Run != oldRun {
-		if line := s.runLine(); line != "" {
-			lines = append(lines, line)
+	// The run moving from one card to the next is no news: the cards' lines
+	// say which one works. A wait at another entry is, even when two
+	// check-offs read the same.
+	if s.Run != nil {
+		moved := s.Run.Status == "waiting" && s.Run.Entry != oldRun.Entry
+
+		if s.Run.Status != oldRun.Status || s.Run.Reason != oldRun.Reason || s.Waiting != oldWaiting || moved {
+			if line := s.runLine(); line != "" {
+				lines = append(lines, line)
+			}
 		}
+	}
+
+	if s.PlaybookGone && (prev == nil || !prev.PlaybookGone) {
+		lines = append(lines, fmt.Sprintf("Playbook %s was deleted in ContextMatrix.", s.Playbook))
 	}
 
 	return lines
@@ -422,7 +529,8 @@ func (s snapshot) runLine() string {
 }
 
 // endPayload is the run's end: the playbook, its compare links, the cards'
-// pull requests and a single card's manual checks.
+// pull requests and a single card's manual checks, with the cards and the
+// playbook deleted in ContextMatrix flagged.
 func (s snapshot) endPayload() map[string]any {
 	repos := make([]any, 0, len(s.Repos))
 	for _, r := range s.Repos {
@@ -431,10 +539,19 @@ func (s snapshot) endPayload() map[string]any {
 
 	cards := make([]any, 0, len(s.Cards))
 	for _, cv := range s.Cards {
-		cards = append(cards, map[string]any{"card": cv.ID, "state": cv.State, "pr": cv.PR})
+		card := map[string]any{"card": cv.ID, "state": cv.State, "pr": cv.PR}
+		if cv.Gone {
+			card["deleted"] = true
+		}
+
+		cards = append(cards, card)
 	}
 
 	end := map[string]any{"playbook": s.Playbook, "repos": repos, "cards": cards, "manual": s.Manual}
+
+	if s.PlaybookGone {
+		end["playbook_deleted"] = true
+	}
 
 	if s.Playbook != "" && s.Followups > 0 {
 		end["followups"] = s.Followups

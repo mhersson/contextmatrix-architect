@@ -155,7 +155,7 @@ func (showMockupTool) Schema() llm.Tool {
 				"id":{"type":"string","description":"lower case letters, digits and _, starting with a letter"},
 				"title":{"type":"string","description":"the screen's name, a few words"}},"required":["id","title"]},
 				"description":"the 1 to 8 screens the document shows, as tabs, steps or views inside it"},
-			"suggestions":{"type":"array","items":` + mockupSuggestionSchema + `,"description":"at most 12 settings the document renders, for the person to try"}},
+			"suggestions":{"type":"array","items":` + mockupSuggestionSchema + `,"description":"the settings the document renders, for the person to try"}},
 			"required":["notes","source","screens"]}`),
 	}}
 }

@@ -3,19 +3,16 @@ version: "1"
 stages:
   - id: intake
     persona: product_owner
-    produces: need
     checks: [assumptions, screen]
     policy: human
   - id: mockup
     persona: designer
-    produces: mockup
     consumes: [intake]
     tools: [code]
     checks: [mockup]
     policy: human
   - id: slicing
     persona: product_owner
-    produces: slices
     consumes: [intake, mockup]
     checks: [slices]
     policy: human
@@ -24,7 +21,6 @@ stages:
     reviewer: {persona: system_designer, threshold: 4}
   - id: solution_design
     persona: system_designer
-    produces: design
     consumes: [intake, mockup, slicing]
     tools: [code]
     checks: [assumptions, decisions]
@@ -34,12 +30,10 @@ stages:
     reviewer: {persona: senior_developer, threshold: 4}
   - id: grounding
     persona: senior_developer
-    produces: grounding
     consumes: [intake, mockup, slicing, solution_design]
     tools: [code, cm]
   - id: acceptance
     persona: senior_developer
-    produces: acceptance
     consumes: [intake, mockup, slicing, solution_design, grounding]
     checks: [criteria]
     policy: auto
@@ -47,13 +41,11 @@ stages:
     reviewer: {persona: senior_developer, threshold: 4}
   - id: decomposition
     persona: senior_developer
-    produces: cards
     consumes: [intake, mockup, slicing, solution_design, grounding, acceptance]
     tools: [code]
     checks: [cards]
   - id: readiness
     persona: reviewer
-    produces: readiness
     consumes: [intake, mockup, slicing, solution_design, grounding, acceptance, decomposition]
     tools: [code, cm]
     loops_to: decomposition

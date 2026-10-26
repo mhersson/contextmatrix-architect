@@ -2398,10 +2398,12 @@ func TestPlain_AChangedDecisionIsFlagged(t *testing.T) {
 
 	for name, tc := range map[string]struct {
 		restated    string
+		followOn    string
 		wantChanged bool
 	}{
-		"restated":  {"Recipes are saved per person.", true},
-		"unchanged": {"recipes are saved per household", false},
+		"restated":  {restated: "Recipes are saved per person.", wantChanged: true},
+		"unchanged": {restated: "recipes are saved per household"},
+		"unchanged, with a follow-on on the same acceptance": {restated: first, followOn: "Each household keeps one shopping list."},
 	} {
 		t.Run(name, func(t *testing.T) {
 			script := dialogScript()
@@ -2411,9 +2413,12 @@ func TestPlain_AChangedDecisionIsFlagged(t *testing.T) {
 			driveIn(t, c, plainStart("BP1"))
 			answerFirstOpenRound(t, c, "BP1")
 
-			putData(t, st, "solution_design", map[string]any{"assumptions": []any{
-				map[string]any{"text": tc.restated, "basis": "round1.A1", "consequence": shown},
-			}})
+			entries := []any{map[string]any{"text": tc.restated, "basis": "round1.A1", "consequence": shown}}
+			if tc.followOn != "" {
+				entries = append(entries, map[string]any{"text": tc.followOn, "basis": "round1.A1"})
+			}
+
+			putData(t, st, "solution_design", map[string]any{"assumptions": entries})
 
 			ctx := context.Background()
 			bp, err := st.GetBlueprint(ctx, "BP1")
@@ -2566,17 +2571,39 @@ func TestPlain_TheSummaryFollowsTheRecordsRules(t *testing.T) {
 
 	for name, tc := range map[string]struct {
 		versions    [][]any
-		text        string
+		texts       []string
 		wantChanged bool
 	}{
 		"the first version stating the basis decides, not the latest": {
 			versions:    [][]any{{"Other."}, {statedUnderTag("Recipes are saved per household.")}, {statedUnderTag("Recipes are saved per person.")}},
-			text:        "Recipes are saved per person.",
+			texts:       []string{"Recipes are saved per person."},
 			wantChanged: true,
 		},
 		"a basis first stated in a later version, equal to the text, is unchanged": {
 			versions: [][]any{{"Other."}, {statedUnderTag("Recipes are saved per household.")}},
-			text:     "Recipes are saved per household.",
+			texts:    []string{"Recipes are saved per household."},
+		},
+		"two entries on one tag, each stated alike, are unchanged": {
+			versions: [][]any{{statedUnderTag("Recipes are saved per household."), statedUnderTag("Lists are shared too.")}},
+			texts:    []string{"Recipes are saved per household.", "Lists are shared too."},
+		},
+		"an entry added under a tag a version already states is unchanged": {
+			versions: [][]any{{statedUnderTag("Recipes are saved per household.")}, {statedUnderTag("Recipes are saved per household."), statedUnderTag("Lists are shared too.")}},
+			texts:    []string{"Recipes are saved per household.", "Lists are shared too."},
+		},
+		"an entry inserted ahead of one a version already states is unchanged": {
+			versions: [][]any{{statedUnderTag("Recipes are saved per household.")}, {statedUnderTag("Lists are shared too."), statedUnderTag("Recipes are saved per household.")}},
+			texts:    []string{"Lists are shared too.", "Recipes are saved per household."},
+		},
+		"a revised entry behind an inserted one is changed": {
+			versions:    [][]any{{statedUnderTag("Recipes are saved per household."), statedUnderTag("Lists are shared too.")}, {statedUnderTag("Meals are planned weekly."), statedUnderTag("Recipes are saved per household."), statedUnderTag("Lists are shared per person.")}},
+			texts:       []string{"Meals are planned weekly.", "Recipes are saved per household.", "Lists are shared per person."},
+			wantChanged: true,
+		},
+		"a revised entry among several on one tag is changed": {
+			versions:    [][]any{{statedUnderTag("Recipes are saved per household."), statedUnderTag("Lists are shared too.")}, {statedUnderTag("Recipes are saved per person."), statedUnderTag("Lists are shared too.")}},
+			texts:       []string{"Recipes are saved per person.", "Lists are shared too."},
+			wantChanged: true,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -2590,9 +2617,12 @@ func TestPlain_TheSummaryFollowsTheRecordsRules(t *testing.T) {
 			bp, err := st.GetBlueprint(ctx, "BP1")
 			require.NoError(t, err)
 
-			sum := c.plainSummary(ctx, bp, []assumption{
-				{ID: "A1", Stage: "solution_design", Text: tc.text, Basis: "round1.A1", Consequence: "Shared.", ConsequenceAccepted: 1},
-			}, "Title")
+			var list []assumption
+			for i, text := range tc.texts {
+				list = append(list, assumption{ID: fmt.Sprintf("A%d", i+1), Stage: "solution_design", Text: text, Basis: "round1.A1", Consequence: "Shared.", ConsequenceAccepted: 1})
+			}
+
+			sum := c.plainSummary(ctx, bp, list, "Title")
 
 			accepted := anyList(sum["accepted"])
 			require.Len(t, accepted, 1)

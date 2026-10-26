@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
+	"github.com/mhersson/contextmatrix-architect/internal/code"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -265,6 +266,90 @@ func TestMovedRepos_EmptyRepositories(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMovedRepos_ReadsTheHeadsWithTheSessionsGitCredentials(t *testing.T) {
+	const url = "https://example.com/alpha.git"
+
+	tests := []struct {
+		name    string
+		noToken bool
+		noCreds bool
+		noRepos bool
+		wantErr bool
+	}{
+		{name: "the credential built from the session's git token"},
+		{name: "a session without a git token", noToken: true, wantErr: true},
+		{name: "a controller without a credential source", noCreds: true, wantErr: true},
+		{name: "a blueprint with no repository needs none", noToken: true, noRepos: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, _, _, ws := newPipeline(t, happyScript())
+			ctx := context.Background()
+
+			if tt.noCreds {
+				c.opts.Credentials = nil
+			}
+
+			in := startInput("BP1")
+			if tt.noToken {
+				in.GitCredentialsToken = ""
+			}
+
+			require.NoError(t, c.Start(ctx, in))
+
+			if !tt.noRepos {
+				_, err := st.AddSource(ctx, store.Source{
+					BlueprintID: "BP1", Kind: "repo", Identity: url, Version: "sha-alpha",
+					FetchedAt: time.Now().UTC(), FirstUsedBy: "grounding",
+				})
+				require.NoError(t, err)
+			}
+
+			bp, err := st.GetBlueprint(ctx, "BP1")
+			require.NoError(t, err)
+
+			_, _, err = c.movedRepos(ctx, sessionOf(t, c, "BP1"), bp, nil)
+			if tt.wantErr {
+				require.ErrorIs(t, err, errNoGitCredentials)
+				assert.Empty(t, ws.headCreds, "no default branch is read anonymously")
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			if !tt.noRepos {
+				assert.Equal(t, []code.Credentials{fakeCreds{token: testGitToken}}, ws.headCreds)
+			}
+		})
+	}
+}
+
+func TestPreflight_AReopenWithoutGitCredentialsFails(t *testing.T) {
+	c, st, _, _, _ := newPipeline(t, happyScript())
+	ctx := context.Background()
+	fake := newFakeCM()
+
+	drive(t, c, "BP1")
+	require.NoError(t, c.End(ctx, "BP1"))
+	c.Wait("BP1")
+
+	reopen := startInput("BP1")
+	reopen.GitCredentialsToken = ""
+	require.NoError(t, c.Start(ctx, reopen))
+	c.Wait("BP1")
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+
+	draft, err := c.draft(ctx, "BP1")
+	require.NoError(t, err)
+
+	_, err = c.preflight(ctx, sessionOf(t, c, "BP1"), bp, draft, fake)
+	require.ErrorIs(t, err, errNoGitCredentials, "the sign-off shows the preflight error and stops for a human")
 }
 
 func TestPreflightSetup(t *testing.T) {

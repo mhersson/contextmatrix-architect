@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -23,6 +26,7 @@ import (
 
 	"github.com/mhersson/contextmatrix-architect/internal/config"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
+	"github.com/mhersson/contextmatrix-architect/internal/webhook"
 )
 
 const (
@@ -108,7 +112,10 @@ func TestServe_EndToEnd(t *testing.T) {
 	runner := &stage.Runner{NewLLM: func(protocol.LLMEndpoint) llm.LLM { return model }}
 
 	build := protocol.BuildInfo{Commit: strings.Repeat("a", 40), BuildTime: "2026-10-21T08:00:00Z", Changes: []protocol.Change{}}
-	srv, cleanup, err := buildServer(context.Background(), cfg, testLogger(t), runner, build)
+	deps, err := loadRuntime(cfg)
+	require.NoError(t, err)
+
+	srv, cleanup, err := buildServer(context.Background(), cfg, deps, testLogger(t), runner, build, &atomic.Bool{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cleanup(context.Background()) })
 
@@ -221,6 +228,156 @@ func TestServe_EndToEnd(t *testing.T) {
 
 	// The record survives on disk.
 	assert.FileExists(t, filepath.Join(cfg.StateDir, "architect.db"))
+}
+
+// lockedBuffer is a log sink a test reads while the server writes it.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.String()
+}
+
+// serveConfig is a config runServe starts with on port, over a fresh state
+// directory.
+func serveConfig(t *testing.T, port int) *config.Config {
+	t.Helper()
+
+	return &config.Config{
+		ContextMatrixURL: "http://cm.invalid", APIKey: e2eKey, Port: port, LogLevel: "info",
+		StateDir: t.TempDir(), MaxRunCostUSD: 1, MaxTurns: 5, WorkspaceMaxAgeDays: 7, WatchInterval: time.Minute,
+		ReplaySkew: 5 * time.Minute, ReplayCacheSize: 100, MessageDedupTTL: time.Minute, MessageDedupCacheSize: 100,
+	}
+}
+
+// loggedAddr is the address the first JSON log entry carrying one names; ""
+// when none does.
+func loggedAddr(logs string) string {
+	for line := range strings.Lines(logs) {
+		var entry struct {
+			Addr string `json:"addr"`
+		}
+
+		if json.Unmarshal([]byte(line), &entry) == nil && entry.Addr != "" {
+			return entry.Addr
+		}
+	}
+
+	return ""
+}
+
+func TestRunServe_ABindFailureIsTheListenErrorAndNeverLogsListening(t *testing.T) {
+	taken, err := net.Listen("tcp", ":0") //nolint:gosec // serve binds every interface; only the same bind is sure to collide on every OS
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = taken.Close() })
+
+	cfg := serveConfig(t, taken.Addr().(*net.TCPAddr).Port)
+
+	deps, err := loadRuntime(cfg)
+	require.NoError(t, err)
+
+	var logs lockedBuffer
+
+	err = runServe(context.Background(), cfg, deps, slog.New(slog.NewJSONHandler(&logs, nil)))
+	require.ErrorIs(t, err, syscall.EADDRINUSE)
+	assert.Empty(t, loggedAddr(logs.String()), "no address is logged")
+}
+
+func TestRunServe_LogsTheBoundAddressThenServes(t *testing.T) {
+	cfg := serveConfig(t, 0)
+
+	deps, err := loadRuntime(cfg)
+	require.NoError(t, err)
+
+	var logs lockedBuffer
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+
+	go func() { done <- runServe(ctx, cfg, deps, slog.New(slog.NewJSONHandler(&logs, nil))) }()
+
+	var addr string
+
+	require.Eventually(t, func() bool {
+		addr = loggedAddr(logs.String())
+
+		return addr != ""
+	}, 5*time.Second, 10*time.Millisecond)
+
+	_, port, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	assert.NotEqual(t, "0", port, "the log names the port the listener took")
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://127.0.0.1:"+port+"/health", nil)
+	require.NoError(t, err)
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	cancel()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("runServe did not return after its context ended")
+	}
+}
+
+func TestShutdownHTTP_AnswersDrainingWhileItDrains(t *testing.T) {
+	var draining atomic.Bool
+
+	routes := webhook.NewServer(webhook.Config{APIKey: e2eKey, Draining: &draining, Logger: testLogger(t)}).Routes()
+	httpServer := &http.Server{Handler: routes, ReadHeaderTimeout: time.Second}
+
+	readyz := func() int {
+		rec := httptest.NewRecorder()
+		routes.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+		return rec.Code
+	}
+
+	require.Equal(t, http.StatusOK, readyz(), "ready before the drain")
+
+	// Shutdown runs its hooks once it has begun, while it waits for the
+	// requests in flight: what /readyz and a signed /chat/start answer then.
+	during := make(chan [2]int, 1)
+
+	httpServer.RegisterOnShutdown(func() {
+		body := []byte(`{"session_id":"S1"}`)
+		req := httptest.NewRequest(http.MethodPost, "/chat/start", bytes.NewReader(body))
+		sign(t, req, body)
+
+		start := httptest.NewRecorder()
+		routes.ServeHTTP(start, req)
+
+		during <- [2]int{readyz(), start.Code}
+	})
+
+	require.NoError(t, shutdownHTTP(httpServer, &draining))
+
+	select {
+	case got := <-during:
+		assert.Equal(t, [2]int{http.StatusServiceUnavailable, http.StatusServiceUnavailable}, got, "/readyz and the mutating routes answer draining")
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown ran no hook")
+	}
 }
 
 func testLogger(t *testing.T) *slog.Logger {

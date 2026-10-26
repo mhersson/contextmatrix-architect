@@ -68,6 +68,10 @@ need to build the architect from this repository (see
    The shared key is a password the architect and ContextMatrix both know. Make
    it at least 32 characters long.
 
+   If your LLM gateway, ContextMatrix or git host has a certificate from a
+   private certificate authority (CA), also set `ca_cert_file` to that CA's
+   certificate file (PEM); it adds to the system trust store.
+
 3. Check the file. This reads it exactly as the architect will, and prints the
    first problem it finds:
 
@@ -98,7 +102,8 @@ need to build the architect from this repository (see
    `./contextmatrix-architect serve --config ~/.config/contextmatrix-architect/config.yaml`.
    To keep it
    running in the background, the architect's [README](../README.md) shows how
-   to run it as a service or in Docker, and lists every other setting.
+   to run it as a service or in Docker.
+   [config.yaml.example](../config.yaml.example) documents every other setting.
 
 ## Check that it works
 
@@ -118,4 +123,5 @@ message: the interview starts.
 - [Architect reference](reference.md) for what you can type, the modes, the cost
   cap and what to do when a blueprint stops.
 - [Models](reference.md#models) for more on choosing a model.
-- [design.md](design.md) for how the architect works inside.
+- [decisions.md](decisions.md) for the decisions the architect's code keeps,
+  and why.

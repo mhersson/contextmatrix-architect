@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"regexp"
@@ -69,8 +70,8 @@ const (
 )
 
 // The instructions every reviewer, responder or plain-language run reads,
-// and every stage run of an unattended blueprint, under stages/. No stage
-// may take these ids.
+// and the runs of an unattended blueprint's stages that check cards and
+// readiness, under stages/. No stage may take these ids.
 const (
 	reviewInstructions     = "review"
 	responderInstructions  = "responder"
@@ -130,9 +131,8 @@ type Reviewer struct {
 // Stage is one unit of work in the pipeline: one model run, and the gate
 // after it when it has one.
 type Stage struct {
-	ID       string `yaml:"id"`
-	Persona  string `yaml:"persona"`
-	Produces string `yaml:"produces"`
+	ID      string `yaml:"id"`
+	Persona string `yaml:"persona"`
 	// Policy is who answers the stage's questions, "human" or "auto", and
 	// decides its gate unless GatePolicy says otherwise; a model stage
 	// without one is auto. The mode and the blueprint's gate replies
@@ -458,6 +458,9 @@ func parseLists(raw []byte) (contract.Lists, error) {
 	return lists, nil
 }
 
+// stageIDPattern is the artifact route's stage rule in internal/webhook.
+var stageIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
 func validateStage(s Stage, seen map[string]Stage) error {
 	if s.ID == "" {
 		return fmt.Errorf("pack: stage needs an id: %+v", s)
@@ -467,13 +470,11 @@ func validateStage(s Stage, seen map[string]Stage) error {
 		return fmt.Errorf("pack: stage id %q is reserved for the %s instructions", s.ID, s.ID)
 	}
 
-	// A reviewer's verdicts are artifacts of <stage>.review.
-	if strings.Contains(s.ID, ".") {
-		return fmt.Errorf("pack: stage id %q has a dot, which names a stage's review", s.ID)
-	}
-
-	if strings.Contains(s.ID, stepSeparator) {
-		return fmt.Errorf("pack: stage id %q has an %s, which joins a per-slice stage's id and its slice", s.ID, stepSeparator)
+	// A stage id is an artifact's route segment. A dot is reserved for a
+	// reviewer's verdicts, artifacts of <stage>.review, and an "@" for the
+	// slice a per-slice stage's step joins to its id.
+	if !stageIDPattern.MatchString(s.ID) {
+		return fmt.Errorf("pack: stage id %q must be 1 to 64 letters, digits, underscores or hyphens: a dot names a stage's review and an %s joins a per-slice stage's id and its slice", s.ID, stepSeparator)
 	}
 
 	if _, dup := seen[s.ID]; dup {
@@ -747,6 +748,10 @@ func (p *Pack) Stage(id string) (Stage, bool) {
 // Persona returns a persona's text; empty when unknown.
 func (p *Pack) Persona(name string) string { return p.personas[name] }
 
+// Personas returns the names of every persona a run can use, sorted: each
+// stage's, each reviewer's and the retrospective's.
+func (p *Pack) Personas() []string { return slices.Sorted(maps.Keys(p.personas)) }
+
 // Instructions returns a stage's instructions; empty when unknown.
 func (p *Pack) Instructions(stageID string) string { return p.instructions[stageID] }
 
@@ -833,8 +838,9 @@ func (p *Pack) MockupResponderInstructions() string { return p.mockupResp }
 // plain-language blueprint; empty when the pack has none.
 func (p *Pack) PlainInstructions() string { return p.plain }
 
-// UnattendedInstructions are added to every stage run of an unattended
-// blueprint; empty when the pack has none.
+// UnattendedInstructions are added, on an unattended blueprint, to the runs
+// of the stage that checks cards and of the one that checks readiness; empty
+// when the pack has none.
 func (p *Pack) UnattendedInstructions() string { return p.unattended }
 
 // StageName is how a stage id or a step key reads to a person: underscores

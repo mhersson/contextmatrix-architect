@@ -187,3 +187,44 @@ func TestRun_AFullWindowStopIsAContextFullError(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoArtifact, "a full window is still a run without an artifact")
 	assert.Equal(t, ReasonContextLimit, out.Result.Reason)
 }
+
+func TestRun_AFinalReplyPastTheLimitIsForcedToSubmit(t *testing.T) {
+	talk := llm.Response{Content: "Here is the need.", FinishReason: "stop", Usage: llm.Usage{PromptTokens: 120_000}}
+	submit := func(prompt int) llm.Response {
+		return llm.Response{
+			ToolCalls: []llm.ToolCall{toolCall("c1", "submit_artifact", `{"body":"# Need"}`)}, FinishReason: "tool_calls",
+			Usage: llm.Usage{PromptTokens: prompt},
+		}
+	}
+
+	tests := []struct {
+		name   string
+		forced llm.Response
+		full   bool
+	}{
+		{"the forced submit is the artifact", submit(1_000), false},
+		// Four messages leave compaction nothing to summarize.
+		{"a forced submit past the limit is a full window", submit(120_000), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeLLM{responses: []llm.Response{talk, tt.forced}}
+
+			out, err := runnerWith(f).Run(context.Background(), baseInput(&bytes.Buffer{}))
+			require.Len(t, f.requests, 2, "the final reply ends the first run and the follow-up asks once")
+			assert.NotNil(t, f.requests[1].ToolChoice, "the second call is the forced follow-up")
+
+			if tt.full {
+				var full *ContextFullError
+				require.ErrorAs(t, err, &full)
+				assert.Equal(t, ReasonContextLimit, out.Result.Reason)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, "# Need", out.Artifact.Body)
+		})
+	}
+}

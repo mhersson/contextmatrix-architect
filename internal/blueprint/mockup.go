@@ -75,7 +75,8 @@ const (
 	reasonEmptyChat     = "empty_chat"
 )
 
-// changeChosen: the person's use or skip, stored on the mockup round.
+// changeChosen: a use or skip stored on the mockup round, the person's or
+// the auto responder's (Failed marks a use the responder never made).
 const changeChosen = "chosen"
 
 // carriedSettings is what a revision with suggestions sugs opens with: for

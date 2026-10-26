@@ -40,10 +40,15 @@ func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(r)
 }
 
-// Connect dials <baseURL>/mcp with apiKey as the bearer. Errors never carry
-// the key.
-func Connect(ctx context.Context, baseURL, apiKey string) (*Client, error) {
-	httpClient := &http.Client{Transport: &bearerTransport{key: apiKey, base: http.DefaultTransport}}
+// Connect dials <baseURL>/mcp with apiKey as the bearer over base, the
+// transport that trusts ca_cert_file; nil is http.DefaultTransport. Errors
+// never carry the key.
+func Connect(ctx context.Context, baseURL, apiKey string, base http.RoundTripper) (*Client, error) {
+	if base == nil {
+		base = http.DefaultTransport
+	}
+
+	httpClient := &http.Client{Transport: &bearerTransport{key: apiKey, base: base}}
 	endpoint := strings.TrimRight(baseURL, "/") + "/mcp"
 
 	dial := func(ctx context.Context) (*mcp.ClientSession, error) {
@@ -114,10 +119,49 @@ func (c *Client) callArgs(ctx context.Context, tool string, args any) (string, e
 	}
 
 	if result.IsError {
-		return "", fmt.Errorf("cm: %s: %s", tool, sb.String())
+		return "", &ToolError{Tool: tool, Text: sb.String()}
 	}
 
 	return sb.String(), nil
+}
+
+// ToolError is a tool's own error result: CM took the call and refused it.
+type ToolError struct {
+	Tool string
+	Text string
+}
+
+func (e *ToolError) Error() string { return fmt.Sprintf("cm: %s: %s", e.Tool, e.Text) }
+
+// CardNotFound reports whether err is get_card's answer that a card does
+// not exist: it was deleted, or its project was, which CM allows only once
+// the project holds no cards. A transport error, a timeout or CM being down
+// is never that answer.
+func CardNotFound(err error) bool {
+	return refused(err, "get_card", "card not found", "project not found")
+}
+
+// PlaybookNotFound reports whether err is get_playbook's answer that a
+// playbook does not exist, as CardNotFound does for a card.
+func PlaybookNotFound(err error) bool { return refused(err, "get_playbook", "playbook not found") }
+
+// refused reports whether err is tool's own error result and its text holds
+// one of texts, CM's errors for the case. The tool is checked because
+// another tool's text can hold the same words: create_card's "parent card
+// not found" is about a different card.
+func refused(err error, tool string, texts ...string) bool {
+	var te *ToolError
+	if !errors.As(err, &te) || te.Tool != tool {
+		return false
+	}
+
+	for _, text := range texts {
+		if strings.Contains(te.Text, text) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (c *Client) call(ctx context.Context, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {

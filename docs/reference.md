@@ -3,8 +3,8 @@
 This page is for looking things up while you work out a blueprint with the
 architect: what you can type, the modes and settings, the cost cap, what to do
 when a blueprint stops, and what the marks on the sheet mean. The table below
-explains these words. Developers will find how the architect works inside in
-[design.md](design.md).
+explains these words. Developers will find the decisions the architect's code
+keeps, and why, in [decisions.md](decisions.md).
 
 | Word | Meaning |
 |---|---|
@@ -102,7 +102,11 @@ a hint.
 ### After the sign-off
 
 While the session is open, the architect **watches** the emitted cards on the
-board and posts each change in the chat.
+board and posts each change in the chat. A card deleted in ContextMatrix is
+reported once and no longer watched. Deleting the only emitted card, or the
+playbook, ends the watch with the closing summary. A playbook whose run reaches
+a deleted card waits for you, as ContextMatrix's run does: remove the entry in
+ContextMatrix, and the run goes on.
 
 | What you type | What it does | When it works |
 |---|---|---|
@@ -395,6 +399,9 @@ New blueprint dialog. ContextMatrix switches it on when you pick Yolo and off
 for the other modes, until you switch it yourself, and you can switch it
 either way in any mode. It is set when the blueprint is created and never
 changes after: a reopen or a mode switch keeps it.
+
+The instructions for this go only to the runs that write the cards and the
+run that judges Readiness; no other stage changes.
 
 A playbook's run stops at every **manual entry**, a step for a person, in its
 run order until someone ticks it off in ContextMatrix. With Unattended on, the

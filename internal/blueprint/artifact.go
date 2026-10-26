@@ -215,8 +215,11 @@ func (c *Controller) boardArtifact(ctx context.Context, id string) (protocol.Blu
 			seen[cv.Draft] = cv
 		}
 
+		// A card the watch never read, deleted before it first saw it or
+		// behind a playbook deleted first, has no state of its own, so it
+		// keeps the one it has.
 		for i := range b.Cards {
-			if cv, ok := seen[b.Cards[i].Draft]; ok {
+			if cv, ok := seen[b.Cards[i].Draft]; ok && cv.State != "" {
 				b.Cards[i].State, b.Cards[i].PR = cv.State, cv.PR
 			}
 		}

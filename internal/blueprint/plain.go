@@ -643,16 +643,14 @@ func (c *Controller) plainSummary(ctx context.Context, bp store.Blueprint, list 
 
 	canDo := []any{}
 
-	if len(c.opts.Pack.Stages) > 0 {
-		art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, c.opts.Pack.Stages[0].ID)
+	art, err := c.opts.Store.LatestArtifact(ctx, bp.ID, c.opts.Pack.Stages[0].ID)
 
-		switch {
-		case err != nil && !errors.Is(err, store.ErrNotFound):
-			c.opts.Logger.Warn("blueprint: plain summary outcomes", "blueprint", bp.ID, "error", err.Error())
-		case err == nil:
-			for _, o := range outcomesOf(art) {
-				canDo = append(canDo, o.Text)
-			}
+	switch {
+	case err != nil && !errors.Is(err, store.ErrNotFound):
+		c.opts.Logger.Warn("blueprint: plain summary outcomes", "blueprint", bp.ID, "error", err.Error())
+	case err == nil:
+		for _, o := range outcomesOf(art) {
+			canDo = append(canDo, o.Text)
 		}
 	}
 
@@ -662,7 +660,6 @@ func (c *Controller) plainSummary(ctx context.Context, bp store.Blueprint, list 
 	var versions []store.Artifact
 
 	if slices.ContainsFunc(list, func(a assumption) bool { return a.ConsequenceAccepted > 0 }) {
-		var err error
 		if versions, err = c.opts.Store.ListArtifacts(ctx, bp.ID); err != nil {
 			c.opts.Logger.Warn("blueprint: plain summary changes", "blueprint", bp.ID, "error", err.Error())
 		}
@@ -753,14 +750,37 @@ func changedSince(a assumption, versions []store.Artifact) bool {
 		return true
 	}
 
-	// A plain round's tag is the basis of one decision per version, so it
-	// names the decision across versions. Several can rest on one answer's
-	// Q<n>, so there the decision is also its sentence, which a version states
-	// once.
-	tagged := plainTagForm.MatchString(a.Basis)
-	same := func(s stated) bool {
-		return s.Basis == a.Basis && (tagged || normalText(s.Text) == normalText(a.Text))
+	norm := normalText(a.Text)
+
+	// own holds, per version of a's stage, the entries resting on its basis.
+	var own [][]stated
+
+	for _, art := range versions {
+		if art.Stage != a.Stage {
+			continue
+		}
+
+		var entries []stated
+
+		for _, s := range statedAssumptions(art) {
+			if s.Basis == a.Basis {
+				entries = append(entries, s)
+			}
+		}
+
+		own = append(own, entries)
 	}
+
+	if len(own) == 0 {
+		return false
+	}
+
+	// A plain round's tag names the decision across versions, so a revised
+	// sentence is a change: a version's entry is the one with a's sentence,
+	// else the one pairedEntry pairs with it. Several can rest on one answer's
+	// Q<n>, so there the decision is its sentence alone.
+	tagged := plainTagForm.MatchString(a.Basis)
+	latest := own[len(own)-1]
 
 	var (
 		first                   stated
@@ -768,31 +788,74 @@ func changedSince(a assumption, versions []store.Artifact) bool {
 		firstGiven, latestGiven string
 	)
 
-	for _, art := range versions {
-		if art.Stage != a.Stage {
+	for _, entries := range own {
+		i := slices.IndexFunc(entries, func(s stated) bool { return normalText(s.Text) == norm })
+		if i < 0 && tagged {
+			i = pairedEntry(entries, latest, norm)
+		}
+
+		if i < 0 {
 			continue
 		}
 
-		for _, s := range statedAssumptions(art) {
-			if !same(s) {
-				continue
+		s := entries[i]
+
+		if !found {
+			first, found = s, true
+		}
+
+		if s.Consequence != "" {
+			if firstGiven == "" {
+				firstGiven = s.Consequence
 			}
 
-			if !found {
-				first, found = s, true
-			}
-
-			if s.Consequence != "" {
-				if firstGiven == "" {
-					firstGiven = s.Consequence
-				}
-
-				latestGiven = s.Consequence
-			}
-
-			break
+			latestGiven = s.Consequence
 		}
 	}
 
-	return found && (normalText(first.Text) != normalText(a.Text) || normalText(firstGiven) != normalText(latestGiven))
+	return found && (normalText(first.Text) != norm || normalText(firstGiven) != normalText(latestGiven))
+}
+
+// pairedEntry is the index in entries, one version's entries on a tag, of
+// the entry paired with latest's entry whose sentence is norm: by position
+// among the entries each states that the other does not, so an entry added
+// or dropped beside them shifts no pair. -1 when there is none.
+func pairedEntry(entries, latest []stated, norm string) int {
+	states := func(list []stated, s stated) bool {
+		return slices.ContainsFunc(list, func(o stated) bool { return normalText(o.Text) == normalText(s.Text) })
+	}
+
+	at, found := 0, false
+
+	for _, s := range latest {
+		if states(entries, s) {
+			continue
+		}
+
+		if normalText(s.Text) == norm {
+			found = true
+
+			break
+		}
+
+		at++
+	}
+
+	if !found {
+		return -1
+	}
+
+	for i, s := range entries {
+		if states(latest, s) {
+			continue
+		}
+
+		if at == 0 {
+			return i
+		}
+
+		at--
+	}
+
+	return -1
 }
