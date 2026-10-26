@@ -166,6 +166,33 @@ func TestArtifact_TheBoardKeepsTheStateOfACardDeletedUnseen(t *testing.T) {
 	assert.Equal(t, "https://example.com/pr/2", b.Cards[1].PR)
 }
 
+// A playbook deleted before the watch's first read leaves its cards unread
+// and stateless; the board keeps the states it had.
+func TestArtifact_TheBoardKeepsTheStatesBehindAPlaybookDeletedUnread(t *testing.T) {
+	c, st := newViewController(t, "default", 0)
+
+	through(t, c, st, "readiness")
+	appendEvent(t, st, EventEmitted, map[string]any{
+		"cards":    []any{map[string]any{"draft": "D1", "project": "alpha", "card": "ALPHA-1", "title": "One", "state": "todo"}},
+		"playbook": "PB-1", "manual": nil, "steps": []any{},
+	})
+	appendEvent(t, st, EventWatchState, map[string]any{
+		"cards":    []any{map[string]any{"draft": "D1", "id": "ALPHA-1", "state": ""}},
+		"playbook": "PB-1", "playbook_gone": true,
+	})
+
+	art, err := c.Artifact(context.Background(), viewID, emissionStage, "", 1)
+	require.NoError(t, err)
+
+	var b struct {
+		Cards []struct{ Card, State string } `json:"cards"`
+	}
+
+	require.NoError(t, json.Unmarshal(art.Data, &b))
+	require.Len(t, b.Cards, 1)
+	assert.Equal(t, "todo", b.Cards[0].State)
+}
+
 func TestArtifact_ABoardFromBeforeCardColoursHasNoTypeOrPriority(t *testing.T) {
 	c, st := newViewController(t, "default", 0)
 

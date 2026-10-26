@@ -699,6 +699,24 @@ func TestWatch_ADeletedPlaybookEndsTheWatch(t *testing.T) {
 	}
 }
 
+// A playbook deleted before the watch's first read, as when ContextMatrix
+// was down from emission until then, leaves every card unread: no status
+// line goes out for a card the watch never saw.
+func TestWatch_APlaybookDeletedBeforeTheFirstReadPostsNoBlankStatus(t *testing.T) {
+	c, _, _, rec, _ := newPipeline(t, twoCardScript())
+	fake := newFakeCM()
+	fake.goneBooks = true
+	c.opts.ConnectCM = fake.connect
+	c.opts.WatchInterval = 5 * time.Millisecond
+
+	drive(t, c, "BP1")
+	require.NoError(t, c.Message(context.Background(), "BP1", "approve", "m3"))
+	c.Wait("BP1")
+	rec.waitFor(t, EventWatchEnded)
+
+	assert.Equal(t, []string{"Playbook ship-the-parser was deleted in ContextMatrix."}, watchLines(rec))
+}
+
 // A read that fails for any other reason, such as ContextMatrix being down,
 // is retried and never taken for a deletion.
 func TestWatch_AFailedReadIsNoDeletion(t *testing.T) {

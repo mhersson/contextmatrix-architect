@@ -40,6 +40,7 @@ type fakeCM struct {
 	cardGets   map[string]int  // GetCard calls by card id
 	deleted    map[string]bool // card or playbook ids deleted in ContextMatrix
 	torn       map[string]bool // projects deleted in ContextMatrix, their cards first
+	goneBooks  bool            // a playbook is deleted as soon as it is created
 	connects   int
 	closes     int
 }
@@ -201,6 +202,7 @@ func (f *fakeCM) CreatePlaybook(_ context.Context, in cm.PlaybookInput) (string,
 	}
 
 	f.bookSeq[id] = []cm.Playbook{{ID: id, Title: in.Title, Total: len(in.Entries), Followups: followups}}
+	f.deleted[id] = f.goneBooks
 
 	return id, nil
 }

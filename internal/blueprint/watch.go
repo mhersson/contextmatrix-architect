@@ -452,7 +452,9 @@ func (s snapshot) changes(prev *snapshot) []string {
 			continue
 		}
 
-		if !seen || old.State != cv.State || old.Worker != cv.Worker || old.Phase != cv.Phase {
+		// A card read from ContextMatrix always has a state; one without was
+		// never read, behind a playbook deleted before the first read.
+		if cv.State != "" && (!seen || old.State != cv.State || old.Worker != cv.Worker || old.Phase != cv.Phase) {
 			lines = append(lines, cv.statusLine())
 		}
 
