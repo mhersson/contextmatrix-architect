@@ -87,10 +87,10 @@ github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/mattn/go-isatty v0.0.24 h1:tGZZoVgT/KiqK1c8ocVLeDS8BSWMRd47J3Lbz7vsReI=
 github.com/mattn/go-isatty v0.0.24/go.mod h1:nMCL3Zebbrt45jsMDgnfIwz6ydEQApk5oEI3HqDio6A=
-github.com/mhersson/contextmatrix-backendkit v0.13.0 h1:DVl0Ihl645hPHWLkaZSEos980zZuzBhQ35KWpqgTbCk=
-github.com/mhersson/contextmatrix-backendkit v0.13.0/go.mod h1:DNaFhRHSanQMrmueGDrBaS+Rt2jHi8YFYP7+xLiuqzg=
-github.com/mhersson/contextmatrix-harness v0.28.0 h1:G18hgQ5EoiuVGa/OBn0tMLN2dWNFKudqJZdpKYjs0tk=
-github.com/mhersson/contextmatrix-harness v0.28.0/go.mod h1:+wjbJPFZEeKAitnDmb86ZwPhDHDARiHYa5gvWOSpg2g=
+github.com/mhersson/contextmatrix-backendkit v0.15.0 h1:PJHfMp/ShFYbbFuxGbx/Pge3/eDRP+dxFo4/TBsyQHA=
+github.com/mhersson/contextmatrix-backendkit v0.15.0/go.mod h1:keNRBI5b9PoYLldM8KK95jdkpjR9wdjStlYZ05dZjhk=
+github.com/mhersson/contextmatrix-harness v0.29.0 h1:vWIZiTRnFCPP95jGM2N/yQQ9a0Jky/mtrarGFlJNNIw=
+github.com/mhersson/contextmatrix-harness v0.29.0/go.mod h1:+wjbJPFZEeKAitnDmb86ZwPhDHDARiHYa5gvWOSpg2g=
 github.com/mhersson/contextmatrix-protocol v0.38.0 h1:w9uK5Pns02nOytK8tlBeSMHFbOPrtjAn+XicbU1oBvg=
 github.com/mhersson/contextmatrix-protocol v0.38.0/go.mod h1:zFuljSRM03u/RR/gEDQ9KhEK6KLQDmMT3nFpoesSIyc=
 github.com/mitchellh/copystructure v1.2.0 h1:vpKXTN4ewci03Vljg/q9QvCGUDttBOGBIa15WveJJGw=

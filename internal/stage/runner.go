@@ -366,10 +366,10 @@ func terminalTools(ts []tools.Tool) []tools.Tool {
 }
 
 // draftEvents passes the harness's event lines on and keeps the draft true
-// to them: a model call starts a fresh draft, an error or a compaction voids
-// it (a turn the harness abandons sends no reset; a compaction that made no
-// progress may leave the turn running, and its submit republishes the body),
-// and a repaired submit is marked refused, since it never executes.
+// to them: a model call starts a fresh draft, an error or a context-limit
+// stop voids it (the harness abandons that turn and sends no reset), and a
+// repaired submit is marked refused, since it never executes. A compaction
+// voids nothing: the harness runs the crossing reply's calls, its submit too.
 type draftEvents struct {
 	w      io.Writer
 	drafts *draftExtractor
@@ -385,8 +385,7 @@ func (v draftEvents) Write(p []byte) (int, error) {
 		switch {
 		case ev.Kind == events.ModelRequest:
 			v.drafts.newModelCall()
-		case ev.Kind == events.ErrorKind,
-			ev.Kind == events.StateChange && ev.Data["event"] == "compaction":
+		case ev.Kind == events.ErrorKind, ev.Kind == events.ContextLimit:
 			v.drafts.void()
 		case ev.Kind == events.ToolRepair && ev.Data["name"] == submitArtifactName:
 			id, _ := ev.Data["id"].(string)

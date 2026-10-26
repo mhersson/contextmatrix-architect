@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -699,51 +700,67 @@ func TestRun_AChatRunDraftsNothing(t *testing.T) {
 	assert.Empty(t, frames, "a chat run's refused submit never reaches the live view")
 }
 
-func TestRun_ACompactionDiscardVoidsTheDraft(t *testing.T) {
+func TestRun_ASubmitPastTheThresholdIsVoidedOnlyWhenTheWindowStopsIt(t *testing.T) {
 	ask := func(id string) llm.Response {
 		return llm.Response{ToolCalls: []llm.ToolCall{toolCall(id, "echo", `{"text":"more"}`)}, FinishReason: "tool_calls"}
 	}
 
-	near := llm.Response{
-		ToolCalls:    []llm.ToolCall{toolCall("c6", "submit_artifact", `{"body":"# Discarded draft"}`)},
+	crossing := llm.Response{
+		ToolCalls:    []llm.ToolCall{toolCall("c6", "submit_artifact", `{"body":"# Crossing"}`)},
 		FinishReason: "tool_calls",
 		Usage:        llm.Usage{PromptTokens: 120000},
 	}
 
-	f := &streamingLLM{chunk: 4, fakeLLM: fakeLLM{responses: []llm.Response{
-		ask("c1"), ask("c2"), ask("c3"), ask("c4"), ask("c5"),
-		near, // over the threshold: the turn is discarded and its submit never executes
-		{Content: "the briefing", FinishReason: "stop"},
-		{ToolCalls: []llm.ToolCall{toolCall("c7", "submit_artifact", `{"body":"# Kept"}`)}, FinishReason: "tool_calls"},
-	}}}
-
-	var frames []DraftFrame
-
-	in := baseInput(&bytes.Buffer{})
-	in.MaxTurns = 20
-	in.Tools = []tools.Tool{echoTool{}}
-	in.Draft = func(d DraftFrame) { frames = append(frames, d) }
-
-	out, err := (&Runner{NewLLM: func(protocol.LLMEndpoint) llm.LLM { return f }}).Run(context.Background(), in)
-	require.NoError(t, err)
-	assert.Equal(t, "# Kept", out.Artifact.Body)
-
-	voided := -1
-
-	for i, d := range frames {
-		if d.Void {
-			voided = i
-		}
+	tests := []struct {
+		name    string
+		earlier []llm.Response
+		stopped bool
+	}{
+		{"a compaction keeps the reply, so its submit is the artifact", []llm.Response{ask("c1"), ask("c2"), ask("c3"), ask("c4"), ask("c5")}, false},
+		{"a window compaction cannot shrink stops the run before the submit", nil, true},
 	}
 
-	require.GreaterOrEqual(t, voided, 1, "the discarded turn's draft was shown, then voided")
-	shown := applied(t, frames[:voided])
-	assert.NotEmpty(t, shown)
-	require.LessOrEqual(t, len(shown), len("# Discarded draft"))
-	assert.Equal(t, "# Discarded draft"[:len(shown)], shown, "what was shown is the discarded body so far")
-	require.Greater(t, len(frames), voided+1)
-	assert.Equal(t, 0, frames[voided+1].Offset, "the next attempt restarts at offset 0")
-	assert.Equal(t, "# Kept", applied(t, frames[voided+1:]))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The briefing answers the summarize call.
+			script := slices.Concat(tt.earlier, []llm.Response{crossing, {Content: "the briefing", FinishReason: "stop"}})
+			f := &streamingLLM{chunk: 4, fakeLLM: fakeLLM{responses: script}}
+
+			var (
+				events bytes.Buffer
+				frames []DraftFrame
+			)
+
+			in := baseInput(&events)
+			in.MaxTurns = 20
+			in.Tools = []tools.Tool{echoTool{}}
+			in.Draft = func(d DraftFrame) { frames = append(frames, d) }
+
+			frozen := time.Unix(1000, 0)
+			r := &Runner{
+				NewLLM:   func(protocol.LLMEndpoint) llm.LLM { return f },
+				draftNow: func() time.Time { return frozen }, draftEvery: time.Hour,
+			}
+
+			out, err := r.Run(context.Background(), in)
+
+			require.Len(t, frames, 2, "the first fragment opens the draft and one frame closes it")
+
+			if tt.stopped {
+				var full *ContextFullError
+				require.ErrorAs(t, err, &full)
+				assert.True(t, frames[1].Void, "the stop voids the draft of a submit that never ran")
+
+				return
+			}
+
+			require.NoError(t, err)
+			require.Contains(t, events.String(), `"event":"compaction"`, "the history was summarized")
+			assert.Equal(t, "# Crossing", out.Artifact.Body)
+			assert.False(t, frames[1].Void, "a compaction voids nothing")
+			assert.Equal(t, "# Crossing", applied(t, frames), "the submit publishes the body it streamed")
+		})
+	}
 }
 
 // ghostLLM streams a submit_artifact fragment under id c1 at the end of its
