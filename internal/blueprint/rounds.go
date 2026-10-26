@@ -253,7 +253,7 @@ func (c *Controller) rounds(ctx context.Context, id string) ([]roundState, error
 
 // putRound stores and publishes snapshot s; runID is the stage run that
 // made the change, or the retrospective run whose lessons a lesson round
-// asks about, and 0 for any change made outside a run.
+// asks about, and 0 for any other change, a responder run's included.
 func (c *Controller) putRound(ctx context.Context, au audit, id string, runID int64, s roundState) {
 	au.event(ctx, Event{Kind: EventRound, BlueprintID: id, RunID: runID, Payload: s.payload()})
 }
