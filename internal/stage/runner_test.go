@@ -722,8 +722,12 @@ func TestRun_ASubmitPastTheThresholdIsVoidedOnlyWhenTheWindowStopsIt(t *testing.
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// The briefing answers the summarize call.
-			script := slices.Concat(tt.earlier, []llm.Response{crossing, {Content: "the briefing", FinishReason: "stop"}})
+			script := slices.Concat(tt.earlier, []llm.Response{crossing})
+			if !tt.stopped {
+				// The briefing answers the summarize call.
+				script = append(script, llm.Response{Content: "the briefing", FinishReason: "stop"})
+			}
+
 			f := &streamingLLM{chunk: 4, fakeLLM: fakeLLM{responses: script}}
 
 			var (
