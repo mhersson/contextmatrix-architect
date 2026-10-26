@@ -1358,6 +1358,12 @@ func TestPrepareCode_WithoutGitCredentialsTheCodeStageFails(t *testing.T) {
 			require.Len(t, runs, 2)
 			assert.Equal(t, "grounding", runs[1].Stage)
 			assert.Equal(t, store.RunFailed, runs[1].Status)
+
+			bp, err := st.GetBlueprint(context.Background(), "BP1")
+			require.NoError(t, err)
+
+			_, err = c.prepareCode(context.Background(), sessionOf(t, c, "BP1"), bp, "grounding")
+			require.ErrorIs(t, err, errNoGitCredentials, "the stop is the missing credentials")
 		})
 	}
 }
