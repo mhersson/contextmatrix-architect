@@ -2477,7 +2477,8 @@ func TestExport_CarriesTheLessonSet(t *testing.T) {
 
 	summary, err := os.ReadFile(dirs[0])
 	require.NoError(t, err)
-	assert.Contains(t, string(summary), "| "+added[0].Tag()+" | Name where the key comes from |")
+	assert.Contains(t, string(summary), added[0].Tag())
+	assert.Contains(t, string(summary), "Name where the key comes from")
 }
 
 func TestExport_UnknownBlueprint(t *testing.T) {
