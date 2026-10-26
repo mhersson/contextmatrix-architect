@@ -528,10 +528,14 @@ func (c *Controller) interruptedStage(ctx context.Context, sess *session, bp sto
 	return stageID, nil
 }
 
-// spentBefore is what r's stored usage lines add up to, as its sink counted
-// them while it ran: priced at sess's price when r ran on sess's model, else
-// at the blueprint's stored price when r ran on the model that price belongs
-// to, else at the reported cost only, as an override runs (see modelFor).
+// spentBefore is what r's stored usage lines add up to, each at the higher
+// of its reported cost and its cost at a price: sess's when r ran on sess's
+// model, else the blueprint's stored one when r ran on the model that price
+// belongs to, else none. That is how r's sink counted them when r ran on that
+// model as its session's. It differs in two cases: a persona override on one
+// of those models while its session ran another ran unpriced (modelFor) and
+// is priced here, and a run on a session model that is neither of them was
+// priced while it ran and counts its reported cost only here.
 func (c *Controller) spentBefore(ctx context.Context, sess *session, bp store.Blueprint, r store.Run) (store.RunUsage, error) {
 	events, err := c.opts.Store.ListRunEventsOfKind(ctx, bp.ID, r.ID, EventHarness)
 	if err != nil {
