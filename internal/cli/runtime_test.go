@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/pem"
 	"io"
 	"log"
@@ -85,8 +86,7 @@ func TestLoadRuntime_CACertFileReachesAPrivateCAHost(t *testing.T) {
 	assert.Nil(t, deps.caBundle)
 
 	_, _, err = code.NewCMCredentials(srv.URL, "bearer", deps.transport).Fetch(context.Background(), "github.com", "acme/alpha")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "certificate")
+	require.ErrorAs(t, err, new(x509.UnknownAuthorityError))
 
 	// The deadline ends the LLM client's retries.
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)

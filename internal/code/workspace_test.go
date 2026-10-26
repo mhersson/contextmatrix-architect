@@ -2,6 +2,7 @@ package code
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -204,12 +205,10 @@ func TestWorkspace_FetchesAndListsTrustingTheCABundle(t *testing.T) {
 	plain := NewWorkspace(t.TempDir(), time.Now, nil)
 
 	_, _, err = plain.RemoteHead(ctx, repo, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "certificate")
+	require.ErrorAs(t, err, new(x509.UnknownAuthorityError))
 
 	_, err = plain.Checkout(ctx, "BP1", "alpha", repo, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "certificate")
+	require.ErrorAs(t, err, new(x509.UnknownAuthorityError))
 }
 
 func TestWorkspace_CheckoutExportsTheTreeAtTheDefaultBranch(t *testing.T) {

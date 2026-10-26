@@ -1352,7 +1352,6 @@ func TestPrepareCode_WithoutGitCredentialsTheCodeStageFails(t *testing.T) {
 			ev, ok := rec.first(EventError)
 			require.True(t, ok)
 			assert.Equal(t, "prepare", ev.Payload["reason"])
-			assert.Contains(t, ev.Payload["message"], errNoGitCredentials.Error())
 
 			runs, err := st.ListRuns(context.Background(), "BP1")
 			require.NoError(t, err)

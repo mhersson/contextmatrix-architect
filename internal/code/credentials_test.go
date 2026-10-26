@@ -2,6 +2,7 @@ package code
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"io"
 	"log"
@@ -109,7 +110,6 @@ func TestCMCredentials_FetchesOverTheBaseTransport(t *testing.T) {
 	assert.Equal(t, "ghs_abc", token)
 
 	_, _, err = NewCMCredentials(srv.URL, testBearer, nil).Fetch(context.Background(), "github.com", "acme/alpha")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "certificate", "the system trust store refuses the certificate")
+	require.ErrorAs(t, err, new(x509.UnknownAuthorityError), "the system trust store refuses the certificate")
 	assert.NotContains(t, err.Error(), testBearer)
 }

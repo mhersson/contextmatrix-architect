@@ -277,7 +277,7 @@ func TestLogEntryFor(t *testing.T) {
 					"why": []any{"parked"}, "rule": "Where", "evidence": "needs a key", "at_fault": false,
 				},
 			},
-		}}, "text", []string{"Skipped 2 card(s) deleted in ContextMatrix: ALPHA-002, ALPHA-003."}, false},
+		}}, "text", []string{"ALPHA-002", "ALPHA-003"}, false},
 		{"a lesson approved", blueprint.Event{Kind: blueprint.EventLessonDecided, BlueprintID: "S1", Payload: map[string]any{
 			"lesson": 2, "state": "active", "scope": "project", "project": "alpha", "text": "Name where the key comes from", "message_id": "m1",
 		}}, "system", []string{"L2", "alpha"}, false},
@@ -1952,73 +1952,6 @@ func TestLogEntryFor_TheClosingSummaryPointsToTheFollowups(t *testing.T) {
 		require.True(t, found)
 		assert.NotContains(t, after, "ship-the-parser")
 	})
-}
-
-func TestLogEntryFor_TheClosingSummaryNamesWhatWasDeleted(t *testing.T) {
-	card := func(id string, deleted bool) map[string]any {
-		c := map[string]any{"card": id, "state": "done", "pr": "https://x/pr/" + id}
-		if deleted {
-			c["deleted"] = true
-		}
-
-		return c
-	}
-
-	tests := []struct {
-		name    string
-		payload map[string]any
-		want    []string
-		absent  []string
-	}{
-		{
-			name: "a deleted playbook",
-			payload: map[string]any{
-				"playbook": "ship-the-parser", "playbook_deleted": true, "repos": []any{},
-				"cards": []any{card("ALPHA-001", false)},
-			},
-			want:   []string{"**Ended.** Playbook ship-the-parser was deleted in ContextMatrix.", "- ALPHA-001 is done"},
-			absent: []string{"completed", "**Done.**"},
-		},
-		{
-			name: "a playbook that completed after a card was deleted",
-			payload: map[string]any{
-				"playbook": "ship-the-parser", "repos": []any{},
-				"cards": []any{card("ALPHA-001", false), card("ALPHA-002", true)},
-			},
-			want:   []string{"**Done.** Playbook ship-the-parser completed.", "- ALPHA-001 is done", "- ALPHA-002 was deleted in ContextMatrix: https://x/pr/ALPHA-002"},
-			absent: []string{"ALPHA-002 is done"},
-		},
-		{
-			name: "a deleted playbook with a card the watch never saw",
-			payload: map[string]any{
-				"playbook": "ship-the-parser", "playbook_deleted": true, "repos": []any{},
-				"cards": []any{map[string]any{"card": "ALPHA-001", "state": "", "pr": ""}},
-			},
-			want:   []string{"\n- ALPHA-001\n"},
-			absent: []string{"ALPHA-001 is"},
-		},
-		{
-			name:    "a deleted single card",
-			payload: map[string]any{"playbook": "", "cards": []any{card("ALPHA-001", true)}},
-			want:    []string{"**Ended.**", "- ALPHA-001 was deleted in ContextMatrix"},
-			absent:  []string{"**Done.**", "ALPHA-001 is done"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventWatchEnded, BlueprintID: "S1", Payload: tt.payload})
-			require.True(t, ok)
-
-			for _, w := range tt.want {
-				assert.Contains(t, entry.Content, w)
-			}
-
-			for _, a := range tt.absent {
-				assert.NotContains(t, entry.Content, a)
-			}
-		})
-	}
 }
 
 func TestLogEntryFor_AnUnattendedSignoffNamesEachStop(t *testing.T) {

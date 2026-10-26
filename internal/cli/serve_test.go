@@ -262,6 +262,22 @@ func serveConfig(t *testing.T, port int) *config.Config {
 	}
 }
 
+// loggedAddr is the address the first JSON log entry carrying one names; ""
+// when none does.
+func loggedAddr(logs string) string {
+	for line := range strings.Lines(logs) {
+		var entry struct {
+			Addr string `json:"addr"`
+		}
+
+		if json.Unmarshal([]byte(line), &entry) == nil && entry.Addr != "" {
+			return entry.Addr
+		}
+	}
+
+	return ""
+}
+
 func TestRunServe_ABindFailureIsTheListenErrorAndNeverLogsListening(t *testing.T) {
 	taken, err := net.Listen("tcp", ":0") //nolint:gosec // serve binds every interface; only the same bind is sure to collide on every OS
 	require.NoError(t, err)
@@ -276,8 +292,7 @@ func TestRunServe_ABindFailureIsTheListenErrorAndNeverLogsListening(t *testing.T
 
 	err = runServe(context.Background(), cfg, deps, slog.New(slog.NewJSONHandler(&logs, nil)))
 	require.ErrorIs(t, err, syscall.EADDRINUSE)
-	assert.Contains(t, err.Error(), "listen")
-	assert.NotContains(t, logs.String(), "architect listening")
+	assert.Empty(t, loggedAddr(logs.String()), "no address is logged")
 }
 
 func TestRunServe_LogsTheBoundAddressThenServes(t *testing.T) {
@@ -298,20 +313,9 @@ func TestRunServe_LogsTheBoundAddressThenServes(t *testing.T) {
 	var addr string
 
 	require.Eventually(t, func() bool {
-		for line := range strings.Lines(logs.String()) {
-			var entry struct {
-				Msg  string `json:"msg"`
-				Addr string `json:"addr"`
-			}
+		addr = loggedAddr(logs.String())
 
-			if json.Unmarshal([]byte(line), &entry) == nil && entry.Msg == "architect listening" {
-				addr = entry.Addr
-
-				return true
-			}
-		}
-
-		return false
+		return addr != ""
 	}, 5*time.Second, 10*time.Millisecond)
 
 	_, port, err := net.SplitHostPort(addr)

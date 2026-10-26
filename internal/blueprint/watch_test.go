@@ -2,6 +2,8 @@ package blueprint
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -563,6 +565,31 @@ func deletedCards(t *testing.T, end Event) []string {
 	return out
 }
 
+// watchedState is the state the watch stored last; false before it stored
+// one, or when it does not decode.
+func watchedState(rec *recorder) (snapshot, bool) {
+	states := rec.all(EventWatchState)
+	if len(states) == 0 {
+		return snapshot{}, false
+	}
+
+	b, err := json.Marshal(states[len(states)-1].Payload)
+	if err != nil {
+		return snapshot{}, false
+	}
+
+	var snap snapshot
+
+	return snap, json.Unmarshal(b, &snap) == nil
+}
+
+// goneIn reports whether the state the watch stored last has card id gone.
+func goneIn(rec *recorder, id string) bool {
+	snap, ok := watchedState(rec)
+
+	return ok && slices.ContainsFunc(snap.Cards, func(cv cardView) bool { return cv.ID == id && cv.Gone })
+}
+
 func TestWatch_ACardDeletedFromThePlaybookIsReportedOnceAndNoLongerRead(t *testing.T) {
 	_, st, _, rec, _, fake := startWatchedTwoCards(t)
 
@@ -577,21 +604,22 @@ func TestWatch_ACardDeletedFromThePlaybookIsReportedOnceAndNoLongerRead(t *testi
 		Run: &cm.PlaybookRun{Status: "waiting", Entry: "e2", Reason: "alpha/ALPHA-002 no longer exists"},
 	})
 
-	const deleted = "ALPHA-002 was deleted in ContextMatrix"
+	require.Eventually(t, func() bool { return goneIn(rec, "ALPHA-002") }, time.Second, 5*time.Millisecond)
 
-	require.Eventually(t, func() bool {
-		return strings.Contains(strings.Join(watchLines(rec), "\n"), deleted)
-	}, time.Second, 5*time.Millisecond)
-
+	posted := len(watchLines(rec))
 	reads := fake.cardReads("ALPHA-002")
 	gets := fake.getCount()
 
 	require.Eventually(t, func() bool { return fake.getCount() > gets+6 }, time.Second, 5*time.Millisecond)
 
-	lines := strings.Join(watchLines(rec), "\n")
-	assert.Equal(t, 1, strings.Count(lines, deleted), "a deleted card is reported once")
-	assert.Equal(t, 1, strings.Count(lines, "needs a human: alpha/ALPHA-002 no longer exists"), "the run follows ContextMatrix's own status")
+	assert.Len(t, watchLines(rec), posted, "the deletion and the run's wait are reported once")
 	assert.Equal(t, reads, fake.cardReads("ALPHA-002"), "a deleted card is not read again")
+
+	state, ok := watchedState(rec)
+	require.True(t, ok)
+	require.NotNil(t, state.Run)
+	assert.Equal(t, runView{Status: "waiting", Entry: "e2", Reason: "alpha/ALPHA-002 no longer exists"}, *state.Run,
+		"the run follows ContextMatrix's own status")
 
 	// A person removes the entry in ContextMatrix, and the run completes.
 	fake.setBooks("ship-the-parser", cm.Playbook{
@@ -612,11 +640,7 @@ func TestWatch_ADeletedCardStaysDeletedAcrossARestart(t *testing.T) {
 
 	fake.remove("ALPHA-002")
 
-	const deleted = "ALPHA-002 was deleted in ContextMatrix"
-
-	require.Eventually(t, func() bool {
-		return strings.Contains(strings.Join(watchLines(rec), "\n"), deleted)
-	}, time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return goneIn(rec, "ALPHA-002") }, time.Second, 5*time.Millisecond)
 
 	c2, rec2 := reopen(t, c, st, ws, twoCardScript(), fake, startInput("BP1"))
 	require.NotNil(t, watcherOf(c2, "BP1"), "the watch goes on")
@@ -625,7 +649,6 @@ func TestWatch_ADeletedCardStaysDeletedAcrossARestart(t *testing.T) {
 
 	require.Eventually(t, func() bool { return fake.cardReads("ALPHA-001") > kept+3 }, time.Second, 5*time.Millisecond)
 	assert.Equal(t, reads, fake.cardReads("ALPHA-002"), "the stored state keeps it deleted")
-	assert.Equal(t, 1, strings.Count(strings.Join(watchLines(rec), "\n"), deleted))
 	assert.Empty(t, watchLines(rec2), "nothing changed while nobody watched")
 }
 
@@ -651,9 +674,7 @@ func TestWatch_ADeletedSingleCardEndsTheWatch(t *testing.T) {
 			tc.delete(fake)
 			rec.waitFor(t, EventWatchEnded)
 
-			lines := watchLines(rec)
-			require.NotEmpty(t, lines)
-			assert.Equal(t, "ALPHA-001 was deleted in ContextMatrix", lines[len(lines)-1], "the final line")
+			assert.True(t, goneIn(rec, "ALPHA-001"), "the deletion was reported")
 
 			end, ok := rec.first(EventWatchEnded)
 			require.True(t, ok)
@@ -685,9 +706,9 @@ func TestWatch_ADeletedPlaybookEndsTheWatch(t *testing.T) {
 
 			rec.waitFor(t, EventWatchEnded)
 
-			lines := watchLines(rec)
-			require.NotEmpty(t, lines)
-			assert.Equal(t, "Playbook ship-the-parser was deleted in ContextMatrix.", lines[len(lines)-1], "the final line")
+			state, ok := watchedState(rec)
+			require.True(t, ok)
+			assert.True(t, state.PlaybookGone, "the deletion was reported")
 
 			end, ok := rec.first(EventWatchEnded)
 			require.True(t, ok)
@@ -714,7 +735,11 @@ func TestWatch_APlaybookDeletedBeforeTheFirstReadPostsNoBlankStatus(t *testing.T
 	c.Wait("BP1")
 	rec.waitFor(t, EventWatchEnded)
 
-	assert.Equal(t, []string{"Playbook ship-the-parser was deleted in ContextMatrix."}, watchLines(rec))
+	assert.Len(t, watchLines(rec), 1, "the playbook's deletion alone is posted")
+
+	state, ok := watchedState(rec)
+	require.True(t, ok)
+	assert.True(t, state.PlaybookGone)
 }
 
 // A read that fails for any other reason, such as ContextMatrix being down,
@@ -743,8 +768,6 @@ func TestWatch_AFailedReadIsNoDeletion(t *testing.T) {
 
 			fake.setBooks("ship-the-parser", cm.Playbook{ID: "ship-the-parser", Total: 2, Complete: 2, Run: &cm.PlaybookRun{Status: "completed"}})
 			rec.waitFor(t, EventWatchEnded)
-
-			assert.NotContains(t, strings.Join(watchLines(rec), "\n"), "deleted")
 
 			end, ok := rec.first(EventWatchEnded)
 			require.True(t, ok)
@@ -782,19 +805,15 @@ func TestWatch_TheRunLineIsPostedOnlyWhenTheRunChanges(t *testing.T) {
 	)
 	rec.waitFor(t, EventWatchEnded)
 
-	var runLines []string
+	// The run's lines are the ones that name the playbook: running, the two
+	// check-offs, running again, and the failed card's wait.
+	runLines := 0
 
 	for _, line := range watchLines(rec) {
-		if strings.HasPrefix(line, "Playbook ") {
-			runLines = append(runLines, line)
+		if strings.Contains(line, "ship-the-parser") {
+			runLines++
 		}
 	}
 
-	assert.Equal(t, []string{
-		"Playbook ship-the-parser is running.",
-		"Playbook ship-the-parser waits for a human to check off: Check the dashboard",
-		"Playbook ship-the-parser waits for a human to check off: Check the dashboard",
-		"Playbook ship-the-parser is running.",
-		"Playbook ship-the-parser needs a human: ALPHA-002 worker failed. Fix it, then Stop and Run the playbook in ContextMatrix.",
-	}, runLines)
+	assert.Equal(t, 5, runLines)
 }

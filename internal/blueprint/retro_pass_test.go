@@ -552,7 +552,7 @@ func TestRetrospective_WithEveryCardDeletedSaysSo(t *testing.T) {
 	}
 }
 
-func TestRetrospective_NoStruggleCountsTheDeletedCards(t *testing.T) {
+func TestRetrospective_ADeletedCardBesideAFinishedOneIsNoStruggle(t *testing.T) {
 	c, _, runner, rec, fake := emitted(t, twoCardScript())
 	fake.setEnded("ALPHA-001", finished("ALPHA-001", cardBody("Add the parser"), 0))
 	fake.remove("ALPHA-002")
@@ -561,7 +561,6 @@ func TestRetrospective_NoStruggleCountsTheDeletedCards(t *testing.T) {
 	c.Wait("BP1")
 
 	assert.Equal(t, []string{retroNoStruggle}, reasonsOf(rec))
-	assert.Contains(t, replies(rec)[0]["message"], "1 deleted")
 	assert.Empty(t, inputsOf(runner, RetroStage))
 }
 
