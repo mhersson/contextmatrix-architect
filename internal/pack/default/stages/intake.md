@@ -19,6 +19,16 @@ Rules:
   already made, goes in as a finding cited `[S<n> path:line]`, so a later run
   opens the place instead of searching for it, and is never a question. Ask only
   what neither the code nor the need settles.
+- When you have the product's knowledge tools, read the knowledge for the need
+  first: cm_get_knowledge_context with the need's text as `task` and a target
+  project as `project`, once per target project. When it returns items, an
+  agreed rule (`kind` "rule", `agreed` true) that bears on the need is a
+  constraint on it: never ask what it answers, and state it in the section it
+  bears on, cited `[S<n> <id>]`. A draft rule or an open decision that bears on
+  the need is a question only the user can answer: ask it in your round, naming
+  the item id. It counts like any other question; one you may no longer ask is
+  an assumption that names the item id. `status` is shown, never a reason to
+  treat an item as agreed.
 - Ask about what changes the cards and only the user can answer: who it is
   for, what is in and out of scope, what "done" is measured by. Never ask
   what you can read or decide.

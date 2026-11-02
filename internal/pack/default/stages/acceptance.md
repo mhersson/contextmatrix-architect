@@ -27,6 +27,13 @@ designs give them, `"outcomes": ["O1"]`; a manual check may name outcomes
 too. Across the slices every outcome is proved by some criterion or manual
 check, and the last slice's acceptance closes any gap.
 
+When the product's knowledge tools return items, a criterion that proves the
+slice keeps an agreed rule (`kind` "rule", `agreed` true) cites the rule's id,
+`[S<n> <id>]`, and states what the rule asks, since the card that carries it is
+built without the knowledge. A draft rule or an open decision is no rule to
+test; a criterion proves what the blueprint decided about it, as for any other
+decision.
+
 Then sweep the slice for the edge cases the task lists. Think of what people
 actually meet: an empty search, a file half written when the process dies, a
 user without the role, two saves of one record at once, an old client against

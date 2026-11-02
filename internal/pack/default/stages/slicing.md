@@ -28,6 +28,14 @@ made, goes in as a finding cited `[S<n> path:line]`, so a later run opens the
 place instead of searching for it, and is never a question. Ask only what
 neither the code nor the need settles.
 
+When the product's knowledge tools return items for the need, keep the
+behaviour one agreed rule (`kind` "rule", `agreed` true) governs within one
+slice where it can be, so no slice ships half of what the rule asks, and cite
+the rule `[S<n> <id>]` in that slice's section. A draft rule or an open
+decision that bears on the cut is a question for the user, asked in a round
+naming the item id. `status` is shown, never a reason to treat an item as
+agreed.
+
 When the cut turns on what only the user can answer, ask in a round: call
 ask_questions once with the related questions together, each with a short
 tab title, why it matters, and the real alternatives as options with a

@@ -62,6 +62,20 @@ settings the person chose are settled. Build the shared decisions on it and
 never ask again what it shows; a decision that cannot keep part of it says which
 part and why.
 
+When the product's knowledge tools return items, check each decision against
+the agreed rules (`kind` "rule", `agreed` true) and the architecture knowledge
+(`level` "where", `kind` "architecture"; cm_query_knowledge with `kinds`
+["architecture"] finds it). Never recommend an option that goes against an
+agreed rule. A decision that goes against an agreed rule or the architecture
+knowledge all the same, such as one an answer chose, names the conflict and the
+item's id in its text. A decision that rests on an agreed rule takes the
+knowledge source's tag alone, `S<n>`, as its basis, never `S<n> <id>`, and
+names the rule's id in its text; a part the work needs to keep an agreed rule
+traces to that rule. A draft rule or an open decision that bears on a decision
+is a question for the user, asked in a round naming the item id. It counts like
+any other question; one you may no longer ask is an assumption that names the
+item id. `status` is shown, never a reason to treat an item as agreed.
+
 Produce markdown with a section per decision, each with the options it
 rejected, and a section for the contracts every slice holds to. Submit with
 a data object

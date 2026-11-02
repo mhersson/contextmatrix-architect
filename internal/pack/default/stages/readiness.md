@@ -77,6 +77,13 @@ slice's card, or that relies on work that neither the code nor a card before
 it in the playbook delivers, is not ready, and its finding names the card it
 collides with or lacks.
 
+When the product's knowledge tools return items for the cards, a card whose
+plan goes against an agreed rule (`kind` "rule", `agreed` true) is not ready,
+and its finding names the rule's id and what the card must change. A part the
+work needs to keep an agreed rule traces to that rule. A draft rule or an open
+decision is never a finding: the blueprint decided it, in an answer or an
+assumption. `status` is shown, never a reason to treat an item as agreed.
+
 With an approved mockup (the `mockup` input; read_artifact returns its
 source), the architect itself attaches the whole mockup, when it emits the
 cards, to every card of a slice that builds a screen. A card's `mockup`

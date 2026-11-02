@@ -110,9 +110,10 @@ HEAD.
 
 - Every stage of the default pack plans only what the need asks: each part an
   artifact adds traces to a need item, an answer, an accepted assumption,
-  gate feedback or a defect it prevents in existing code; the working whole
-  is in scope, and doing the work correctly and securely on real input is the
-  work itself. Why: no gold-plating, and no hollow result.
+  gate feedback, a defect it prevents in existing code or an agreed rule of
+  the product's knowledge; the working whole is in scope, and doing the work
+  correctly and securely on real input is the work itself. Why: no
+  gold-plating, and no hollow result.
 - A check's refusal goes back to the model, and the third failing submit is
   accepted with its problems kept, except a fatal problem (the slices check's
   shape and no_slices; the decisions check's shape, no_slices and
@@ -156,6 +157,13 @@ HEAD.
 - No extra model run guards the plain wording: the stage reviewers judge it
   in their own runs, and the server's plain texts are fixed per situation.
   Why: no added cost, and predictable wording.
+- Knowledge adds no human stop and no sign-off warning: a card that goes
+  against an agreed rule is an ordinary readiness card finding inside
+  readiness's rounds, and a draft rule or open decision is decided by the
+  responder as an assumption naming the item. Why: knowledge is a guardrail
+  for automation, used most in Auto, Auto + emit and Yolo.
+- Every knowledge instruction in the default pack applies only when the tools
+  return items. Why: without a provider each stage reads as before.
 
 ## Card contract
 
@@ -287,6 +295,9 @@ HEAD.
   identifiers, module, project and repository names, card ids, and more than
   160 characters, in queries and URL parts; plain words and technology names
   pass. Why: code and project names never leave the installation.
+- Knowledge text is not an input of the leak guard. Why: it is the product
+  owner's internal material, like the need text, which the guard does not
+  block either.
 
 ## Security
 

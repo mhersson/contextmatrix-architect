@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mhersson/contextmatrix-harness/tools"
@@ -482,4 +483,39 @@ func TestKnowledge_AnAutoEmitBlueprintWhoseResponderSettledAnOpenDecisionApprove
 			assert.True(t, found, "entry %s in %v", tt.wantEntry, list)
 		})
 	}
+}
+
+func TestKnowledge_ARuleConflictSendsTheCardsBackToDecompositionAndAddsNoStop(t *testing.T) {
+	srv := cmtest.NewKnowledge(t)
+	srv.Answer("get_knowledge_context", cmtest.AgreedRule)
+
+	var runs atomic.Int32
+
+	script := knowledgeScript()
+	script["readiness"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if runs.Add(1) > 1 {
+			return done("# Ready", readiness(true)), nil
+		}
+
+		if _, err := callKnowledge(ctx, in, "cm_get_knowledge_context", map[string]any{"project": "alpha", "task": "the cards"}); err != nil {
+			return stage.Output{}, err
+		}
+
+		return done("# Not ready", map[string]any{"cards": []any{map[string]any{
+			"id": "D1", "ready": false, "findings": []any{"D1 shows prices without VAT, against agreed rule R-12"},
+		}}}), nil
+	}
+	c, st, runner, rec, _ := newKnowledgePipeline(t, script, srv)
+	c.opts.ConnectCM = newFakeCM().connect
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeAutoEmit
+	driveIn(t, c, in)
+
+	decompositions := inputsOf(runner, "decomposition")
+	require.Len(t, decompositions, 2)
+	assert.Contains(t, decompositions[1].Task, "against agreed rule R-12", "the finding reaches decomposition")
+	assert.True(t, rec.has(EventSignOffAuto))
+	assert.False(t, rec.has(EventSignOff), "no stop for a person")
+	assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
 }

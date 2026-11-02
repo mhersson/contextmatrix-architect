@@ -135,7 +135,17 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 		s, _ := p.Stage(id)
 		require.NotNil(t, s.Reviewer, id)
 		assert.Equal(t, persona, s.Reviewer.Persona, "%s is reviewed from the next role's seat", id)
-		assert.Equal(t, []string{ToolCode, ToolResearch}, s.Reviewer.Tools, "%s's reviewer reads the code and opens cited pages", id)
+		assert.Equal(t, []string{ToolCode, ToolResearch, ToolKnowledge}, s.Reviewer.Tools, "%s's reviewer reads the code, opens cited pages and reads the product's knowledge", id)
+	}
+
+	for _, id := range []string{"intake", "slicing", "shared_decisions", "solution_design", "acceptance", "decomposition", "readiness"} {
+		s, _ := p.Stage(id)
+		assert.Contains(t, s.Tools, ToolKnowledge, "%s reads the product's knowledge", id)
+	}
+
+	for _, id := range []string{"mockup", "grounding"} {
+		s, _ := p.Stage(id)
+		assert.NotContains(t, s.Tools, ToolKnowledge, "%s stays as it is", id)
 	}
 
 	for _, id := range []string{"intake", "slicing", "shared_decisions", "solution_design"} {

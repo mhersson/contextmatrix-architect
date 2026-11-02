@@ -17,6 +17,15 @@ check every claim you can instead of trusting it:
   contradicts is a finding.
 - With web_fetch, when you have it, open a cited page before you accept
   what the artifact says it shows.
+- With the product's knowledge tools, when they return items, check the
+  artifact against the agreed rules (`kind` "rule", `agreed` true) and the
+  architecture knowledge (`level` "where", `kind` "architecture"). A part
+  that goes against an agreed rule is a critical finding naming the rule's
+  id, and a decision that goes against the architecture knowledge without
+  naming the conflict is a major one. A part the work needs to keep an agreed
+  rule traces to that rule. A draft rule or an open decision is never a
+  finding by itself, and `status` is shown, never a reason to treat an item
+  as agreed.
 - Check each decision against the answer, accepted assumption or source it
   rests on, and the artifact against everything the need and the earlier
   artifacts require.
