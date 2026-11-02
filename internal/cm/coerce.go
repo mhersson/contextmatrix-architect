@@ -86,6 +86,13 @@ func coerceArgs(args map[string]any, types propTypes) map[string]any {
 		}
 
 		switch {
+		case slices.Contains(allowed, "array"):
+			var list []any
+			if json.Unmarshal([]byte(s), &list) == nil {
+				out[k] = list
+			} else {
+				out[k] = []any{s}
+			}
 		case slices.Contains(allowed, "boolean") && (s == "true" || s == "false"):
 			out[k] = s == "true"
 		case slices.Contains(allowed, "integer"):

@@ -34,7 +34,8 @@ decisions the code keeps and why, and must stay true at HEAD.
 - `internal/pack` - pipeline packs: stages, personas, instructions (`plain.md` for plain-language blueprints, `unattended.md` for the Unattended overlay, the mockup responder's instructions, `retrospective.md` for the retrospective), lists.yaml and card.md and their merge with lesson overlays, and the rules a pack's screen and mockup stages keep; the default pack is embedded.
 - `internal/code` - read-only mirrors and per-blueprint trees for the code stages; repo facts; the names a checkout declares, for the leak guard.
 - `internal/research` - web research: the `web_search` and `web_fetch` tools, the leak guard that refuses code-shaped and project-specific text in search queries and URLs, the fetcher that reads public pages only, as readable text, and the search provider (Brave).
-- `internal/cm` - MCP client to ContextMatrix: list_projects, the read-only `cm_` tools stage runs get, and typed card, playbook and run calls.
+- `internal/cm` - MCP client to ContextMatrix: list_projects, the read-only `cm_` tools stage runs get (the board reads and the knowledge reads, whose `caller` the architect fills), and typed card, playbook and run calls.
+- `internal/cm/cmtest` - a fixture ContextMatrix MCP server for tests, serving the knowledge tools.
 - `internal/contract` - the card contract: lists data, the mechanical checks, the screens a card names and the mockup blocks the phrase scans skip.
 - `internal/store` - SQLite: blueprints, stage runs, artifacts, transcripts, events, sources, gates, emissions, questions, lessons and each blueprint's lesson set.
 

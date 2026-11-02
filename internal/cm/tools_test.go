@@ -14,6 +14,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mhersson/contextmatrix-architect/internal/cm/cmtest"
 )
 
 // listProjectsReply is CM's raw project config: a repository url may carry
@@ -384,4 +386,22 @@ func TestReadTools_ListCardsFilterOnlyWithoutAState(t *testing.T) {
 
 	open := `{"cards":[{"id":"A-1","state":"todo"}]}`
 	assert.Equal(t, open, listCards(t, open, map[string]any{"project": "alpha"}), "nothing left out, CM's reply as it is")
+}
+
+func TestReadTools_NeverOffersTheKnowledgeReads(t *testing.T) {
+	srv := cmtest.NewKnowledge(t, "get_card", "get_knowledge_context", "query_knowledge", "get_knowledge_item")
+
+	c, err := Connect(context.Background(), srv.URL, "", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+
+	got, err := c.ReadTools(context.Background(), StageReads(), "S3")
+	require.NoError(t, err)
+
+	names := make([]string, 0, len(got))
+	for _, tool := range got {
+		names = append(names, tool.Name())
+	}
+
+	assert.Equal(t, []string{"cm_get_card"}, names)
 }
