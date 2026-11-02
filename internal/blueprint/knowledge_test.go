@@ -289,3 +289,70 @@ func TestKnowledge_ASessionThatFailsToOpenLeavesTheRunWithoutIt(t *testing.T) {
 	assert.True(t, rec.has(EventSignOff))
 	assert.False(t, rec.has(EventError))
 }
+
+func TestKnowledge_AReviewerGetsTheGroupAndNamesItsRun(t *testing.T) {
+	srv := cmtest.NewKnowledge(t)
+	srv.Answer("get_knowledge_context", cmtest.AgreedRule)
+
+	script := calling(knowledgeScript(), "intake.review", func(ctx context.Context, in stage.Input) error {
+		_, err := callKnowledge(ctx, in, "cm_get_knowledge_context", map[string]any{"project": "alpha", "task": "the artifact"})
+
+		return err
+	})
+	c, _, runner, _, sessions := newKnowledgePipeline(t, script, srv)
+
+	drive(t, c, "BP1")
+
+	reviews := inputsOf(runner, "intake.review")
+	require.NotEmpty(t, reviews)
+	assert.Subset(t, toolNames(reviews[0]), knowledgeNames)
+
+	calls := srv.Calls("get_knowledge_context")
+	require.NotEmpty(t, calls)
+	assert.Equal(t, "blueprint BP1 stage intake reviewer", calls[len(calls)-1]["caller"])
+
+	opened, closed := sessions.counts()
+	assert.Positive(t, opened)
+	assert.Equal(t, opened, closed)
+}
+
+func TestKnowledge_AResponderCallNamesTheAskingStage(t *testing.T) {
+	srv := cmtest.NewKnowledge(t)
+	srv.Answer("get_knowledge_context", cmtest.AgreedRule)
+
+	got := make(chan error, 1)
+	ask := askingIntake(got)
+
+	script := knowledgeScript()
+	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		out, err := ask(ctx, in)
+		if err != nil {
+			return out, err
+		}
+
+		if _, err := callKnowledge(ctx, in, "cm_get_knowledge_context", map[string]any{"project": "alpha", "task": "the need"}); err != nil {
+			return stage.Output{}, err
+		}
+
+		return out, nil
+	}
+	script["intake.responder"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if _, err := callKnowledge(ctx, in, "cm_get_knowledge_item", map[string]any{"project": "alpha", "ids": []any{"D-3"}}); err != nil {
+			return stage.Output{}, err
+		}
+
+		return reading([]string{"S1"}, map[string]any{"answer": "helm", "reasoning": "r", "grounded": false, "evidence": ""})(ctx, in)
+	}
+	c, _, _, _, _ := newKnowledgePipeline(t, script, srv)
+
+	driveIn(t, c, autoInput())
+	require.NoError(t, <-got)
+
+	items := srv.Calls("get_knowledge_item")
+	require.NotEmpty(t, items)
+	assert.Equal(t, "blueprint BP1 stage intake responder", items[0]["caller"])
+
+	contexts := srv.Calls("get_knowledge_context")
+	require.NotEmpty(t, contexts)
+	assert.Equal(t, "blueprint BP1 stage intake", contexts[0]["caller"])
+}

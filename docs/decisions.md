@@ -288,8 +288,9 @@ HEAD.
 ## Security
 
 - The knowledge reads' `caller` is hidden from the model and filled by the
-  architect as `blueprint <id> stage <step>`. Why: ContextMatrix's knowledge
-  log names who asked, and a model cannot name another caller.
+  architect as `blueprint <id> stage <step>`, followed by ` reviewer` or
+  ` responder` for those runs. Why: ContextMatrix's knowledge log names who
+  asked, and a model cannot name another caller.
 - Card and playbook writes and run starts are controller calls made with the
   caller identity, never model tools. Why: the identity that passes
   ContextMatrix's human gates must never reach the model.

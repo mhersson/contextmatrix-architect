@@ -24,8 +24,13 @@ type knowledgeLedger struct {
 	stage string
 }
 
-func (l knowledgeLedger) Caller(context.Context) string {
-	return fmt.Sprintf("blueprint %s stage %s", l.id, l.stage)
+func (l knowledgeLedger) Caller(ctx context.Context) string {
+	caller := fmt.Sprintf("blueprint %s stage %s", l.id, l.stage)
+	if kind := sideOf(ctx); kind != "" {
+		caller += " " + kind
+	}
+
+	return caller
 }
 
 // Source returns the tag of the blueprint's source for source, adding it on
