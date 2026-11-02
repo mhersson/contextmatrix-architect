@@ -21,11 +21,12 @@ type fakeKnowledge struct {
 	tag     string
 	err     error
 	sources []string
+	ids     [][]string
 }
 
 func (f *fakeKnowledge) Caller(context.Context) string { return f.caller }
 
-func (f *fakeKnowledge) Source(_ context.Context, source string) (string, error) {
+func (f *fakeKnowledge) Source(_ context.Context, source string, ids []string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -34,6 +35,7 @@ func (f *fakeKnowledge) Source(_ context.Context, source string) (string, error)
 	}
 
 	f.sources = append(f.sources, source)
+	f.ids = append(f.ids, ids)
 
 	return f.tag, nil
 }
@@ -136,6 +138,7 @@ func TestKnowledgeTools_AResultWithItemsLeadsWithItsSourceTag(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(res.Text, "[S4] "))
 	assert.Equal(t, []string{"knowledge:intent"}, k.sources)
+	assert.Equal(t, [][]string{{"R-12"}}, k.ids)
 	assert.NotContains(t, res.Text, "secret")
 
 	var body struct {
@@ -175,6 +178,7 @@ func TestKnowledgeTools_AnAnswerWithoutItemsIsUntaggedAndNoSource(t *testing.T) 
 			if tt.tagged {
 				assert.True(t, strings.HasPrefix(res.Text, "[S4] "))
 				assert.Equal(t, []string{"knowledge:intent"}, k.sources)
+				assert.Equal(t, [][]string{{"G-1"}}, k.ids)
 
 				return
 			}

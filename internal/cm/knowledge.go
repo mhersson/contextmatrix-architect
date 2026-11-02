@@ -17,8 +17,9 @@ type Knowledge interface {
 	// Caller is the caller CM's knowledge log records for the run.
 	Caller(ctx context.Context) string
 	// Source returns the tag a result with items from source (CM's source
-	// value) is cited by.
-	Source(ctx context.Context, source string) (string, error)
+	// value) is cited by. ids are the ids of the result's items and related
+	// entries, each once, in result order.
+	Source(ctx context.Context, source string, ids []string) (string, error)
 }
 
 // KnowledgeTools wraps the knowledge reads CM serves; a name CM does not
@@ -75,6 +76,11 @@ func OpenKnowledge(ctx context.Context, baseURL, apiKey string, base http.RoundT
 	return ts, func() { _ = c.Close() }, nil
 }
 
+// knowledgeEntry is the part of a result's item the wrapper reads.
+type knowledgeEntry struct {
+	ID string `json:"id"`
+}
+
 // knowledgeTool is one CM knowledge read offered to a run.
 type knowledgeTool struct {
 	client      *Client
@@ -114,16 +120,24 @@ func (t *knowledgeTool) Execute(ctx context.Context, args map[string]any) (tools
 	text = stripURLUserinfo(text)
 
 	var reply struct {
-		Source  string            `json:"source"`
-		Items   []json.RawMessage `json:"items"`
-		Related []json.RawMessage `json:"related"`
+		Source  string           `json:"source"`
+		Items   []knowledgeEntry `json:"items"`
+		Related []knowledgeEntry `json:"related"`
 	}
 
 	if json.Unmarshal([]byte(text), &reply) != nil || len(reply.Items)+len(reply.Related) == 0 {
 		return tools.Result{Text: text}, nil
 	}
 
-	tag, err := t.k.Source(ctx, cmp.Or(reply.Source, "knowledge"))
+	var ids []string
+
+	for _, e := range slices.Concat(reply.Items, reply.Related) {
+		if e.ID != "" && !slices.Contains(ids, e.ID) {
+			ids = append(ids, e.ID)
+		}
+	}
+
+	tag, err := t.k.Source(ctx, cmp.Or(reply.Source, "knowledge"), ids)
 	if err != nil {
 		return tools.Result{}, fmt.Errorf("cm: record knowledge source: %w", err)
 	}

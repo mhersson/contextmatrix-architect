@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/mhersson/contextmatrix-harness/tools"
 
@@ -37,8 +38,13 @@ func (l knowledgeLedger) Caller(ctx context.Context) string {
 }
 
 // Source returns the tag of the blueprint's source for source, adding it on
-// first use: the same provider read again is the same source.
-func (l knowledgeLedger) Source(ctx context.Context, source string) (string, error) {
+// first use: the same provider read again is the same source. A responder
+// run's ids are kept for its answer to be checked against.
+func (l knowledgeLedger) Source(ctx context.Context, source string, ids []string) (string, error) {
+	if sideOf(ctx) == store.RunKindResponder {
+		l.c.returned.add(runOf(ctx), ids)
+	}
+
 	bg := context.WithoutCancel(ctx)
 	identity := l.au.text(source)
 
@@ -64,6 +70,41 @@ func (l knowledgeLedger) Source(ctx context.Context, source string) (string, err
 	return src.Tag(), nil
 }
 
+// returnedKnowledge holds the item ids each responder run's knowledge reads
+// returned, until the run's answer takes them.
+type returnedKnowledge struct {
+	mu  sync.Mutex
+	ids map[int64]map[string]bool
+}
+
+func (r *returnedKnowledge) add(runID int64, ids []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.ids == nil {
+		r.ids = map[int64]map[string]bool{}
+	}
+
+	if r.ids[runID] == nil {
+		r.ids[runID] = map[string]bool{}
+	}
+
+	for _, id := range ids {
+		r.ids[runID][id] = true
+	}
+}
+
+// take returns the ids runID's reads returned and forgets them.
+func (r *returnedKnowledge) take(runID int64) map[string]bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	got := r.ids[runID]
+	delete(r.ids, runID)
+
+	return got
+}
+
 // offersKnowledge reports whether ts holds one of the knowledge reads.
 func offersKnowledge(ts []tools.Tool) bool {
 	reads := cm.KnowledgeReads()
@@ -73,27 +114,6 @@ func offersKnowledge(ts []tools.Tool) bool {
 
 		return ok && slices.Contains(reads, name)
 	})
-}
-
-// knowledgeRead reports whether any of tags is a knowledge source of
-// blueprint id.
-func (c *Controller) knowledgeRead(ctx context.Context, id string, tags []string) (bool, error) {
-	if len(tags) == 0 {
-		return false, nil
-	}
-
-	known, err := c.opts.Store.ListSources(ctx, id)
-	if err != nil {
-		return false, fmt.Errorf("blueprint: list sources: %w", err)
-	}
-
-	for _, s := range known {
-		if s.Kind == sourceKindKnowledge && slices.Contains(tags, s.Tag()) {
-			return true, nil
-		}
-	}
-
-	return false, nil
 }
 
 // knowledgeTools opens the knowledge reads for a run of stageID and returns

@@ -389,15 +389,20 @@ func TestKnowledge_AResponderTaskOpensWithTheLeadOnlyWithTheTools(t *testing.T) 
 	}
 }
 
-func TestKnowledge_AResponderKeepsItemIDsOnlyAfterReadingItems(t *testing.T) {
+func TestKnowledge_AResponderKeepsOnlyTheItemIDsItsOwnReadsReturned(t *testing.T) {
 	tests := []struct {
-		name  string
-		reply string
-		want  []string
+		name      string
+		reply     string
+		stageRead bool
+		read      bool
+		ids       []any
+		want      []string
 	}{
-		{"read an open decision", cmtest.OpenDecision, []string{"D-3"}},
-		{"read nothing", "", nil},
-		{"read an answer without items", cmtest.NoProvider, nil},
+		{"read an open decision", cmtest.OpenDecision, false, true, []any{"D-3"}, []string{"D-3"}},
+		{"an id nothing returned is dropped", cmtest.OpenDecision, false, true, []any{"D-3", "X-9"}, []string{"D-3"}},
+		{"read nothing", "", false, false, []any{"D-3"}, nil},
+		{"read an answer without items", cmtest.NoProvider, false, true, []any{"D-3"}, nil},
+		{"the asking stage's read is not the responder's", cmtest.OpenDecision, true, false, []any{"D-3"}, nil},
 	}
 
 	for _, tt := range tests {
@@ -408,9 +413,18 @@ func TestKnowledge_AResponderKeepsItemIDsOnlyAfterReadingItems(t *testing.T) {
 			}
 
 			got := make(chan error, 1)
+			ask := askingIntake(got)
 			script := knowledgeScript()
-			script["intake"] = askingIntake(got)
-			script["intake.responder"] = respondingWith(tt.reply != "", []any{"D-3"})
+			script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+				if tt.stageRead {
+					if _, err := callKnowledge(ctx, in, "cm_get_knowledge_item", map[string]any{"project": "alpha", "ids": []any{"D-3"}}); err != nil {
+						return stage.Output{}, err
+					}
+				}
+
+				return ask(ctx, in)
+			}
+			script["intake.responder"] = respondingWith(tt.read, tt.ids)
 			c, _, _, rec, _ := newKnowledgePipeline(t, script, srv)
 
 			driveIn(t, c, autoInput())

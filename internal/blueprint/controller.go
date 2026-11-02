@@ -264,6 +264,8 @@ type Controller struct {
 	// caps are each blueprint's live cost cap, which its runs in flight read.
 	caps    map[string]*liveCap
 	closing bool
+	// returned holds the knowledge item ids each responder run's reads returned.
+	returned returnedKnowledge
 }
 
 // New builds a Controller.

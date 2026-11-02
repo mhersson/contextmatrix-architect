@@ -166,9 +166,11 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion, re
 		task = knowledgeLead + task
 	}
 
+	var responderRun int64
+
 	out, err := c.runSide(ctx, iv.r, iv.sess, iv.bp, sideRun{
 		kind: store.RunKindResponder, stage: stageID, persona: iv.st.Persona, attempt: iv.attempt, round: q.Number,
-		parent: iv.sink,
+		parent: iv.sink, started: func(id int64) { responderRun = id },
 		in: stage.Input{
 			Stage: stageID + ".responder", Persona: c.opts.Pack.Persona(iv.st.Persona),
 			Instructions: withPlain(iv.bp, c.opts.Pack.ResponderInstructions(), c.opts.Pack.PlainInstructions()), Task: task, Tools: iv.tools,
@@ -179,6 +181,9 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion, re
 			},
 		},
 	})
+
+	// Taken on every path so the run's entry never lingers.
+	returned := c.returned.take(responderRun)
 
 	switch {
 	case ctx.Err() != nil:
@@ -213,17 +218,17 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion, re
 		"reasoning": ans.Reasoning, "grounded": grounded, "evidence": evidence,
 	}
 
-	// An id the run never read proves nothing: only a knowledge read of its
-	// own run lets the ids stand.
-	if len(ans.Knowledge) > 0 {
-		read, err := c.knowledgeRead(bg, iv.bp.ID, out.SourceTags)
-		if err != nil {
-			c.opts.Logger.Error("blueprint: check the responder's knowledge reads", "blueprint", iv.bp.ID, "question", q.Number, "error", err)
-		}
+	// Per id: only an id the run's own knowledge reads returned stands.
+	var kept []string
 
-		if read {
-			payload["knowledge"] = ans.Knowledge
+	for _, id := range ans.Knowledge {
+		if returned[id] {
+			kept = append(kept, id)
 		}
+	}
+
+	if len(kept) > 0 {
+		payload["knowledge"] = kept
 	}
 
 	if reasks > 0 {
