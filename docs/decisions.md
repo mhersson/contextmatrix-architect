@@ -37,10 +37,15 @@ HEAD.
 - Personas are prompt text on stages, not an agent system. Why: a
   composer-and-agents layer would be a second decision engine that has not
   earned its place.
-- No memory or knowledge layer: retrieval is live, and each blueprint records
-  the sources it used with their kind and version. Why: live retrieval with
-  versioned sources needs no layer, and one could be fed only approved
-  outputs.
+- No memory or knowledge store of its own: retrieval is live, from the code,
+  the board, web pages and, through ContextMatrix, a project's knowledge
+  provider, and each blueprint records the sources it used with their kind
+  and, where one exists, version. Why: live retrieval with recorded sources
+  needs no layer, and one could be fed only approved outputs.
+- The knowledge tools are offered wherever ContextMatrix serves them, and a
+  knowledge session that fails to open leaves the run without them. Why:
+  knowledge never fails a blueprint, and a ContextMatrix that serves none (an
+  older one, or one with no provider configured) reads as before.
 - No bespoke web UI: ContextMatrix's chat panel renders the sessions, and
   richer controls are ContextMatrix web changes. Why: the panel brings the
   session list, auth and look for free.
@@ -64,6 +69,10 @@ HEAD.
 
 ## Data and record
 
+- A knowledge result is a source only when it returns items, one source per
+  provider per blueprint, and a citation names the item, as `[S4 R-12]`. Why:
+  an empty answer has nothing to cite, and an item carries no version a read
+  could cite.
 - SQLite is the record, and the markdown export is a rendering of it written
   to the state directory. Why: committing per-stage markdown into code
   repositories bloats them.
@@ -278,6 +287,9 @@ HEAD.
 
 ## Security
 
+- The knowledge reads' `caller` is hidden from the model and filled by the
+  architect as `blueprint <id> stage <step>`. Why: ContextMatrix's knowledge
+  log names who asked, and a model cannot name another caller.
 - Card and playbook writes and run starts are controller calls made with the
   caller identity, never model tools. Why: the identity that passes
   ContextMatrix's human gates must never reach the model.
@@ -295,6 +307,9 @@ HEAD.
 
 ## Runtime and build
 
+- No timeout on the ContextMatrix client is shorter than 60 seconds. Why:
+  ContextMatrix gives a knowledge context or query call up to 55 seconds,
+  connect included.
 - Reasoning is replayed only to the model that wrote it, and a 400 on a
   request carrying reasoning is retried once without it. Why: another model
   cannot validate it.

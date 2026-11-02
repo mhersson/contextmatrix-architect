@@ -34,7 +34,10 @@ const (
 	// ToolResearch is web_search and web_fetch, offered when the session's
 	// research setting is on.
 	ToolResearch = "research"
-	CheckCards   = "cards"
+	// ToolKnowledge is the read-only knowledge tools ContextMatrix serves,
+	// offered when it serves them.
+	ToolKnowledge = "knowledge"
+	CheckCards    = "cards"
 	// CheckAssumptions checks a submit's assumptions: standalone sentences,
 	// each basis an answered question, and no sentence naming one.
 	CheckAssumptions = "assumptions"
@@ -121,7 +124,7 @@ type Fold struct {
 // major finding left open sends the stage back for another round; open
 // minors go to the gate. Tools names its tool groups: "code", and
 // "research", which gives a reviewer web_fetch alone, to open what the
-// artifact cites.
+// artifact cites, and "knowledge", the product's knowledge reads.
 type Reviewer struct {
 	Persona   string   `yaml:"persona"`
 	Threshold int      `yaml:"threshold"`
@@ -154,7 +157,8 @@ type Stage struct {
 	Consumes []string `yaml:"consumes"`
 	// Tools names the tool groups the run gets: "code" is the read-only
 	// checkout tools plus repo_info, "cm" the read-only ContextMatrix tools,
-	// "research" web_search and web_fetch when the session has research on.
+	// "research" web_search and web_fetch when the session has research on,
+	// "knowledge" the knowledge reads ContextMatrix serves.
 	Tools []string `yaml:"tools"`
 	// Checks names the mechanical checks run on every submit; "cards" is the
 	// card contract.
@@ -496,7 +500,7 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	}
 
 	for _, tool := range s.Tools {
-		if tool != ToolCode && tool != ToolCM && tool != ToolResearch {
+		if tool != ToolCode && tool != ToolCM && tool != ToolResearch && tool != ToolKnowledge {
 			return fmt.Errorf("pack: stage %q: unknown tool group %q", s.ID, tool)
 		}
 	}
@@ -636,8 +640,8 @@ func validateDialog(s Stage) error {
 		}
 
 		for _, tool := range r.Tools {
-			if tool != ToolCode && tool != ToolResearch {
-				return fmt.Errorf("pack: stage %q: the reviewer's tool group %q is not code or research", s.ID, tool)
+			if tool != ToolCode && tool != ToolResearch && tool != ToolKnowledge {
+				return fmt.Errorf("pack: stage %q: the reviewer's tool group %q is not code, research or knowledge", s.ID, tool)
 			}
 		}
 	}

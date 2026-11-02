@@ -1,0 +1,52 @@
+required_sections:
+  - Context
+  - Where
+  - Solution
+  - Acceptance criteria
+  - Tests expected
+  - Out of scope
+stripped_headings:
+  - Diagnosis
+  - Design
+  - Plan
+  - Discussion
+  - Verify Command
+  - Review Approval
+  - PR Gates
+  - Execute Discussions
+  - Best-of-N Report
+stripped_heading_prefixes:
+  - Review Findings
+  - Copilot Review
+defect_phrases:
+  - "doesn't work"
+  - "does not work"
+  - "is broken"
+  - "throws"
+  - "crashes"
+  - "fails when"
+  - "unexpected behavior"
+  - "regression"
+  - "stack trace"
+  - "panic"
+  - "error:"
+bug_title_verbs: [fix, bugfix, repair, resolve, investigate, debug]
+maintenance_labels: [simple, chore, dependencies, infra]
+maintenance_verbs: [bump, update, rename, move, pin, upgrade, downgrade]
+forbidden_references:
+  - name: local path
+    pattern: '(^|[\s"`(])(/(home|Users)/|C:\\Users\\)'
+  - name: parent directory
+    pattern: '(^|\s)\.\./'
+
+# Phrases that point at text the reader does not have. A card body and an
+# assumption stand alone once they leave the blueprint.
+dangling_references:
+  - "as noted above"
+  - "noted above"
+  - "see above"
+  - "as above"
+  - "mentioned above"
+  - "as mentioned"
+  - "as noted earlier"
+  - "described above"

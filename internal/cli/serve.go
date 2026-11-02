@@ -122,6 +122,7 @@ func buildServer(ctx context.Context, cfg *config.Config, deps *runtimeDeps, log
 		ExportDir:      filepath.Join(cfg.StateDir, "exports"),
 		Projects:       cmProjects(cfg.ContextMatrixURL, deps.transport),
 		CMTools:        cmReadTools(cfg.ContextMatrixURL, deps.transport),
+		KnowledgeTools: cmKnowledgeTools(cfg.ContextMatrixURL, deps.transport),
 		ConnectCM:      cmConnect(cfg.ContextMatrixURL, deps.transport),
 		CallerIdentity: cfg.CallerIdentity,
 		WatchInterval:  cfg.WatchInterval,
@@ -220,6 +221,14 @@ func cmReadTools(baseURL string, base http.RoundTripper) func(ctx context.Contex
 		}
 
 		return ts, func() { _ = client.Close() }, nil
+	}
+}
+
+// cmKnowledgeTools opens one MCP session per stage run and offers the run
+// the knowledge reads CM serves; the closer is never nil on success.
+func cmKnowledgeTools(baseURL string, base http.RoundTripper) func(ctx context.Context, mcpAPIKey string, k cm.Knowledge) ([]tools.Tool, func(), error) {
+	return func(ctx context.Context, mcpAPIKey string, k cm.Knowledge) ([]tools.Tool, func(), error) {
+		return cm.OpenKnowledge(ctx, baseURL, mcpAPIKey, base, k)
 	}
 }
 

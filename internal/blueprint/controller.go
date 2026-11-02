@@ -165,6 +165,12 @@ type Options struct {
 	// disables cm stages: such a stage then fails with a clear error before
 	// any checkout.
 	CMTools func(ctx context.Context, mcpAPIKey, tag string) ([]tools.Tool, func(), error)
+	// KnowledgeTools opens one MCP session with the session's key for a run
+	// of a stage with the knowledge group and returns the knowledge reads CM
+	// serves, each result with items recorded through k, and the closer the
+	// run calls when it ends. nil, an error or no tools leave the run
+	// without them.
+	KnowledgeTools func(ctx context.Context, mcpAPIKey string, k cm.Knowledge) ([]tools.Tool, func(), error)
 	// Search builds a session's search provider from its research settings,
 	// and Fetch reads the pages web_fetch is given. Either nil leaves
 	// research off for every session.

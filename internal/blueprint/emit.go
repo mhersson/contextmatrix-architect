@@ -899,6 +899,8 @@ func sourceLine(s store.Source, own []string) string {
 	switch {
 	case s.Kind == "cm":
 		return s.Tag() + ": the ContextMatrix board, as read while the cards were written"
+	case s.Kind == sourceKindKnowledge:
+		return s.Tag() + ": the product's knowledge (" + s.Identity + "), as read while the cards were written"
 	case s.Kind == "repo" && !slices.Contains(own, s.Identity):
 		return s.Tag() + ": another project's repository " + atCommit(s.Version)
 	case s.Kind == "repo":
