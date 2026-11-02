@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -47,6 +48,8 @@ func TestCMCredentials_Fetch(t *testing.T) {
 			cmError(w, http.StatusUnauthorized, "UNAUTHORIZED", "bad bearer "+gotAuth)
 		case "acme/opaque":
 			w.WriteHeader(http.StatusBadGateway)
+		case "acme/moved":
+			http.Redirect(w, r, "/elsewhere", http.StatusTemporaryRedirect)
 		default:
 			_, _ = w.Write([]byte(`{"username":"x-access-token","token":"ghs_abc"}`))
 		}
@@ -76,6 +79,7 @@ func TestCMCredentials_Fetch(t *testing.T) {
 		{path: "acme/mint", carries: "token mint failed"},
 		{path: "acme/echo", carries: "bad bearer"},
 		{path: "acme/opaque", carries: "502"},
+		{path: "acme/moved", carries: "307"},
 	}
 
 	for _, tt := range tests {
@@ -112,4 +116,36 @@ func TestCMCredentials_FetchesOverTheBaseTransport(t *testing.T) {
 	_, _, err = NewCMCredentials(srv.URL, testBearer, nil).Fetch(context.Background(), "github.com", "acme/alpha")
 	require.ErrorAs(t, err, new(x509.UnknownAuthorityError), "the system trust store refuses the certificate")
 	assert.NotContains(t, err.Error(), testBearer)
+}
+
+func TestCMCredentials_FetchRefusesRedirects(t *testing.T) {
+	const bearer = "redirect-secret-bearer"
+
+	var (
+		mu       sync.Mutex
+		received []string
+	)
+
+	// Same hostname, different port: Go's own header stripping would not protect this hop.
+	other := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		received = append(received, r.Header.Get("Authorization"))
+	}))
+	t.Cleanup(other.Close)
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/api/worker/git-credentials", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(redirector.Close)
+
+	_, _, err := NewCMCredentials(redirector.URL, bearer, nil).Fetch(context.Background(), "github.com", "acme/alpha")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), bearer)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	assert.Empty(t, received, "the redirect target must never be dialed")
 }

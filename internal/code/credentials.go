@@ -45,7 +45,13 @@ type CMCredentials struct {
 // http.DefaultTransport.
 func NewCMCredentials(baseURL, bearer string, base http.RoundTripper) *CMCredentials {
 	return &CMCredentials{
-		client: &http.Client{Timeout: 15 * time.Second, Transport: base},
+		client: &http.Client{
+			Timeout:   15 * time.Second,
+			Transport: base,
+			// Go keeps the bearer on same-host redirects (other port,
+			// subdomain, https to http); CM never redirects here.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 		url:    strings.TrimRight(baseURL, "/") + "/api/worker/git-credentials",
 		bearer: bearer,
 	}
@@ -82,7 +88,7 @@ func (c *CMCredentials) Fetch(ctx context.Context, host, path string) (string, s
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
-	if resp.StatusCode >= http.StatusBadRequest {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return "", "", c.refusal(resp.StatusCode, body)
 	}
 
