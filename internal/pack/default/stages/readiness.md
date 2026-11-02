@@ -100,12 +100,12 @@ that say one thing in different words; an outcome (O<n>) that no criterion
 or manual check proves; a contract, inside one project or between projects,
 that one side's cards keep and the other's do not; a change one card makes
 that breaks behaviour the code has today, which no card handles; a decision,
-outcome or criterion that traces to no need item, answered question,
-accepted assumption or gate feedback and prevents no defect in code that
-exists; an assumption that adds work the need does not ask for, accepted or
-not. A card that does not deliver what its own criterion promises is that
-card's problem, in its `cards` entry; `cross` holds the problems between
-artifacts. Report each in `cross`,
+outcome or criterion that traces to no need item, answered question, accepted
+assumption, gate feedback or agreed rule the asked-for work must keep, and
+prevents no defect in code that exists; an assumption that adds work the need
+does not ask for, accepted or not. A card that does not deliver what its own
+criterion promises is that card's problem, in its `cards` entry; `cross`
+holds the problems between artifacts. Report each in `cross`,
 `{"id": "X1", "severity": "critical", "major" or "minor", "text": "<one sentence a person can act on>", "refs": ["<the ids it names, such as DEC2, AC4, D3, A5, O1, SL2>"]}`:
 critical when building as planned would deliver the wrong thing, break what
 the need promises or break what the code does today, or when a decision,

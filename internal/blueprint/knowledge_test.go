@@ -359,6 +359,36 @@ func TestKnowledge_AResponderCallNamesTheAskingStage(t *testing.T) {
 	assert.Equal(t, "blueprint BP1 stage intake", contexts[0]["caller"])
 }
 
+func TestKnowledge_AResponderTaskOpensWithTheLeadOnlyWithTheTools(t *testing.T) {
+	tests := []struct {
+		name   string
+		served []string
+		want   bool
+	}{
+		{"the three tools", nil, true},
+		{"none of them", []string{"get_card"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := cmtest.NewKnowledge(t, tt.served...)
+
+			got := make(chan error, 1)
+			script := knowledgeScript()
+			script["intake"] = askingIntake(got)
+			script["intake.responder"] = reading(nil, map[string]any{"answer": "helm", "reasoning": "r", "grounded": false})
+			c, _, runner, _, _ := newKnowledgePipeline(t, script, srv)
+
+			driveIn(t, c, autoInput())
+			require.NoError(t, <-got)
+
+			responders := inputsOf(runner, "intake.responder")
+			require.NotEmpty(t, responders)
+			assert.Equal(t, tt.want, strings.HasPrefix(responders[0].Task, knowledgeLead))
+		})
+	}
+}
+
 func TestKnowledge_AResponderKeepsItemIDsOnlyAfterReadingItems(t *testing.T) {
 	tests := []struct {
 		name  string

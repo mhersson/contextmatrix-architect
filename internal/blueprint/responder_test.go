@@ -655,6 +655,14 @@ func TestParseAnswer_ReadsTheKnowledgeIDs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"D-3", "R-12"}, a.Knowledge)
 
-	_, err = parseAnswer(map[string]any{"answer": "EUR only", "knowledge": "D-3"})
+	a, err = parseAnswer(map[string]any{"answer": "EUR only", "knowledge": " D-3 "})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"D-3"}, a.Knowledge)
+
+	a, err = parseAnswer(map[string]any{"answer": "EUR only", "knowledge": " "})
+	require.NoError(t, err)
+	assert.Empty(t, a.Knowledge)
+
+	_, err = parseAnswer(map[string]any{"answer": "EUR only", "knowledge": float64(3)})
 	require.Error(t, err)
 }

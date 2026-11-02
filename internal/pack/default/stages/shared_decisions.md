@@ -65,7 +65,8 @@ part and why.
 When the product's knowledge tools return items, check each decision against
 the agreed rules (`kind` "rule", `agreed` true) and the architecture knowledge
 (`level` "where", `kind` "architecture"; cm_query_knowledge with `kinds`
-["architecture"] finds it). Never recommend an option that goes against an
+["architecture"] finds it). An agreed rule is a constraint: never ask what it
+answers, keep it and cite it. Never recommend an option that goes against an
 agreed rule. A decision that goes against an agreed rule or the architecture
 knowledge all the same, such as one an answer chose, names the conflict and the
 item's id in its text. A decision that rests on an agreed rule takes the
@@ -87,10 +88,11 @@ one from before it may still be cited.
 When a reviewer's findings come back to you, each with an id such as R2, add
 `"addressed": [{"finding": "<its id>", "note": "<one sentence>"}]` to the data,
 one entry per finding you act on. Revise for a finding that the need, the
-answers, the accepted assumptions, gate feedback or a defect in code that exists
-calls for, and say in its note what you changed. A finding that asks you to add
-what none of them asks for, such as a recovery path, a cache, a guard, a limit,
-a test hook or an outcome, is out of scope: change nothing for it, and note
+answers, the accepted assumptions, gate feedback, an agreed rule the asked-for
+work must keep or a defect in code that exists calls for, and say in its note
+what you changed. A finding that asks you to add what none of them asks for,
+such as a recovery path, a cache, a guard, a limit, a test hook or an outcome,
+is out of scope: change nothing for it, and note
 `out of scope: <what it would add>`. A finding that asks you to remove such a
 part is in scope. Where a finding can be met by removing or by adding, remove. A
 minor finding changes wording, never what is built. Never claim a finding you

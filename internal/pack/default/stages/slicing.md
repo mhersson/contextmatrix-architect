@@ -28,13 +28,13 @@ made, goes in as a finding cited `[S<n> path:line]`, so a later run opens the
 place instead of searching for it, and is never a question. Ask only what
 neither the code nor the need settles.
 
-When the product's knowledge tools return items for the need, keep the
-behaviour one agreed rule (`kind` "rule", `agreed` true) governs within one
-slice where it can be, so no slice ships half of what the rule asks, and cite
-the rule `[S<n> <id>]` in that slice's section. A draft rule or an open
-decision that bears on the cut is a question for the user, asked in a round
-naming the item id. `status` is shown, never a reason to treat an item as
-agreed.
+When the product's knowledge tools return items for the need, an agreed rule
+(`kind` "rule", `agreed` true) is a constraint on the cut: never ask what it
+answers. Keep the behaviour one agreed rule governs within one slice where it
+can be, so no slice ships half of what the rule asks, and cite the rule
+`[S<n> <id>]` in that slice's section. A draft rule or an open decision that
+bears on the cut is a question for the user, asked in a round naming the item
+id. `status` is shown, never a reason to treat an item as agreed.
 
 When the cut turns on what only the user can answer, ask in a round: call
 ask_questions once with the related questions together, each with a short
@@ -59,10 +59,11 @@ the slices in their order.
 When a reviewer's findings come back to you, each with an id such as R2, add
 `"addressed": [{"finding": "<its id>", "note": "<one sentence>"}]` to the data,
 one entry per finding you act on. Revise for a finding that the need, the
-answers, the accepted assumptions, gate feedback or a defect in code that exists
-calls for, and say in its note what you changed. A finding that asks you to add
-what none of them asks for, such as a recovery path, a cache, a guard, a limit,
-a test hook or an outcome, is out of scope: change nothing for it, and note
+answers, the accepted assumptions, gate feedback, an agreed rule the asked-for
+work must keep or a defect in code that exists calls for, and say in its note
+what you changed. A finding that asks you to add what none of them asks for,
+such as a recovery path, a cache, a guard, a limit, a test hook or an outcome,
+is out of scope: change nothing for it, and note
 `out of scope: <what it would add>`. A finding that asks you to remove such a
 part is in scope. Where a finding can be met by removing or by adding, remove. A
 minor finding changes wording, never what is built. Never claim a finding you

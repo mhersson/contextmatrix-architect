@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -101,6 +102,12 @@ func answerKnowledge(ctx context.Context, s *store.Store, blueprintID string) (m
 
 // parseAnswer reads a responder's submit; the answer is required.
 func parseAnswer(data map[string]any) (answer, error) {
+	// A bare id is a one-item list, as the cm tools take ids.
+	if id, ok := data["knowledge"].(string); ok {
+		data = maps.Clone(data)
+		data["knowledge"] = []any{id}
+	}
+
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return answer{}, fmt.Errorf("encode the answer: %w", err)
@@ -133,7 +140,8 @@ func parseAnswer(data map[string]any) (answer, error) {
 
 // respond answers a question under the auto policy with a responder run:
 // the asking stage's persona and tools, the responder instructions, and
-// responderTask, never the asker's transcript. The answer is recorded as an
+// responderTask, led by knowledgeLead when those tools hold the knowledge
+// reads, never the asker's transcript. The answer is recorded as an
 // assumption, grounded only when its evidence cites a tool result of its
 // own run. A responder that fails leaves the stage to decide; a cancel ends
 // the asking run too. The responder spends from the asking run's cap; on a
@@ -152,6 +160,10 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion, re
 	task, err := c.responderTask(bg, iv.bp, iv.st, iv.attempt, iv.poc, q, iv.concerns[q.Number])
 	if err != nil {
 		return protocol.RoundAnswer{}, undecided(err)
+	}
+
+	if offersKnowledge(iv.tools) {
+		task = knowledgeLead + task
 	}
 
 	out, err := c.runSide(ctx, iv.r, iv.sess, iv.bp, sideRun{

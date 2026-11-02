@@ -65,10 +65,11 @@ func decodeTypeField(raw json.RawMessage) []string {
 	return nil
 }
 
-// coerceArgs returns a copy of args with string values rewritten to the scalar
-// type the schema declares, when unambiguous. Weak models often serialize
-// scalars as strings (e.g. include_images "true"); this repairs that before the
-// args reach the MCP server's schema validation. It never errors and never
+// coerceArgs returns a copy of args with string values rewritten to the type
+// the schema declares, when unambiguous: a scalar parsed, a list decoded or a
+// bare string made a one-item list. Weak models often serialize such values as
+// strings (e.g. include_images "true"); this repairs that before the args
+// reach the MCP server's schema validation. It never errors and never
 // drops a key: anything it cannot confidently coerce passes through unchanged.
 func coerceArgs(args map[string]any, types propTypes) map[string]any {
 	out := make(map[string]any, len(args))
