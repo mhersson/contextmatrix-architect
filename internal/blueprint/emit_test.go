@@ -911,6 +911,11 @@ func TestSourceLine(t *testing.T) {
 			want: "S2: another project's repository at 0123456",
 		},
 		{
+			name: "the product's knowledge",
+			src:  store.Source{Number: 4, Kind: "knowledge", Identity: "knowledge:intent"},
+			want: "S4: the product's knowledge (knowledge:intent), as read while the cards were written",
+		},
+		{
 			name: "the board",
 			src:  store.Source{Number: 3, Kind: "cm"},
 			want: "S3: the ContextMatrix board, as read while the cards were written",

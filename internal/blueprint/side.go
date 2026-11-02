@@ -119,7 +119,7 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 	}
 	in.Events = sink
 
-	out, runErr := c.opts.Runner.Run(withRun(runCtx, runID), in)
+	out, runErr := c.opts.Runner.Run(withSide(withRun(runCtx, runID), s.kind), in)
 
 	if runErr != nil && c.shuttingDown(r) {
 		return out, runErr
@@ -199,4 +199,18 @@ func (c *Controller) sideFailed(ctx context.Context, r *run, au audit, id, stage
 			c.fail(bg, au, id, 0, err.Error())
 		}
 	}
+}
+
+type sideKey struct{}
+
+// withSide marks ctx with the kind of side run it belongs to, so tools shared
+// with the asking stage can tell a responder's calls from the stage's own.
+func withSide(ctx context.Context, kind string) context.Context {
+	return context.WithValue(ctx, sideKey{}, kind)
+}
+
+func sideOf(ctx context.Context) string {
+	kind, _ := ctx.Value(sideKey{}).(string)
+
+	return kind
 }

@@ -24,6 +24,13 @@ func StageReads() []string {
 	return []string{"list_projects", "list_cards", "get_card", "get_playbook"}
 }
 
+// KnowledgeReads returns the CM tools that answer from a project's knowledge
+// provider, a fresh slice on every call. They are offered by KnowledgeTools,
+// never by ReadTools, because the run's identity fills their caller.
+func KnowledgeReads() []string {
+	return []string{"get_knowledge_context", "query_knowledge", "get_knowledge_item"}
+}
+
 // ReadTools wraps the tools in allow that CM serves as harness tools; a
 // name CM does not serve is skipped. agent_id is removed from every schema
 // and every call, so CM treats the caller as an agent and keeps redacting
@@ -87,10 +94,10 @@ func (c *Client) listTools(ctx context.Context) ([]*mcp.Tool, error) {
 	return out, nil
 }
 
-// modelSchema is the input schema the model sees: CM's, without agent_id
-// and include_images. images reports whether CM's schema declared
+// modelSchema is the input schema the model sees: CM's, without agent_id,
+// include_images and the hidden names. images reports whether CM's schema declared
 // include_images, so every call can turn it off.
-func modelSchema(input any) (json.RawMessage, bool, error) {
+func modelSchema(input any, hidden ...string) (json.RawMessage, bool, error) {
 	if input == nil {
 		return json.RawMessage(`{"type":"object","properties":{}}`), false, nil
 	}
@@ -112,13 +119,17 @@ func modelSchema(input any) (json.RawMessage, bool, error) {
 
 		delete(props, "agent_id")
 		delete(props, "include_images")
+
+		for _, name := range hidden {
+			delete(props, name)
+		}
 	}
 
 	if req, ok := schema["required"].([]any); ok {
 		kept := make([]any, 0, len(req))
 
 		for _, r := range req {
-			if r != "agent_id" && r != "include_images" {
+			if r != "agent_id" && r != "include_images" && !slices.Contains(hidden, fmt.Sprint(r)) {
 				kept = append(kept, r)
 			}
 		}

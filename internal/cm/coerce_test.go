@@ -33,9 +33,15 @@ func TestCoerceArgs(t *testing.T) {
 		"limit": {"integer"},
 		"ratio": {"number"},
 		"name":  {"string"},
+		"ids":   {"array"},
+		"kinds": {"array"},
+		"both":  {"string", "array"},
 	}
 
 	got := coerceArgs(map[string]any{
+		"ids":   "R-12",
+		"kinds": `["rule","decision"]`,
+		"both":  "stay",
 		"flag":  "true",
 		"limit": "5",
 		"ratio": "1.5",
@@ -48,6 +54,9 @@ func TestCoerceArgs(t *testing.T) {
 	assert.InEpsilon(t, 1.5, got["ratio"], 1e-9)
 	assert.Equal(t, "keep-me", got["name"])    // schema says string -> unchanged
 	assert.Equal(t, "untouched", got["extra"]) // unknown prop -> unchanged
+	assert.Equal(t, []any{"R-12"}, got["ids"])
+	assert.Equal(t, []any{"rule", "decision"}, got["kinds"])
+	assert.Equal(t, "stay", got["both"])
 }
 
 func TestCoerceArgs_FalseUnparseableAndNonString(t *testing.T) {

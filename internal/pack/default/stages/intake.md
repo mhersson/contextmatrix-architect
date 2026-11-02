@@ -19,6 +19,16 @@ Rules:
   already made, goes in as a finding cited `[S<n> path:line]`, so a later run
   opens the place instead of searching for it, and is never a question. Ask only
   what neither the code nor the need settles.
+- When you have the product's knowledge tools, read the knowledge for the need
+  first: cm_get_knowledge_context with the need's text as `task` and a target
+  project as `project`, once per target project. When it returns items, an
+  agreed rule (`kind` "rule", `agreed` true) that bears on the need is a
+  constraint on it: never ask what it answers, and state it in the section it
+  bears on, cited `[S<n> <id>]`. A draft rule or an open decision that bears on
+  the need is a question only the user can answer: ask it in your round, naming
+  the item id. It counts like any other question; one you may no longer ask is
+  an assumption that names the item id. `status` is shown, never a reason to
+  treat an item as agreed.
 - Ask about what changes the cards and only the user can answer: who it is
   for, what is in and out of scope, what "done" is measured by. Never ask
   what you can read or decide.
@@ -97,10 +107,11 @@ Rules:
 When a reviewer's findings come back to you, each with an id such as R2, add
 `"addressed": [{"finding": "<its id>", "note": "<one sentence>"}]` to the data,
 one entry per finding you act on. Revise for a finding that the need, the
-answers, the accepted assumptions, gate feedback or a defect in code that exists
-calls for, and say in its note what you changed. A finding that asks you to add
-what none of them asks for, such as a recovery path, a cache, a guard, a limit,
-a test hook or an outcome, is out of scope: change nothing for it, and note
+answers, the accepted assumptions, gate feedback, an agreed rule the asked-for
+work must keep or a defect in code that exists calls for, and say in its note
+what you changed. A finding that asks you to add what none of them asks for,
+such as a recovery path, a cache, a guard, a limit, a test hook or an outcome,
+is out of scope: change nothing for it, and note
 `out of scope: <what it would add>`. A finding that asks you to remove such a
 part is in scope. Where a finding can be met by removing or by adding, remove. A
 minor finding changes wording, never what is built. Never claim a finding you

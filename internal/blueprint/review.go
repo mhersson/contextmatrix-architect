@@ -701,12 +701,13 @@ func (c *Controller) runReviewer(ctx context.Context, r *run, sess *session, bp 
 		return review{}, false
 	}
 
-	ts, lead, err := c.reviewerTools(ctx, sess, bp, st)
+	ts, lead, closeKnowledge, err := c.reviewerTools(ctx, sess, bp, st)
 	if err != nil {
 		c.sideFailed(ctx, r, au, bp.ID, st.ID, err)
 
 		return review{}, false
 	}
+	defer closeKnowledge()
 
 	out, err := c.runSide(ctx, r, sess, bp, sideRun{
 		kind: store.RunKindReviewer, stage: st.ID, persona: st.Reviewer.Persona, attempt: attempt, round: number,
@@ -861,20 +862,23 @@ func (c *Controller) reviewTask(ctx context.Context, bp store.Blueprint, st pipe
 // reviewerTools gives a reviewer run the tool groups its pack entry names:
 // the code tools over the blueprint's checkouts, and from the research
 // group web_fetch alone while the session has research on, behind the same
-// leak guard as the stage's research; and read_artifact whenever the stage
-// is offered it (readsArtifacts). The text returned opens its task.
+// leak guard as the stage's research; the knowledge reads; and
+// read_artifact whenever the stage is offered it (readsArtifacts). The text
+// returned opens its task; the closer, never nil, ends the knowledge session
+// once the run returns.
 // It never posts the research-off notice: the session's first stage does.
-func (c *Controller) reviewerTools(ctx context.Context, sess *session, bp store.Blueprint, st pipelineStep) ([]tools.Tool, string, error) {
+func (c *Controller) reviewerTools(ctx context.Context, sess *session, bp store.Blueprint, st pipelineStep) ([]tools.Tool, string, func(), error) {
 	var (
-		ts    []tools.Tool
-		lead  string
-		facts *codeFacts
+		ts     []tools.Tool
+		lead   string
+		facts  *codeFacts
+		closer = func() {}
 	)
 
 	if slices.Contains(st.Reviewer.Tools, pack.ToolCode) {
 		var err error
 		if facts, err = c.prepareCode(ctx, sess, bp, st.ID); err != nil {
-			return nil, "", err
+			return nil, "", closer, err
 		}
 
 		ts = stage.CodeTools(facts.root, facts.repos)
@@ -883,21 +887,32 @@ func (c *Controller) reviewerTools(ctx context.Context, sess *session, bp store.
 
 	steps, pieces, err := c.steps(ctx, bp.ID)
 	if err != nil {
-		return nil, "", err
+		return nil, "", closer, err
 	}
 
 	reads, err := c.readsArtifacts(ctx, bp.ID, steps, len(pieces) > 1, st)
 	if err != nil {
-		return nil, "", err
+		return nil, "", closer, err
 	}
 
 	if reads {
 		ts = append(ts, artifactReader{c: c, id: bp.ID, st: st})
 	}
 
+	if slices.Contains(st.Reviewer.Tools, pack.ToolKnowledge) {
+		var (
+			kts   []tools.Tool
+			klead string
+		)
+
+		kts, klead, closer = c.knowledgeTools(ctx, sess, bp, st.ID)
+		ts = append(ts, kts...)
+		lead = klead + lead
+	}
+
 	if slices.Contains(st.Reviewer.Tools, pack.ToolResearch) {
 		if sess.searcher == nil || c.opts.Fetch == nil {
-			return ts, reviewerResearchOffTask + lead, nil
+			return ts, reviewerResearchOffTask + lead, closer, nil
 		}
 
 		guard := c.researchGuard(sess, bp, st.ID, facts)
@@ -907,7 +922,7 @@ func (c *Controller) reviewerTools(ctx context.Context, sess *session, bp store.
 		lead = reviewerResearchOnTask + lead
 	}
 
-	return ts, lead, nil
+	return ts, lead, closer, nil
 }
 
 // fetchOnly keeps web_fetch of the research tools: a reviewer opens what

@@ -688,3 +688,9 @@ func TestAssumptions_SoFarListsIDStatusAndText(t *testing.T) {
 	assert.NotContains(t, line, "keep them", "the line carries no answer")
 	assert.NotContains(t, line, "Q1")
 }
+
+func TestAssumptionsPayload_NamesTheKnowledgeItems(t *testing.T) {
+	got := assumptionsPayload([]assumption{{ID: "A1", Text: "Only euros.", Status: assumptionAssumed, Knowledge: []string{"D-3"}}})
+	require.Len(t, got, 1)
+	assert.Equal(t, "Only euros. Knowledge: D-3.", got[0].(map[string]any)["text"])
+}

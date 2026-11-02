@@ -691,6 +691,19 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		in.Task = fmt.Sprintf("ContextMatrix board reads (the %s tools) are source [%s]; cite it for anything read there.\n\n", cm.ToolPrefix+"*", src.Tag()) + in.Task
 	}
 
+	if slices.Contains(st.Tools, pack.ToolKnowledge) {
+		kt, lead, closeKnowledge := c.knowledgeTools(ctx, sess, bp, st.ID)
+
+		closeCMOnly := closeCM
+		closeCM = func() {
+			closeCMOnly()
+			closeKnowledge()
+		}
+
+		in.Tools = append(in.Tools, kt...)
+		in.Task = lead + in.Task
+	}
+
 	if slices.Contains(st.Tools, pack.ToolResearch) {
 		if c.researchOn(sess, st.Stage) {
 			guard := c.researchGuard(sess, bp, st.ID, facts)

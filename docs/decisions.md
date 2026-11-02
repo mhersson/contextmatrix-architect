@@ -37,10 +37,15 @@ HEAD.
 - Personas are prompt text on stages, not an agent system. Why: a
   composer-and-agents layer would be a second decision engine that has not
   earned its place.
-- No memory or knowledge layer: retrieval is live, and each blueprint records
-  the sources it used with their kind and version. Why: live retrieval with
-  versioned sources needs no layer, and one could be fed only approved
-  outputs.
+- No memory or knowledge store of its own: retrieval is live, from the code,
+  the board, web pages and, through ContextMatrix, a project's knowledge
+  provider, and each blueprint records the sources it used with their kind
+  and, where one exists, version. Why: live retrieval with recorded sources
+  needs no layer, and one could be fed only approved outputs.
+- The knowledge tools are offered wherever ContextMatrix serves them, and a
+  knowledge session that fails to open leaves the run without them. Why:
+  knowledge never fails a blueprint, and a ContextMatrix that serves none (an
+  older one, or one with no provider configured) reads as before.
 - No bespoke web UI: ContextMatrix's chat panel renders the sessions, and
   richer controls are ContextMatrix web changes. Why: the panel brings the
   session list, auth and look for free.
@@ -64,6 +69,10 @@ HEAD.
 
 ## Data and record
 
+- A knowledge result is a source only when it returns items, one source per
+  provider per blueprint, and a citation names the item, as `[S4 R-12]`. Why:
+  an empty answer has nothing to cite, and an item carries no version a read
+  could cite.
 - SQLite is the record, and the markdown export is a rendering of it written
   to the state directory. Why: committing per-stage markdown into code
   repositories bloats them.
@@ -85,6 +94,10 @@ HEAD.
 - A responder answer reads "verified" only when its evidence cites a tag that
   a tool call of the same run returned. Why: tags in the task or in the
   responder's own prose prove nothing.
+- Only the knowledge item ids a knowledge read of the responder's own run
+  returned count, and the sign-off names those with the assumption. Why: an
+  id the run never read proves nothing, and one that run did not get back
+  would be a false claim at the gate.
 - The server never runs git: trees are written from mirror objects. Why: no
   git binary is needed, and nothing writes to a repository.
 - `workspaces/` in the state directory is a disposable cache, and `exports/`
@@ -98,7 +111,8 @@ HEAD.
 
 - Every stage of the default pack plans only what the need asks: each part an
   artifact adds traces to a need item, an answer, an accepted assumption,
-  gate feedback or a defect it prevents in existing code; the working whole
+  gate feedback, a defect it prevents in existing code or an agreed rule of
+  the product's knowledge that the asked-for work must keep; the working whole
   is in scope, and doing the work correctly and securely on real input is the
   work itself. Why: no gold-plating, and no hollow result.
 - A check's refusal goes back to the model, and the third failing submit is
@@ -144,6 +158,17 @@ HEAD.
 - No extra model run guards the plain wording: the stage reviewers judge it
   in their own runs, and the server's plain texts are fixed per situation.
   Why: no added cost, and predictable wording.
+- Knowledge adds no human stop and no sign-off warning: a card that goes
+  against an agreed rule is an ordinary readiness card finding inside
+  readiness's rounds, and a draft rule or open decision is asked like any
+  other question. Where the responder answers (Auto, Auto + emit, Yolo, or a
+  stage whose policy is auto) it decides one as an assumption naming the
+  item. Why: knowledge is a guardrail for automation, used most in Auto,
+  Auto + emit and Yolo.
+- Intake reads the product's knowledge for the need whenever it has the
+  tools; every other knowledge instruction in the default pack applies only
+  when the tools return items. Why: without a provider each stage works as
+  before once Intake's first read comes back empty.
 
 ## Card contract
 
@@ -275,9 +300,16 @@ HEAD.
   identifiers, module, project and repository names, card ids, and more than
   160 characters, in queries and URL parts; plain words and technology names
   pass. Why: code and project names never leave the installation.
+- Knowledge text is not an input of the leak guard. Why: it is the product
+  owner's internal material, like the need text, which the guard does not
+  block either.
 
 ## Security
 
+- The knowledge reads' `caller` is hidden from the model and filled by the
+  architect as `blueprint <id> stage <step>`, followed by ` reviewer` or
+  ` responder` for those runs. Why: ContextMatrix's knowledge log names who
+  asked, and a model cannot name another caller.
 - Card and playbook writes and run starts are controller calls made with the
   caller identity, never model tools. Why: the identity that passes
   ContextMatrix's human gates must never reach the model.
@@ -295,6 +327,9 @@ HEAD.
 
 ## Runtime and build
 
+- No timeout on the ContextMatrix MCP client is shorter than 60 seconds. Why:
+  ContextMatrix gives a knowledge context or query call up to 55 seconds,
+  connect included.
 - Reasoning is replayed only to the model that wrote it, and a 400 on a
   request carrying reasoning is retried once without it. Why: another model
   cannot validate it.

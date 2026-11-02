@@ -135,7 +135,17 @@ func TestLoadEmbedded_DefaultPipeline(t *testing.T) {
 		s, _ := p.Stage(id)
 		require.NotNil(t, s.Reviewer, id)
 		assert.Equal(t, persona, s.Reviewer.Persona, "%s is reviewed from the next role's seat", id)
-		assert.Equal(t, []string{ToolCode, ToolResearch}, s.Reviewer.Tools, "%s's reviewer reads the code and opens cited pages", id)
+		assert.Equal(t, []string{ToolCode, ToolResearch, ToolKnowledge}, s.Reviewer.Tools, "%s's reviewer reads the code, opens cited pages and reads the product's knowledge", id)
+	}
+
+	for _, id := range []string{"intake", "slicing", "shared_decisions", "solution_design", "acceptance", "decomposition", "readiness"} {
+		s, _ := p.Stage(id)
+		assert.Contains(t, s.Tools, ToolKnowledge, "%s reads the product's knowledge", id)
+	}
+
+	for _, id := range []string{"mockup", "grounding"} {
+		s, _ := p.Stage(id)
+		assert.NotContains(t, s.Tools, ToolKnowledge, "%s stays as it is", id)
 	}
 
 	for _, id := range []string{"intake", "slicing", "shared_decisions", "solution_design"} {
@@ -317,8 +327,8 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "card checks without card.md", stage: "    tools: [code]\n    checks: [cards]\n", files: map[string]string{"card.md": ""}, want: "card.md"},
 		{name: "card checks without code tools", stage: "    checks: [cards]\n", want: "tools: [code]"},
 		{name: "a reviewer without review instructions", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4}\n", want: "stages/review.md"},
-		{name: "a reviewer with the cm tools", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4, tools: [cm]}\n", files: map[string]string{"stages/review.md": "x"}, want: "not code or research"},
-		{name: "a reviewer with an unknown tool group", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4, tools: [shell]}\n", files: map[string]string{"stages/review.md": "x"}, want: "not code or research"},
+		{name: "a reviewer with the cm tools", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4, tools: [cm]}\n", files: map[string]string{"stages/review.md": "x"}, want: "not code, research or knowledge"},
+		{name: "a reviewer with an unknown tool group", stage: "    gate: true\n    reviewer: {persona: po, threshold: 4, tools: [shell]}\n", files: map[string]string{"stages/review.md": "x"}, want: "not code, research or knowledge"},
 		{name: "a reserved stage id", stage: "  - id: review\n    persona: po\n", files: map[string]string{"stages/review.md": "x"}, want: "reserved"},
 		{name: "the reserved plain id", stage: "  - id: plain\n    persona: po\n", files: map[string]string{"stages/plain.md": "x"}, want: "reserved"},
 		{name: "the reserved retrospective id", stage: "  - id: retrospective\n    persona: po\n", files: map[string]string{"stages/retrospective.md": "x", "personas/reviewer.md": "x"}, want: "reserved"},
@@ -391,6 +401,16 @@ func TestLoad_AcceptsTheResearchToolGroup(t *testing.T) {
 	s1, ok := p.Stage("s1")
 	require.True(t, ok)
 	assert.Equal(t, []string{ToolCode, ToolResearch}, s1.Tools)
+}
+
+func TestLoad_AcceptsTheKnowledgeToolGroup(t *testing.T) {
+	p, err := load(packFS("    tools: [code, knowledge]\n    gate: true\n    reviewer: {persona: po, threshold: 4, tools: [code, knowledge]}\n", map[string]string{"stages/review.md": "x"}))
+	require.NoError(t, err)
+
+	s1, _ := p.Stage("s1")
+	assert.Equal(t, []string{ToolCode, ToolKnowledge}, s1.Tools)
+	require.NotNil(t, s1.Reviewer)
+	assert.Equal(t, []string{ToolCode, ToolKnowledge}, s1.Reviewer.Tools)
 }
 
 func TestLoad_AcceptsTheAssumptionsCheck(t *testing.T) {

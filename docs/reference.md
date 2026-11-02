@@ -82,7 +82,7 @@ word "slicing" as its feedback.
 The sign-off lists the cards in order, any checks left for you after the run
 (**follow-ups**, kept in the playbook and not run steps), where the run will
 stop for you on an [Unattended](#unattended) blueprint, the assumptions the
-plan rests on, and the result of a last check against ContextMatrix (the **preflight**: does every
+plan rests on (one that rests on an AI answer drawn from the product's knowledge names the [knowledge items](#product-knowledge) it settled), and the result of a last check against ContextMatrix (the **preflight**: does every
 card's project exist and have a repository, and is there anything to warn
 about). In Default and Auto mode it waits for you.
 
@@ -435,6 +435,45 @@ reaches a blueprint the next time it is opened.
 |---|---|
 | Off | The stages work from the model's own knowledge and your code. The chat says once that research is off, and question options show "model knowledge" instead of web links. |
 | On | Those stages search the web (with Brave Search) and read pages, and options link the pages read. Reviewers may open a cited page to check it, but do not search. A guard keeps your project's own names, code, file paths and card ids out of every search and page address. Search result lists are never stored; only the pages read are kept, as sources. |
+
+## Product knowledge
+
+A project's **knowledge provider** holds what the people behind the product
+have written down about it: rules, some agreed and some still drafts, decisions
+still open, and knowledge of the product's architecture. A project names its
+provider in ContextMatrix's project settings, and ContextMatrix serves the
+provider's answers to the architect, read only. It is not in the New blueprint
+dialog.
+
+An **agreed rule**, one the provider marks as agreed, is a constraint: the
+stages keep it, never ask you what it answers, and cite it by its source tag
+and id, as `[S4 R-12]`. A draft rule or an open decision is a question for you.
+Where the AI answers for you, as in Auto, Auto + emit and Yolo, the AI
+responder decides it, and the sign-off lists its answer as an assumption naming
+the item.
+
+| Part of the blueprint | With product knowledge |
+|---|---|
+| Intake | Reads the knowledge for the need first. An agreed rule goes into the need, cited; a draft rule or an open decision that bears on the need is asked as a question naming its id. |
+| Slicing | Keeps what one agreed rule governs within one slice where it can. |
+| Shared decisions and Solution design | Check each decision against the agreed rules and the architecture knowledge, and name a conflict with the item's id. |
+| Acceptance | A criterion that proves an agreed rule is kept cites the rule's id and says what the rule asks. |
+| Decomposition | Each card's Context lists the agreed rules it serves, each with what it says, since the agent that builds the card never reads the knowledge. |
+| Readiness | A card whose plan goes against an agreed rule is not ready: its finding names the rule, and the cards go back to Decomposition, as for any other finding. A draft rule or an open decision is never a finding. |
+| The reviewers of Intake, Slicing, Shared decisions, Solution design and Acceptance | Check the result against the same knowledge: a part that goes against an agreed rule is a critical finding. |
+| The AI responder | Answers from an agreed rule first. A draft rule or an open decision does not bind it: it decides anyway. |
+| Mockup and Grounding | Do not read the knowledge. |
+
+Product knowledge adds no stop and no warning of its own: a rule conflict is a
+Readiness finding inside Readiness's rounds, and a draft rule or an open
+decision is asked where any question is. Without a provider, with a provider
+that is down or slow (ContextMatrix gives up on a slow one within a minute), or
+with a ContextMatrix that serves no knowledge tools (an older one, or one with
+no provider configured), every stage works as before.
+
+The knowledge is a source like a page or a checkout: one per provider, listed in
+the export and in the Sources of each card that cites it. ContextMatrix logs
+every read with the blueprint and the stage that asked.
 
 ## POC projects
 

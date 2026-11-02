@@ -100,6 +100,11 @@ against unusual cases); the design work is the same. See [POC projects](referenc
 setting of ContextMatrix, not of this dialog. It was off for this run. See
 [The research setting](reference.md#the-research-setting).
 
+**Product knowledge**, the agreed rules and open decisions a project's knowledge
+provider holds, is a project setting of ContextMatrix too. recipe-box has none,
+so this run worked from your answers and the code. See
+[Product knowledge](reference.md#product-knowledge).
+
 ### Starting from a chat
 
 You may work a need out first in a plain ContextMatrix chat: choose **Chat**

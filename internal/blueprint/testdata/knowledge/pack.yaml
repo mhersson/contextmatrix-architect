@@ -1,0 +1,27 @@
+name: knowledge
+version: "1"
+stages:
+  - id: intake
+    persona: product_owner
+    policy: human
+    max_questions: 3
+    tools: [knowledge]
+    checks: [assumptions]
+    gate: true
+    gate_policy: auto
+    reviewer: { persona: system_designer, threshold: 4, tools: [knowledge] }
+  - id: grounding
+    persona: senior_developer
+    consumes: [intake]
+    tools: [code, cm]
+  - id: decomposition
+    persona: senior_developer
+    consumes: [intake, grounding]
+    tools: [code]
+    checks: [cards]
+  - id: readiness
+    persona: reviewer
+    consumes: [intake, grounding, decomposition]
+    tools: [code, cm, knowledge]
+    loops_to: decomposition
+    max_rounds: 3

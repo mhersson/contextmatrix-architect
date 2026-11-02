@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -23,6 +24,9 @@ type answer struct {
 	Grounded    bool   `json:"grounded"`
 	Evidence    string `json:"evidence"`
 	Consequence string `json:"consequence"`
+	// Knowledge is the ids of the knowledge items the answer rests on or
+	// settles in a person's place.
+	Knowledge []string `json:"knowledge"`
 }
 
 // citesToolResult reports whether evidence cites a source tag one of the
@@ -69,8 +73,41 @@ func answerEvidence(ctx context.Context, s *store.Store, blueprintID string) (ma
 	return out, nil
 }
 
+// answerKnowledge maps a question number to the knowledge item ids its auto
+// answer event carries.
+func answerKnowledge(ctx context.Context, s *store.Store, blueprintID string) (map[int][]string, error) {
+	events, err := s.ListEventsOfKind(ctx, blueprintID, EventAnswer)
+	if err != nil {
+		return nil, fmt.Errorf("blueprint: answer knowledge: %w", err)
+	}
+
+	out := map[int][]string{}
+
+	for _, e := range events {
+		var p struct {
+			Number    int      `json:"number"`
+			Responder string   `json:"responder"`
+			Knowledge []string `json:"knowledge"`
+		}
+
+		if json.Unmarshal(e.Payload, &p) != nil || p.Responder != store.ResponderAuto {
+			continue
+		}
+
+		out[p.Number] = p.Knowledge
+	}
+
+	return out, nil
+}
+
 // parseAnswer reads a responder's submit; the answer is required.
 func parseAnswer(data map[string]any) (answer, error) {
+	// A bare id is a one-item list, as the cm tools take ids.
+	if id, ok := data["knowledge"].(string); ok {
+		data = maps.Clone(data)
+		data["knowledge"] = []any{id}
+	}
+
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return answer{}, fmt.Errorf("encode the answer: %w", err)
@@ -88,12 +125,23 @@ func parseAnswer(data map[string]any) (answer, error) {
 
 	a.Consequence = strings.TrimSpace(a.Consequence)
 
+	var ids []string
+
+	for _, id := range a.Knowledge {
+		if id = strings.TrimSpace(id); id != "" && !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+
+	a.Knowledge = ids
+
 	return a, nil
 }
 
 // respond answers a question under the auto policy with a responder run:
 // the asking stage's persona and tools, the responder instructions, and
-// responderTask, never the asker's transcript. The answer is recorded as an
+// responderTask, led by knowledgeLead when those tools hold the knowledge
+// reads, never the asker's transcript. The answer is recorded as an
 // assumption, grounded only when its evidence cites a tool result of its
 // own run. A responder that fails leaves the stage to decide; a cancel ends
 // the asking run too. The responder spends from the asking run's cap; on a
@@ -114,9 +162,15 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion, re
 		return protocol.RoundAnswer{}, undecided(err)
 	}
 
+	if offersKnowledge(iv.tools) {
+		task = knowledgeLead + task
+	}
+
+	var responderRun int64
+
 	out, err := c.runSide(ctx, iv.r, iv.sess, iv.bp, sideRun{
 		kind: store.RunKindResponder, stage: stageID, persona: iv.st.Persona, attempt: iv.attempt, round: q.Number,
-		parent: iv.sink,
+		parent: iv.sink, started: func(id int64) { responderRun = id },
 		in: stage.Input{
 			Stage: stageID + ".responder", Persona: c.opts.Pack.Persona(iv.st.Persona),
 			Instructions: withPlain(iv.bp, c.opts.Pack.ResponderInstructions(), c.opts.Pack.PlainInstructions()), Task: task, Tools: iv.tools,
@@ -127,6 +181,9 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion, re
 			},
 		},
 	})
+
+	// Taken on every path so the run's entry never lingers.
+	returned := c.returned.take(responderRun)
 
 	switch {
 	case ctx.Err() != nil:
@@ -159,6 +216,19 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion, re
 	payload := map[string]any{
 		"number": q.Number, "text": ans.Answer, "responder": store.ResponderAuto,
 		"reasoning": ans.Reasoning, "grounded": grounded, "evidence": evidence,
+	}
+
+	// Per id: only an id the run's own knowledge reads returned stands.
+	var kept []string
+
+	for _, id := range ans.Knowledge {
+		if returned[id] {
+			kept = append(kept, id)
+		}
+	}
+
+	if len(kept) > 0 {
+		payload["knowledge"] = kept
 	}
 
 	if reasks > 0 {

@@ -77,6 +77,13 @@ slice's card, or that relies on work that neither the code nor a card before
 it in the playbook delivers, is not ready, and its finding names the card it
 collides with or lacks.
 
+When the product's knowledge tools return items for the cards, a card whose
+plan goes against an agreed rule (`kind` "rule", `agreed` true) is not ready,
+and its finding names the rule's id and what the card must change. A part the
+work needs to keep an agreed rule traces to that rule. A draft rule or an open
+decision is never a finding: the blueprint decided it, in an answer or an
+assumption. `status` is shown, never a reason to treat an item as agreed.
+
 With an approved mockup (the `mockup` input; read_artifact returns its
 source), the architect itself attaches the whole mockup, when it emits the
 cards, to every card of a slice that builds a screen. A card's `mockup`
@@ -93,12 +100,12 @@ that say one thing in different words; an outcome (O<n>) that no criterion
 or manual check proves; a contract, inside one project or between projects,
 that one side's cards keep and the other's do not; a change one card makes
 that breaks behaviour the code has today, which no card handles; a decision,
-outcome or criterion that traces to no need item, answered question,
-accepted assumption or gate feedback and prevents no defect in code that
-exists; an assumption that adds work the need does not ask for, accepted or
-not. A card that does not deliver what its own criterion promises is that
-card's problem, in its `cards` entry; `cross` holds the problems between
-artifacts. Report each in `cross`,
+outcome or criterion that traces to no need item, answered question, accepted
+assumption, gate feedback or agreed rule the asked-for work must keep, and
+prevents no defect in code that exists; an assumption that adds work the need
+does not ask for, accepted or not. A card that does not deliver what its own
+criterion promises is that card's problem, in its `cards` entry; `cross`
+holds the problems between artifacts. Report each in `cross`,
 `{"id": "X1", "severity": "critical", "major" or "minor", "text": "<one sentence a person can act on>", "refs": ["<the ids it names, such as DEC2, AC4, D3, A5, O1, SL2>"]}`:
 critical when building as planned would deliver the wrong thing, break what
 the need promises or break what the code does today, or when a decision,

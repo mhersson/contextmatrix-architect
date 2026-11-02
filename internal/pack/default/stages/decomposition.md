@@ -46,6 +46,13 @@ Rules:
   rules on tests, documentation and how a change lands bind every card.
 - A contract whose two sides land in different cards, in one project or
   across projects, is written into both cards word for word.
+- When the product's knowledge tools return items, each card's Context lists
+  the agreed rules (`kind` "rule", `agreed` true) the card serves, each by its
+  id cited `[S<n> <id>]` with what the rule says in one sentence, since the
+  agent that builds the card never reads the knowledge. A card serves a rule
+  when its change must keep it. A draft rule or an open decision is never
+  listed as a rule: the card states what the blueprint decided about it, as
+  for any other decision.
 - `depends_on` names draft ids within the same project only. Order across
   projects comes from the playbook order and manual entries.
 - `priority` is one of the priorities the project declares; `type` one of
