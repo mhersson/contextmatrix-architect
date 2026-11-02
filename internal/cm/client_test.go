@@ -176,7 +176,7 @@ func TestCallText_AfterCloseFailsWithoutRedialling(t *testing.T) {
 	require.NoError(t, c.Close(), "Close is idempotent")
 }
 
-func TestConnectRefusesRedirects(t *testing.T) {
+func TestConnect_RefusesRedirects(t *testing.T) {
 	const key = "redirect-secret-key"
 
 	var (

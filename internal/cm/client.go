@@ -50,7 +50,8 @@ func Connect(ctx context.Context, baseURL, apiKey string, base http.RoundTripper
 
 	httpClient := &http.Client{
 		Transport: &bearerTransport{key: apiKey, base: base},
-		// bearerTransport sets the key on every hop, so a followed redirect would hand it to whatever host the redirect names.
+		// bearerTransport sets the key on every hop, so a followed redirect
+		// would hand it to whatever host the redirect names.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	endpoint := strings.TrimRight(baseURL, "/") + "/mcp"

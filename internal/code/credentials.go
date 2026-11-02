@@ -48,7 +48,8 @@ func NewCMCredentials(baseURL, bearer string, base http.RoundTripper) *CMCredent
 		client: &http.Client{
 			Timeout:   15 * time.Second,
 			Transport: base,
-			// Go keeps the bearer on same-host redirects (other port, subdomain, https to http); CM never redirects here.
+			// Go keeps the bearer on same-host redirects (other port,
+			// subdomain, https to http); CM never redirects here.
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
 		url:    strings.TrimRight(baseURL, "/") + "/api/worker/git-credentials",

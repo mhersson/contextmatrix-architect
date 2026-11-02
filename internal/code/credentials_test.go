@@ -48,6 +48,8 @@ func TestCMCredentials_Fetch(t *testing.T) {
 			cmError(w, http.StatusUnauthorized, "UNAUTHORIZED", "bad bearer "+gotAuth)
 		case "acme/opaque":
 			w.WriteHeader(http.StatusBadGateway)
+		case "acme/moved":
+			http.Redirect(w, r, "/elsewhere", http.StatusTemporaryRedirect)
 		default:
 			_, _ = w.Write([]byte(`{"username":"x-access-token","token":"ghs_abc"}`))
 		}
@@ -77,6 +79,7 @@ func TestCMCredentials_Fetch(t *testing.T) {
 		{path: "acme/mint", carries: "token mint failed"},
 		{path: "acme/echo", carries: "bad bearer"},
 		{path: "acme/opaque", carries: "502"},
+		{path: "acme/moved", carries: "307"},
 	}
 
 	for _, tt := range tests {
@@ -115,7 +118,7 @@ func TestCMCredentials_FetchesOverTheBaseTransport(t *testing.T) {
 	assert.NotContains(t, err.Error(), testBearer)
 }
 
-func TestCMCredentialsFetchRefusesRedirects(t *testing.T) {
+func TestCMCredentials_FetchRefusesRedirects(t *testing.T) {
 	const bearer = "redirect-secret-bearer"
 
 	var (
