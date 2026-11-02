@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mhersson/contextmatrix-harness/tools"
+	protocol "github.com/mhersson/contextmatrix-protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -355,4 +356,130 @@ func TestKnowledge_AResponderCallNamesTheAskingStage(t *testing.T) {
 	contexts := srv.Calls("get_knowledge_context")
 	require.NotEmpty(t, contexts)
 	assert.Equal(t, "blueprint BP1 stage intake", contexts[0]["caller"])
+}
+
+func TestKnowledge_AResponderKeepsItemIDsOnlyAfterReadingItems(t *testing.T) {
+	tests := []struct {
+		name  string
+		reply string
+		want  []string
+	}{
+		{"read an open decision", cmtest.OpenDecision, []string{"D-3"}},
+		{"read nothing", "", nil},
+		{"read an answer without items", cmtest.NoProvider, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := cmtest.NewKnowledge(t)
+			if tt.reply != "" {
+				srv.Answer("get_knowledge_item", tt.reply)
+			}
+
+			got := make(chan error, 1)
+			script := knowledgeScript()
+			script["intake"] = askingIntake(got)
+			script["intake.responder"] = respondingWith(tt.reply != "", []any{"D-3"})
+			c, _, _, rec, _ := newKnowledgePipeline(t, script, srv)
+
+			driveIn(t, c, autoInput())
+			require.NoError(t, <-got)
+
+			e, ok := rec.first(EventAnswer)
+			require.True(t, ok)
+
+			if tt.want == nil {
+				assert.NotContains(t, e.Payload, "knowledge")
+
+				return
+			}
+
+			assert.Equal(t, tt.want, e.Payload["knowledge"])
+		})
+	}
+}
+
+// respondingWith scripts a responder that reads a knowledge item when read
+// is set and submits an ungrounded answer naming ids.
+func respondingWith(read bool, ids []any) func(context.Context, stage.Input) (stage.Output, error) {
+	return func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		var tags []string
+
+		if read {
+			text, err := callKnowledge(ctx, in, "cm_get_knowledge_item", map[string]any{"project": "alpha", "ids": []any{"D-3"}})
+			if err != nil {
+				return stage.Output{}, err
+			}
+
+			if m := sourceTag.FindStringSubmatch(strings.SplitN(text, "]", 2)[0]); strings.HasPrefix(text, "[") && m != nil {
+				tags = []string{"S" + m[1]}
+			}
+		}
+
+		return reading(tags, map[string]any{"answer": "EUR only", "reasoning": "r", "grounded": false, "knowledge": ids})(ctx, in)
+	}
+}
+
+func TestKnowledge_AnAutoEmitBlueprintWhoseResponderSettledAnOpenDecisionApprovesItself(t *testing.T) {
+	tests := []struct {
+		name      string
+		stated    []any
+		wantEntry string
+	}{
+		{"the auto answer's own entry", nil, "Q1"},
+		{"a stated entry resting on the answer", []any{map[string]any{"text": "Only euros.", "basis": "Q1"}}, "A1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := cmtest.NewKnowledge(t)
+			srv.Answer("get_knowledge_item", cmtest.OpenDecision)
+
+			got := make(chan error, 1)
+			ask := askingIntake(got)
+			script := knowledgeScript()
+			script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+				out, err := ask(ctx, in)
+				if err != nil {
+					return out, err
+				}
+
+				out.Artifact.Data = map[string]any{"slices": 1, "assumptions": tt.stated}
+
+				return out, nil
+			}
+			script["intake.responder"] = respondingWith(true, []any{"D-3"})
+			c, st, _, rec, _ := newKnowledgePipeline(t, script, srv)
+			c.opts.ConnectCM = newFakeCM().connect
+
+			in := startInput("BP1")
+			in.Mode = protocol.ArchitectModeAutoEmit
+			driveIn(t, c, in)
+			require.NoError(t, <-got)
+
+			so, ok := rec.first(EventSignOffAuto)
+			require.True(t, ok)
+			assert.False(t, rec.has(EventSignOff), "no stop for a person")
+			assert.Equal(t, string(StateEmitted), stateOf(t, st, "BP1"))
+
+			list, ok := so.Payload["assumptions"].([]any)
+			require.True(t, ok)
+
+			var found bool
+
+			for _, raw := range list {
+				entry := raw.(map[string]any)
+				if entry["id"] != tt.wantEntry {
+					continue
+				}
+
+				found = true
+
+				assert.Equal(t, assumptionAssumed, entry["status"])
+				assert.Contains(t, entry["text"], "D-3")
+			}
+
+			assert.True(t, found, "entry %s in %v", tt.wantEntry, list)
+		})
+	}
 }

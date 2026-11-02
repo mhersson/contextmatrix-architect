@@ -649,3 +649,12 @@ func TestRound_TheContinuationListsTheResponderAnswers(t *testing.T) {
 	assert.Contains(t, task, answeredByResponder)
 	assert.NotContains(t, task, answeredByUser)
 }
+
+func TestParseAnswer_ReadsTheKnowledgeIDs(t *testing.T) {
+	a, err := parseAnswer(map[string]any{"answer": "EUR only", "knowledge": []any{" D-3 ", "", "D-3", "R-12"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"D-3", "R-12"}, a.Knowledge)
+
+	_, err = parseAnswer(map[string]any{"answer": "EUR only", "knowledge": "D-3"})
+	require.Error(t, err)
+}

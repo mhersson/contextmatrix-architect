@@ -23,6 +23,9 @@ type answer struct {
 	Grounded    bool   `json:"grounded"`
 	Evidence    string `json:"evidence"`
 	Consequence string `json:"consequence"`
+	// Knowledge is the ids of the knowledge items the answer rests on or
+	// settles in a person's place.
+	Knowledge []string `json:"knowledge"`
 }
 
 // citesToolResult reports whether evidence cites a source tag one of the
@@ -69,6 +72,33 @@ func answerEvidence(ctx context.Context, s *store.Store, blueprintID string) (ma
 	return out, nil
 }
 
+// answerKnowledge maps a question number to the knowledge item ids its auto
+// answer event carries.
+func answerKnowledge(ctx context.Context, s *store.Store, blueprintID string) (map[int][]string, error) {
+	events, err := s.ListEventsOfKind(ctx, blueprintID, EventAnswer)
+	if err != nil {
+		return nil, fmt.Errorf("blueprint: answer knowledge: %w", err)
+	}
+
+	out := map[int][]string{}
+
+	for _, e := range events {
+		var p struct {
+			Number    int      `json:"number"`
+			Responder string   `json:"responder"`
+			Knowledge []string `json:"knowledge"`
+		}
+
+		if json.Unmarshal(e.Payload, &p) != nil || p.Responder != store.ResponderAuto {
+			continue
+		}
+
+		out[p.Number] = p.Knowledge
+	}
+
+	return out, nil
+}
+
 // parseAnswer reads a responder's submit; the answer is required.
 func parseAnswer(data map[string]any) (answer, error) {
 	raw, err := json.Marshal(data)
@@ -87,6 +117,16 @@ func parseAnswer(data map[string]any) (answer, error) {
 	}
 
 	a.Consequence = strings.TrimSpace(a.Consequence)
+
+	var ids []string
+
+	for _, id := range a.Knowledge {
+		if id = strings.TrimSpace(id); id != "" && !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+
+	a.Knowledge = ids
 
 	return a, nil
 }
@@ -159,6 +199,19 @@ func (iv *interviewer) respond(ctx context.Context, q protocol.RoundQuestion, re
 	payload := map[string]any{
 		"number": q.Number, "text": ans.Answer, "responder": store.ResponderAuto,
 		"reasoning": ans.Reasoning, "grounded": grounded, "evidence": evidence,
+	}
+
+	// An id the run never read proves nothing: only a knowledge read of its
+	// own run lets the ids stand.
+	if len(ans.Knowledge) > 0 {
+		read, err := c.knowledgeRead(bg, iv.bp.ID, out.SourceTags)
+		if err != nil {
+			c.opts.Logger.Error("blueprint: check the responder's knowledge reads", "blueprint", iv.bp.ID, "question", q.Number, "error", err)
+		}
+
+		if read {
+			payload["knowledge"] = ans.Knowledge
+		}
 	}
 
 	if reasks > 0 {

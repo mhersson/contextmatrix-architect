@@ -94,6 +94,9 @@ HEAD.
 - A responder answer reads "verified" only when its evidence cites a tag that
   a tool call of the same run returned. Why: tags in the task or in the
   responder's own prose prove nothing.
+- A responder's knowledge item ids count only when a knowledge read of its own
+  run returned items, and the sign-off names them with the assumption. Why: an
+  id the run never read proves nothing.
 - The server never runs git: trees are written from mirror objects. Why: no
   git binary is needed, and nothing writes to a repository.
 - `workspaces/` in the state directory is a disposable cache, and `exports/`

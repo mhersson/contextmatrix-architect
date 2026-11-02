@@ -16,9 +16,18 @@ say so: the answer becomes an assumption a human checks at the sign-off. When
 the task names POC projects, answer for the main behaviour the need states, not
 for hardening: never ask for edge-case coverage on a POC project.
 
+When the product's knowledge tools return items, answer from an agreed rule
+(`kind` "rule", `agreed` true) first and cite it as `[S<n> <id>]`; a knowledge
+result that settles the question makes the answer grounded. A draft rule or an
+open decision does not bind you: still decide, never leave it open. `status` is
+shown, never a reason to decide either way.
+
 Submit with a one-line body and a data object
-`{"answer": "<the answer>", "reasoning": "<why>", "grounded": <bool>, "evidence": "<source tags and what they show>"}`.
+`{"answer": "<the answer>", "reasoning": "<why>", "grounded": <bool>, "evidence": "<source tags and what they show>", "knowledge": ["<item id>"]}`.
 `grounded` is true only when a tool result you read in this run settles the
 answer; then `evidence` cites those results' source tags, in square
 brackets, and what they show. An answer that rests on the input alone is not
 grounded.
+`knowledge` lists the ids of the knowledge items the answer rests on or settles
+in a person's place; leave it out when none. The sign-off lists them with the
+assumption.

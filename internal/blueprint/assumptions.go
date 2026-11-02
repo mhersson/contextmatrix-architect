@@ -53,6 +53,9 @@ type assumption struct {
 	Consequence         string
 	ConsequenceAccepted int
 	SupersededBy        string
+	// Knowledge is the ids of the knowledge items the auto answer this
+	// rests on, or is, settled.
+	Knowledge []string
 }
 
 // stated is one assumption as a stage submitted it. ID is the id the stored
@@ -107,6 +110,11 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 	}
 
 	evidence, err := answerEvidence(ctx, c.opts.Store, id)
+	if err != nil {
+		return nil, err
+	}
+
+	knowledge, err := answerKnowledge(ctx, c.opts.Store, id)
 	if err != nil {
 		return nil, err
 	}
@@ -178,6 +186,10 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 				Status: status, Evidence: proof,
 			}
 
+			if q, ok := answered[s.Basis]; ok && q.Assumption {
+				a.Knowledge = knowledge[q.Number]
+			}
+
 			// An older acceptance's row answers "Accepted", which says nothing.
 			if accepted[s.Basis] {
 				a.Answer, a.AcceptedAt = "", acceptedAt[s.Basis]
@@ -200,7 +212,7 @@ func (c *Controller) assumptions(ctx context.Context, id string) ([]assumption, 
 		status, proof := basisStatus(answered, accepted, evidence, q.Tag())
 		a := assumption{
 			ID: q.Tag(), Stage: q.Stage, Basis: q.Tag(), Status: status, Evidence: proof,
-			Text: fmt.Sprintf("%s The responder answered: %s", q.Text, q.Answer),
+			Text: fmt.Sprintf("%s The responder answered: %s", q.Text, q.Answer), Knowledge: knowledge[q.Number],
 		}
 
 		if bp.PlainLanguage {
@@ -453,8 +465,13 @@ func assumptionsPayload(list []assumption) []any {
 	out := make([]any, 0, len(list))
 
 	for _, a := range list {
+		text := a.Text
+		if len(a.Knowledge) > 0 {
+			text += " Knowledge: " + strings.Join(a.Knowledge, ", ") + "."
+		}
+
 		entry := map[string]any{
-			"id": a.ID, "stage": a.Stage, "text": a.Text, "basis": a.Basis, "answer": a.Answer, "status": a.Status, "evidence": a.Evidence,
+			"id": a.ID, "stage": a.Stage, "text": text, "basis": a.Basis, "answer": a.Answer, "status": a.Status, "evidence": a.Evidence,
 		}
 
 		if a.AcceptedAt != "" {

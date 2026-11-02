@@ -3,6 +3,7 @@ package blueprint
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/mhersson/contextmatrix-harness/tools"
 
@@ -59,6 +60,27 @@ func (l knowledgeLedger) Source(ctx context.Context, source string) (string, err
 	}
 
 	return src.Tag(), nil
+}
+
+// knowledgeRead reports whether any of tags is a knowledge source of
+// blueprint id.
+func (c *Controller) knowledgeRead(ctx context.Context, id string, tags []string) (bool, error) {
+	if len(tags) == 0 {
+		return false, nil
+	}
+
+	known, err := c.opts.Store.ListSources(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("blueprint: list sources: %w", err)
+	}
+
+	for _, s := range known {
+		if s.Kind == sourceKindKnowledge && slices.Contains(tags, s.Tag()) {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // knowledgeTools opens the knowledge reads for a run of stageID and returns

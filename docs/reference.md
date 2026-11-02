@@ -82,7 +82,7 @@ word "slicing" as its feedback.
 The sign-off lists the cards in order, any checks left for you after the run
 (**follow-ups**, kept in the playbook and not run steps), where the run will
 stop for you on an [Unattended](#unattended) blueprint, the assumptions the
-plan rests on, and the result of a last check against ContextMatrix (the **preflight**: does every
+plan rests on (one that rests on an AI answer drawn from the product's knowledge names the knowledge items it settled), and the result of a last check against ContextMatrix (the **preflight**: does every
 card's project exist and have a repository, and is there anything to warn
 about). In Default and Auto mode it waits for you.
 
