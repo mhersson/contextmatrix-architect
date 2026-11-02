@@ -150,6 +150,33 @@ func TestKnowledgeTools_AResultWithItemsLeadsWithItsSourceTag(t *testing.T) {
 	assert.Equal(t, "R-12", body.Items[0]["id"])
 }
 
+func TestKnowledgeTools_AnItemOffTheContractStaysTaggedAndKeepsOnlyTheIDsItCanRead(t *testing.T) {
+	tests := []struct {
+		name  string
+		reply string
+		want  []string
+	}{
+		{"a non-string id", `{"source":"knowledge:intent","items":[{"id":12,"kind":"rule","title":"t","text":"x"},{"id":"R-12","kind":"rule","title":"Prices include VAT","text":"Every price shown includes VAT.","agreed":true}]}`, []string{"R-12"}},
+		{"a missing id, an empty id and a non-object", `{"source":"knowledge:intent","items":[{"kind":"rule"},{"id":""},"x",{"id":"R-1"},{"id":"R-1"}],"related":[{"id":"G-1"}]}`, []string{"R-1", "G-1"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := cmtest.NewKnowledge(t)
+			srv.Answer("get_knowledge_context", tt.reply)
+
+			k := &fakeKnowledge{tag: "S4"}
+			got := knowledgeToolsFor(t, srv, k)
+
+			res, err := got["cm_get_knowledge_context"].Execute(context.Background(), map[string]any{"project": "alpha", "task": "t"})
+			require.NoError(t, err)
+			assert.True(t, strings.HasPrefix(res.Text, "[S4] "))
+			assert.Equal(t, []string{"knowledge:intent"}, k.sources)
+			assert.Equal(t, [][]string{tt.want}, k.ids)
+		})
+	}
+}
+
 func TestKnowledgeTools_AnAnswerWithoutItemsIsUntaggedAndNoSource(t *testing.T) {
 	tests := []struct {
 		name   string

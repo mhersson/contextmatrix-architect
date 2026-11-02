@@ -76,11 +76,6 @@ func OpenKnowledge(ctx context.Context, baseURL, apiKey string, base http.RoundT
 	return ts, func() { _ = c.Close() }, nil
 }
 
-// knowledgeEntry is the part of a result's item the wrapper reads.
-type knowledgeEntry struct {
-	ID string `json:"id"`
-}
-
 // knowledgeTool is one CM knowledge read offered to a run.
 type knowledgeTool struct {
 	client      *Client
@@ -120,9 +115,9 @@ func (t *knowledgeTool) Execute(ctx context.Context, args map[string]any) (tools
 	text = stripURLUserinfo(text)
 
 	var reply struct {
-		Source  string           `json:"source"`
-		Items   []knowledgeEntry `json:"items"`
-		Related []knowledgeEntry `json:"related"`
+		Source  string            `json:"source"`
+		Items   []json.RawMessage `json:"items"`
+		Related []json.RawMessage `json:"related"`
 	}
 
 	if json.Unmarshal([]byte(text), &reply) != nil || len(reply.Items)+len(reply.Related) == 0 {
@@ -131,8 +126,14 @@ func (t *knowledgeTool) Execute(ctx context.Context, args map[string]any) (tools
 
 	var ids []string
 
-	for _, e := range slices.Concat(reply.Items, reply.Related) {
-		if e.ID != "" && !slices.Contains(ids, e.ID) {
+	// An entry off the contract (non-string or missing id, not an object) has
+	// no id recorded, so it never untags the rest of the result.
+	for _, raw := range slices.Concat(reply.Items, reply.Related) {
+		var e struct {
+			ID string `json:"id"`
+		}
+
+		if json.Unmarshal(raw, &e) == nil && e.ID != "" && !slices.Contains(ids, e.ID) {
 			ids = append(ids, e.ID)
 		}
 	}

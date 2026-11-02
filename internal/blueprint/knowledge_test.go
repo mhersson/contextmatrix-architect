@@ -400,6 +400,7 @@ func TestKnowledge_AResponderKeepsOnlyTheItemIDsItsOwnReadsReturned(t *testing.T
 	}{
 		{"read an open decision", cmtest.OpenDecision, false, true, []any{"D-3"}, []string{"D-3"}},
 		{"an id nothing returned is dropped", cmtest.OpenDecision, false, true, []any{"D-3", "X-9"}, []string{"D-3"}},
+		{"an item off the contract does not untag the reply", `{"source":"knowledge:intent","items":[{"id":12,"kind":"rule","title":"t","text":"x"},{"id":"R-12","kind":"rule","title":"Prices include VAT","text":"Every price shown includes VAT.","agreed":true}]}`, false, true, []any{"R-12"}, []string{"R-12"}},
 		{"read nothing", "", false, false, []any{"D-3"}, nil},
 		{"read an answer without items", cmtest.NoProvider, false, true, []any{"D-3"}, nil},
 		{"the asking stage's read is not the responder's", cmtest.OpenDecision, true, false, []any{"D-3"}, nil},

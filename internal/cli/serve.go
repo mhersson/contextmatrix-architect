@@ -224,8 +224,8 @@ func cmReadTools(baseURL string, base http.RoundTripper) func(ctx context.Contex
 	}
 }
 
-// cmKnowledgeTools opens one MCP session per stage run and offers the run
-// the knowledge reads CM serves; the closer is never nil on success.
+// cmKnowledgeTools opens one MCP session per stage or reviewer run and offers
+// the run the knowledge reads CM serves; the closer is never nil on success.
 func cmKnowledgeTools(baseURL string, base http.RoundTripper) func(ctx context.Context, mcpAPIKey string, k cm.Knowledge) ([]tools.Tool, func(), error) {
 	return func(ctx context.Context, mcpAPIKey string, k cm.Knowledge) ([]tools.Tool, func(), error) {
 		return cm.OpenKnowledge(ctx, baseURL, mcpAPIKey, base, k)

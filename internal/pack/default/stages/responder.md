@@ -29,5 +29,7 @@ answer; then `evidence` cites those results' source tags, in square
 brackets, and what they show. An answer that rests on the input alone is not
 grounded.
 `knowledge` lists the ids of the knowledge items the answer rests on or settles
-in a person's place; leave it out when none. The sign-off lists them with the
-assumption.
+in a person's place; leave it out when none. Name only items a knowledge read
+in this run returned (read one with cm_get_knowledge_item when you know it only
+from the question), since an id your own reads did not return is dropped. The
+sign-off lists them with the assumption.
