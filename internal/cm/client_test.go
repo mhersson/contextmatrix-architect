@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -173,4 +174,35 @@ func TestCallText_AfterCloseFailsWithoutRedialling(t *testing.T) {
 	require.ErrorIs(t, err, ErrClosed)
 	assert.Equal(t, int32(1), srv.dials.Load(), "a closed client never redials")
 	require.NoError(t, c.Close(), "Close is idempotent")
+}
+
+func TestConnectRefusesRedirects(t *testing.T) {
+	const key = "redirect-secret-key"
+
+	var (
+		mu       sync.Mutex
+		received []string
+	)
+
+	other := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		received = append(received, r.Header.Get("Authorization"))
+	}))
+	t.Cleanup(other.Close)
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/mcp", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(redirector.Close)
+
+	_, err := Connect(context.Background(), redirector.URL, key, nil)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), key)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	assert.Empty(t, received, "the redirect target must never be dialed")
 }
