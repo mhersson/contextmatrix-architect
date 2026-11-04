@@ -64,9 +64,10 @@ func readInTree(treeDir, rel string) (string, error) {
 	return string(data), nil
 }
 
-// ownTree reads, from the rest of the tree, the files a root's own CSS
-// imports that are not among them, such as a workspace package's or a file
-// under node_modules. files is the root's own; each file read is added to it.
+// ownTree reads, from the rest of the tree, a CSS file the root's own files
+// import that is not one of its own CSS files, such as a workspace package's
+// or one under node_modules. files is the root's own; each file read is added
+// to it.
 type ownTree struct {
 	treeDir string
 	files   *pkgFiles
@@ -81,19 +82,11 @@ func (o *ownTree) local(file, spec string) (rel string, handled bool) {
 		return "", false
 	}
 
-	target := path.Join(path.Dir(file), spec)
-
-	switch {
-	case spec[0] == '.':
-		if !filepath.IsLocal(target) {
-			o.gap(spec, "the path leaves the repository")
-
-			return "", true
-		}
-	case !isLocalFile(o.treeDir, file, spec):
+	if spec[0] != '.' && !isLocalFile(o.treeDir, file, spec) {
 		return "", false
 	}
 
+	target := path.Join(path.Dir(file), spec)
 	if !o.read(target, spec) {
 		return "", true
 	}
@@ -106,6 +99,12 @@ func (o *ownTree) local(file, spec string) (rel string, handled bool) {
 func (o *ownTree) read(rel, spec string) bool {
 	if _, ok := o.files.css[rel]; ok {
 		return true
+	}
+
+	if !filepath.IsLocal(rel) {
+		o.gap(spec, "the path leaves the repository")
+
+		return false
 	}
 
 	css, err := readInTree(o.treeDir, rel)

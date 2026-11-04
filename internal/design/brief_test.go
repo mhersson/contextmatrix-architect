@@ -379,3 +379,13 @@ func TestTokenRank(t *testing.T) {
 		})
 	}
 }
+
+func TestBrief_ARootGapWithoutImport(t *testing.T) {
+	m := briefMaterial()
+	m.Gaps = []Gap{{Root: m.Roots[0].Path, Reason: "x"}}
+
+	lines := strings.Split(Brief(m, nil), "\n")
+
+	assert.Contains(t, lines, "- x")
+	assert.Empty(t, linesWith(strings.Join(lines, "\n"), ": x"))
+}

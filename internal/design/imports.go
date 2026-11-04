@@ -2,6 +2,7 @@ package design
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -17,6 +18,12 @@ var (
 	jsCSSImportRE = regexp.MustCompile(`\bimport\s*(?:"([^"]+\.css)"|'([^']+\.css)')`)
 
 	schemeRE = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
+
+	htmlCommentRE = regexp.MustCompile(`(?s)<!--.*?-->`)
+	htmlLinkRE    = regexp.MustCompile(`(?i)<link\b([^>]*)>`)
+
+	// Groups: 1 the name; 2-4 the value as double-quoted, single-quoted, bare.
+	htmlAttrRE = regexp.MustCompile(`([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>=` + "`" + `]+)))?`)
 )
 
 // cssImports returns every @import specifier in css, in order, ignoring
@@ -45,6 +52,34 @@ func jsCSSImports(src string) []string {
 	}
 
 	return specs
+}
+
+// htmlStylesheets returns the href of each <link> in src whose rel holds the
+// token stylesheet and not alternate, in document order, ignoring comments.
+func htmlStylesheets(src string) []string {
+	src = htmlCommentRE.ReplaceAllString(src, "")
+
+	var hrefs []string
+
+	for _, link := range htmlLinkRE.FindAllStringSubmatch(src, -1) {
+		attrs := map[string]string{}
+
+		for _, a := range htmlAttrRE.FindAllStringSubmatch(link[1], -1) {
+			// The first of a repeated attribute counts, as in a browser.
+			name := strings.ToLower(a[1])
+			if _, dup := attrs[name]; !dup {
+				attrs[name] = firstNonEmpty(a[2:]...)
+			}
+		}
+
+		// An alternate stylesheet is not applied until a user picks it.
+		rel := strings.Fields(strings.ToLower(attrs["rel"]))
+		if attrs["href"] != "" && slices.Contains(rel, "stylesheet") && !slices.Contains(rel, "alternate") {
+			hrefs = append(hrefs, attrs["href"])
+		}
+	}
+
+	return hrefs
 }
 
 // splitBare splits a package specifier into the package name (including its

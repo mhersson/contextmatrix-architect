@@ -62,7 +62,8 @@ func PackageDir(name, version string) string {
 }
 
 // Gap is design material that could not be had. Root is the Path of the root
-// it belongs to, Import the import spec as written.
+// it belongs to, Import the import spec as written, or "" for a gap of the
+// root as a whole.
 type Gap struct{ Root, Import, Reason string }
 
 // gathering is the state of one Gather call.
@@ -245,24 +246,52 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 		own.css[rel] = css
 	}
 
-	// The CSS packages a script imports come before the root's own CSS.
+	ot := &ownTree{treeDir: treeDir, files: own, gap: func(spec, reason string) { s.gap(w.path, spec, reason) }}
+	ownDecls := func(rel string) []decl { return rootDecls(own.css[rel]) }
+	rootPkg := func(e entry) error { return s.rootImport(ctx, w, e) }
+	walkOwn := func(rel string) error { return w.importOrder(own, treePrefix, rel, ownDecls, rootPkg, ot.local) }
+
 	for _, e := range f.Entries {
-		if _, isCSS := own.css[e.File]; isCSS {
-			continue
+		var err error
+
+		switch {
+		case e.Name != "":
+			err = s.rootImport(ctx, w, e)
+		case e.Local == "":
+			s.gap(w.path, e.Spec, "an import alias the architect does not resolve")
+		case ot.read(e.Local, e.Spec):
+			err = walkOwn(e.Local)
 		}
 
-		if err := s.rootImport(ctx, w, e); err != nil {
+		if err != nil {
 			return Root{}, err
 		}
 	}
 
-	ot := &ownTree{treeDir: treeDir, files: own, gap: func(spec, reason string) { s.gap(w.path, spec, reason) }}
-	ownDecls := func(rel string) []decl { return rootDecls(own.css[rel]) }
-	rootPkg := func(e entry) error { return s.rootImport(ctx, w, e) }
+	unreached := slices.DeleteFunc(slices.Clone(f.CSS), func(rel string) bool { return w.seen[treePrefix+"/"+rel] })
 
-	for _, rel := range ownStarts(own, f.CSS) {
-		if err := w.importOrder(own, treePrefix, rel, ownDecls, rootPkg, ot.local); err != nil {
+	switch {
+	case len(unreached) > 0 && len(unreached) == len(f.CSS):
+		// A single file has no load order in question.
+		if len(f.CSS) > 1 {
+			s.gap(w.path, "", "no HTML link or script import reaches the root's CSS, so its load order is unknown "+
+				"and token values come from every CSS file in path order")
+		}
+
+		for _, rel := range ownStarts(own, f.CSS) {
+			if err := walkOwn(rel); err != nil {
+				return Root{}, err
+			}
+		}
+	case len(unreached) > 0:
+		filled, err := w.beneath(ownStarts(own, unreached), walkOwn)
+		if err != nil {
 			return Root{}, err
+		}
+
+		if len(filled) > 0 {
+			s.gap(w.path, "", "nothing the architect reads loads "+fileList(treePrefix, filled)+
+				", so their values count only for tokens the loaded CSS does not declare")
 		}
 	}
 
@@ -326,6 +355,55 @@ func ownStarts(own *pkgFiles, files []string) []string {
 	}
 
 	return append(starts, rest...)
+}
+
+// beneath walks starts, own CSS files no entry reached, beneath the
+// declarations so far, which win; it returns the starts that added a name.
+func (w *rootWalk) beneath(starts []string, walk func(rel string) error) ([]string, error) {
+	loaded := w.decls
+
+	declared := make(map[string]bool, len(loaded))
+	for _, d := range loaded {
+		declared[d.Name] = true
+	}
+
+	w.decls = nil
+
+	var filled []string
+
+	for _, rel := range starts {
+		n := len(w.decls)
+
+		if err := walk(rel); err != nil {
+			return nil, err
+		}
+
+		if slices.ContainsFunc(w.decls[n:], func(d decl) bool { return !declared[d.Name] }) {
+			filled = append(filled, rel)
+		}
+	}
+
+	w.decls = append(w.decls, loaded...)
+
+	return filled, nil
+}
+
+// fileList names up to five tree-relative files by their tool-root-relative
+// path, and how many more there are.
+func fileList(treePrefix string, files []string) string {
+	const show = 5
+
+	names := make([]string, 0, min(len(files), show))
+	for _, rel := range files[:min(len(files), show)] {
+		names = append(names, path.Join(treePrefix, rel))
+	}
+
+	list := strings.Join(names, ", ")
+	if len(files) > show {
+		list += fmt.Sprintf(" and %d more", len(files)-show)
+	}
+
+	return list
 }
 
 // ownMaterial resolves the tokens the root's own CSS and sources reference,

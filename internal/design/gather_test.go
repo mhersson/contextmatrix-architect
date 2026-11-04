@@ -97,15 +97,17 @@ func npmLockJSON(t *testing.T, entries map[string]map[string]any) string {
 	return string(data)
 }
 
-// portalTree is a tree whose frontend imports @acme/ui/style/core.css, with
-// @acme/ui and @acme/tokens locked on the registry at srvURL. Only @acme/ui
-// carries an integrity.
+// portalTree is a tree whose frontend loads src/index.css from src/main.tsx,
+// and index.css imports @acme/ui/style/core.css, with @acme/ui and
+// @acme/tokens locked on the registry at srvURL. Only @acme/ui carries an
+// integrity.
 func portalTree(t *testing.T, srvURL string, tarballs map[string][]byte) map[string]string {
 	t.Helper()
 
 	return map[string]string{
 		".npmrc":                 "registry=" + srvURL + "/\n",
 		"frontend/package.json":  `{"name":"frontend","dependencies":{"@acme/ui":"^1.2.0"}}`,
+		"frontend/src/main.tsx":  "import './index.css'\n",
 		"frontend/src/index.css": "@import '" + coreImport + "';\n.tile{border:1px solid var(--color-border)}\n",
 		"package-lock.json": npmLockJSON(t, map[string]map[string]any{
 			"node_modules/@acme/ui": {
@@ -249,8 +251,9 @@ func TestGather_TokensInImportOrder(t *testing.T) {
 			style: map[string]string{"core.css": "@import './theme.css';\n@import '@acme/tokens/vars.css';"},
 			vars:  grey,
 			own: map[string]string{
-				"frontend/src/a.css": "@import './b.css';\n:root{--color-border:#666666}",
-				"frontend/src/b.css": "@import './a.css';",
+				"frontend/src/main.tsx": "import './index.css'\nimport './a.css'\n",
+				"frontend/src/a.css":    "@import './b.css';\n:root{--color-border:#666666}",
+				"frontend/src/b.css":    "@import './a.css';",
 			},
 			want: "#666666",
 		},
@@ -625,8 +628,10 @@ func TestGather_TwoRootsKeepTokensApart(t *testing.T) {
 
 	m, err := gatherPortal(t, srv, t.TempDir(), map[string]string{
 		"frontend/package.json":  `{"name":"frontend"}`,
+		"frontend/src/main.tsx":  "import './index.css'\n",
 		"frontend/src/index.css": ":root{--brand:#111111}\n.a{color:var(--brand)}\n",
 		"admin/package.json":     `{"name":"admin"}`,
+		"admin/src/main.tsx":     "import './index.css'\n",
 		"admin/src/index.css":    ":root{--brand:#222222}\n.b{color:var(--brand)}\n",
 	})
 	require.NoError(t, err)
@@ -804,6 +809,28 @@ func TestGather_FetchingIsBounded(t *testing.T) {
 	assert.True(t, imports["@acme/b/x.css"])
 }
 
+func TestGather_AnUnreachedOwnFileStillReachesItsPackage(t *testing.T) {
+	tarballs := defaultTarballs(t)
+	srv := registryServer(t, tarballs, 0)
+
+	// main.tsx loads app.css; index.css, which imports @acme/ui, is loaded by
+	// nothing the scan reads.
+	files := portalTree(t, srv.URL, tarballs)
+	files["frontend/src/main.tsx"] = "import './app.css'\n"
+	files["frontend/src/app.css"] = ".app{margin:0}\n"
+
+	m, err := gatherPortal(t, srv, t.TempDir(), files)
+	require.NoError(t, err)
+
+	require.Len(t, m.Roots, 1)
+	assert.Equal(t, "#ebebeb", tokenValue(t, m.Roots[0], "--color-border"))
+	assert.Equal(t, []string{tokensDir, uiDir}, m.Roots[0].Packages)
+
+	require.Len(t, m.Gaps, 1, "%+v", m.Gaps)
+	assert.Equal(t, Gap{Root: "portal/frontend"}, Gap{Root: m.Gaps[0].Root, Import: m.Gaps[0].Import})
+	assert.NotEmpty(t, m.Gaps[0].Reason)
+}
+
 // rootAt returns the root of m at path.
 func rootAt(t *testing.T, m Material, path string) Root {
 	t.Helper()
@@ -933,6 +960,196 @@ func TestGather_RelativeImportThatCannotBeReadIsAGap(t *testing.T) {
 				assert.Equal(t, reasonNoFile, m.Gaps[0].Reason)
 			} else {
 				assert.NotEqual(t, reasonNoFile, m.Gaps[0].Reason)
+			}
+		})
+	}
+}
+
+func TestGather_TokensFollowTheLoadedCSS(t *testing.T) {
+	primary := func(v string) string { return ":root{--primary:" + v + "}\n.a{color:var(--primary)}\n" }
+
+	tests := []struct {
+		name  string
+		files map[string]string // under frontend/
+		want  string
+		gaps  []Gap // Root and Import of each
+	}{
+		{
+			name: "a theme nothing imports",
+			files: map[string]string{
+				"src/main.tsx":        "import './index.css'\n",
+				"src/index.css":       primary("#0055ff"),
+				"src/themes/zeta.css": primary("#ff0000"),
+			},
+			want: "#0055ff",
+		},
+		{
+			name: "a vendored copy",
+			files: map[string]string{
+				"src/main.tsx":                 "import './app.css'\n",
+				"src/app.css":                  primary("#0055ff"),
+				"static/lib/bootstrap.min.css": ":root{--primary:#ff0000}",
+			},
+			want: "#0055ff",
+		},
+		{
+			name: "a script's later import wins",
+			files: map[string]string{
+				"src/main.tsx":   "import './tokens.css'\nimport './index.css'\n",
+				"src/index.css":  primary("#0055ff"),
+				"src/tokens.css": primary("#ff0000"),
+			},
+			want: "#0055ff",
+		},
+		{
+			name: "a script's later import wins, swapped",
+			files: map[string]string{
+				"src/main.tsx":   "import './index.css'\nimport './tokens.css'\n",
+				"src/index.css":  primary("#0055ff"),
+				"src/tokens.css": primary("#ff0000"),
+			},
+			want: "#ff0000",
+		},
+		{
+			name: "a shallow entry loads before a component",
+			files: map[string]string{
+				"src/main.tsx":  "import './index.css'\n",
+				"src/index.css": primary("#ff0000"),
+				"src/App.tsx":   "import './App.css'\n",
+				"src/App.css":   primary("#0055ff"),
+			},
+			want: "#0055ff",
+		},
+		{
+			name: "an HTML entry",
+			files: map[string]string{
+				"index.html":     `<link rel="stylesheet" href="/css/site.css">`,
+				"css/site.css":   primary("#0055ff"),
+				"css/zz-old.css": primary("#ff0000"),
+			},
+			want: "#0055ff",
+		},
+		{
+			name: "a nested page's / link to a file of the root",
+			files: map[string]string{
+				"about/index.html": `<link rel="stylesheet" href="/css/site.css">`,
+				"css/site.css":     primary("#0055ff"),
+				"css/zz-old.css":   primary("#ff0000"),
+			},
+			want: "#0055ff",
+		},
+		{
+			name: "own CSS loaded by a file the scan skips fills a name",
+			files: map[string]string{
+				"src/layouts/Layout.astro":   "---\nimport '../styles/global.css'\n---\n<slot />\n",
+				"src/styles/global.css":      ":root{--primary:#0055ff}\n",
+				"src/components/Counter.tsx": "import './Counter.css'\n",
+				"src/components/Counter.css": ".counter{color:var(--primary)}\n",
+			},
+			want: "#0055ff",
+			gaps: []Gap{{Root: "portal/frontend"}},
+		},
+		{
+			name: "an HTML entry's / link served from public",
+			files: map[string]string{
+				"index.html":       `<link rel="stylesheet" href="/theme.css">`,
+				"public/theme.css": primary("#0055ff"),
+				"src/legacy.css":   primary("#ff0000"),
+			},
+			want: "#0055ff",
+		},
+		{
+			name: "an HTML entry's link with a query",
+			files: map[string]string{
+				"index.html":     `<link rel="stylesheet" href="css/site.css?v=3">`,
+				"css/site.css":   primary("#0055ff"),
+				"css/zz-old.css": primary("#ff0000"),
+			},
+			want: "#0055ff",
+		},
+		{
+			name: "an HTML entry's link to a missing file",
+			files: map[string]string{
+				"index.html":     `<link rel="stylesheet" href="css/site.css"><link rel="stylesheet" href="css/gone.css">`,
+				"css/site.css":   primary("#0055ff"),
+				"css/zz-old.css": primary("#ff0000"),
+			},
+			want: "#0055ff",
+			gaps: []Gap{{Root: "portal/frontend", Import: "css/gone.css"}},
+		},
+		{
+			name: "an import alias",
+			files: map[string]string{
+				"src/pages/_app.tsx":     "import '@/styles/globals.css'\n",
+				"src/styles/globals.css": primary("#0055ff"),
+				"src/styles/legacy.css":  primary("#ff0000"),
+			},
+			want: "#0055ff",
+		},
+		{
+			name: "an import alias that does not resolve",
+			files: map[string]string{
+				"src/main.tsx":  "import './index.css'\nimport '@/styles/gone.css'\n",
+				"src/index.css": primary("#0055ff"),
+			},
+			want: "#0055ff",
+			gaps: []Gap{{Root: "portal/frontend", Import: "@/styles/gone.css"}},
+		},
+		{
+			name: "no entry reaches the root's CSS",
+			files: map[string]string{
+				"src/index.css": primary("#0055ff"),
+				"src/zeta.css":  primary("#ff0000"),
+			},
+			want: "#ff0000",
+			gaps: []Gap{{Root: "portal/frontend"}},
+		},
+		{
+			name: "no entry reaches own files that import each other",
+			files: map[string]string{
+				"src/a.css": "@import './b.css';\n" + primary("#0055ff"),
+				"src/b.css": "@import './a.css';\n" + primary("#ff0000"),
+			},
+			want: "#0055ff",
+			gaps: []Gap{{Root: "portal/frontend"}},
+		},
+		{
+			name: "no entry reaches a single CSS file",
+			files: map[string]string{
+				"src/index.css": primary("#0055ff"),
+			},
+			want: "#0055ff",
+		},
+		{
+			name: "a script imports a missing file",
+			files: map[string]string{
+				"src/main.tsx":  "import './index.css'\nimport './gone.css'\n",
+				"src/index.css": primary("#0055ff"),
+			},
+			want: "#0055ff",
+			gaps: []Gap{{Root: "portal/frontend", Import: "./gone.css"}},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			files := map[string]string{"frontend/package.json": `{"name":"frontend"}`}
+			for name, content := range tc.files {
+				files["frontend/"+name] = content
+			}
+
+			m, err := gatherPortal(t, registryServer(t, nil, 0), t.TempDir(), files)
+			require.NoError(t, err)
+
+			require.Len(t, m.Roots, 1)
+			assert.Equal(t, tc.want, tokenValue(t, m.Roots[0], "--primary"))
+
+			require.Len(t, m.Gaps, len(tc.gaps), "%+v", m.Gaps)
+
+			for i, want := range tc.gaps {
+				assert.Equal(t, want.Root, m.Gaps[i].Root)
+				assert.Equal(t, want.Import, m.Gaps[i].Import)
+				assert.NotEmpty(t, m.Gaps[i].Reason)
 			}
 		})
 	}

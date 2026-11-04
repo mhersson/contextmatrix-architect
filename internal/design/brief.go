@@ -242,6 +242,12 @@ func (b briefer) packageLines(pkgs []Package) []string {
 func gapLines(gaps []Gap) []string {
 	out := make([]string, len(gaps))
 	for i, g := range gaps {
+		if g.Import == "" {
+			out[i] = oneLine(g.Reason)
+
+			continue
+		}
+
 		out[i] = oneLine(g.Import) + ": " + oneLine(g.Reason)
 	}
 

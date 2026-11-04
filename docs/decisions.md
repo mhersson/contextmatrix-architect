@@ -268,6 +268,16 @@ HEAD.
 - A registry host that fails with a network error is skipped for 5 minutes,
   and a gather's downloads stop after 3 minutes, each a gap. Why: an
   unreachable registry costs one wait every 5 minutes, not one per package.
+- A frontend's token values come from the CSS its HTML links and script
+  imports load, in load order, following `@import` anywhere in the
+  repository but never through a symlink; a relative or aliased link or
+  import the tree does not hold is a gap, and a remote or templated link is
+  skipped without one. The root's own CSS files none of them reaches are read
+  beneath the loaded CSS and count only for tokens it does not declare, with
+  a gap when they add one; when none reaches the root's own CSS, every CSS
+  file is read in path order, with a gap when there is more than one. Why: an
+  unimported theme or a vendored copy must not override the values the app
+  shows, and CSS that config or a file the scan skips loads still counts.
 - Design material that cannot be had is a gap in the brief, and a gather that
   fails is posted as an error the run goes on after. Why: the checkouts alone
   still make a mockup.

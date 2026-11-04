@@ -69,6 +69,7 @@ func TestScanTree_RootAtTreeRoot(t *testing.T) {
 	writeTree(t, root, map[string]string{
 		"package.json":  `{}`,
 		"src/style.css": `@import '@acme/ui/core.css';`,
+		"src/main.ts":   `import '@acme/ui/core.css'`,
 	})
 
 	got, err := scanTree(root)
@@ -78,7 +79,7 @@ func TestScanTree_RootAtTreeRoot(t *testing.T) {
 	assert.Empty(t, got[0].Dir)
 	assert.Equal(t, []string{"src/style.css"}, got[0].CSS)
 	assert.Equal(t, []entry{{
-		File:    "src/style.css",
+		File:    "src/main.ts",
 		Spec:    "@acme/ui/core.css",
 		Name:    "@acme/ui",
 		Subpath: "core.css",
@@ -116,26 +117,12 @@ func TestScanTree_LocalFileWinsOverBareSpecifier(t *testing.T) {
 		want  []entry
 	}{
 		{
-			name: "css import resolving to a sibling subdirectory file is local",
+			// The own walk resolves these; TestOwnTree_Local covers them.
+			name: "a css file's imports are not entries",
 			files: map[string]string{
-				"app/src/index.css": `@import 'sub/x.css';`,
+				"app/src/index.css": `@import 'sub/x.css'; @import '@acme/ui/x.css';`,
 				"app/src/sub/x.css": `a {}`,
 			},
-		},
-		{
-			name: "css import with no such file is a package",
-			files: map[string]string{
-				"app/src/index.css": `@import 'sub/x.css';`,
-			},
-			want: []entry{{File: "app/src/index.css", Spec: "sub/x.css", Name: "sub", Subpath: "x.css"}},
-		},
-		{
-			name: "css import resolves relative to the importing file",
-			files: map[string]string{
-				"app/src/index.css":   `@import 'sub/x.css';`,
-				"app/other/sub/x.css": `a {}`,
-			},
-			want: []entry{{File: "app/src/index.css", Spec: "sub/x.css", Name: "sub", Subpath: "x.css"}},
 		},
 		{
 			name: "js side-effect import resolving to a local file is local",
@@ -143,11 +130,20 @@ func TestScanTree_LocalFileWinsOverBareSpecifier(t *testing.T) {
 				"app/src/main.ts":   `import 'sub/y.css'`,
 				"app/src/sub/y.css": `a {}`,
 			},
+			want: []entry{{File: "app/src/main.ts", Spec: "sub/y.css", Local: "app/src/sub/y.css"}},
 		},
 		{
 			name: "js side-effect import with no such file is a package",
 			files: map[string]string{
 				"app/src/main.ts": `import 'sub/y.css'`,
+			},
+			want: []entry{{File: "app/src/main.ts", Spec: "sub/y.css", Name: "sub", Subpath: "y.css"}},
+		},
+		{
+			name: "js side-effect import resolves relative to the importing file",
+			files: map[string]string{
+				"app/src/main.ts":     `import 'sub/y.css'`,
+				"app/other/sub/y.css": `a {}`,
 			},
 			want: []entry{{File: "app/src/main.ts", Spec: "sub/y.css", Name: "sub", Subpath: "y.css"}},
 		},
@@ -198,6 +194,53 @@ func TestScanTree_BareJSImportMakesRootWithoutCSSFile(t *testing.T) {
 	assert.Empty(t, got[0].CSS)
 	require.Len(t, got[0].Entries, 1)
 	assert.Equal(t, "sub", got[0].Entries[0].Name)
+}
+
+func TestScanTree_EntriesInLoadOrder(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"app/package.json": `{}`,
+		"app/index.html": `<link rel="icon" href="/favicon.ico">` +
+			`<link rel="stylesheet" href="https://cdn.example.test/x.css">` +
+			`<link rel="stylesheet" href="/b.css"><link rel="stylesheet" href="./a.css?v=2#top">` +
+			`<link rel="stylesheet" href="/gone.css"><link rel="stylesheet" href="/theme.css">` +
+			`<link rel="stylesheet" href="{{ asset('x.css') }}"><link rel="stylesheet" href="${base}/y.css">`,
+		"app/a.css":                     `a {}`,
+		"app/b.css":                     `b {}`,
+		"app/public/theme.css":          `t {}`,
+		"app/src/routes/layout.tsx":     `import './layout.css'`,
+		"app/public/index.html":         `<link rel="stylesheet" href="%PUBLIC_URL%/p.css">`,
+		"app/public/p.css":              `p {}`,
+		"app/top.ts":                    `import './top.css'`,
+		"app/src/main.tsx":              `import './z.css'; import '@acme/ui/x.css'`,
+		"app/src/index.ts":              `import 'sub/y.css'`,
+		"app/src/sub/y.css":             `y {}`,
+		"app/src/App.tsx":               `import './App.css'`,
+		"app/src/pages/_app.tsx":        `import '@/styles/g.css'; import '~/missing.css'`,
+		"app/src/styles/g.css":          `g {}`,
+		"app/src/components/Button.tsx": `import '../../shared.css'`,
+	})
+
+	got, err := scanTree(root)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"app"}, frontendDirs(got))
+	assert.Equal(t, []entry{
+		{File: "app/index.html", Spec: "/b.css", Local: "app/b.css"},
+		{File: "app/index.html", Spec: "./a.css?v=2#top", Local: "app/a.css"},
+		{File: "app/index.html", Spec: "/gone.css", Local: "app/gone.css"},
+		{File: "app/index.html", Spec: "/theme.css", Local: "app/public/theme.css"},
+		{File: "app/public/index.html", Spec: "%PUBLIC_URL%/p.css", Local: "app/public/p.css"},
+		{File: "app/top.ts", Spec: "./top.css", Local: "app/top.css"},
+		{File: "app/src/index.ts", Spec: "sub/y.css", Local: "app/src/sub/y.css"},
+		{File: "app/src/main.tsx", Spec: "./z.css", Local: "app/src/z.css"},
+		{File: "app/src/main.tsx", Spec: "@acme/ui/x.css", Name: "@acme/ui", Subpath: "x.css"},
+		{File: "app/src/App.tsx", Spec: "./App.css", Local: "app/src/App.css"},
+		{File: "app/src/pages/_app.tsx", Spec: "@/styles/g.css", Local: "app/src/styles/g.css"},
+		{File: "app/src/pages/_app.tsx", Spec: "~/missing.css"},
+		{File: "app/src/routes/layout.tsx", Spec: "./layout.css", Local: "app/src/routes/layout.css"},
+		{File: "app/src/components/Button.tsx", Spec: "../../shared.css", Local: "app/shared.css"},
+	}, got[0].Entries)
 }
 
 func TestScanTree_SkipsVendoredDirs(t *testing.T) {

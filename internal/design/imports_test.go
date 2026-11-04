@@ -175,3 +175,72 @@ func TestSplitBare(t *testing.T) {
 		})
 	}
 }
+
+func TestHTMLStylesheets(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{
+			name: "double quoted",
+			src:  `<link rel="stylesheet" href="/a.css">`,
+			want: []string{"/a.css"},
+		},
+		{
+			name: "single quoted",
+			src:  `<link rel='stylesheet' href='/a.css'>`,
+			want: []string{"/a.css"},
+		},
+		{
+			name: "unquoted",
+			src:  `<link rel=stylesheet href=/a.css>`,
+			want: []string{"/a.css"},
+		},
+		{
+			name: "href first, self-closing, upper case",
+			src:  `<LINK HREF="/a.css" REL="StyleSheet" />`,
+			want: []string{"/a.css"},
+		},
+		{
+			name: "stylesheet among other tokens",
+			src:  `<link rel="preload stylesheet" href="/a.css">`,
+			want: []string{"/a.css"},
+		},
+		{
+			name: "an alternate stylesheet skipped",
+			src:  `<link rel="alternate stylesheet" href="/dark.css" title="Dark">`,
+			want: nil,
+		},
+		{
+			name: "preload and icon skipped",
+			src:  `<link rel="preload" href="/a.css" as="style"><link rel="icon" href="/favicon.ico">`,
+			want: nil,
+		},
+		{
+			name: "a data attribute is not the href",
+			src:  `<link rel="stylesheet" data-href="/a.css">`,
+			want: nil,
+		},
+		{
+			name: "remote hrefs kept",
+			src:  `<link rel="stylesheet" href="https://cdn.example.test/a.css"><link rel="stylesheet" href="//cdn.example.test/b.css">`,
+			want: []string{"https://cdn.example.test/a.css", "//cdn.example.test/b.css"},
+		},
+		{
+			name: "document order",
+			src:  "<head>\n<link rel=\"stylesheet\" href=\"b.css\">\n<link\n  rel=\"stylesheet\"\n  href=\"a.css\">\n</head>",
+			want: []string{"b.css", "a.css"},
+		},
+		{
+			name: "commented link ignored",
+			src:  `<!-- <link rel="stylesheet" href="/old.css"> --><link rel="stylesheet" href="/new.css">`,
+			want: []string{"/new.css"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, htmlStylesheets(tt.src))
+		})
+	}
+}
