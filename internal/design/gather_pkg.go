@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strings"
 )
 
 // maxKeptCSSBytes bounds the reflowed CSS one Gather writes.
@@ -147,7 +146,7 @@ func (s *gathering) pkg(ctx context.Context, w *rootWalk, l locked, spec string)
 		return nil, "the registry url uses an environment variable", nil
 	}
 
-	dir := "_npm+" + strings.ReplaceAll(l.Name, "/", "+") + "@" + l.Version
+	dir := PackageDir(l.Name, l.Version)
 	if p, ok := s.pkgs[dir]; ok {
 		return p, p.failed, nil
 	}

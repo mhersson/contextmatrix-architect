@@ -56,6 +56,10 @@ const (
 	EventAwaitInput = "await_input"
 	// EventGrounded lists the sources a code stage checked out.
 	EventGrounded = "grounded"
+	// EventFetched lists the packages a stage with the design key kept as new
+	// sources: {"stage", "packages": [{"tag", "name", "version", "registry",
+	// "verified"}]}.
+	EventFetched = "fetched"
 	// EventResearch is one web_search or web_fetch call: the query and the
 	// result count, or the URL with the page's final URL, title and source
 	// tag, or the guard rule that refused it, or the error. A search's

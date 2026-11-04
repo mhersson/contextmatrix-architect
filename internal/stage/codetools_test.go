@@ -48,7 +48,7 @@ func toolByName(t *testing.T, ts []tools.Tool, name string) tools.Tool {
 
 func TestCodeTools_ReadIsTaggedWithTheProjectSource(t *testing.T) {
 	root, repos := codeRoot(t)
-	ts := CodeTools(root, repos)
+	ts := CodeTools(root, repos, nil)
 
 	res, err := toolByName(t, ts, "read").Execute(context.Background(), map[string]any{"path": "alpha/cmd/main.go"})
 	require.NoError(t, err)
@@ -66,7 +66,7 @@ func TestCodeTools_ReadIsTaggedWithTheProjectSource(t *testing.T) {
 
 func TestCodeTools_ReadOutsideTheRootIsRefused(t *testing.T) {
 	root, repos := codeRoot(t)
-	ts := CodeTools(root, repos)
+	ts := CodeTools(root, repos, nil)
 
 	_, err := toolByName(t, ts, "read").Execute(context.Background(), map[string]any{"path": "../../etc/passwd"})
 	require.Error(t, err)
@@ -76,7 +76,7 @@ func TestCodeTools_TagFollowsThePathArgument(t *testing.T) {
 	root, repos := codeRoot(t)
 	// A dot-directory under a project keeps its name when the path is trimmed.
 	repos = append(repos, RepoFacts{Project: "gamma", Dir: ".github", SourceTag: "S3"})
-	ts := CodeTools(root, repos)
+	ts := CodeTools(root, repos, nil)
 
 	tests := []struct {
 		name string
@@ -111,6 +111,35 @@ func TestCodeTools_TagFollowsThePathArgument(t *testing.T) {
 	}
 }
 
+func TestCodeTools_TagsPackageDirs(t *testing.T) {
+	root := t.TempDir()
+	repos := []RepoFacts{{Project: "alpha", Dir: "alpha", SHA: "aaa", SourceTag: "S1"}}
+	ts := CodeTools(root, repos, map[string]string{"_npm+@acme+ui@1.2.3": "S2"})
+
+	tests := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{"grep under a package dir", map[string]any{"pattern": "button", "path": "_npm+@acme+ui@1.2.3/style"}, "[S2] "},
+		{"grep under a tree", map[string]any{"pattern": "button", "path": "alpha"}, "[S1] "},
+		{"grep without a path", map[string]any{"pattern": "button"}, "[S1,S2] "},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tool, ok := toolByName(t, ts, "grep").(tagged)
+			require.True(t, ok)
+
+			tool.Tool = stubbed{tool.Tool}
+
+			res, err := tool.Execute(context.Background(), tc.args)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want+"stub", res.Text)
+		})
+	}
+}
+
 // stubbed keeps a tool's name and schema but answers without running it.
 type stubbed struct{ tools.Tool }
 
@@ -120,7 +149,7 @@ func (stubbed) Execute(context.Context, map[string]any) (tools.Result, error) {
 
 func TestCodeTools_RepoInfo(t *testing.T) {
 	root, repos := codeRoot(t)
-	ts := CodeTools(root, repos)
+	ts := CodeTools(root, repos, nil)
 
 	res, err := toolByName(t, ts, "repo_info").Execute(context.Background(), map[string]any{})
 	require.NoError(t, err)

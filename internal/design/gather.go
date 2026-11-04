@@ -54,6 +54,12 @@ type Package struct {
 	Files                        []string
 }
 
+// PackageDir is the top-level directory under the tool root a package's kept
+// files are written to. "_" starts no project name, so no tree collides.
+func PackageDir(name, version string) string {
+	return "_npm+" + strings.ReplaceAll(name, "/", "+") + "@" + version
+}
+
 // Gap is design material that could not be had. Root is the Path of the root
 // it belongs to, Import the import spec as written.
 type Gap struct{ Root, Import, Reason string }

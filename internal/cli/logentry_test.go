@@ -51,6 +51,7 @@ func TestLogEntryFor_AnErrorNamesContinueOnlyWhenItStoppedAStageRun(t *testing.T
 		{"a refusal cap stop", map[string]any{"stage": "solution_design", "cap": "blueprint", "message": "cap used up."}, false},
 		{"a refused responder", map[string]any{"stage": "solution_design", "reason": "responder_refused", "message": "refused."}, false},
 		{"a mockup responder that failed, whose revision is used", map[string]any{"stage": "mockup", "reason": "responder_failed", "revision": 1, "message": "failed."}, false},
+		{"design material that could not be gathered, the run goes on", map[string]any{"stage": "mockup", "reason": "design", "message": "failed."}, false},
 		{"a stage error that gave no reason", map[string]any{"stage": "solution_design", "message": "stopped."}, false},
 		{"a stale reply", map[string]any{"reason": "stale_reply", "message": "answers nothing."}, false},
 		{"a failure with no stage", map[string]any{"message": "boom."}, false},
@@ -390,6 +391,33 @@ func TestLogEntryFor_GroundedShowsNoRepositoryURL(t *testing.T) {
 	}})
 	require.True(t, ok)
 	assert.Equal(t, "Checked out alpha at abc [S1].", entry.Content)
+}
+
+func TestLogEntryFor_FetchedNamesEachPackage(t *testing.T) {
+	fetched := func(verified bool) protocol.LogEntry {
+		t.Helper()
+
+		entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventFetched, BlueprintID: "S1", Payload: map[string]any{
+			"stage": "mockup", "packages": []any{map[string]any{
+				"tag": "S2", "name": "@acme/ui", "version": "1.2.3", "registry": "registry.example.test", "verified": verified,
+			}},
+		}})
+		require.True(t, ok)
+
+		return entry
+	}
+
+	verified, unverified := fetched(true), fetched(false)
+
+	for _, entry := range []protocol.LogEntry{verified, unverified} {
+		assert.Equal(t, "system", entry.Type)
+
+		for _, value := range []string{"@acme/ui", "1.2.3", "registry.example.test", "[S2]"} {
+			assert.Contains(t, entry.Content, value)
+		}
+	}
+
+	assert.NotEqual(t, verified.Content, unverified.Content, "an unverified package says so")
 }
 
 func TestLogEntryFor_ReportIsTheVerdictNotTheBody(t *testing.T) {

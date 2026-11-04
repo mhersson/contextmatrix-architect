@@ -193,6 +193,7 @@ func TestLoadDir_Invalid(t *testing.T) {
 		{dir: "testdata/broken", want: "persona"},
 		{dir: "testdata/dupstage", want: "duplicate stage"},
 		{dir: "testdata/badconsumes", want: "consumes"},
+		{dir: "testdata/baddesign", want: "design"},
 	}
 
 	for _, tt := range tests {

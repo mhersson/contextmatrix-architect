@@ -1,0 +1,6 @@
+name: bad
+version: "1"
+stages:
+  - id: mockup
+    persona: designer
+    design: true

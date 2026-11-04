@@ -27,6 +27,7 @@ import (
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/code"
 	"github.com/mhersson/contextmatrix-architect/internal/config"
+	"github.com/mhersson/contextmatrix-architect/internal/design"
 	"github.com/mhersson/contextmatrix-architect/internal/research"
 	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
@@ -119,6 +120,7 @@ func buildServer(ctx context.Context, cfg *config.Config, deps *runtimeDeps, log
 		Sink:           eventSink(hub),
 		HarnessLine:    harnessForwarder(hub),
 		Workspace:      workspace,
+		Design:         design.NewGatherer(filepath.Join(cfg.StateDir, "workspaces", "packages"), deps.transport),
 		ExportDir:      filepath.Join(cfg.StateDir, "exports"),
 		Projects:       cmProjects(cfg.ContextMatrixURL, deps.transport),
 		CMTools:        cmReadTools(cfg.ContextMatrixURL, deps.transport),

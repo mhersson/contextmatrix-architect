@@ -881,7 +881,7 @@ func (c *Controller) reviewerTools(ctx context.Context, sess *session, bp store.
 			return nil, "", closer, err
 		}
 
-		ts = stage.CodeTools(facts.root, facts.repos)
+		ts = stage.CodeTools(facts.root, facts.repos, facts.packages)
 		lead = checkoutLines(facts)
 	}
 

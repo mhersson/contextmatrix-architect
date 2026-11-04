@@ -9,6 +9,7 @@ stages:
     persona: designer
     consumes: [intake]
     tools: [code]
+    design: true
     checks: [mockup]
     policy: human
   - id: slicing

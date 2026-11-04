@@ -905,6 +905,8 @@ func sourceLine(s store.Source, own []string) string {
 		return s.Tag() + ": another project's repository " + atCommit(s.Version)
 	case s.Kind == "repo":
 		return s.Tag() + ": " + s.Identity + " " + atCommit(s.Version)
+	case s.Kind == sourceKindPackage:
+		return s.Tag() + ": package " + strings.TrimPrefix(s.Identity, packageIdentityPrefix) + " " + s.Version
 	default:
 		return s.Tag() + ": " + s.Identity
 	}

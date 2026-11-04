@@ -54,10 +54,12 @@ func (c *Controller) cmSource(ctx context.Context, bp store.Blueprint, stageID s
 }
 
 // codeFacts is what a code stage knows: the jailed tool root, the facts
-// repo_info reports, and the contract view of every target project.
+// repo_info reports, the tag of each kept package's directory, and the
+// contract view of every target project.
 type codeFacts struct {
 	root     string
 	repos    []stage.RepoFacts
+	packages map[string]string
 	projects map[string]contract.Project
 	// listed is every project ContextMatrix lists, for the card id prefixes
 	// the leak guard refuses.
@@ -275,6 +277,8 @@ func (c *Controller) prepareCode(ctx context.Context, sess *session, bp store.Bl
 	for _, s := range known {
 		byIdentity[s.Identity] = s
 	}
+
+	facts.packages = packageTags(known)
 
 	// A blueprint with any tree needs the credentials, even when every tree
 	// is already checked out, so nothing is fetched anonymously; one with no

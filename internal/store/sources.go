@@ -7,9 +7,10 @@ import (
 )
 
 // Source is something external a blueprint read, by Kind: a repository at a
-// sha ("repo"), a web page ("url"), the ContextMatrix board ("cm") or a
-// project's knowledge provider ("knowledge"). Tool results carry its tag so
-// claims can cite it.
+// sha ("repo"), a web page ("url"), the ContextMatrix board ("cm"), a
+// project's knowledge provider ("knowledge") or a package kept for the
+// design material at its locked version ("package"). Tool results carry its
+// tag so claims can cite it.
 type Source struct {
 	BlueprintID string
 	Number      int

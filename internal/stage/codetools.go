@@ -3,7 +3,9 @@ package stage
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mhersson/contextmatrix-harness/llm"
@@ -27,14 +29,25 @@ type RepoFacts struct {
 
 // CodeTools is the read-only tool set of a code stage: the harness read, grep
 // and glob tools jailed to root, each result prefixed with the source tag of
-// the project its path starts with, plus repo_info. All three harness tools
-// take their location in the "path" argument; grep and glob default it to the
-// whole root, which is tagged with every source.
-func CodeTools(root string, repos []RepoFacts) []tools.Tool {
+// the project or kept package its path starts with, plus repo_info. packages
+// maps a kept package's top-level directory to its tag. All three harness
+// tools take their location in the "path" argument; grep and glob default it
+// to the whole root, which is tagged with every source.
+func CodeTools(root string, repos []RepoFacts, packages map[string]string) []tools.Tool {
 	tags := map[string]string{}
+	all := make([]string, 0, len(repos)+len(packages))
+
 	for _, r := range repos {
 		tags[r.Dir] = r.SourceTag
+		all = append(all, r.SourceTag)
 	}
+
+	for _, dir := range slices.Sorted(maps.Keys(packages)) {
+		tags[dir] = packages[dir]
+		all = append(all, packages[dir])
+	}
+
+	whole := "[" + strings.Join(all, ",") + "] "
 
 	tagFor := func(args map[string]any) string {
 		path := strings.TrimSpace(stringArg(args, "path"))
@@ -56,12 +69,7 @@ func CodeTools(root string, repos []RepoFacts) []tools.Tool {
 			}
 		}
 
-		all := make([]string, 0, len(repos))
-		for _, r := range repos {
-			all = append(all, r.SourceTag)
-		}
-
-		return "[" + strings.Join(all, ",") + "] "
+		return whole
 	}
 
 	return []tools.Tool{

@@ -322,6 +322,26 @@ func logEntryFor(e blueprint.Event) (protocol.LogEntry, bool) {
 		}
 
 		entry.Content = b.String() + "."
+	case blueprint.EventFetched:
+		entry.Type = "system"
+
+		var b strings.Builder
+
+		b.WriteString("Fetched ")
+
+		for i, pkg := range anyMaps(p["packages"]) {
+			if i > 0 {
+				b.WriteString("; ")
+			}
+
+			fmt.Fprintf(&b, "%s %s from %s [%s]", str(pkg["name"]), str(pkg["version"]), str(pkg["registry"]), str(pkg["tag"]))
+
+			if verified, _ := pkg["verified"].(bool); !verified {
+				b.WriteString(", unverified")
+			}
+		}
+
+		entry.Content = b.String() + "."
 	case blueprint.EventReport:
 		// The verdict only: the artifact is on the sheet.
 		entry.Type = "text"
@@ -1246,10 +1266,11 @@ func stopsStage(p map[string]any) bool {
 }
 
 // goesOn reports an error reason after which the pipeline goes on by
-// itself: a responder a cap refused inside its asking run, and a mockup
-// responder that failed, whose revision is then used.
+// itself: a responder a cap refused inside its asking run, a mockup
+// responder that failed, whose revision is then used, and design material
+// that could not be gathered, whose run goes on without it.
 func goesOn(reason string) bool {
-	return reason == "responder_refused" || reason == "responder_failed"
+	return reason == "responder_refused" || reason == "responder_failed" || reason == "design"
 }
 
 // resumeText renders a resume reply: the stage it runs again, or that
