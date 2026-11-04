@@ -92,11 +92,30 @@ func (l *yarnLock) resolve(name, rangeSpec string) (locked, bool) {
 	// An alias is recorded under the alias; the real name is in the
 	// resolution (Berry) or the descriptor's npm: range (classic).
 	realName := name
+	local := false
 
 	if l.berry {
-		if n := yarnDescriptorName(entry.Resolution); n != "" {
-			realName = n
+		n := yarnDescriptorName(entry.Resolution)
+		if n == "" {
+			return locked{}, false
 		}
+
+		// Only a registry package or a package inside the repository can be
+		// told apart from its name and version; git, tarball, patch: and
+		// file: resolutions are some other package.
+		protocol := strings.TrimPrefix(entry.Resolution, n+"@")
+
+		switch {
+		case strings.HasPrefix(protocol, "npm:"):
+		case strings.HasPrefix(protocol, "workspace:"),
+			strings.HasPrefix(protocol, "link:"),
+			strings.HasPrefix(protocol, "portal:"):
+			local = true
+		default:
+			return locked{}, false
+		}
+
+		realName = n
 	} else if target, ok := strings.CutPrefix(rangeSpec, "npm:"); ok {
 		if n := yarnDescriptorName(target); n != "" {
 			realName = n
@@ -108,7 +127,7 @@ func (l *yarnLock) resolve(name, rangeSpec string) (locked, bool) {
 		Version:   entry.Version,
 		Resolved:  entry.resolved,
 		Integrity: entry.integrity,
-		Local:     l.berry && strings.Contains(entry.Resolution, "@workspace:"),
+		Local:     local,
 		pos:       descriptor,
 	}, true
 }

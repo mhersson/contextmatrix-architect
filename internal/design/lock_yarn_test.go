@@ -263,3 +263,67 @@ func TestYarnLock_Malformed(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, lock)
 }
+
+const yarnBerryProtocolsFixture = `__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"@acme/patched@patch:@acme/patched@npm%3A1.0.0#./patches/p.patch":
+  version: 1.0.0
+  resolution: "@acme/patched@patch:@acme/patched@npm%3A1.0.0#./patches/p.patch::version=1.0.0&hash=abc"
+
+"@acme/forked@github:acme/forked#main":
+  version: 1.0.0
+  resolution: "@acme/forked@https://github.com/acme/forked.git#commit=abc123"
+
+"@acme/tarball@https://example.test/tarball.tgz":
+  version: 1.0.0
+  resolution: "@acme/tarball@https://example.test/tarball.tgz"
+
+"@acme/vendored@file:./vendor/vendored":
+  version: 1.0.0
+  resolution: "@acme/vendored@file:./vendor/vendored#./vendor/vendored::hash=abc"
+
+"@acme/linked@link:../linked":
+  version: 0.0.0-use.local
+  resolution: "@acme/linked@link:../linked::locator=app%40workspace%3A."
+
+"@acme/portaled@portal:../portaled":
+  version: 0.0.0-use.local
+  resolution: "@acme/portaled@portal:../portaled::locator=app%40workspace%3A."
+`
+
+func TestYarnBerryLock_Protocols(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"yarn.lock": yarnBerryProtocolsFixture})
+
+	lock, err := readLockfile(root)
+	require.NoError(t, err)
+	require.NotNil(t, lock)
+
+	tests := []struct {
+		name      string
+		pkg       string
+		rangeSpec string
+		wantOK    bool
+	}{
+		{name: "a patch is not the registry package", pkg: "@acme/patched", rangeSpec: "patch:@acme/patched@npm%3A1.0.0#./patches/p.patch"},
+		{name: "a git package is not the registry package", pkg: "@acme/forked", rangeSpec: "github:acme/forked#main"},
+		{name: "a tarball package is not the registry package", pkg: "@acme/tarball", rangeSpec: "https://example.test/tarball.tgz"},
+		{name: "a file package is not the registry package", pkg: "@acme/vendored", rangeSpec: "file:./vendor/vendored"},
+		{name: "a link is local", pkg: "@acme/linked", rangeSpec: "link:../linked", wantOK: true},
+		{name: "a portal is local", pkg: "@acme/portaled", rangeSpec: "portal:../portaled", wantOK: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := lock.fromRoot("", tt.pkg, tt.rangeSpec)
+			require.Equal(t, tt.wantOK, ok)
+
+			if tt.wantOK {
+				assert.Equal(t, tt.pkg, got.Name)
+				assert.True(t, got.Local)
+			}
+		})
+	}
+}
