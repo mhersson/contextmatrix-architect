@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 // maxTokenNames bounds the custom property names one root resolves.
@@ -67,6 +68,7 @@ type Gap struct{ Root, Import, Reason string }
 // gathering is the state of one Gather call.
 type gathering struct {
 	g        *Gatherer
+	fetchBy  time.Time // downloads stop here; Gather's own ctx is not wrapped
 	root     string
 	pkgs     map[string]*keptPkg // by dir
 	order    []*keptPkg          // in the order first reached
@@ -92,7 +94,7 @@ type rootWalk struct {
 // writes the package CSS those roots import under req.Root. What cannot be had
 // is a Gap; only a local read or write failure or a cancelled ctx is an error.
 func (g *Gatherer) Gather(ctx context.Context, req Request) (Material, error) {
-	s := &gathering{g: g, root: req.Root, pkgs: map[string]*keptPkg{}, seenGaps: map[Gap]bool{}}
+	s := &gathering{g: g, fetchBy: time.Now().Add(g.fetchFor), root: req.Root, pkgs: map[string]*keptPkg{}, seenGaps: map[Gap]bool{}}
 
 	var m Material
 

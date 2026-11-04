@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -681,4 +683,123 @@ func TestGather_ClassicFileEntryIsNotFetched(t *testing.T) {
 	assert.Equal(t, "portal/frontend", m.Gaps[0].Root)
 	assert.Equal(t, coreImport, m.Gaps[0].Import)
 	assert.NotEmpty(t, m.Gaps[0].Reason)
+}
+
+// hangingPortal writes, under a new tool root it returns, a tree whose frontend
+// imports @acme/a and @acme/b, both locked on a registry that never answers.
+func hangingPortal(t *testing.T) (*httptest.Server, string) {
+	t.Helper()
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	t.Cleanup(srv.Close)
+
+	return srv, hangingRoot(t, srv.URL)
+}
+
+// hangingRoot is a new tool root holding hangingPortal's tree for the registry at srvURL.
+func hangingRoot(t *testing.T, srvURL string) string {
+	t.Helper()
+
+	root := t.TempDir()
+	writeTree(t, filepath.Join(root, "portal"), map[string]string{
+		".npmrc":                 "registry=" + srvURL + "/\n",
+		"frontend/package.json":  `{"name":"frontend","dependencies":{"@acme/a":"1.0.0","@acme/b":"1.0.0"}}`,
+		"frontend/src/index.css": "@import '@acme/a/x.css';\n@import '@acme/b/x.css';\n",
+		"package-lock.json": npmLockJSON(t, map[string]map[string]any{
+			"node_modules/@acme/a": {"version": "1.0.0", "resolved": srvURL + "/a.tgz"},
+			"node_modules/@acme/b": {"version": "1.0.0", "resolved": srvURL + "/b.tgz"},
+		}),
+	})
+
+	return root
+}
+
+func TestGather_AnUnreachableHostIsSkippedByTheNextGather(t *testing.T) {
+	srv, root := hangingPortal(t)
+
+	ct := &countingTransport{rt: srv.Client().Transport}
+	g := NewGatherer(t.TempDir(), ct)
+	g.client.Timeout = 100 * time.Millisecond
+
+	for i := range 2 {
+		m, err := g.Gather(t.Context(), portalRequest(root))
+		require.NoError(t, err)
+
+		// The first gather's one request marks the host; the second sends none.
+		assert.EqualValues(t, 1, ct.n.Load(), "requests after gather %d", i+1)
+
+		imports := map[string]bool{}
+		for _, gap := range m.Gaps {
+			imports[gap.Import] = true
+		}
+
+		assert.True(t, imports["@acme/a/x.css"], "gather %d", i+1)
+		assert.True(t, imports["@acme/b/x.css"], "gather %d", i+1)
+	}
+}
+
+func TestGather_ConcurrentGathersShareOneGatherer(t *testing.T) {
+	srv, first := hangingPortal(t)
+
+	g := NewGatherer(t.TempDir(), srv.Client().Transport)
+	g.client.Timeout = 100 * time.Millisecond
+
+	roots := []string{first}
+	for range 7 {
+		roots = append(roots, hangingRoot(t, srv.URL))
+	}
+
+	mats := make([]Material, len(roots))
+	errs := make([]error, len(roots))
+
+	var wg sync.WaitGroup
+
+	for i, root := range roots {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			mats[i], errs[i] = g.Gather(t.Context(), portalRequest(root))
+		}()
+	}
+
+	wg.Wait()
+
+	for i := range roots {
+		require.NoError(t, errs[i])
+
+		imports := map[string]bool{}
+		for _, gap := range mats[i].Gaps {
+			imports[gap.Import] = true
+		}
+
+		assert.True(t, imports["@acme/a/x.css"], "gather %d", i)
+		assert.True(t, imports["@acme/b/x.css"], "gather %d", i)
+	}
+}
+
+func TestGather_FetchingIsBounded(t *testing.T) {
+	srv, root := hangingPortal(t)
+
+	g := NewGatherer(t.TempDir(), srv.Client().Transport)
+	g.fetchFor = 200 * time.Millisecond
+
+	start := time.Now()
+	m, err := g.Gather(t.Context(), portalRequest(root))
+
+	require.NoError(t, err)
+	assert.Less(t, time.Since(start), 5*time.Second)
+
+	imports := map[string]bool{}
+
+	for _, gap := range m.Gaps {
+		assert.Equal(t, "portal/frontend", gap.Root)
+		assert.NotEmpty(t, gap.Reason)
+
+		imports[gap.Import] = true
+	}
+
+	assert.True(t, imports["@acme/a/x.css"])
+	assert.True(t, imports["@acme/b/x.css"])
 }

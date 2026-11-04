@@ -13,11 +13,13 @@ import (
 	"hash"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,6 +27,8 @@ const (
 	maxTarballBytes = 100 << 20
 	maxRedirects    = 5
 	fetchTimeout    = 2 * time.Minute
+	hostDownFor     = 5 * time.Minute
+	gatherFetchFor  = 3 * time.Minute
 )
 
 // gapError is a failure to get a package that the mockup designer is told
@@ -38,7 +42,21 @@ func (e gapError) Error() string { return e.reason }
 type Gatherer struct {
 	cacheDir string
 	client   *http.Client
+
+	now      func() time.Time
+	downFor  time.Duration // how long a host that failed on the network is skipped
+	fetchFor time.Duration // the budget for one Gather's downloads
+
+	mu   sync.Mutex
+	down map[string]time.Time // host to the time it may be tried again
 }
+
+// transportError is a download that failed on the network rather than on an
+// answer from the registry.
+type transportError struct{ err error }
+
+func (e transportError) Error() string { return e.err.Error() }
+func (e transportError) Unwrap() error { return e.err }
 
 // NewGatherer returns a Gatherer caching in cacheDir. A nil rt means
 // http.DefaultTransport.
@@ -49,6 +67,10 @@ func NewGatherer(cacheDir string, rt http.RoundTripper) *Gatherer {
 
 	return &Gatherer{
 		cacheDir: cacheDir,
+		now:      time.Now,
+		downFor:  hostDownFor,
+		fetchFor: gatherFetchFor,
+		down:     map[string]time.Time{},
 		client: &http.Client{
 			Transport:     rt,
 			Timeout:       fetchTimeout,
@@ -108,12 +130,35 @@ func (g *Gatherer) tarball(ctx context.Context, rawURL, integrity string) (path 
 		return path, verified, nil
 	}
 
+	if g.hostDown(u.Host) {
+		return "", false, gapError{"the registry could not be reached"}
+	}
+
 	verified, err = g.download(ctx, rawURL, path, want)
 	if err != nil {
+		var te transportError
+		if errors.As(err, &te) && ctx.Err() == nil {
+			g.markDown(u.Host)
+		}
+
 		return "", false, err
 	}
 
 	return path, verified, nil
+}
+
+func (g *Gatherer) hostDown(host string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	return g.now().Before(g.down[host])
+}
+
+func (g *Gatherer) markDown(host string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	g.down[host] = g.now().Add(g.downFor)
 }
 
 // checkCached reports whether path exists and, when want is set, whether it
@@ -174,7 +219,7 @@ func (g *Gatherer) download(ctx context.Context, rawURL, path string, want *inte
 			err = urlErr.Err
 		}
 
-		return false, fmt.Errorf("design: fetch package: %w", err)
+		return false, transportError{fmt.Errorf("design: fetch package: %w", err)}
 	}
 
 	defer func() { _ = resp.Body.Close() }()
@@ -191,7 +236,7 @@ func (g *Gatherer) download(ctx context.Context, rawURL, path string, want *inte
 
 	magic, err := body.Peek(2)
 	if err != nil && !errors.Is(err, io.EOF) {
-		return false, fmt.Errorf("design: read package: %w", err)
+		return false, bodyError("design: read package", err)
 	}
 
 	if len(magic) < 2 || magic[0] != 0x1f || magic[1] != 0x8b {
@@ -224,7 +269,7 @@ func (g *Gatherer) download(ctx context.Context, rawURL, path string, want *inte
 
 	n, err := io.Copy(dst, body)
 	if err != nil {
-		return false, fmt.Errorf("design: download package: %w", err)
+		return false, bodyError("design: download package", err)
 	}
 
 	if n > maxTarballBytes {
@@ -244,6 +289,18 @@ func (g *Gatherer) download(ctx context.Context, rawURL, path string, want *inte
 	}
 
 	return h != nil, nil
+}
+
+// bodyError wraps a failed body read; a network error is a transportError.
+func bodyError(op string, err error) error {
+	err = fmt.Errorf("%s: %w", op, err)
+
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return transportError{err}
+	}
+
+	return err
 }
 
 // integrityCheck is the strongest digest in an npm integrity string.

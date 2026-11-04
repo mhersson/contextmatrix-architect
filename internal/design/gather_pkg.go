@@ -190,16 +190,26 @@ func (s *gathering) pkg(ctx context.Context, w *rootWalk, l locked, spec string)
 		p.registry = u.Host
 	}
 
-	tgz, verified, err := s.g.tarball(ctx, rawURL, integrity)
+	fetchCtx, cancel := context.WithDeadline(ctx, s.fetchBy)
+	tgz, verified, err := s.g.tarball(fetchCtx, rawURL, integrity)
+
+	outOfTime := fetchCtx.Err() != nil
+
+	cancel()
+
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, "", fmt.Errorf("design: gather: %w", ctx.Err())
 		}
 
 		var gap gapError
-		if errors.As(err, &gap) {
+
+		switch {
+		case errors.As(err, &gap):
 			p.failed = gap.reason
-		} else {
+		case outOfTime:
+			p.failed = "the downloads ran out of time"
+		default:
 			slog.Warn("design: fetch package", "package", dir, "error", err)
 
 			p.failed = "the registry could not be reached"

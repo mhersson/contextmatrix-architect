@@ -1,10 +1,12 @@
 package design
 
 import (
+	"context"
 	"crypto/sha1" //nolint:gosec // npm integrity strings still use sha1
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +17,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -414,4 +417,109 @@ func TestTarball_Redirects(t *testing.T) {
 	}
 
 	assert.False(t, sawAuth.Load(), "no request carried an Authorization header")
+}
+
+// countingTransport counts the requests a client sends.
+type countingTransport struct {
+	rt http.RoundTripper
+	n  atomic.Int32
+}
+
+func (c *countingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	c.n.Add(1)
+
+	return c.rt.RoundTrip(r)
+}
+
+func hangingGatherer(t *testing.T) (*httptest.Server, *Gatherer, *countingTransport) {
+	t.Helper()
+
+	srv, g := tarballServer(t, func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() })
+	ct := &countingTransport{rt: g.client.Transport}
+	g.client.Transport = ct
+
+	return srv, g, ct
+}
+
+func TestTarball_AnUnreachableHostIsRememberedForAWhile(t *testing.T) {
+	srv, g, ct := hangingGatherer(t)
+	g.client.Timeout = 200 * time.Millisecond
+
+	now := time.Now()
+	g.now = func() time.Time { return now }
+
+	for _, name := range []string{"a", "b", "c"} {
+		_, _, err := g.tarball(t.Context(), srv.URL+"/"+name+".tgz", "")
+		require.Error(t, err)
+	}
+
+	assert.EqualValues(t, 1, ct.n.Load())
+
+	now = now.Add(g.downFor - time.Second)
+
+	_, _, err := g.tarball(t.Context(), srv.URL+"/d.tgz", "")
+	require.Error(t, err)
+	assert.EqualValues(t, 1, ct.n.Load())
+
+	now = now.Add(2 * time.Second)
+
+	_, _, err = g.tarball(t.Context(), srv.URL+"/e.tgz", "")
+	require.Error(t, err)
+	assert.EqualValues(t, 2, ct.n.Load())
+}
+
+func TestTarball_AStatusErrorIsNotRemembered(t *testing.T) {
+	var requests atomic.Int32
+
+	srv, g := tarballServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+
+			return
+		}
+
+		_, _ = w.Write(tgz(t, map[string]string{"package/a.css": "a{}"}))
+	})
+
+	_, _, err := g.tarball(t.Context(), srv.URL+"/one.tgz", "")
+	requireGap(t, err, "login")
+
+	_, _, err = g.tarball(t.Context(), srv.URL+"/two.tgz", "")
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, requests.Load())
+}
+
+func TestTarball_ADoneContextDoesNotMarkTheHost(t *testing.T) {
+	srv, g, ct := hangingGatherer(t)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+
+	_, _, err := g.tarball(ctx, srv.URL+"/a.tgz", "")
+	require.Error(t, err)
+
+	g.client.Timeout = 100 * time.Millisecond
+
+	_, _, err = g.tarball(t.Context(), srv.URL+"/b.tgz", "")
+	require.Error(t, err)
+	assert.EqualValues(t, 2, ct.n.Load())
+}
+
+func TestTarball_ACachedArchiveIsServedWhileTheHostIsDown(t *testing.T) {
+	srv, g, ct := hangingGatherer(t)
+	g.client.Timeout = 100 * time.Millisecond
+
+	_, _, err := g.tarball(t.Context(), srv.URL+"/down.tgz", "")
+	require.Error(t, err)
+	require.EqualValues(t, 1, ct.n.Load())
+
+	cachedURL := srv.URL + "/cached.tgz"
+	sum := sha256.Sum256([]byte(cachedURL))
+	cached := filepath.Join(g.cacheDir, hex.EncodeToString(sum[:])+".tgz")
+	require.NoError(t, os.WriteFile(cached, tgz(t, map[string]string{"package/a.css": "a{}"}), 0o600))
+
+	path, _, err := g.tarball(t.Context(), cachedURL, "")
+	require.NoError(t, err)
+	assert.Equal(t, cached, path)
+	assert.EqualValues(t, 1, ct.n.Load())
 }

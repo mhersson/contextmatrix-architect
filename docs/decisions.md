@@ -265,6 +265,9 @@ HEAD.
   one, and a mismatch is a gap; a package-lock or classic yarn.lock entry
   without one, and a Yarn Berry package, is kept unverified. Why: Berry's
   checksum covers its own repackaged archive, not the registry's.
+- A registry host that fails with a network error is skipped for 5 minutes,
+  and a gather's downloads stop after 3 minutes, each a gap. Why: an
+  unreachable registry costs one wait every 5 minutes, not one per package.
 - Design material that cannot be had is a gap in the brief, and a gather that
   fails is posted as an error the run goes on after. Why: the checkouts alone
   still make a mockup.
