@@ -226,12 +226,13 @@ HEAD.
   tools. Why: the brief points at files read with those tools, and no model
   picks a download.
 - The only packages downloaded are those the project's own CSS imports (a CSS
-  `@import`, or a JavaScript import of a package's `.css` file) and the
-  importing frontend's package.json declares, at the version the repository's
-  lockfile records, and by the same rules those a kept package's CSS imports;
-  only a registry package is fetched, never a git or file entry, and a
-  workspace package is read in the tree. Why: the architect gets exactly what
-  the project installs.
+  `@import`, or a JavaScript side-effect import of a package's `.css` file)
+  and the importing frontend's package.json declares, at the version the
+  repository's lockfile records; the same rules apply to the packages a kept
+  package's CSS imports, checked against that package's own package.json and
+  its lock entry. Only a registry package is fetched, never a git or file
+  entry, and a workspace package is read in the tree. Why: the architect gets
+  exactly what the project installs.
 - Package downloads are anonymous: no credential is taken from any config or
   sent, and an address carrying a username is refused. Why: the architect's
   secrets are its HMAC key and what ContextMatrix sends, and a repository's
@@ -246,11 +247,11 @@ HEAD.
   100 MiB per archive. Why: the url is the project's own, like a repository
   url, never a model's.
 - Of a package only the CSS the project imports, and what that imports, is
-  kept, reflowed one rule per line, under a directory such as
-  `_npm+@acme+ui@1.2.3` at the blueprint's tool root, at most 8 MiB per
-  gather, and each kept package is a source of kind `package`. Why: the
-  designer needs only the styles, a grep match on a minified stylesheet would
-  return the whole file, and `_` starts no project name.
+  kept, reflowed with a line break after every brace and semicolon, under a
+  directory such as `_npm+@acme+ui@1.2.3` at the blueprint's tool root, at
+  most 8 MiB per gather, and each kept package is a source of kind `package`.
+  Why: the designer needs only the styles, a grep match on a minified
+  stylesheet would return the whole file, and `_` starts no project name.
 - A package locked in package-lock.json, a classic yarn.lock or
   pnpm-lock.yaml is checked against its npm integrity, and a mismatch is a
   gap; a Yarn Berry package is kept unverified. Why: Berry's checksum covers
