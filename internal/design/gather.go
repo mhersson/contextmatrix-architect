@@ -75,13 +75,16 @@ type gathering struct {
 	order    []*keptPkg          // in the order first reached
 	gaps     []Gap
 	seenGaps map[Gap]bool
+	treePkgs map[string]map[string][]treePackage // by tree dir, then package name
 }
 
 // rootWalk is one frontend root's walk through the packages its CSS imports.
 type rootWalk struct {
 	path     string // Root.Path
+	tree     string // the tree's directory under the tool root
 	lock     lockfile
 	lockGap  string // why lock cannot be used; "" when it can
+	lockDir  string // the lockfile's directory, tree-relative
 	lockRoot string // the root's directory relative to the lockfile's
 	regs     registries
 	regErr   error
@@ -89,13 +92,20 @@ type rootWalk struct {
 	seen     map[string]bool   // tool-root-relative path of each file walked
 	reached  map[string]bool   // pkg dirs
 	decls    []decl
+	own      *ownTree // the root's own files
+	// walk walks a file of own as the root's own CSS, giving each package
+	// import it meets to pkg.
+	walk func(rel string, pkg func(entry) error) error
 }
 
 // Gather collects the design material of every frontend root in req.Trees and
 // writes the package CSS those roots import under req.Root. What cannot be had
 // is a Gap; only a local read or write failure or a cancelled ctx is an error.
 func (g *Gatherer) Gather(ctx context.Context, req Request) (Material, error) {
-	s := &gathering{g: g, fetchBy: time.Now().Add(g.fetchFor), root: req.Root, pkgs: map[string]*keptPkg{}, seenGaps: map[Gap]bool{}}
+	s := &gathering{
+		g: g, fetchBy: time.Now().Add(g.fetchFor), root: req.Root, pkgs: map[string]*keptPkg{}, seenGaps: map[Gap]bool{},
+		treePkgs: map[string]map[string][]treePackage{},
+	}
 
 	var m Material
 
@@ -153,8 +163,10 @@ func (s *gathering) tree(ctx context.Context, tree Tree) ([]Root, error) {
 
 		w := &rootWalk{
 			path:     path.Join(filepath.ToSlash(tree.Dir), f.Dir),
+			tree:     filepath.ToSlash(tree.Dir),
 			lock:     lock,
 			lockGap:  lockGap,
+			lockDir:  lockDir,
 			lockRoot: relDir(lockDir, f.Dir),
 			seen:     map[string]bool{},
 			reached:  map[string]bool{},
@@ -249,7 +261,11 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 	ot := &ownTree{treeDir: treeDir, files: own, gap: func(spec, reason string) { s.gap(w.path, spec, reason) }}
 	ownDecls := func(rel string) []decl { return rootDecls(own.css[rel]) }
 	rootPkg := func(e entry) error { return s.rootImport(ctx, w, e) }
-	walkOwn := func(rel string) error { return w.importOrder(own, treePrefix, rel, ownDecls, rootPkg, ot.local) }
+	w.own = ot
+	w.walk = func(rel string, pkg func(entry) error) error {
+		return w.importOrder(own, treePrefix, rel, ownDecls, pkg, ot.local)
+	}
+	walkOwn := func(rel string) error { return w.walk(rel, rootPkg) }
 
 	for _, e := range f.Entries {
 		var err error
@@ -312,9 +328,15 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 // rootImport resolves a package import of the root's own files through the
 // root's package.json and the lockfile, and walks the package.
 func (s *gathering) rootImport(ctx context.Context, w *rootWalk, e entry) error {
-	rangeSpec, ok := w.deps[e.Name]
+	return s.declaredImport(ctx, w, e, w.deps, w.lockRoot, path.Join(w.path, "package.json"))
+}
+
+// declaredImport resolves e through deps, the declarations of the package.json
+// at manifest, and the lockfile's importer at lockRoot, and walks the package.
+func (s *gathering) declaredImport(ctx context.Context, w *rootWalk, e entry, deps map[string]string, lockRoot, manifest string) error {
+	rangeSpec, ok := deps[e.Name]
 	if !ok {
-		s.gap(w.path, e.Spec, "not declared in "+path.Join(w.path, "package.json"))
+		s.gap(w.path, e.Spec, "not declared in "+manifest)
 
 		return nil
 	}
@@ -325,11 +347,15 @@ func (s *gathering) rootImport(ctx context.Context, w *rootWalk, e entry) error 
 		return nil
 	}
 
-	l, ok := w.lock.fromRoot(w.lockRoot, e.Name, rangeSpec)
+	l, ok := w.lock.fromRoot(lockRoot, e.Name, rangeSpec)
 	if !ok {
 		s.gap(w.path, e.Spec, "the lockfile has no entry for it")
 
 		return nil
+	}
+
+	if l.Local {
+		return s.workspace(ctx, w, e, l.Name)
 	}
 
 	return s.visit(ctx, w, l, e.Spec, e.Subpath)
@@ -465,6 +491,12 @@ func declaredDeps(file string) map[string]string {
 		return nil
 	}
 
+	return manifestDeps(manifest)
+}
+
+// manifestDeps returns the range of each dependency, dev dependency and peer
+// dependency a package.json declares.
+func manifestDeps(manifest map[string]any) map[string]string {
 	deps := map[string]string{}
 
 	for _, field := range []string{"dependencies", "devDependencies", "peerDependencies"} {

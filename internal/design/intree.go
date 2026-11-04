@@ -15,6 +15,11 @@ import (
 // hold.
 const reasonNoFile = "no such file in the repository"
 
+// reasonUnreadable is the gap reason for a tree file readInTree refuses.
+func reasonUnreadable() string {
+	return fmt.Sprintf("a symbolic link, not a regular file, over %d MiB or unreadable", maxKeptFileBytes>>20)
+}
+
 // readInTree reads the file at rel, slash-separated and relative to treeDir.
 // The tree is untrusted: a path that leaves it, a symlink anywhere on the
 // path, a file that is not regular and one over maxKeptFileBytes are refused.
@@ -107,9 +112,8 @@ func (o *ownTree) read(rel, spec string) bool {
 		return false
 	}
 
-	css, err := readInTree(o.treeDir, rel)
-	if err != nil {
-		reason := fmt.Sprintf("a symbolic link, not a regular file, over %d MiB or unreadable", maxKeptFileBytes>>20)
+	if err := o.load(rel); err != nil {
+		reason := reasonUnreadable()
 		if errors.Is(err, fs.ErrNotExist) {
 			reason = reasonNoFile
 		}
@@ -119,7 +123,21 @@ func (o *ownTree) read(rel, spec string) bool {
 		return false
 	}
 
+	return true
+}
+
+// load adds the tree file rel to o.files unless it is there.
+func (o *ownTree) load(rel string) error {
+	if _, ok := o.files.css[rel]; ok {
+		return nil
+	}
+
+	css, err := readInTree(o.treeDir, rel)
+	if err != nil {
+		return err
+	}
+
 	o.files.css[rel] = css
 
-	return true
+	return nil
 }

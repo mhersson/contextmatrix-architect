@@ -30,9 +30,20 @@ var exportConditions = []string{"style", "default", "import", "browser", "requir
 
 // pkgFiles is the part of a package that design gathering reads: its manifest
 // and its CSS files, keyed by slash path relative to the package root.
+// onDisk, when set, finds a CSS file of a package read in the tree.
 type pkgFiles struct {
 	manifest map[string]any
 	css      map[string]string
+	onDisk   func(rel string) bool
+}
+
+// has reports whether the package holds the CSS file rel.
+func (p *pkgFiles) has(rel string) bool {
+	if _, ok := p.css[rel]; ok {
+		return true
+	}
+
+	return p.onDisk != nil && p.onDisk(rel)
 }
 
 type readLimits struct {
@@ -182,7 +193,7 @@ func packagePath(name string) (string, bool) {
 // exports. ok is false for a path that is not exported or whose target is not
 // a CSS file the package holds.
 func (p *pkgFiles) resolve(subpath string) (string, bool) {
-	if _, ok := p.css[subpath]; ok {
+	if p.has(subpath) {
 		return subpath, true
 	}
 
@@ -256,7 +267,7 @@ func (p *pkgFiles) target(v any, sub func(string) string) (string, bool) {
 			return "", false
 		}
 
-		if _, ok := p.css[rel]; !ok {
+		if !p.has(rel) {
 			return "", false
 		}
 

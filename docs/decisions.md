@@ -233,9 +233,14 @@ HEAD.
   pnpm-lock.yaml) at or above that frontend, up to the repository root,
   records; the same rules apply to the packages a kept package's CSS imports,
   checked against that package's own package.json and its lock entry. Only a
-  registry package is fetched, never a git or file entry, and a workspace
-  package is read in the tree. Why: the architect gets exactly what the
-  project installs.
+  registry package is fetched, never a git or file entry. A workspace package
+  (an npm link, a pnpm `link:` or `workspace:` dependency, a Yarn Berry
+  `workspace:` one) the root imports by name is found in the tree by its
+  package.json `name`, and the file its exports or the plain subpath names is
+  read like a relative import, its package imports checked against its own
+  package.json and lock entry; no package of that name, or more than one, is
+  a gap. Why: the architect gets exactly what the project installs, and pnpm
+  records no workspace path, so one rule by name serves every lockfile.
 - Package downloads are anonymous: no credential setting is read from any
   config and no Authorization header is sent, a lockfile url that is used is
   requested as written, query included, and an address carrying a username is

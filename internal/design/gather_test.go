@@ -387,13 +387,13 @@ func TestGather_Gaps(t *testing.T) {
 			word: "entry",
 		},
 		{
-			name: "workspace package",
+			name: "workspace package not in the tree",
 			edit: func(t *testing.T, files map[string]string, _ string) {
 				files["package-lock.json"] = npmLockJSON(t, map[string]map[string]any{
 					"node_modules/@acme/ui": {"resolved": "packages/ui", "link": true},
 				})
 			},
-			word: "tree",
+			word: "@acme/ui",
 		},
 		{
 			name: "not from a registry",
@@ -913,6 +913,299 @@ func TestGather_RelativeImportLeavingTheRootIsRead(t *testing.T) {
 
 			assert.Empty(t, gapsOf(m, "portal/frontend"))
 			assert.Equal(t, tc.want, tokenValue(t, rootAt(t, m, "portal/frontend"), tc.token))
+		})
+	}
+}
+
+// workspaceThenApp is a tree whose frontend's main.tsx is mainTSX, beside an
+// app.css declaring --brand #654321, with @acme/tokens a workspace package
+// declaring it #123456 and locked as an npm link.
+func workspaceThenApp(t *testing.T, mainTSX string) map[string]string {
+	t.Helper()
+
+	return map[string]string{
+		"package-lock.json": npmLockJSON(t, map[string]map[string]any{
+			"node_modules/@acme/tokens": {"resolved": "packages/tokens", "link": true},
+		}),
+		"frontend/package.json":        `{"name":"frontend","dependencies":{"@acme/tokens":"^1.0.0"}}`,
+		"frontend/src/main.tsx":        mainTSX,
+		"frontend/src/app.css":         ":root{--brand:#654321}\n.a{color:var(--brand)}\n",
+		"packages/tokens/package.json": `{"name":"@acme/tokens","version":"1.0.0"}`,
+		"packages/tokens/tokens.css":   ":root{--brand:#123456}",
+	}
+}
+
+func TestGather_WorkspacePackageImportedByName(t *testing.T) {
+	npmLink := func(t *testing.T) string {
+		t.Helper()
+
+		return npmLockJSON(t, map[string]map[string]any{
+			"node_modules/@acme/tokens": {"resolved": "packages/tokens", "link": true},
+			"packages/tokens":           {"name": "@acme/tokens", "version": "1.0.0"},
+		})
+	}
+
+	npmApp := func(t *testing.T, spec string) map[string]string {
+		t.Helper()
+
+		return map[string]string{
+			"package-lock.json":          npmLink(t),
+			"frontend/package.json":      `{"name":"frontend","dependencies":{"@acme/tokens":"^1.0.0"}}`,
+			"frontend/src/main.tsx":      "import './index.css'\n",
+			"frontend/src/index.css":     "@import '" + spec + "';\n.a{color:var(--brand)}\n",
+			"packages/tokens/tokens.css": ":root{--brand:#123456}",
+		}
+	}
+
+	tests := []struct {
+		name  string
+		files func(t *testing.T) map[string]string
+		root  string // Root.Path of the app
+		spec  string // the app's import, for a gap
+		want  string // --brand's value; "" when the import is a gap
+		data  string // a tool-root-relative path or a name the gap's reason holds
+	}{
+		{
+			name: "an npm link entry",
+			files: func(t *testing.T) map[string]string {
+				t.Helper()
+
+				files := npmApp(t, "@acme/tokens/tokens.css")
+				files["packages/tokens/package.json"] = `{"name":"@acme/tokens","version":"1.0.0"}`
+
+				return files
+			},
+			root: "portal/frontend",
+			want: "#123456",
+		},
+		{
+			name: "a pnpm link importer dependency",
+			files: func(*testing.T) map[string]string {
+				return map[string]string{
+					"pnpm-lock.yaml": "lockfileVersion: '9.0'\n\nimporters:\n  apps/web:\n    dependencies:\n" +
+						"      '@repo/ui':\n        specifier: workspace:*\n        version: link:../../packages/ui\n" +
+						"  packages/ui: {}\n",
+					"apps/web/package.json":       `{"name":"web","dependencies":{"@repo/ui":"workspace:*"}}`,
+					"apps/web/src/main.tsx":       "import './index.css'\n",
+					"apps/web/src/index.css":      "@import '@repo/ui/styles.css';\n.a{color:var(--brand)}\n",
+					"packages/ui/package.json":    `{"name":"@repo/ui","exports":{"./styles.css":"./dist/index.css"}}`,
+					"packages/ui/dist/index.css":  "@import './tokens.css';",
+					"packages/ui/dist/tokens.css": ":root{--brand:#123456}",
+				}
+			},
+			root: "portal/apps/web",
+			want: "#123456",
+		},
+		{
+			name: "a Yarn Berry workspace entry",
+			files: func(*testing.T) map[string]string {
+				return map[string]string{
+					"yarn.lock": "__metadata:\n  version: 8\n  cacheKey: 10c0\n\n" +
+						"\"@workspace/ui@workspace:*, @workspace/ui@workspace:packages/ui\":\n" +
+						"  version: 0.0.0-use.local\n  resolution: \"@workspace/ui@workspace:packages/ui\"\n" +
+						"  languageName: unknown\n  linkType: soft\n",
+					"apps/web/package.json":   `{"name":"web","dependencies":{"@workspace/ui":"workspace:*"}}`,
+					"apps/web/app/layout.tsx": "import '@workspace/ui/globals.css'\n",
+					"apps/web/app/page.css":   ".a{color:var(--brand)}\n",
+					"packages/ui/package.json": `{"name":"@workspace/ui","exports":` +
+						`{"./globals.css":"./src/styles/globals.css","./components/*":"./src/components/*.tsx"}}`,
+					"packages/ui/src/styles/globals.css": ":root{--brand:#123456}",
+				}
+			},
+			root: "portal/apps/web",
+			want: "#123456",
+		},
+		{
+			name: "a later import overrides the workspace file",
+			files: func(t *testing.T) map[string]string {
+				t.Helper()
+
+				return workspaceThenApp(t, "import '@acme/tokens/tokens.css'\nimport './app.css'\n")
+			},
+			root: "portal/frontend",
+			want: "#654321",
+		},
+		{
+			name: "the workspace file overrides an earlier import",
+			files: func(t *testing.T) map[string]string {
+				t.Helper()
+
+				return workspaceThenApp(t, "import './app.css'\nimport '@acme/tokens/tokens.css'\n")
+			},
+			root: "portal/frontend",
+			want: "#123456",
+		},
+		{
+			name: "a subpath that names no file",
+			files: func(t *testing.T) map[string]string {
+				t.Helper()
+
+				files := npmApp(t, "@acme/tokens/missing.css")
+				files["packages/tokens/package.json"] = `{"name":"@acme/tokens","version":"1.0.0"}`
+
+				return files
+			},
+			root: "portal/frontend",
+			spec: "@acme/tokens/missing.css",
+			data: "portal/packages/tokens/package.json",
+		},
+		{
+			name: "a workspace file over the size cap",
+			files: func(t *testing.T) map[string]string {
+				t.Helper()
+
+				files := npmApp(t, "@acme/tokens/big.css")
+				files["packages/tokens/package.json"] = `{"name":"@acme/tokens","version":"1.0.0"}`
+				files["packages/tokens/big.css"] = strings.Repeat(" ", maxKeptFileBytes+1)
+
+				return files
+			},
+			root: "portal/frontend",
+			spec: "@acme/tokens/big.css",
+			data: "portal/packages/tokens/big.css",
+		},
+		{
+			name: "no package.json of that name",
+			files: func(t *testing.T) map[string]string {
+				t.Helper()
+
+				return npmApp(t, "@acme/tokens/tokens.css")
+			},
+			root: "portal/frontend",
+			spec: "@acme/tokens/tokens.css",
+			data: "@acme/tokens",
+		},
+		{
+			name: "two package.json files of that name",
+			files: func(t *testing.T) map[string]string {
+				t.Helper()
+
+				files := npmApp(t, "@acme/tokens/tokens.css")
+				files["packages/tokens/package.json"] = `{"name":"@acme/tokens","version":"1.0.0"}`
+				files["legacy/tokens/package.json"] = `{"name":"@acme/tokens","version":"0.9.0"}`
+
+				return files
+			},
+			root: "portal/frontend",
+			spec: "@acme/tokens/tokens.css",
+			data: "portal/legacy/tokens/package.json",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests atomic.Int32
+
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				http.NotFound(w, r)
+			}))
+			t.Cleanup(srv.Close)
+
+			files := tc.files(t)
+			files[".npmrc"] = "registry=" + srv.URL + "/\n"
+
+			m, err := gatherPortal(t, srv, t.TempDir(), files)
+			require.NoError(t, err)
+
+			assert.Zero(t, requests.Load())
+
+			gaps := gapsOf(m, tc.root)
+
+			if tc.want != "" {
+				assert.Empty(t, gaps)
+				assert.Equal(t, tc.want, tokenValue(t, rootAt(t, m, tc.root), "--brand"))
+
+				return
+			}
+
+			require.Len(t, gaps, 1, "%+v", m.Gaps)
+			assert.Equal(t, tc.spec, gaps[0].Import)
+			assert.Contains(t, gaps[0].Reason, tc.data)
+		})
+	}
+}
+
+func TestGather_AWorkspaceFileImportsItsOwnPackage(t *testing.T) {
+	const basePath = "/@acme/base/-/base-1.0.0.tgz"
+
+	tarballs := map[string][]byte{basePath: tgz(t, map[string]string{
+		"package/package.json": `{"name":"@acme/base","version":"1.0.0"}`,
+		"package/base.css":     ":root{--base:#0000aa}",
+	})}
+	srv := registryServer(t, tarballs, 0)
+
+	// Only packages/ui declares @acme/base, under its own pnpm importer.
+	m, err := gatherPortal(t, srv, t.TempDir(), map[string]string{
+		".npmrc": "registry=" + srv.URL + "/\n",
+		"pnpm-lock.yaml": "lockfileVersion: '9.0'\n\nimporters:\n" +
+			"  apps/web:\n    dependencies:\n      '@workspace/ui':\n" +
+			"        specifier: workspace:*\n        version: link:../../packages/ui\n" +
+			"  packages/ui:\n    dependencies:\n      '@acme/base':\n        specifier: ^1.0.0\n        version: 1.0.0\n\n" +
+			"packages:\n  '@acme/base@1.0.0':\n    resolution: {integrity: " + integrity(tarballs[basePath]) + "}\n\n" +
+			"snapshots:\n  '@acme/base@1.0.0': {}\n",
+		"apps/web/package.json":  `{"name":"web","dependencies":{"@workspace/ui":"workspace:*"}}`,
+		"apps/web/src/main.tsx":  "import './index.css'\n",
+		"apps/web/src/index.css": "@import '@workspace/ui/globals.css';\n.a{color:var(--base)}\n",
+		"packages/ui/package.json": `{"name":"@workspace/ui","dependencies":{"@acme/base":"^1.0.0"},` +
+			`"exports":{"./globals.css":"./src/globals.css"}}`,
+		"packages/ui/src/globals.css": "@import '@acme/base/base.css';\n:root{--ui:#123456}",
+	})
+	require.NoError(t, err)
+
+	assert.Empty(t, gapsOf(m, "portal/apps/web"))
+
+	web := rootAt(t, m, "portal/apps/web")
+	assert.Equal(t, "#0000aa", tokenValue(t, web, "--base"))
+	assert.Equal(t, []string{"_npm+@acme+base@1.0.0"}, web.Packages)
+}
+
+func TestGather_AWorkspaceFilesPackageImportIsAGap(t *testing.T) {
+	tests := []struct {
+		name  string
+		files map[string]string
+		data  string // a tool-root-relative path the gap's reason holds
+	}{
+		{
+			// The app's own lockfile cannot name the workspace's importer.
+			name: "the workspace is outside the lockfile's directory",
+			files: map[string]string{
+				"apps/web/package-lock.json": npmLockJSON(t, map[string]map[string]any{
+					"node_modules/@acme/tokens": {"resolved": "../../packages/tokens", "link": true},
+				}),
+				"apps/web/package.json":        `{"name":"web","dependencies":{"@acme/tokens":"^1.0.0"}}`,
+				"apps/web/src/main.tsx":        "import '@acme/tokens/tokens.css'\n",
+				"packages/tokens/package.json": `{"name":"@acme/tokens","dependencies":{"@acme/base":"^1.0.0"}}`,
+				"packages/tokens/tokens.css":   "@import '@acme/base/base.css';\n:root{--brand:#123456}",
+			},
+			data: "portal/packages/tokens/package.json",
+		},
+		{
+			// Only the app declares @acme/base; the workspace's own package.json counts.
+			name: "the workspace does not declare it",
+			files: map[string]string{
+				"package-lock.json": npmLockJSON(t, map[string]map[string]any{
+					"node_modules/@workspace/ui": {"resolved": "packages/ui", "link": true},
+					"node_modules/@acme/base":    {"version": "1.0.0", "resolved": "https://registry.example.test/base.tgz"},
+				}),
+				"apps/web/package.json":    `{"name":"web","dependencies":{"@workspace/ui":"*","@acme/base":"^1.0.0"}}`,
+				"apps/web/src/main.tsx":    "import '@workspace/ui/globals.css'\n",
+				"packages/ui/package.json": `{"name":"@workspace/ui"}`,
+				"packages/ui/globals.css":  "@import '@acme/base/base.css';\n:root{--brand:#123456}",
+			},
+			data: "portal/packages/ui/package.json",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := gatherPortal(t, registryServer(t, nil, 0), t.TempDir(), tc.files)
+			require.NoError(t, err)
+
+			gaps := gapsOf(m, "portal/apps/web")
+			require.Len(t, gaps, 1, "%+v", m.Gaps)
+			assert.Equal(t, "@acme/base/base.css", gaps[0].Import)
+			assert.Contains(t, gaps[0].Reason, tc.data)
 		})
 	}
 }
