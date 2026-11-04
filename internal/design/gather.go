@@ -295,6 +295,11 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 		}
 	}
 
+	if len(f.Styles) > 0 {
+		s.gap(w.path, "", "the root's styles in "+strings.Join(f.Styles, ", ")+
+			" are not read, so its tokens and fonts leave them out")
+	}
+
 	if err := ownMaterial(treeDir, w, f, own, &root); err != nil {
 		return Root{}, err
 	}

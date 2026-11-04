@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode"
@@ -28,6 +29,26 @@ var (
 		".vue": true, ".svelte": true, ".html": true, ".css": true,
 	}
 
+	// Style files the walk finds but never reads, by the language they name.
+	styleLangExts = map[string]string{
+		".scss": "SCSS", ".sass": "SCSS", ".less": "Less", ".styl": "Stylus",
+	}
+
+	// The lang of a Vue or Svelte style block, by the language it names.
+	blockLangs = map[string]string{
+		"scss": "SCSS", "sass": "SCSS", "less": "Less", "stylus": "Stylus", "styl": "Stylus",
+	}
+
+	styleBlockRE = regexp.MustCompile(`(?is)<style\b([^>]*)>`)
+	langAttrRE   = regexp.MustCompile(`(?i)\blang\s*=\s*["']?([a-z]+)`)
+
+	// CSS-in-JS dependencies, exact or by name prefix.
+	cssInJSDeps     = map[string]bool{"styled-components": true, "goober": true, "jss": true, "react-jss": true, "styled-jsx": true}
+	cssInJSPrefixes = []string{
+		"@emotion/", "@mui/", "@vanilla-extract/", "@chakra-ui/", "@mantine/",
+		"@linaria/", "@stitches/", "@pandacss/", "@stylexjs/",
+	}
+
 	frameWords = map[string]bool{
 		"layout": true, "shell": true, "app": true, "header": true, "navigation": true,
 		"navbar": true, "nav": true, "menu": true, "sidebar": true, "hero": true, "footer": true,
@@ -46,16 +67,19 @@ var (
 	nonFrameMarkers = []string{".test.", ".spec.", ".stories."}
 )
 
-// frontend is one frontend root: a directory with a package.json that owns CSS
-// or imports CSS from a package. Dir is relative to the scanned tree ("" for
-// the tree itself); CSS and Sources are tree-relative paths of the files that
-// belong to this root and to no root nested below it. Entries are the style
-// imports of its HTML and script files in load order.
+// frontend is one frontend root: a directory with a package.json that owns CSS,
+// imports CSS from a package, or styles its sources in a language the walk does
+// not read. Dir is relative to the scanned tree ("" for the tree itself); CSS
+// and Sources are tree-relative paths of the files that belong to this root and
+// to no root nested below it. Entries are the style imports of its HTML and
+// script files in load order. Styles names the unread style languages of its
+// own files, sorted.
 type frontend struct {
 	Dir     string
 	CSS     []string
 	Entries []entry
 	Sources []string
+	Styles  []string
 }
 
 // entry is a style import of an HTML or script file. File is the
@@ -74,8 +98,10 @@ type Asset struct {
 }
 
 // scanTree finds the frontend roots under treeDir in a single walk. A root is
-// the nearest directory holding a package.json above a .css file, or above a
-// source file that imports a package's CSS.
+// the nearest directory holding a package.json above a .css file or above a
+// source file that imports a package's CSS, or one above a source file when
+// its files use SCSS, Less, Stylus or Vue or Svelte style blocks, or its
+// package.json a CSS-in-JS library.
 func scanTree(treeDir string) ([]frontend, error) {
 	type candidate struct{ rel, ext string }
 
@@ -92,7 +118,7 @@ func scanTree(treeDir string) ([]frontend, error) {
 			return nil
 		}
 
-		if ext := strings.ToLower(path.Ext(name)); ext == ".css" || ext == ".html" || sourceExts[ext] {
+		if ext := strings.ToLower(path.Ext(name)); ext == ".css" || ext == ".html" || sourceExts[ext] || styleLangExts[ext] != "" {
 			candidates = append(candidates, candidate{rel: rel, ext: ext})
 		}
 
@@ -103,8 +129,10 @@ func scanTree(treeDir string) ([]frontend, error) {
 	}
 
 	var (
-		files []scanned
-		roots = map[string]bool{}
+		files   []scanned
+		roots   = map[string]bool{}
+		sources = map[string]bool{} // package dirs holding a source file
+		styled  = map[string]bool{} // package dirs with a style language
 	)
 
 	for _, c := range candidates {
@@ -115,10 +143,24 @@ func scanTree(treeDir string) ([]frontend, error) {
 
 		f := scanned{rel: c.rel, ext: c.ext}
 
-		if c.ext != ".css" {
+		if lang := styleLangExts[c.ext]; lang != "" {
+			f.styles = []string{lang}
+			styled[pkg] = true
+		}
+
+		if sourceExts[c.ext] {
+			sources[pkg] = true
+		}
+
+		if c.ext != ".css" && styleLangExts[c.ext] == "" {
 			src, err := os.ReadFile(filepath.Join(treeDir, filepath.FromSlash(c.rel)))
 			if err != nil {
 				return nil, fmt.Errorf("design: scan tree: read %s: %w", c.rel, err)
+			}
+
+			if c.ext == ".vue" || c.ext == ".svelte" {
+				f.styles = blockStyles(c.ext, string(src))
+				styled[pkg] = styled[pkg] || len(f.styles) > 0
 			}
 
 			if c.ext == ".html" {
@@ -133,6 +175,12 @@ func scanTree(treeDir string) ([]frontend, error) {
 		}
 
 		files = append(files, f)
+	}
+
+	for pkg := range sources {
+		if styled[pkg] || len(cssInJS(treeDir, pkg)) > 0 {
+			roots[pkg] = true
+		}
 	}
 
 	var (
@@ -159,6 +207,8 @@ func scanTree(treeDir string) ([]frontend, error) {
 			fe.Sources = append(fe.Sources, f.rel)
 		}
 
+		fe.Styles = append(fe.Styles, f.styles...)
+
 		if len(f.entries) > 0 {
 			loaders[dir] = append(loaders[dir], f)
 		}
@@ -174,6 +224,10 @@ func scanTree(treeDir string) ([]frontend, error) {
 			fe.Entries = append(fe.Entries, f.entries...)
 		}
 
+		fe.Styles = append(fe.Styles, cssInJS(treeDir, dir)...)
+		slices.Sort(fe.Styles)
+		fe.Styles = slices.Compact(fe.Styles)
+
 		out = append(out, *fe)
 	}
 
@@ -187,6 +241,41 @@ func scanTree(treeDir string) ([]frontend, error) {
 type scanned struct {
 	rel, ext string
 	entries  []entry
+	styles   []string // unread style languages of the file
+}
+
+// blockStyles names the style languages of the <style> blocks in a Vue or
+// Svelte file; a block without a known lang is "<Vue|Svelte> <style> blocks".
+func blockStyles(ext, src string) []string {
+	var out []string
+
+	for _, m := range styleBlockRE.FindAllStringSubmatch(src, -1) {
+		if lm := langAttrRE.FindStringSubmatch(m[1]); lm != nil {
+			if lang := blockLangs[strings.ToLower(lm[1])]; lang != "" {
+				out = append(out, lang)
+
+				continue
+			}
+		}
+
+		out = append(out, map[string]string{".vue": "Vue", ".svelte": "Svelte"}[ext]+" <style> blocks")
+	}
+
+	return out
+}
+
+// cssInJS lists the CSS-in-JS dependencies of the package.json in dir as
+// "CSS-in-JS (<dep>)".
+func cssInJS(treeDir, dir string) []string {
+	var out []string
+
+	for dep := range declaredDeps(filepath.Join(treeDir, filepath.FromSlash(dir), "package.json")) {
+		if cssInJSDeps[dep] || slices.ContainsFunc(cssInJSPrefixes, func(p string) bool { return strings.HasPrefix(dep, p) }) {
+			out = append(out, "CSS-in-JS ("+dep+")")
+		}
+	}
+
+	return out
 }
 
 // loadOrder approximates the order a root's files load their CSS in without a

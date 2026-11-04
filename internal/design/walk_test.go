@@ -436,3 +436,40 @@ func TestBrandFiles_SkipNestedPackages(t *testing.T) {
 		[]Asset{{Path: "app/packages/server/logo.svg", Size: int64(len(`<svg/>`))}},
 		brandFiles(root, frontend{Dir: "app/packages/server"}))
 }
+
+func TestScanTree_Styles(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"a/package.json":   `{"dependencies":{"@emotion/react":"1","react":"1"}}`,
+		"a/src/main.ts":    "export {}",
+		"a/src/s.scss":     "a{}",
+		"a/src/t.sass":     "a",
+		"a/src/V.vue":      "<style lang='stylus'></style>",
+		"a/src/W.vue":      "<style scoped></style>",
+		"b/package.json":   `{}`,
+		"b/lib/x.less":     "a{}",
+		"c/package.json":   `{}`,
+		"c/src/App.svelte": "<style lang=\"scss\"></style>",
+		"d/package.json":   `{}`,
+		"d/src/App.svelte": "<div/>",
+		"f/package.json":   `{}`,
+		"f/src/App.svelte": "<style></style>",
+		"f/src/Zed.svelte": "<div/>",
+		"e/package.json":   `{}`,
+		"e/src/only.styl":  "a",
+	})
+
+	got, err := scanTree(root)
+	require.NoError(t, err)
+
+	styles := map[string][]string{}
+	for _, f := range got {
+		styles[f.Dir] = f.Styles
+	}
+
+	assert.Equal(t, map[string][]string{
+		"a": {"CSS-in-JS (@emotion/react)", "SCSS", "Stylus", "Vue <style> blocks"},
+		"c": {"SCSS"},
+		"f": {"Svelte <style> blocks"},
+	}, styles)
+}

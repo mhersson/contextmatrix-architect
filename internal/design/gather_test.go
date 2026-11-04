@@ -1154,3 +1154,130 @@ func TestGather_TokensFollowTheLoadedCSS(t *testing.T) {
 		})
 	}
 }
+
+func TestGather_StyleLanguageRoots(t *testing.T) {
+	tests := []struct {
+		name     string
+		files    map[string]string
+		root     string // "" when no root is expected
+		language string // named by the root gap; "" when none is expected
+		frame    []string
+		brand    []string
+	}{
+		{
+			name: "scss",
+			files: map[string]string{
+				"app/package.json":              `{"name":"app"}`,
+				"app/src/main.ts":               "import './styles.scss'\n",
+				"app/src/styles.scss":           ":root{--brand:#123456}",
+				"app/src/components/Header.tsx": "export const Header = () => null\n",
+				"app/src/logo.svg":              "<svg/>",
+			},
+			root:     "portal/app",
+			language: "SCSS",
+			frame:    []string{"portal/app/src/components/Header.tsx"},
+			brand:    []string{"portal/app/src/logo.svg"},
+		},
+		{
+			name: "vue style block",
+			files: map[string]string{
+				"web/package.json": `{"name":"web"}`,
+				"web/src/main.ts":  "import './App.vue'\n",
+				"web/src/App.vue":  "<template/><style>.a{color:red}</style>",
+			},
+			root:     "portal/web",
+			language: "Vue",
+			frame:    []string{"portal/web/src/App.vue"},
+		},
+		{
+			name: "svelte style block with a lang",
+			files: map[string]string{
+				"web/package.json":   `{"name":"web"}`,
+				"web/src/main.ts":    "import './App.svelte'\n",
+				"web/src/App.svelte": `<style lang="less">.a{color:red}</style>`,
+			},
+			root:     "portal/web",
+			language: "Less",
+			frame:    []string{"portal/web/src/App.svelte"},
+		},
+		{
+			name: "css-in-js",
+			files: map[string]string{
+				"ui/package.json": `{"dependencies":{"styled-components":"^6"}}`,
+				"ui/src/App.tsx":  "export const App = () => null\n",
+			},
+			root:     "portal/ui",
+			language: "styled-components",
+			frame:    []string{"portal/ui/src/App.tsx"},
+		},
+		{
+			name: "not a frontend",
+			files: map[string]string{
+				"api/package.json":  `{"dependencies":{"express":"^4"}}`,
+				"api/src/server.ts": "export {}\n",
+			},
+		},
+		{
+			name: "own css and an scss file",
+			files: map[string]string{
+				"app/package.json":   `{"name":"app"}`,
+				"app/src/main.ts":    "import './app.css'\n",
+				"app/src/app.css":    ":root{--brand:#123456}",
+				"app/src/extra.scss": ".a{color:red}",
+			},
+			root:     "portal/app",
+			language: "SCSS",
+			frame:    []string{"portal/app/src/app.css"},
+		},
+		{
+			name: "template css and styled-components",
+			files: map[string]string{
+				"app/package.json":   `{"dependencies":{"styled-components":"^6"}}`,
+				"app/src/main.tsx":   "import './index.css'\n",
+				"app/src/index.css":  ":root{font-family:system-ui}",
+				"app/src/Button.tsx": "export {}\n",
+			},
+			root:     "portal/app",
+			language: "styled-components",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := registryServer(t, nil, 0)
+
+			m, err := gatherPortal(t, srv, t.TempDir(), tt.files)
+			require.NoError(t, err)
+
+			if tt.root == "" {
+				assert.Empty(t, m.Roots)
+
+				return
+			}
+
+			require.Len(t, m.Roots, 1)
+
+			r := rootAt(t, m, tt.root)
+			assert.Equal(t, tt.frame, r.Frame)
+
+			var brand []string
+			for _, a := range r.Brand {
+				brand = append(brand, a.Path)
+			}
+
+			assert.Equal(t, tt.brand, brand)
+
+			var named []Gap
+
+			for _, g := range gapsOf(m, tt.root) {
+				if g.Import == "" && tt.language != "" && strings.Contains(g.Reason, tt.language) {
+					named = append(named, g)
+				}
+			}
+
+			if tt.language != "" {
+				assert.Len(t, named, 1)
+			}
+		})
+	}
+}

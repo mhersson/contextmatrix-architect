@@ -278,6 +278,12 @@ HEAD.
   file is read in path order, with a gap when there is more than one. Why: an
   unimported theme or a vendored copy must not override the values the app
   shows, and CSS that config or a file the scan skips loads still counts.
+- A frontend styled with SCSS, Less, Stylus, Vue or Svelte style blocks or
+  CSS-in-JS is a root even with no CSS file of its own, with its frame and
+  brand files, and gets a gap naming the style language whether or not it
+  also has CSS. Why: those styles are not read, so its tokens and fonts leave
+  them out, and a frontend with no root would reach the designer as an empty
+  brief.
 - Design material that cannot be had is a gap in the brief, and a gather that
   fails is posted as an error the run goes on after. Why: the checkouts alone
   still make a mockup.
