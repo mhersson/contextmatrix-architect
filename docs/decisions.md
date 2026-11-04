@@ -240,9 +240,14 @@ HEAD.
   token is neither.
 - The registry comes only from the repository's own `.yarnrc.yml`, `.npmrc`
   or `.yarnrc`, else the public npm registry; a registry value using an
-  environment variable is not used, and a lockfile's tarball url only on the
-  registry's host. Why: the machine's config and environment are not the
-  project's, and a lockfile must not steer a download elsewhere.
+  environment variable is not used, and a lockfile's tarball url only when it
+  is https on the registry's host. A lockfile url on another host gives way
+  to the registry's own url only when the download is checked against the
+  lockfile's integrity or the url has the registry's tarball path; otherwise
+  the package is a gap. Why: the machine's config and environment are not the
+  project's, a lockfile must not steer a download elsewhere, and a url
+  elsewhere, such as a git host's archive, can hold another package than the
+  registry's of that name and version.
 - The package client may reach a private address and trusts `ca_cert_file`,
   unlike web research, and fetches https only, with at most 5 redirects and
   100 MiB per archive. Why: the url is the project's own, like a repository

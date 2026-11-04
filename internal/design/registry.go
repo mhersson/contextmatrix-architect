@@ -212,24 +212,44 @@ func (r registries) forPackage(name string) (string, error) {
 
 // tarballURL is the conventional registry location of a package tarball.
 func tarballURL(registry, name, version string) string {
-	unscoped := name[strings.LastIndex(name, "/")+1:]
-
-	return strings.TrimRight(registry, "/") + "/" + name + "/-/" + unscoped + "-" + version + ".tgz"
+	return strings.TrimRight(registry, "/") + "/" + tarballPath(name, version)
 }
 
-// pickURL prefers the url the lockfile recorded, but only on the registry's own
-// host: a lockfile must not steer the download to another one.
-func pickURL(registry string, l locked) string {
-	reg, err := url.Parse(registry)
-	if err != nil || reg.Host == "" {
-		return tarballURL(registry, l.Name, l.Version)
+func tarballPath(name, version string) string {
+	unscoped := name[strings.LastIndex(name, "/")+1:]
+
+	return name + "/-/" + unscoped + "-" + version + ".tgz"
+}
+
+// pickURL returns the url to fetch l from: the lockfile's url when it is
+// https on the registry's host, else the registry's conventional url. A url
+// on another host may name some other package, so it is replaced only when
+// checked (the download is checked against the lockfile's integrity) or it
+// has the registry's tarball path; ok is false otherwise.
+func pickURL(registry string, l locked, checked bool) (string, bool) {
+	conventional := tarballURL(registry, l.Name, l.Version)
+	if l.Resolved == "" {
+		return conventional, true
 	}
 
 	resolved, _, _ := strings.Cut(l.Resolved, "#")
 
-	if u, err := url.Parse(resolved); err == nil && strings.EqualFold(u.Host, reg.Host) {
-		return resolved
+	u, err := url.Parse(resolved)
+	if err != nil {
+		u = &url.URL{}
 	}
 
-	return tarballURL(registry, l.Name, l.Version)
+	if reg, err := url.Parse(registry); err == nil && reg.Host != "" && strings.EqualFold(u.Host, reg.Host) {
+		if u.Scheme == "https" {
+			return resolved, true
+		}
+
+		return conventional, true
+	}
+
+	if checked || strings.HasSuffix(u.Path, "/"+tarballPath(l.Name, l.Version)) {
+		return conventional, true
+	}
+
+	return "", false
 }

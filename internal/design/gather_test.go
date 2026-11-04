@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -466,6 +467,91 @@ func TestGather_Gaps(t *testing.T) {
 			assert.Contains(t, m.Gaps[0].Reason, tc.word)
 			assert.Empty(t, m.Packages)
 			require.Len(t, m.Roots, 1)
+		})
+	}
+}
+
+func TestGather_LockedURL(t *testing.T) {
+	tarballs := acmeTarballs(t, "@import './theme.css';", ":root{--acme-grey-8:#ebebeb}")
+	ui := integrity(tarballs[uiPath])
+
+	tests := []struct {
+		name      string
+		rangeSpec string
+		lock      func(t *testing.T, srvURL string) (file, content string)
+		gap       string // a word of the gap reason; "" when the package is kept
+	}{
+		{
+			name:      "an unchecked url on another host is not fetched",
+			rangeSpec: "github:acme/ui#v1",
+			lock: func(*testing.T, string) (string, string) {
+				return "yarn.lock", "\"@acme/ui@github:acme/ui#v1\":\n  version \"1.2.3\"\n" +
+					"  resolved \"https://codeload.example.test/acme/ui/tar.gz/v1\"\n"
+			},
+			gap: "installed",
+		},
+		{
+			name:      "a checked url on another host is fetched from the registry",
+			rangeSpec: "^1.2.0",
+			lock: func(*testing.T, string) (string, string) {
+				return "yarn.lock", "\"@acme/ui@^1.2.0\":\n  version \"1.2.3\"\n" +
+					"  resolved \"https://mirror.example.test/acme-ui-1.2.3.tgz#abc\"\n  integrity " + ui + "\n"
+			},
+		},
+		{
+			name:      "an http url on the registry host is fetched over https",
+			rangeSpec: "^1.2.0",
+			lock: func(t *testing.T, srvURL string) (string, string) {
+				return "package-lock.json", npmLockJSON(t, map[string]map[string]any{
+					"node_modules/@acme/ui": {
+						"version": "1.2.3", "resolved": strings.Replace(srvURL, "https:", "http:", 1) + uiPath, "integrity": ui,
+					},
+				})
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests atomic.Int32
+
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+
+				body, ok := tarballs[r.URL.Path]
+				if !ok {
+					http.NotFound(w, r)
+
+					return
+				}
+
+				_, _ = w.Write(body)
+			}))
+			t.Cleanup(srv.Close)
+
+			files := portalTree(t, srv.URL, tarballs)
+			files["frontend/package.json"] = `{"name":"frontend","dependencies":{"@acme/ui":"` + tc.rangeSpec + `"}}`
+			delete(files, "package-lock.json")
+
+			file, content := tc.lock(t, srv.URL)
+			files[file] = content
+
+			m, err := gatherPortal(t, srv, t.TempDir(), files)
+			require.NoError(t, err)
+
+			if tc.gap != "" {
+				require.Len(t, m.Gaps, 1, "%+v", m.Gaps)
+				assert.Contains(t, m.Gaps[0].Reason, tc.gap)
+				assert.Empty(t, m.Packages)
+				assert.Zero(t, requests.Load())
+
+				return
+			}
+
+			assert.Empty(t, m.Gaps)
+			require.Len(t, m.Packages, 1)
+			assert.Equal(t, uiDir, m.Packages[0].Dir)
+			assert.True(t, m.Packages[0].Verified)
 		})
 	}
 }

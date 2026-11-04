@@ -159,6 +159,16 @@ func (s *gathering) pkg(ctx context.Context, w *rootWalk, l locked, spec string)
 		return nil, "the registry url uses an environment variable", nil
 	}
 
+	integrity := ""
+	if w.lock.checksummed() {
+		integrity = l.Integrity
+	}
+
+	rawURL, ok := pickURL(registry, l, parseIntegrity(integrity) != nil)
+	if !ok {
+		return nil, "is not installed from a registry", nil
+	}
+
 	dir := PackageDir(l.Name, l.Version)
 	if p, ok := s.pkgs[dir]; ok {
 		return p, p.failed, nil
@@ -176,14 +186,8 @@ func (s *gathering) pkg(ctx context.Context, w *rootWalk, l locked, spec string)
 	s.pkgs[dir] = p
 	s.order = append(s.order, p)
 
-	rawURL := pickURL(registry, l)
 	if u, err := url.Parse(rawURL); err == nil {
 		p.registry = u.Host
-	}
-
-	integrity := ""
-	if w.lock.checksummed() {
-		integrity = l.Integrity
 	}
 
 	tgz, verified, err := s.g.tarball(ctx, rawURL, integrity)

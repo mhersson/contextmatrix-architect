@@ -235,9 +235,10 @@ func TestPickURL(t *testing.T) {
 	const registry = "https://npm.example.test/group/"
 
 	tests := []struct {
-		name string
-		l    locked
-		want string
+		name    string
+		l       locked
+		checked bool
+		want    string // "" when no url may be used
 	}{
 		{
 			name: "resolved on the registry host drops its fragment",
@@ -245,9 +246,28 @@ func TestPickURL(t *testing.T) {
 			want: "https://npm.example.test/other/@acme/ui/-/ui-1.2.3.tgz",
 		},
 		{
-			name: "resolved on another host falls back to the registry",
-			l:    locked{Name: "@acme/ui", Version: "1.2.3", Resolved: "https://elsewhere.example.test/@acme/ui/-/ui-1.2.3.tgz"},
+			name: "http resolved on the registry host falls back to the registry",
+			l:    locked{Name: "@acme/ui", Version: "1.2.3", Resolved: "http://npm.example.test/other/@acme/ui/-/ui-1.2.3.tgz"},
 			want: "https://npm.example.test/group/@acme/ui/-/ui-1.2.3.tgz",
+		},
+		{
+			name: "registry-shaped resolved on another host falls back to the registry",
+			l:    locked{Name: "@acme/ui", Version: "1.2.3", Resolved: "https://elsewhere.example.test/npm/@acme/ui/-/ui-1.2.3.tgz"},
+			want: "https://npm.example.test/group/@acme/ui/-/ui-1.2.3.tgz",
+		},
+		{
+			name:    "checked resolved on another host falls back to the registry",
+			l:       locked{Name: "@acme/ui", Version: "1.2.3", Resolved: "https://codeload.example.test/acme/ui/tar.gz/v1"},
+			checked: true,
+			want:    "https://npm.example.test/group/@acme/ui/-/ui-1.2.3.tgz",
+		},
+		{
+			name: "unchecked resolved on another host is not used",
+			l:    locked{Name: "@acme/ui", Version: "1.2.3", Resolved: "https://codeload.example.test/acme/ui/tar.gz/v1"},
+		},
+		{
+			name: "resolved of another version on another host is not used",
+			l:    locked{Name: "@acme/ui", Version: "1.2.3", Resolved: "https://elsewhere.example.test/@acme/ui/-/ui-1.2.4.tgz"},
 		},
 		{
 			name: "no resolved falls back to the registry",
@@ -255,15 +275,16 @@ func TestPickURL(t *testing.T) {
 			want: "https://npm.example.test/group/left-pad/-/left-pad-1.0.2.tgz",
 		},
 		{
-			name: "resolved that is not a url falls back to the registry",
+			name: "unchecked resolved that is not a url is not used",
 			l:    locked{Name: "left-pad", Version: "1.0.2", Resolved: "packages/left-pad"},
-			want: "https://npm.example.test/group/left-pad/-/left-pad-1.0.2.tgz",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, pickURL(registry, tt.l))
+			got, ok := pickURL(registry, tt.l, tt.checked)
+			assert.Equal(t, tt.want != "", ok)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
