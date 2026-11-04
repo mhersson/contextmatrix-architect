@@ -102,8 +102,11 @@ repository, fetched over HTTPS with credentials CM mints per session, and
 `trees/<blueprint>/<project>` holds one plain tree per blueprint and project at
 the default branch's commit, written without a git binary. A project's
 secondary repository sits beside it at `trees/<blueprint>/<project>@<repo>`.
-Trees not written for `workspace_max_age_days` are swept at startup and hourly;
-mirrors stay.
+`packages/` caches the package archives the mockup's design material is read
+from, and the CSS kept from them sits beside the trees, as in
+`trees/<blueprint>/_npm+@acme+ui@1.2.3`. Trees not written for
+`workspace_max_age_days` are swept at startup and hourly, kept CSS with them;
+mirrors and package archives stay.
 
 ## Export
 

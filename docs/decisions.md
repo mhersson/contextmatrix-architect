@@ -37,11 +37,12 @@ HEAD.
 - Personas are prompt text on stages, not an agent system. Why: a
   composer-and-agents layer would be a second decision engine that has not
   earned its place.
-- No memory or knowledge store of its own: retrieval is live, from the code,
-  the board, web pages and, through ContextMatrix, a project's knowledge
-  provider, and each blueprint records the sources it used with their kind
-  and, where one exists, version. Why: live retrieval with recorded sources
-  needs no layer, and one could be fed only approved outputs.
+- No memory or knowledge store of its own: retrieval is live, from the code
+  and the packages its styles import, the board, web pages and, through
+  ContextMatrix, a project's knowledge provider, and each blueprint records
+  the sources it used with their kind and, where one exists, version. Why:
+  live retrieval with recorded sources needs no layer, and one could be fed
+  only approved outputs.
 - The knowledge tools are offered wherever ContextMatrix serves them, and a
   knowledge session that fails to open leaves the run without them. Why:
   knowledge never fails a blueprint, and a ContextMatrix that serves none (an
@@ -219,6 +220,44 @@ HEAD.
 - Where a UI exists the mockup keeps its look unless intake's data holds
   `redesign: true`, and an intake without the flag reads as no re-design.
   Why: a change to an existing UI fits the look people already use.
+- A stage with the `design` key, the default pack's mockup, gets the target
+  projects' design material gathered by the controller before each run, as a
+  brief opening its task; the pack loader refuses the key without the code
+  tools. Why: the brief points at files read with those tools, and no model
+  picks a download.
+- The only packages downloaded are those the project's own CSS imports (a CSS
+  `@import`, or a JavaScript import of a package's `.css` file) and the
+  importing frontend's package.json declares, at the version the repository's
+  lockfile records, and by the same rules those a kept package's CSS imports;
+  only a registry package is fetched, never a git or file entry, and a
+  workspace package is read in the tree. Why: the architect gets exactly what
+  the project installs.
+- Package downloads are anonymous: no credential is taken from any config or
+  sent, and an address carrying a username is refused. Why: the architect's
+  secrets are its HMAC key and what ContextMatrix sends, and a repository's
+  token is neither.
+- The registry comes only from the repository's own `.yarnrc.yml`, `.npmrc`
+  or `.yarnrc`, else the public npm registry; a registry value using an
+  environment variable is not used, and a lockfile's tarball url only on the
+  registry's host. Why: the machine's config and environment are not the
+  project's, and a lockfile must not steer a download elsewhere.
+- The package client may reach a private address and trusts `ca_cert_file`,
+  unlike web research, and fetches https only, with at most 5 redirects and
+  100 MiB per archive. Why: the url is the project's own, like a repository
+  url, never a model's.
+- Of a package only the CSS the project imports, and what that imports, is
+  kept, reflowed one rule per line, under a directory such as
+  `_npm+@acme+ui@1.2.3` at the blueprint's tool root, at most 8 MiB per
+  gather, and each kept package is a source of kind `package`. Why: the
+  designer needs only the styles, a grep match on a minified stylesheet would
+  return the whole file, and `_` starts no project name.
+- A package locked in package-lock.json, a classic yarn.lock or
+  pnpm-lock.yaml is checked against its npm integrity, and a mismatch is a
+  gap; a Yarn Berry package is kept unverified. Why: Berry's checksum covers
+  its own repackaged archive, not the registry's.
+- Design material that cannot be had is a gap in the brief, and a gather that
+  fails is posted as an error the run goes on after. Why: the checkouts alone
+  still make a mockup.
 - ContextMatrix's sealed frame is the boundary, and show_mockup's source
   check is only a quality guard. Why: the check keeps a revision from showing
   broken; the frame is what contains it.
@@ -294,7 +333,8 @@ HEAD.
 - web_fetch dials directly, never through a proxy. Why: its public-address
   check must see the page's own address.
 - web_search and web_fetch trust the system store alone, never
-  `ca_cert_file`, which the LLM, ContextMatrix and git clients add to it.
+  `ca_cert_file`, which the LLM, ContextMatrix, git and package clients add to
+  it.
   Why: research reaches public hosts only.
 - The leak guard refuses paths, file names, code punctuation, declared
   identifiers, module, project and repository names, card ids, and more than
