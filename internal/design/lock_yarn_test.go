@@ -355,3 +355,60 @@ func TestYarnBerryLock_Protocols(t *testing.T) {
 		})
 	}
 }
+
+func TestYarnClassicLock_NonRegistryRanges(t *testing.T) {
+	tests := []struct {
+		rangeSpec   string
+		notRegistry bool
+	}{
+		{"file:./vendor/pkg", true},
+		{"link:../pkg", true},
+		{"portal:../pkg", true},
+		{"git+https://git.example.test/pkg.git#v1", true},
+		{"git://git.example.test/pkg.git", true},
+		{"github:acme/pkg", true},
+		{"acme/pkg", true},
+		{"https://cdn.example.test/pkg-1.0.0.tgz", true},
+		{"./pkg-1.0.0.tgz", true},
+		{"^1.0.0", false},
+		{"latest", false},
+		{"~1.0.0", false},
+		{"npm:@acme/ui@^1.2.0", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.rangeSpec, func(t *testing.T) {
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{
+				"yarn.lock": "# yarn lockfile v1\n\n\"pkg@" + tc.rangeSpec + "\":\n  version \"1.0.0\"\n",
+			})
+
+			lock, err := readLockfile(root)
+			require.NoError(t, err)
+			require.NotNil(t, lock)
+
+			got, ok := lock.fromRoot("", "pkg", tc.rangeSpec)
+			require.True(t, ok)
+			assert.Equal(t, tc.notRegistry, got.NotRegistry)
+		})
+	}
+}
+
+func TestYarnClassicLock_NonRegistryDependency(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"yarn.lock": "# yarn lockfile v1\n\n" +
+			"parent@^1.0.0:\n  version \"1.0.0\"\n  dependencies:\n    x \"file:../x\"\n\n" +
+			"\"x@file:../x\":\n  version \"1.0.0\"\n",
+	})
+
+	lock, err := readLockfile(root)
+	require.NoError(t, err)
+
+	parent, ok := lock.fromRoot("", "parent", "^1.0.0")
+	require.True(t, ok)
+
+	x, ok := lock.fromPackage(parent, "x")
+	require.True(t, ok)
+	assert.True(t, x.NotRegistry)
+}

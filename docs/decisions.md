@@ -222,22 +222,25 @@ HEAD.
   Why: a change to an existing UI fits the look people already use.
 - A stage with the `design` key, the default pack's mockup, gets the target
   projects' design material gathered by the controller before each run, as a
-  brief opening its task; the pack loader refuses the key without the code
+  brief that opens the task after any lead the stage's cm, knowledge or
+  research tools add; the pack loader refuses the key without the code
   tools. Why: the brief points at files read with those tools, and no model
   picks a download.
 - The only packages downloaded are those the project's own CSS imports (a CSS
   `@import`, or a JavaScript side-effect import of a package's `.css` file)
   and the importing frontend's package.json declares, at the version the
-  nearest lockfile at or above that frontend, up to the repository root,
+  nearest lockfile (package-lock.json at lockfileVersion 2 or 3, yarn.lock or
+  pnpm-lock.yaml) at or above that frontend, up to the repository root,
   records; the same rules apply to the packages a kept package's CSS imports,
   checked against that package's own package.json and its lock entry. Only a
   registry package is fetched, never a git or file entry, and a workspace
   package is read in the tree. Why: the architect gets exactly what the
   project installs.
-- Package downloads are anonymous: no credential is taken from any config or
-  sent, and an address carrying a username is refused. Why: the architect's
-  secrets are its HMAC key and what ContextMatrix sends, and a repository's
-  token is neither.
+- Package downloads are anonymous: no credential setting is read from any
+  config and no Authorization header is sent, a lockfile url that is used is
+  requested as written, query included, and an address carrying a username is
+  refused. Why: the architect's secrets are its HMAC key and what
+  ContextMatrix sends, and a repository's token is neither.
 - The registry comes only from the repository's own `.yarnrc.yml`, `.npmrc`
   or `.yarnrc`, else the public npm registry; a registry value using an
   environment variable is not used, and a lockfile's tarball url only when it
@@ -258,10 +261,10 @@ HEAD.
   most 8 MiB per gather, and each kept package is a source of kind `package`.
   Why: the designer needs only the styles, a grep match on a minified
   stylesheet would return the whole file, and `_` starts no project name.
-- A package locked in package-lock.json, a classic yarn.lock or
-  pnpm-lock.yaml is checked against its npm integrity, and a mismatch is a
-  gap; a Yarn Berry package is kept unverified. Why: Berry's checksum covers
-  its own repackaged archive, not the registry's.
+- A package is checked against its npm integrity when its lock entry records
+  one, and a mismatch is a gap; a package-lock or classic yarn.lock entry
+  without one, and a Yarn Berry package, is kept unverified. Why: Berry's
+  checksum covers its own repackaged archive, not the registry's.
 - Design material that cannot be had is a gap in the brief, and a gather that
   fails is posted as an error the run goes on after. Why: the checkouts alone
   still make a mockup.

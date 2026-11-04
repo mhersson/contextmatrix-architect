@@ -132,7 +132,8 @@ kept as a note, and the offer stays open.
 When a target project has a web frontend, the designer draws from its design
 material: the files that build its page frame, its logo, its design tokens and
 fonts, and the CSS of the design-system packages its styles import, downloaded
-at the version its lockfile records from the registry its repository
+at the version its lockfile (package-lock.json at lockfileVersion 2 or 3,
+yarn.lock or pnpm-lock.yaml) records from the registry its repository
 configures, else the public npm registry. Each package kept is a source, and
 the chat names it when it is first fetched.
 

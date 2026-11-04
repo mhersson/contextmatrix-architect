@@ -647,3 +647,38 @@ func TestGather_NoFrontend(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, Material{}, m)
 }
+
+func TestGather_ClassicFileEntryIsNotFetched(t *testing.T) {
+	tarballs := acmeTarballs(t, "@import './theme.css';", ":root{--acme-grey-8:#ebebeb}")
+
+	var requests atomic.Int32
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+
+		body, ok := tarballs[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+
+			return
+		}
+
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+
+	files := portalTree(t, srv.URL, tarballs)
+	delete(files, "package-lock.json")
+	files["frontend/package.json"] = `{"name":"frontend","dependencies":{"@acme/ui":"file:./vendor/ui"}}`
+	files["yarn.lock"] = "# yarn lockfile v1\n\n\"@acme/ui@file:./vendor/ui\":\n  version \"1.2.3\"\n"
+
+	m, err := gatherPortal(t, srv, t.TempDir(), files)
+	require.NoError(t, err)
+
+	assert.Zero(t, requests.Load())
+	assert.Empty(t, m.Packages)
+	require.Len(t, m.Gaps, 1, "%+v", m.Gaps)
+	assert.Equal(t, "portal/frontend", m.Gaps[0].Root)
+	assert.Equal(t, coreImport, m.Gaps[0].Import)
+	assert.NotEmpty(t, m.Gaps[0].Reason)
+}

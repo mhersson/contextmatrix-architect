@@ -120,6 +120,8 @@ func (l *yarnLock) resolve(name, rangeSpec string) (locked, bool) {
 		}
 
 		realName = n
+	} else if classicNotRegistry(rangeSpec) {
+		return locked{Name: name, Version: entry.Version, NotRegistry: true}, true
 	} else if target, ok := strings.CutPrefix(rangeSpec, "npm:"); ok && target != "" {
 		// npm:<name> without a range names the package whole.
 		realName = target
@@ -136,6 +138,29 @@ func (l *yarnLock) resolve(name, rangeSpec string) (locked, bool) {
 		Local:     local,
 		pos:       descriptor,
 	}, true
+}
+
+// classicNotRegistry reports whether a classic descriptor's range names a git,
+// file, link, portal or tarball source rather than a registry version. An npm:
+// range is the registry alias and is never one.
+func classicNotRegistry(rangeSpec string) bool {
+	if strings.HasPrefix(rangeSpec, "npm:") {
+		return false
+	}
+
+	switch {
+	case schemeRE.MatchString(rangeSpec),
+		strings.HasPrefix(rangeSpec, "."),
+		strings.HasPrefix(rangeSpec, "/"),
+		strings.HasPrefix(rangeSpec, "~/"),
+		strings.Contains(rangeSpec, "/"),
+		strings.HasSuffix(rangeSpec, ".tgz"),
+		strings.HasSuffix(rangeSpec, ".tar.gz"),
+		strings.HasSuffix(rangeSpec, ".tar"):
+		return true
+	}
+
+	return false
 }
 
 // yarnDescriptorName is the package name of a "name@range" string, or "" when
