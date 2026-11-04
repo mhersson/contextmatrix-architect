@@ -88,6 +88,26 @@ func TestReflow(t *testing.T) {
 			want: "a{\ncontent:\"é;ü\"}\nb{\nc:d}\n",
 		},
 		{
+			name: "escaped quotes outside a string do not open one",
+			css:  `.x\:content-\[\'\'\]{--tw-content:'';}.y{content:'a; b'}`,
+			want: ".x\\:content-\\[\\'\\'\\]{\n--tw-content:'';\n}\n.y{\ncontent:'a; b'}\n",
+		},
+		{
+			name: "escaped semicolon and brace in a selector",
+			css:  `.a\;b{c:d}.a\{b{e:f}.a\}b{g:h}`,
+			want: ".a\\;b{\nc:d}\n.a\\{b{\ne:f}\n.a\\}b{\ng:h}\n",
+		},
+		{
+			name: "escaped slash does not open a comment",
+			css:  `.a\/*b{c:d}`,
+			want: ".a\\/*b{\nc:d}\n",
+		},
+		{
+			name: "trailing backslash",
+			css:  `a{b:c}\`,
+			want: "a{\nb:c}\n\\",
+		},
+		{
 			name: "empty",
 			css:  "",
 			want: "",

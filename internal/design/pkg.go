@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"cmp"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,15 +46,15 @@ type readLimits struct {
 // tgzPath. The archive is untrusted: nothing is written to disk, and entries
 // that are not regular files or whose path is absolute or leaves the package
 // are skipped.
-func readPackage(tgzPath string) (*pkgFiles, error) {
-	return readPackageLimited(tgzPath, readLimits{
+func readPackage(ctx context.Context, tgzPath string) (*pkgFiles, error) {
+	return readPackageLimited(ctx, tgzPath, readLimits{
 		file:  maxKeptFileBytes,
 		total: maxArchiveBytes,
 		css:   maxPackageCSSBytes,
 	})
 }
 
-func readPackageLimited(tgzPath string, lim readLimits) (*pkgFiles, error) {
+func readPackageLimited(ctx context.Context, tgzPath string, lim readLimits) (*pkgFiles, error) {
 	f, err := os.Open(tgzPath)
 	if err != nil {
 		return nil, fmt.Errorf("design: read package: %w", err)
@@ -74,6 +75,10 @@ func readPackageLimited(tgzPath string, lim readLimits) (*pkgFiles, error) {
 	)
 
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("design: read package: %w", err)
+		}
+
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			return p, nil

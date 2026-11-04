@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -84,7 +85,7 @@ func TestReadPackage(t *testing.T) {
 	})
 	tarball := writeFile(t, in, "pkg.tgz", archive)
 
-	p, err := readPackage(tarball)
+	p, err := readPackage(t.Context(), tarball)
 	require.NoError(t, err)
 
 	assert.Equal(t, map[string]string{"style/core.css": `a{b:c}`}, p.css)
@@ -142,26 +143,37 @@ func TestReadPackage_Errors(t *testing.T) {
 				data = tt.raw
 			}
 
-			p, err := readPackage(writeFile(t, t.TempDir(), "pkg.tgz", data))
+			p, err := readPackage(t.Context(), writeFile(t, t.TempDir(), "pkg.tgz", data))
 			require.Error(t, err)
 			assert.Nil(t, p)
 		})
 	}
 
 	t.Run("missing file", func(t *testing.T) {
-		_, err := readPackage(filepath.Join(t.TempDir(), "absent.tgz"))
+		_, err := readPackage(t.Context(), filepath.Join(t.TempDir(), "absent.tgz"))
 		require.Error(t, err)
 	})
 }
 
 func TestReadPackage_NoManifest(t *testing.T) {
-	p, err := readPackage(writeFile(t, t.TempDir(), "pkg.tgz", tgz(t, map[string]string{"package/a.css": `a{}`})))
+	p, err := readPackage(t.Context(), writeFile(t, t.TempDir(), "pkg.tgz", tgz(t, map[string]string{"package/a.css": `a{}`})))
 	require.NoError(t, err)
 
 	assert.Equal(t, map[string]string{"a.css": `a{}`}, p.css)
 
 	_, ok := p.declares("@acme/tokens")
 	assert.False(t, ok)
+}
+
+func TestReadPackage_CancelledContext(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "pkg.tgz", tgz(t, map[string]string{"package/a.css": `a{}`}))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	p, err := readPackage(ctx, path)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, p)
 }
 
 func TestReadPackageLimits(t *testing.T) {
@@ -209,7 +221,7 @@ func TestReadPackageLimits(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			path := writeFile(t, t.TempDir(), "pkg.tgz", tgz(t, tt.files))
 
-			p, err := readPackageLimited(path, limits)
+			p, err := readPackageLimited(t.Context(), path, limits)
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Nil(t, p)

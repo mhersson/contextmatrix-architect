@@ -30,6 +30,8 @@ func reflow(css string) string {
 			}
 
 			continue
+		case c == '\\':
+			end = min(i+2, len(css))
 		default:
 			end = i + 1
 		}
