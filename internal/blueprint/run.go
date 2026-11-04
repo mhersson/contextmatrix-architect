@@ -669,13 +669,13 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		brief := ""
 
 		if st.Design {
-			var tags map[string]string
+			var tags map[string]keptPackage
 
 			brief, tags = c.prepareDesign(ctx, sess, bp, st.ID, facts)
 			maps.Copy(facts.packages, tags)
 		}
 
-		in.Tools = append(in.Tools, stage.CodeTools(facts.root, facts.repos, facts.packages)...)
+		in.Tools = append(in.Tools, stage.CodeTools(facts.root, facts.repos, tagsByDir(facts.packages))...)
 		in.Task = brief + checkoutLines(facts) + in.Task
 	}
 

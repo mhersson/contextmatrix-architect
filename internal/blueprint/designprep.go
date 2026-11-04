@@ -22,15 +22,18 @@ const (
 // the run goes on without the material.
 const reasonDesign = "design"
 
+// keptPackage is a package kept under the tool root: later code stages grep
+// the whole root, where the files still sit, and cite them by Tag.
+type keptPackage struct{ Name, Version, Tag string }
+
 // packageTags maps the directory under the tool root each package source is
-// kept in to its tag: later code stages grep the whole root, where the kept
-// files still sit, and cite them by it.
-func packageTags(sources []store.Source) map[string]string {
-	out := map[string]string{}
+// kept in to the package.
+func packageTags(sources []store.Source) map[string]keptPackage {
+	out := map[string]keptPackage{}
 
 	for _, s := range sources {
 		if name, ok := strings.CutPrefix(s.Identity, packageIdentityPrefix); ok && s.Kind == sourceKindPackage {
-			out[designpkg.PackageDir(name, s.Version)] = s.Tag()
+			out[designpkg.PackageDir(name, s.Version)] = keptPackage{Name: name, Version: s.Version, Tag: s.Tag()}
 		}
 	}
 
@@ -39,10 +42,10 @@ func packageTags(sources []store.Source) map[string]string {
 
 // prepareDesign gathers the design material of facts' trees for a run of
 // stageID and records each kept package as a source. It returns the brief
-// that opens the run's task and the tag of each kept package by its
-// directory. A failure is logged and posted and leaves the run without the
-// material; it never fails the run.
-func (c *Controller) prepareDesign(ctx context.Context, sess *session, bp store.Blueprint, stageID string, facts *codeFacts) (string, map[string]string) {
+// that opens the run's task and each kept package by its directory. A
+// failure is logged and posted and leaves the run without the material; it
+// never fails the run.
+func (c *Controller) prepareDesign(ctx context.Context, sess *session, bp store.Blueprint, stageID string, facts *codeFacts) (string, map[string]keptPackage) {
 	if c.opts.Design == nil {
 		return "", nil
 	}
@@ -69,7 +72,7 @@ func (c *Controller) prepareDesign(ctx context.Context, sess *session, bp store.
 		return "", nil
 	}
 
-	brief := designpkg.Brief(m, tags)
+	brief := designpkg.Brief(m, tagsByDir(tags))
 	if brief == "" {
 		return "", tags
 	}
@@ -81,7 +84,7 @@ func (c *Controller) prepareDesign(ctx context.Context, sess *session, bp store.
 // their tags by directory. A package recorded at the same version is reused,
 // so a revision's run cites what the first run did. Packages added are
 // announced together, even when a later one fails to record.
-func (c *Controller) recordPackages(ctx context.Context, sess *session, bp store.Blueprint, stageID string, pkgs []designpkg.Package) (map[string]string, error) {
+func (c *Controller) recordPackages(ctx context.Context, sess *session, bp store.Blueprint, stageID string, pkgs []designpkg.Package) (map[string]keptPackage, error) {
 	bg := context.WithoutCancel(ctx)
 
 	known, err := c.opts.Store.ListSources(bg, bp.ID)
@@ -97,7 +100,7 @@ func (c *Controller) recordPackages(ctx context.Context, sess *session, bp store
 		}
 	}()
 
-	tags := make(map[string]string, len(pkgs))
+	tags := make(map[string]keptPackage, len(pkgs))
 
 	for _, p := range pkgs {
 		identity := packageIdentityPrefix + p.Name
@@ -105,7 +108,7 @@ func (c *Controller) recordPackages(ctx context.Context, sess *session, bp store
 		if i := slices.IndexFunc(known, func(s store.Source) bool {
 			return s.Kind == sourceKindPackage && s.Identity == identity && s.Version == p.Version
 		}); i >= 0 {
-			tags[p.Dir] = known[i].Tag()
+			tags[p.Dir] = keptPackage{Name: p.Name, Version: p.Version, Tag: known[i].Tag()}
 
 			continue
 		}
@@ -118,7 +121,7 @@ func (c *Controller) recordPackages(ctx context.Context, sess *session, bp store
 			return nil, fmt.Errorf("blueprint: record source: %w", err)
 		}
 
-		tags[p.Dir] = src.Tag()
+		tags[p.Dir] = keptPackage{Name: p.Name, Version: p.Version, Tag: src.Tag()}
 		added = append(added, map[string]any{
 			"tag": src.Tag(), "name": p.Name, "version": p.Version, "registry": p.Registry, "verified": p.Verified,
 		})

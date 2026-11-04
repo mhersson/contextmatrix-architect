@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	designpkg "github.com/mhersson/contextmatrix-architect/internal/design"
+	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -226,6 +228,59 @@ func TestDesign_CodeStagesTagThePackage(t *testing.T) {
 		assert.True(t, strings.HasPrefix(res.Text, "["+srcs[0].Tag()+"] "), "%s: %s", stageID, res.Text)
 		assert.Contains(t, res.Text, "acme-button")
 	}
+}
+
+// The package dir sits under the tool root beside the checkouts, so a later
+// code stage is told what it is.
+func TestDesign_LaterCodeStagesAreToldThePackageDir(t *testing.T) {
+	c, st, runner, _, _ := newDesign(t, &fakeDesigner{material: designMaterial()})
+	drive(t, c, "BP1")
+	takeOffer(t, c)
+	useMockup(t, c, nil)
+
+	srcs := packageSources(t, st)
+	require.Len(t, srcs, 1)
+
+	runs := inputsOf(runner, "solution_design")
+	require.NotEmpty(t, runs)
+
+	assert.True(t, hasLineWith(runs[0].Task, designPkgDir+"/", "@acme/ui 1.2.3", "["+srcs[0].Tag()+"]"), runs[0].Task)
+}
+
+func TestDesign_ACodeReviewerTagsThePackage(t *testing.T) {
+	c, st, runner, _, _ := newDesign(t, &fakeDesigner{material: designMaterial()})
+
+	for i := range c.opts.Pack.Stages {
+		if c.opts.Pack.Stages[i].ID == "solution_design" {
+			c.opts.Pack.Stages[i].Reviewer.Tools = []string{pack.ToolCode}
+		}
+	}
+
+	drive(t, c, "BP1")
+	takeOffer(t, c)
+	useMockup(t, c, nil)
+
+	srcs := packageSources(t, st)
+	require.Len(t, srcs, 1)
+
+	runs := inputsOf(runner, "solution_design.review")
+	require.NotEmpty(t, runs)
+
+	res, err := toolNamed(t, runs[0], "read").Execute(context.Background(), map[string]any{"path": designPkgFile})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(res.Text, "["+srcs[0].Tag()+"] "), res.Text)
+	assert.True(t, hasLineWith(runs[0].Task, designPkgDir+"/", "@acme/ui 1.2.3", "["+srcs[0].Tag()+"]"), runs[0].Task)
+}
+
+// hasLineWith reports whether one line of s holds every part.
+func hasLineWith(s string, parts ...string) bool {
+	for _, line := range strings.Split(s, "\n") {
+		if !slices.ContainsFunc(parts, func(p string) bool { return !strings.Contains(line, p) }) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func TestDesign_GatherFailureNeverFailsTheRun(t *testing.T) {

@@ -54,12 +54,12 @@ func (c *Controller) cmSource(ctx context.Context, bp store.Blueprint, stageID s
 }
 
 // codeFacts is what a code stage knows: the jailed tool root, the facts
-// repo_info reports, the tag of each kept package's directory, and the
-// contract view of every target project.
+// repo_info reports, each kept package's name, version and tag by its
+// directory, and the contract view of every target project.
 type codeFacts struct {
 	root     string
 	repos    []stage.RepoFacts
-	packages map[string]string
+	packages map[string]keptPackage
 	projects map[string]contract.Project
 	// listed is every project ContextMatrix lists, for the card id prefixes
 	// the leak guard refuses.
@@ -374,7 +374,7 @@ func foreignRepos(projects []cm.Project, name string) []string {
 
 // checkoutLines describes the trees for a stage's task, then the card types
 // and priorities each target project declares, since the card contract
-// accepts only those.
+// accepts only those, then the packages kept under the tool root.
 func checkoutLines(facts *codeFacts) string {
 	if len(facts.repos) == 0 {
 		return ""
@@ -412,7 +412,23 @@ func checkoutLines(facts *codeFacts) string {
 		}
 	}
 
+	for _, dir := range slices.Sorted(maps.Keys(facts.packages)) {
+		p := facts.packages[dir]
+		fmt.Fprintf(&b, "- %s/ is package %s %s, CSS kept for the design material, not a checkout [%s]\n", dir, p.Name, p.Version, p.Tag)
+	}
+
 	b.WriteString("\n")
 
 	return b.String()
+}
+
+// tagsByDir is the tag of each kept package by its directory, as the code
+// tools and the brief take it.
+func tagsByDir(pkgs map[string]keptPackage) map[string]string {
+	out := make(map[string]string, len(pkgs))
+	for dir, p := range pkgs {
+		out[dir] = p.Tag
+	}
+
+	return out
 }
