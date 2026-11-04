@@ -43,9 +43,9 @@ func readLockfile(treeDir string) (lockfile, error) {
 			return readNPMLock(path)
 		case "yarn.lock":
 			return readYarnLock(path)
+		case "pnpm-lock.yaml":
+			return readPNPMLock(path)
 		}
-
-		return nil, fmt.Errorf("design: %s is not supported yet", name)
 	}
 
 	return nil, nil
