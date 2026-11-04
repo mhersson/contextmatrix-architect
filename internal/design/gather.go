@@ -256,17 +256,12 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 		}
 	}
 
+	ot := &ownTree{treeDir: treeDir, files: own, gap: func(spec, reason string) { s.gap(w.path, spec, reason) }}
 	ownDecls := func(rel string) []decl { return rootDecls(own.css[rel]) }
+	rootPkg := func(e entry) error { return s.rootImport(ctx, w, e) }
 
-	for _, rel := range ownStarts(own) {
-		err := w.importOrder(own, treePrefix, rel, ownDecls, func(e entry) error {
-			if isLocalFile(treeDir, e.File, e.Spec) {
-				return nil
-			}
-
-			return s.rootImport(ctx, w, e)
-		})
-		if err != nil {
+	for _, rel := range ownStarts(own, f.CSS) {
+		if err := w.importOrder(own, treePrefix, rel, ownDecls, rootPkg, ot.local); err != nil {
 			return Root{}, err
 		}
 	}
@@ -306,14 +301,14 @@ func (s *gathering) rootImport(ctx context.Context, w *rootWalk, e entry) error 
 	return s.visit(ctx, w, l, e.Spec, e.Subpath)
 }
 
-// ownStarts lists the root's CSS files in the order their walks start: those
-// no other of them imports, then the rest, so files in a cycle are walked too,
-// each group in path order.
-func ownStarts(own *pkgFiles) []string {
+// ownStarts lists the root's own CSS files in the order their walks start:
+// those no other of them imports, then the rest, so files in a cycle are
+// walked too, each group in path order.
+func ownStarts(own *pkgFiles, files []string) []string {
 	imported := map[string]bool{}
 
-	for file, css := range own.css {
-		for _, spec := range cssImports(css) {
+	for _, file := range files {
+		for _, spec := range cssImports(own.css[file]) {
 			if rel, ok := own.sibling(file, spec); ok && rel != file {
 				imported[rel] = true
 			}
@@ -322,7 +317,7 @@ func ownStarts(own *pkgFiles) []string {
 
 	var starts, rest []string
 
-	for _, rel := range slices.Sorted(maps.Keys(own.css)) {
+	for _, rel := range slices.Sorted(slices.Values(files)) {
 		if imported[rel] {
 			rest = append(rest, rel)
 		} else {
@@ -334,14 +329,15 @@ func ownStarts(own *pkgFiles) []string {
 }
 
 // ownMaterial resolves the tokens the root's own CSS and sources reference,
-// and its fonts.
+// and its fonts. A file own gained from elsewhere in the tree adds only
+// declarations, like a package's.
 func ownMaterial(treeDir string, w *rootWalk, f frontend, own *pkgFiles, root *Root) error {
 	var (
 		ownCSS []string
 		names  []string
 	)
 
-	for _, rel := range slices.Sorted(maps.Keys(own.css)) {
+	for _, rel := range slices.Sorted(slices.Values(f.CSS)) {
 		ownCSS = append(ownCSS, own.css[rel])
 		names = append(names, references(own.css[rel])...)
 	}

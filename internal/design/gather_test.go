@@ -803,3 +803,137 @@ func TestGather_FetchingIsBounded(t *testing.T) {
 	assert.True(t, imports["@acme/a/x.css"])
 	assert.True(t, imports["@acme/b/x.css"])
 }
+
+// rootAt returns the root of m at path.
+func rootAt(t *testing.T, m Material, path string) Root {
+	t.Helper()
+
+	for _, r := range m.Roots {
+		if r.Path == path {
+			return r
+		}
+	}
+
+	require.Failf(t, "root not found", "%s in %+v", path, m.Roots)
+
+	return Root{}
+}
+
+// gapsOf returns the gaps of m that belong to the root at path.
+func gapsOf(m Material, path string) []Gap {
+	var gaps []Gap
+
+	for _, g := range m.Gaps {
+		if g.Root == path {
+			gaps = append(gaps, g)
+		}
+	}
+
+	return gaps
+}
+
+func TestGather_RelativeImportLeavingTheRootIsRead(t *testing.T) {
+	tests := []struct {
+		name  string
+		spec  string // imported by frontend/src/index.css
+		files map[string]string
+		token string
+		want  string
+	}{
+		{
+			name: "a workspace package's file",
+			spec: "../../packages/ui/tokens.css",
+			files: map[string]string{
+				"packages/ui/package.json": `{"name":"@acme/ui"}`,
+				"packages/ui/tokens.css":   ":root{--brand:#123456}",
+			},
+			token: "--brand",
+			want:  "#123456",
+		},
+		{
+			name: "an installed package's file",
+			spec: "../node_modules/bootstrap/dist/css/bootstrap.css",
+			files: map[string]string{
+				"frontend/node_modules/bootstrap/dist/css/bootstrap.css": ":root{--bs-primary:#0d6efd}",
+			},
+			token: "--bs-primary",
+			want:  "#0d6efd",
+		},
+		{
+			name: "a bare-looking import of a vendored file",
+			spec: "vendor/theme.css",
+			files: map[string]string{
+				"frontend/src/vendor/theme.css": ":root{--brand:#654321}",
+			},
+			token: "--brand",
+			want:  "#654321",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			files := map[string]string{
+				"frontend/package.json":  `{"name":"frontend"}`,
+				"frontend/src/main.tsx":  "import './index.css'\n",
+				"frontend/src/index.css": "@import '" + tc.spec + "';\n.a{color:var(" + tc.token + ")}\n",
+			}
+			for name, content := range tc.files {
+				files[name] = content
+			}
+
+			m, err := gatherPortal(t, registryServer(t, nil, 0), t.TempDir(), files)
+			require.NoError(t, err)
+
+			assert.Empty(t, gapsOf(m, "portal/frontend"))
+			assert.Equal(t, tc.want, tokenValue(t, rootAt(t, m, "portal/frontend"), tc.token))
+		})
+	}
+}
+
+func TestGather_RelativeImportThatCannotBeReadIsAGap(t *testing.T) {
+	tests := []struct {
+		name   string
+		spec   string // imported by frontend/src/index.css
+		link   bool   // frontend/src/linked.css is a symlink to a file outside the tree
+		noFile bool   // the gap's reason is reasonNoFile
+	}{
+		{name: "a missing file", spec: "./missing.css", noFile: true},
+		{name: "a file outside the tree", spec: "../../../outside.css"},
+		{name: "a symlink", spec: "./linked.css", link: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			tree := filepath.Join(root, "portal")
+
+			writeTree(t, root, map[string]string{"outside.css": ":root{--brand:#ff0000}"})
+			writeTree(t, tree, map[string]string{
+				"frontend/package.json":  `{"name":"frontend"}`,
+				"frontend/src/main.tsx":  "import './index.css'\n",
+				"frontend/src/index.css": "@import '" + tc.spec + "';\n.a{color:var(--brand)}\n",
+			})
+
+			if tc.link {
+				require.NoError(t, os.Symlink(filepath.Join(root, "outside.css"), filepath.Join(tree, "frontend", "src", "linked.css")))
+			}
+
+			srv := registryServer(t, nil, 0)
+
+			m, err := NewGatherer(t.TempDir(), srv.Client().Transport).Gather(t.Context(), portalRequest(root))
+			require.NoError(t, err)
+
+			require.Len(t, m.Gaps, 1, "%+v", m.Gaps)
+			assert.Equal(t, "portal/frontend", m.Gaps[0].Root)
+			assert.Equal(t, tc.spec, m.Gaps[0].Import)
+			assert.NotEmpty(t, m.Gaps[0].Reason)
+
+			// Which reason applies is pinned, not its wording.
+			if tc.noFile {
+				assert.Equal(t, reasonNoFile, m.Gaps[0].Reason)
+			} else {
+				assert.NotEqual(t, reasonNoFile, m.Gaps[0].Reason)
+			}
+		})
+	}
+}

@@ -85,15 +85,19 @@ func (s *gathering) walk(ctx context.Context, w *rootWalk, p *keptPkg, l locked,
 
 	return w.importOrder(p.files, p.dir, start, p.rootDecls, func(b entry) error {
 		return s.bare(ctx, w, p, l, b)
-	})
+	}, nil)
 }
 
 // importOrder adds the declarations of file and of everything it imports to
 // w.decls in import order: depth first in source order, a file after its
 // imports, each once. files holds file and its relative imports, and dir, its
 // tool-root-relative directory, keys them in w.seen; pkg gets each package
-// import where it is imported.
-func (w *rootWalk) importOrder(files *pkgFiles, dir, file string, declsOf func(string) []decl, pkg func(entry) error) error {
+// import where it is imported. local, when not nil, resolves an import that is
+// no file of files: unhandled, it goes on to pkg; handled with rel "", it was
+// a gap.
+func (w *rootWalk) importOrder(files *pkgFiles, dir, file string, declsOf func(string) []decl, pkg func(entry) error,
+	local func(file, spec string) (rel string, handled bool),
+) error {
 	if w.seen[dir+"/"+file] {
 		return nil
 	}
@@ -101,8 +105,15 @@ func (w *rootWalk) importOrder(files *pkgFiles, dir, file string, declsOf func(s
 	w.seen[dir+"/"+file] = true
 
 	for _, spec := range cssImports(files.css[file]) {
-		if rel, ok := files.sibling(file, spec); ok {
-			if err := w.importOrder(files, dir, rel, declsOf, pkg); err != nil {
+		rel, ok := files.sibling(file, spec)
+		if !ok && local != nil {
+			if rel, ok = local(file, spec); ok && rel == "" {
+				continue
+			}
+		}
+
+		if ok {
+			if err := w.importOrder(files, dir, rel, declsOf, pkg, local); err != nil {
 				return err
 			}
 
