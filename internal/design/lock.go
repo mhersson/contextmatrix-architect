@@ -13,6 +13,7 @@ import (
 type locked struct {
 	Name, Version, Resolved, Integrity string
 	Local                              bool // a workspace or link package inside the repository
+	NotRegistry                        bool // a git, tarball, file, directory or patched package
 	pos                                string
 }
 

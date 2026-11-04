@@ -112,8 +112,11 @@ func (l *yarnLock) resolve(name, rangeSpec string) (locked, bool) {
 			strings.HasPrefix(protocol, "link:"),
 			strings.HasPrefix(protocol, "portal:"):
 			local = true
-		default:
+		case strings.HasPrefix(protocol, "npm:"):
+			// A registry resolution of another version is not this entry's package.
 			return locked{}, false
+		default:
+			return locked{Name: n, Version: entry.Version, NotRegistry: true}, true
 		}
 
 		realName = n

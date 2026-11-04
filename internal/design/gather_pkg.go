@@ -146,7 +146,7 @@ func (s *gathering) pkg(ctx context.Context, w *rootWalk, l locked, spec string)
 	switch {
 	case l.Local:
 		return nil, "is a package in this repository; read it in the tree", nil
-	case l.Resolved != "" && !isHTTPURL(l.Resolved):
+	case l.NotRegistry, l.Resolved != "" && !isHTTPURL(l.Resolved):
 		return nil, "is not installed from a registry", nil
 	case !pkgNameRE.MatchString(l.Name) || !pkgVersionRE.MatchString(l.Version):
 		return nil, "has a name or version the architect will not use", nil

@@ -389,15 +389,16 @@ func TestPNPMLock_Resolutions(t *testing.T) {
 	require.NotNil(t, lock)
 
 	tests := []struct {
-		name   string
-		pkg    string
-		wantOK bool
-		local  bool
+		name        string
+		pkg         string
+		wantOK      bool
+		local       bool
+		notRegistry bool
 	}{
 		{name: "a registry resolution is the package", pkg: "@acme/registry", wantOK: true},
-		{name: "a tarball resolution is not the registry package", pkg: "@acme/tarball"},
-		{name: "a git resolution is not the registry package", pkg: "@acme/git"},
-		{name: "a directory resolution is not the registry package", pkg: "@acme/directory"},
+		{name: "a tarball resolution is not the registry package", pkg: "@acme/tarball", wantOK: true, notRegistry: true},
+		{name: "a git resolution is not the registry package", pkg: "@acme/git", wantOK: true, notRegistry: true},
+		{name: "a directory resolution is not the registry package", pkg: "@acme/directory", wantOK: true, notRegistry: true},
 		{name: "a resolution without integrity cannot be checked", pkg: "@acme/unchecked"},
 		{name: "a file version is local whatever its resolution", pkg: "@acme/vendored", wantOK: true, local: true},
 	}
@@ -413,6 +414,7 @@ func TestPNPMLock_Resolutions(t *testing.T) {
 
 			assert.Equal(t, tt.pkg, got.Name)
 			assert.Equal(t, tt.local, got.Local)
+			assert.Equal(t, tt.notRegistry, got.NotRegistry)
 		})
 	}
 }

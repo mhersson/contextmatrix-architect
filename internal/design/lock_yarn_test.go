@@ -324,16 +324,17 @@ func TestYarnBerryLock_Protocols(t *testing.T) {
 	require.NotNil(t, lock)
 
 	tests := []struct {
-		name      string
-		pkg       string
-		rangeSpec string
-		wantOK    bool
-		local     bool
+		name        string
+		pkg         string
+		rangeSpec   string
+		wantOK      bool
+		local       bool
+		notRegistry bool
 	}{
-		{name: "a patch is not the registry package", pkg: "@acme/patched", rangeSpec: "patch:@acme/patched@npm%3A1.0.0#./patches/p.patch"},
-		{name: "a git package is not the registry package", pkg: "@acme/forked", rangeSpec: "github:acme/forked#main"},
-		{name: "a tarball package is not the registry package", pkg: "@acme/tarball", rangeSpec: "https://example.test/tarball.tgz"},
-		{name: "a file package is not the registry package", pkg: "@acme/vendored", rangeSpec: "file:./vendor/vendored"},
+		{name: "a patch is not the registry package", pkg: "@acme/patched", rangeSpec: "patch:@acme/patched@npm%3A1.0.0#./patches/p.patch", wantOK: true, notRegistry: true},
+		{name: "a git package is not the registry package", pkg: "@acme/forked", rangeSpec: "github:acme/forked#main", wantOK: true, notRegistry: true},
+		{name: "a tarball package is not the registry package", pkg: "@acme/tarball", rangeSpec: "https://example.test/tarball.tgz", wantOK: true, notRegistry: true},
+		{name: "a file package is not the registry package", pkg: "@acme/vendored", rangeSpec: "file:./vendor/vendored", wantOK: true, notRegistry: true},
 		{name: "a registry resolution may carry params", pkg: "@acme/archived", rangeSpec: "^1.2.3", wantOK: true},
 		{name: "an npm resolution of another version is not the package", pkg: "@acme/mismatch", rangeSpec: "^1.2.3"},
 		{name: "an npm resolution that only starts with the version is not the package", pkg: "@acme/longer", rangeSpec: "^1.2.3"},
@@ -349,6 +350,7 @@ func TestYarnBerryLock_Protocols(t *testing.T) {
 			if tt.wantOK {
 				assert.Equal(t, tt.pkg, got.Name)
 				assert.Equal(t, tt.local, got.Local)
+				assert.Equal(t, tt.notRegistry, got.NotRegistry)
 			}
 		})
 	}

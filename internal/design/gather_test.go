@@ -400,6 +400,29 @@ func TestGather_Gaps(t *testing.T) {
 			word: "installed",
 		},
 		{
+			name: "a patched package",
+			edit: func(_ *testing.T, files map[string]string, _ string) {
+				const patch = "patch:@acme/ui@npm%3A1.2.3#./patches/ui.patch"
+
+				delete(files, "package-lock.json")
+				files["frontend/package.json"] = `{"name":"frontend","dependencies":{"@acme/ui":"` + patch + `"}}`
+				files["yarn.lock"] = "__metadata:\n  version: 8\n\n\"@acme/ui@" + patch + "\":\n" +
+					"  version: 1.2.3\n  resolution: \"@acme/ui@" + patch + "::version=1.2.3&hash=abc\"\n"
+			},
+			word: "installed",
+		},
+		{
+			name: "a tarball package",
+			edit: func(_ *testing.T, files map[string]string, _ string) {
+				delete(files, "package-lock.json")
+				files["pnpm-lock.yaml"] = "lockfileVersion: '9.0'\n\nimporters:\n  frontend:\n    dependencies:\n" +
+					"      '@acme/ui':\n        specifier: ^1.2.0\n        version: 1.2.3\n\n" +
+					"packages:\n  '@acme/ui@1.2.3':\n" +
+					"    resolution: {integrity: sha512-ui123, tarball: 'https://example.test/ui.tgz'}\n"
+			},
+			word: "installed",
+		},
+		{
 			name: "unsafe version",
 			edit: func(t *testing.T, files map[string]string, srvURL string) {
 				files["package-lock.json"] = npmLockJSON(t, map[string]map[string]any{

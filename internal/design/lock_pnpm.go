@@ -129,7 +129,11 @@ func (l *pnpmLock) resolve(name, value string) (locked, bool) {
 	// Only a registry package is told apart from its name and version; git,
 	// tarball and directory packages are some other package.
 	res := pkg.Resolution
-	if res.Integrity == "" || res.Tarball != "" || res.Type != "" || res.Directory != "" {
+
+	switch {
+	case res.Tarball != "" || res.Type != "" || res.Directory != "":
+		return locked{Name: name, Version: version, NotRegistry: true}, true
+	case res.Integrity == "":
 		return locked{}, false
 	}
 
