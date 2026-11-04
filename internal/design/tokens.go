@@ -1,6 +1,7 @@
 package design
 
 import (
+	"iter"
 	"slices"
 	"strings"
 	"unicode"
@@ -14,7 +15,8 @@ const (
 	// fan-out or a huge shared value cannot blow up time or memory.
 	maxExpandBytes = 8 << 10
 
-	maxFonts = 6
+	maxFonts          = 6
+	maxFontCandidates = 64
 )
 
 // decl is one declaration: a property name and its value, trimmed of
@@ -169,7 +171,8 @@ func trimValue(v string) string {
 }
 
 // lexEnd returns the index after the comment, string, unquoted url() body or
-// backslash escape that starts at i, or i when none does.
+// backslash escape that starts at i, or i when none does. The parenthesis of a
+// url() with a quoted body is structure, so it is not skipped.
 func lexEnd(css string, i int) int {
 	switch c := css[i]; {
 	case c == '/' && strings.HasPrefix(css[i:], "/*"):
@@ -177,7 +180,9 @@ func lexEnd(css string, i int) int {
 	case c == '"' || c == '\'':
 		return stringEnd(css, i)
 	case c == '(' && i >= 3 && strings.EqualFold(css[i-3:i], "url"):
-		return urlEnd(css, i)
+		if end := urlEnd(css, i); end > i+1 {
+			return end
+		}
 	case c == '\\':
 		return min(i+2, len(css))
 	}
@@ -529,8 +534,28 @@ type Font struct{ Stack, DrawWith string }
 
 // fonts returns up to six distinct stacks: the resolved declarations whose
 // name contains font-family, in name order, then the font-family values of the
-// html, body and :root rules of ownCSS. Stacks that do not resolve are left out.
+// html, body and :root rules of ownCSS. Stacks that do not resolve are left
+// out. Each source is examined for at most maxFontCandidates declarations, so
+// a flood of them in untrusted CSS costs a fixed amount of work.
 func fonts(decls []decl, ownCSS []string) []Font {
+	r := newResolver(decls)
+
+	var (
+		out  []Font
+		seen = map[string]bool{}
+	)
+
+	// add reports whether out is full.
+	add := func(stack string) bool {
+		if stack != "" && !seen[stack] {
+			seen[stack] = true
+
+			out = append(out, Font{Stack: stack, DrawWith: drawWith(stack)})
+		}
+
+		return len(out) == maxFonts
+	}
+
 	var names []string
 
 	for _, d := range decls {
@@ -539,15 +564,16 @@ func fonts(decls []decl, ownCSS []string) []Font {
 		}
 	}
 
-	var stacks []string
+	slices.Sort(names)
 
-	for _, t := range resolveTokens(names, decls) {
-		if !t.Unresolved {
-			stacks = append(stacks, t.Value)
+	names = slices.Compact(names)
+	for _, name := range names[:min(len(names), maxFontCandidates)] {
+		if t := r.token(name); !t.Unresolved && add(t.Value) {
+			return out
 		}
 	}
 
-	r := newResolver(decls)
+	examined := 0
 
 	for _, css := range ownCSS {
 		for _, d := range blockDecls(css, isFontRulePrelude) {
@@ -555,26 +581,15 @@ func fonts(decls []decl, ownCSS []string) []Font {
 				continue
 			}
 
-			if value, ok := r.value("", d.Value); ok {
-				stacks = append(stacks, value)
+			if examined == maxFontCandidates {
+				return out
 			}
-		}
-	}
 
-	var out []Font
+			examined++
 
-	seen := map[string]bool{}
-
-	for _, stack := range stacks {
-		if stack == "" || seen[stack] {
-			continue
-		}
-
-		seen[stack] = true
-
-		out = append(out, Font{Stack: stack, DrawWith: drawWith(stack)})
-		if len(out) == maxFonts {
-			break
+			if value, ok := r.value("", d.Value); ok && add(value) {
+				return out
+			}
 		}
 	}
 
@@ -584,7 +599,7 @@ func fonts(decls []decl, ownCSS []string) []Font {
 // drawWith returns the first family of stack that a mockup can draw without
 // loading anything, or sans-serif.
 func drawWith(stack string) string {
-	for _, family := range splitFamilies(stack) {
+	for family := range families(stack) {
 		family = strings.TrimSpace(family)
 		if n := len(family); n >= 2 && (family[0] == '"' || family[0] == '\'') && family[n-1] == family[0] {
 			family = strings.TrimSpace(family[1 : n-1])
@@ -602,31 +617,28 @@ func drawWith(stack string) string {
 	return "sans-serif"
 }
 
-// splitFamilies splits a font stack at the commas outside quotes.
-func splitFamilies(stack string) []string {
-	var (
-		out   []string
-		start int
-	)
+// families yields the families of a font stack, split at the commas outside
+// quotes.
+func families(stack string) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		start := 0
 
-	for i := 0; i < len(stack); {
-		if stack[i] == ',' {
-			out = append(out, stack[start:i])
+		for i := 0; i < len(stack); {
+			switch stack[i] {
+			case ',':
+				if !yield(stack[start:i]) {
+					return
+				}
 
-			start = i + 1
-			i++
-
-			continue
+				start = i + 1
+				i++
+			case '"', '\'':
+				i = stringEnd(stack, i)
+			default:
+				i++
+			}
 		}
 
-		if stack[i] == '"' || stack[i] == '\'' {
-			i = stringEnd(stack, i)
-
-			continue
-		}
-
-		i++
+		yield(stack[start:])
 	}
-
-	return append(out, stack[start:])
 }

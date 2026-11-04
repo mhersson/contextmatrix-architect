@@ -2,6 +2,7 @@ package design
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -212,6 +213,24 @@ func TestResolveTokens(t *testing.T) {
 			want:  []Token{{Name: "--b", Value: "rgb(0, 1, 2) url(a,b)"}},
 		},
 		{
+			name:  "a declared name is preferred over a fallback holding a quoted url",
+			names: []string{"--b"},
+			decls: []decl{{"--a", "red"}, {"--b", `var(--a, url("x.png") no-repeat)`}},
+			want:  []Token{{Name: "--b", Value: "red"}},
+		},
+		{
+			name:  "fallback holding a quoted url",
+			names: []string{"--b"},
+			decls: []decl{{"--b", `var(--missing, url("a.png") no-repeat)`}},
+			want:  []Token{{Name: "--b", Value: `url("a.png") no-repeat`}},
+		},
+		{
+			name:  "text after a call whose fallback holds a quoted url",
+			names: []string{"--b"},
+			decls: []decl{{"--b", `1px var(--missing, url( 'a.png' )) 2px`}},
+			want:  []Token{{Name: "--b", Value: `1px url( 'a.png' ) 2px`}},
+		},
+		{
 			name:  "empty fallback",
 			names: []string{"--b"},
 			decls: []decl{{"--b", "a var(--missing,) b"}},
@@ -419,6 +438,76 @@ func TestResolveTokens_UnclosedCallsAreLinear(t *testing.T) {
 		assert.True(t, got[0].Unresolved)
 	case <-time.After(10 * time.Second):
 		t.Fatal("resolveTokens did not finish")
+	}
+}
+
+func TestFonts_BoundedWork(t *testing.T) {
+	const n = 100_000
+
+	huge := strings.Repeat("a", 8000)
+
+	withFontDecls := func(value string) []decl {
+		decls := []decl{{"--h", huge}}
+		for i := range n {
+			decls = append(decls, decl{fmt.Sprintf("--font-family-%d", i), value})
+		}
+
+		return decls
+	}
+
+	tests := []struct {
+		name   string
+		decls  []decl
+		ownCSS []string
+		want   int
+	}{
+		{
+			name:  "declarations that all resolve to the same large stack",
+			decls: withFontDecls("var(--h)"),
+			want:  1,
+		},
+		{
+			name:  "declarations that expand a large value and then fail",
+			decls: withFontDecls("var(--h) var(--missing)"),
+		},
+		{
+			name:   "own css rules that all resolve to the same large stack",
+			decls:  []decl{{"--h", huge}},
+			ownCSS: []string{strings.Repeat("body{font-family:var(--h)}", n)},
+			want:   1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			type run struct {
+				fonts []Font
+				alloc uint64
+			}
+
+			done := make(chan run, 1)
+
+			go func() {
+				var before, after runtime.MemStats
+
+				runtime.ReadMemStats(&before)
+
+				got := fonts(tt.decls, tt.ownCSS)
+
+				runtime.ReadMemStats(&after)
+
+				done <- run{got, after.TotalAlloc - before.TotalAlloc}
+			}()
+
+			select {
+			case got := <-done:
+				assert.Len(t, got.fonts, tt.want)
+				// Expanding every candidate would allocate about 800 MB.
+				assert.Less(t, got.alloc, uint64(64<<20))
+			case <-time.After(10 * time.Second):
+				t.Fatal("fonts did not finish")
+			}
+		})
 	}
 }
 
