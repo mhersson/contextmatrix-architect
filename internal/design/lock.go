@@ -18,7 +18,8 @@ type locked struct {
 
 type lockfile interface {
 	// fromRoot resolves a dependency declared by the frontend root at dir
-	// (tree-relative) with rangeSpec, the value in its package.json.
+	// (relative to the lockfile's directory) with rangeSpec, the value in its
+	// package.json.
 	fromRoot(dir, name, rangeSpec string) (locked, bool)
 	// fromPackage resolves a dependency of an already resolved package.
 	fromPackage(parent locked, name string) (locked, bool)
@@ -26,11 +27,11 @@ type lockfile interface {
 	checksummed() bool
 }
 
-// readLockfile reads the lockfile at the tree root: package-lock.json,
-// yarn.lock or pnpm-lock.yaml, first found in that order; nil when none.
-func readLockfile(treeDir string) (lockfile, error) {
+// readLockfile reads the lockfile in dir: package-lock.json, yarn.lock or
+// pnpm-lock.yaml, first found in that order; nil when none.
+func readLockfile(dir string) (lockfile, error) {
 	for _, name := range []string{"package-lock.json", "yarn.lock", "pnpm-lock.yaml"} {
-		path := filepath.Join(treeDir, name)
+		path := filepath.Join(dir, name)
 
 		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 			continue

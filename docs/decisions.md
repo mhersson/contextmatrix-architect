@@ -228,11 +228,12 @@ HEAD.
 - The only packages downloaded are those the project's own CSS imports (a CSS
   `@import`, or a JavaScript side-effect import of a package's `.css` file)
   and the importing frontend's package.json declares, at the version the
-  repository's lockfile records; the same rules apply to the packages a kept
-  package's CSS imports, checked against that package's own package.json and
-  its lock entry. Only a registry package is fetched, never a git or file
-  entry, and a workspace package is read in the tree. Why: the architect gets
-  exactly what the project installs.
+  nearest lockfile at or above that frontend, up to the repository root,
+  records; the same rules apply to the packages a kept package's CSS imports,
+  checked against that package's own package.json and its lock entry. Only a
+  registry package is fetched, never a git or file entry, and a workspace
+  package is read in the tree. Why: the architect gets exactly what the
+  project installs.
 - Package downloads are anonymous: no credential is taken from any config or
   sent, and an address carrying a username is refused. Why: the architect's
   secrets are its HMAC key and what ContextMatrix sends, and a repository's

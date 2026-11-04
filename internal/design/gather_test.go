@@ -273,6 +273,74 @@ func TestGather_TokensInImportOrder(t *testing.T) {
 	}
 }
 
+func TestGather_NearestLockfile(t *testing.T) {
+	tarballs := defaultTarballs(t)
+
+	pnpmLock := "lockfileVersion: '9.0'\n\nimporters:\n  .:\n    dependencies:\n" +
+		"      '@acme/ui':\n        specifier: ^1.2.0\n        version: 1.2.3\n\n" +
+		"packages:\n  '@acme/tokens@2.0.1':\n    resolution: {integrity: " + integrity(tarballs[tokensPath]) + "}\n" +
+		"  '@acme/ui@1.2.3':\n    resolution: {integrity: " + integrity(tarballs[uiPath]) + "}\n\n" +
+		"snapshots:\n  '@acme/tokens@2.0.1': {}\n  '@acme/ui@1.2.3':\n    dependencies:\n      '@acme/tokens': 2.0.1\n"
+
+	tests := []struct {
+		name string
+		edit func(t *testing.T, files map[string]string, srvURL string)
+	}{
+		{
+			name: "a package-lock.json beside the frontend",
+			edit: func(*testing.T, map[string]string, string) {},
+		},
+		{
+			name: "a pnpm-lock.yaml beside the frontend keys its importer from there",
+			edit: func(_ *testing.T, files map[string]string, _ string) {
+				delete(files, "web/package-lock.json")
+				files["web/pnpm-lock.yaml"] = pnpmLock
+			},
+		},
+		{
+			name: "the nearest lockfile wins over the tree root's",
+			edit: func(t *testing.T, files map[string]string, srvURL string) {
+				files["package-lock.json"] = npmLockJSON(t, map[string]map[string]any{
+					"node_modules/@acme/other": {"version": "1.0.0", "resolved": srvURL + "/@acme/other/-/other-1.0.0.tgz"},
+				})
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := registryServer(t, tarballs, 0)
+
+			files := map[string]string{
+				"go.mod":  "module example.test/portal\n",
+				"main.go": "package main\n",
+			}
+
+			for name, content := range portalTree(t, srv.URL, tarballs) {
+				if web, ok := strings.CutPrefix(name, "frontend/"); ok {
+					name = "web/" + web
+				}
+
+				if name == "package-lock.json" {
+					name = "web/package-lock.json"
+				}
+
+				files[name] = content
+			}
+
+			tc.edit(t, files, srv.URL)
+
+			m, err := gatherPortal(t, srv, t.TempDir(), files)
+			require.NoError(t, err)
+
+			assert.Empty(t, m.Gaps)
+			require.Len(t, m.Roots, 1)
+			assert.Equal(t, "portal/web", m.Roots[0].Path)
+			assert.Equal(t, []string{tokensDir, uiDir}, m.Roots[0].Packages)
+		})
+	}
+}
+
 func TestGather_Gaps(t *testing.T) {
 	tarballs := defaultTarballs(t)
 

@@ -76,15 +76,16 @@ type gathering struct {
 
 // rootWalk is one frontend root's walk through the packages its CSS imports.
 type rootWalk struct {
-	path    string // Root.Path
-	lock    lockfile
-	lockGap string // why lock cannot be used; "" when it can
-	regs    registries
-	regErr  error
-	deps    map[string]string // the root package.json's declared ranges
-	seen    map[string]bool   // tool-root-relative path of each file walked
-	reached map[string]bool   // pkg dirs
-	decls   []decl
+	path     string // Root.Path
+	lock     lockfile
+	lockGap  string // why lock cannot be used; "" when it can
+	lockRoot string // the root's directory relative to the lockfile's
+	regs     registries
+	regErr   error
+	deps     map[string]string // the root package.json's declared ranges
+	seen     map[string]bool   // tool-root-relative path of each file walked
+	reached  map[string]bool   // pkg dirs
+	decls    []decl
 }
 
 // Gather collects the design material of every frontend root in req.Trees and
@@ -141,28 +142,19 @@ func (s *gathering) tree(ctx context.Context, tree Tree) ([]Root, error) {
 		return nil, nil
 	}
 
-	lock, err := readLockfile(treeDir)
-
-	var lockGap string
-
-	switch {
-	case err != nil:
-		slog.Warn("design: read lockfile", "tree", tree.Dir, "error", err)
-
-		lockGap = "the lockfile could not be read"
-	case lock == nil:
-		lockGap = "no lockfile in the repository"
-	}
-
+	locks := map[string]dirLock{}
 	roots := make([]Root, 0, len(fronts))
 
 	for _, f := range fronts {
+		lockDir, lock, lockGap := nearestLock(tree.Dir, treeDir, f.Dir, locks)
+
 		w := &rootWalk{
-			path:    path.Join(filepath.ToSlash(tree.Dir), f.Dir),
-			lock:    lock,
-			lockGap: lockGap,
-			seen:    map[string]bool{},
-			reached: map[string]bool{},
+			path:     path.Join(filepath.ToSlash(tree.Dir), f.Dir),
+			lock:     lock,
+			lockGap:  lockGap,
+			lockRoot: relDir(lockDir, f.Dir),
+			seen:     map[string]bool{},
+			reached:  map[string]bool{},
 		}
 
 		root, err := s.frontend(ctx, tree, treeDir, w, f)
@@ -174,6 +166,48 @@ func (s *gathering) tree(ctx context.Context, tree Tree) ([]Root, error) {
 	}
 
 	return roots, nil
+}
+
+// dirLock is what readLockfile found in one directory of a tree.
+type dirLock struct {
+	lock lockfile
+	err  error
+}
+
+// nearestLock finds the lockfile in the frontend root at dir or the nearest
+// directory above it, up to the tree root; locks caches each directory read.
+// lockGap says why no lockfile can be used.
+func nearestLock(treeName, treeDir, dir string, locks map[string]dirLock) (lockDir string, lock lockfile, lockGap string) {
+	for d := dir; ; d = parentDir(d) {
+		found, ok := locks[d]
+		if !ok {
+			found.lock, found.err = readLockfile(filepath.Join(treeDir, filepath.FromSlash(d)))
+			if found.err != nil {
+				slog.Warn("design: read lockfile", "tree", treeName, "dir", d, "error", found.err)
+			}
+
+			locks[d] = found
+		}
+
+		switch {
+		case found.err != nil:
+			return d, nil, "the lockfile could not be read"
+		case found.lock != nil:
+			return d, found.lock, ""
+		case d == "":
+			return "", nil, "no lockfile in the repository"
+		}
+	}
+}
+
+// relDir is the tree-relative dir relative to base, an ancestor of it or dir
+// itself.
+func relDir(base, dir string) string {
+	if base == "" {
+		return dir
+	}
+
+	return strings.TrimPrefix(strings.TrimPrefix(dir, base), "/")
 }
 
 func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *rootWalk, f frontend) (Root, error) {
@@ -215,7 +249,7 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 			continue
 		}
 
-		if err := s.rootImport(ctx, w, f, e); err != nil {
+		if err := s.rootImport(ctx, w, e); err != nil {
 			return Root{}, err
 		}
 	}
@@ -228,7 +262,7 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 				return nil
 			}
 
-			return s.rootImport(ctx, w, f, e)
+			return s.rootImport(ctx, w, e)
 		})
 		if err != nil {
 			return Root{}, err
@@ -246,7 +280,7 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 
 // rootImport resolves a package import of the root's own files through the
 // root's package.json and the lockfile, and walks the package.
-func (s *gathering) rootImport(ctx context.Context, w *rootWalk, f frontend, e entry) error {
+func (s *gathering) rootImport(ctx context.Context, w *rootWalk, e entry) error {
 	rangeSpec, ok := w.deps[e.Name]
 	if !ok {
 		s.gap(w.path, e.Spec, "not declared in "+path.Join(w.path, "package.json"))
@@ -260,7 +294,7 @@ func (s *gathering) rootImport(ctx context.Context, w *rootWalk, f frontend, e e
 		return nil
 	}
 
-	l, ok := w.lock.fromRoot(f.Dir, e.Name, rangeSpec)
+	l, ok := w.lock.fromRoot(w.lockRoot, e.Name, rangeSpec)
 	if !ok {
 		s.gap(w.path, e.Spec, "the lockfile has no entry for it")
 
