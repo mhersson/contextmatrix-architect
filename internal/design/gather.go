@@ -81,9 +81,9 @@ type rootWalk struct {
 	lockGap string // why lock cannot be used; "" when it can
 	regs    registries
 	regErr  error
-	starts  map[string]bool // "<pkg dir>/<file>" of each start file walked
-	seen    map[string]bool // "<pkg dir>/<file>" of each file in decls
-	reached map[string]bool // pkg dirs
+	deps    map[string]string // the root package.json's declared ranges
+	seen    map[string]bool   // tool-root-relative path of each file walked
+	reached map[string]bool   // pkg dirs
 	decls   []decl
 }
 
@@ -161,7 +161,6 @@ func (s *gathering) tree(ctx context.Context, tree Tree) ([]Root, error) {
 			path:    path.Join(filepath.ToSlash(tree.Dir), f.Dir),
 			lock:    lock,
 			lockGap: lockGap,
-			starts:  map[string]bool{},
 			seen:    map[string]bool{},
 			reached: map[string]bool{},
 		}
@@ -197,36 +196,46 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 		slog.Warn("design: read registry config", "root", w.path, "error", w.regErr)
 	}
 
-	manifest := path.Join(w.path, "package.json")
-	deps := declaredDeps(filepath.Join(rootDir, "package.json"))
+	w.deps = declaredDeps(filepath.Join(rootDir, "package.json"))
 
+	own := &pkgFiles{css: make(map[string]string, len(f.CSS))}
+
+	for _, rel := range f.CSS {
+		css, err := readTreeFile(treeDir, rel)
+		if err != nil {
+			return Root{}, err
+		}
+
+		own.css[rel] = css
+	}
+
+	// The CSS packages a script imports come before the root's own CSS.
 	for _, e := range f.Entries {
-		rangeSpec, ok := deps[e.Name]
-		if !ok {
-			s.gap(w.path, e.Spec, "not declared in "+manifest)
-
+		if _, isCSS := own.css[e.File]; isCSS {
 			continue
 		}
 
-		if w.lockGap != "" {
-			s.gap(w.path, e.Spec, w.lockGap)
-
-			continue
-		}
-
-		l, ok := w.lock.fromRoot(f.Dir, e.Name, rangeSpec)
-		if !ok {
-			s.gap(w.path, e.Spec, "the lockfile has no entry for it")
-
-			continue
-		}
-
-		if err := s.visit(ctx, w, l, e.Spec, e.Subpath); err != nil {
+		if err := s.rootImport(ctx, w, f, e); err != nil {
 			return Root{}, err
 		}
 	}
 
-	if err := ownMaterial(treeDir, w, f, &root); err != nil {
+	ownDecls := func(rel string) []decl { return rootDecls(own.css[rel]) }
+
+	for _, rel := range ownStarts(own) {
+		err := w.importOrder(own, treePrefix, rel, ownDecls, func(e entry) error {
+			if isLocalFile(treeDir, e.File, e.Spec) {
+				return nil
+			}
+
+			return s.rootImport(ctx, w, f, e)
+		})
+		if err != nil {
+			return Root{}, err
+		}
+	}
+
+	if err := ownMaterial(treeDir, w, f, own, &root); err != nil {
 		return Root{}, err
 	}
 
@@ -235,23 +244,70 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 	return root, nil
 }
 
-// ownMaterial adds the root's own CSS declarations after the package ones and
-// resolves the tokens the root's own CSS and sources reference.
-func ownMaterial(treeDir string, w *rootWalk, f frontend, root *Root) error {
+// rootImport resolves a package import of the root's own files through the
+// root's package.json and the lockfile, and walks the package.
+func (s *gathering) rootImport(ctx context.Context, w *rootWalk, f frontend, e entry) error {
+	rangeSpec, ok := w.deps[e.Name]
+	if !ok {
+		s.gap(w.path, e.Spec, "not declared in "+path.Join(w.path, "package.json"))
+
+		return nil
+	}
+
+	if w.lockGap != "" {
+		s.gap(w.path, e.Spec, w.lockGap)
+
+		return nil
+	}
+
+	l, ok := w.lock.fromRoot(f.Dir, e.Name, rangeSpec)
+	if !ok {
+		s.gap(w.path, e.Spec, "the lockfile has no entry for it")
+
+		return nil
+	}
+
+	return s.visit(ctx, w, l, e.Spec, e.Subpath)
+}
+
+// ownStarts lists the root's CSS files in the order their walks start: those
+// no other of them imports, then the rest, so files in a cycle are walked too,
+// each group in path order.
+func ownStarts(own *pkgFiles) []string {
+	imported := map[string]bool{}
+
+	for file, css := range own.css {
+		for _, spec := range cssImports(css) {
+			if rel, ok := own.sibling(file, spec); ok && rel != file {
+				imported[rel] = true
+			}
+		}
+	}
+
+	var starts, rest []string
+
+	for _, rel := range slices.Sorted(maps.Keys(own.css)) {
+		if imported[rel] {
+			rest = append(rest, rel)
+		} else {
+			starts = append(starts, rel)
+		}
+	}
+
+	return append(starts, rest...)
+}
+
+// ownMaterial resolves the tokens the root's own CSS and sources reference,
+// and its fonts.
+func ownMaterial(treeDir string, w *rootWalk, f frontend, own *pkgFiles, root *Root) error {
 	var (
 		ownCSS []string
 		names  []string
 	)
 
-	for _, rel := range slices.Sorted(slices.Values(f.CSS)) {
-		css, err := readTreeFile(treeDir, rel)
-		if err != nil {
-			return err
-		}
-
-		ownCSS = append(ownCSS, css)
-		w.decls = append(w.decls, rootDecls(css)...)
-		names = append(names, references(css)...)
+	for _, rel := range slices.Sorted(maps.Keys(own.css)) {
+		ownCSS = append(ownCSS, own.css[rel])
+		names = append(names, references(own.css[rel])...)
 	}
 
 	for _, rel := range f.Sources {

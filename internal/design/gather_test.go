@@ -28,14 +28,26 @@ const (
 func acmeTarballs(t *testing.T, coreCSS, varsCSS string) map[string][]byte {
 	t.Helper()
 
+	return acmeStyleTarballs(t, map[string]string{"core.css": coreCSS}, varsCSS)
+}
+
+// acmeStyleTarballs is acmeTarballs with the files of @acme/ui's style
+// directory given by name, beside its theme.css.
+func acmeStyleTarballs(t *testing.T, style map[string]string, varsCSS string) map[string][]byte {
+	t.Helper()
+
+	ui := map[string]string{
+		"package/package.json": `{"name":"@acme/ui","version":"1.2.3",` +
+			`"dependencies":{"@acme/tokens":"^2.0.0"},` +
+			`"exports":{"./style/*":"./style/*","./theme.css":"./dist/theme.css"}}`,
+		"package/style/theme.css": ":root{--color-border:var(--acme-grey-8)}",
+	}
+	for name, css := range style {
+		ui["package/style/"+name] = css
+	}
+
 	return map[string][]byte{
-		uiPath: tgz(t, map[string]string{
-			"package/package.json": `{"name":"@acme/ui","version":"1.2.3",` +
-				`"dependencies":{"@acme/tokens":"^2.0.0"},` +
-				`"exports":{"./style/*":"./style/*","./theme.css":"./dist/theme.css"}}`,
-			"package/style/core.css":  coreCSS,
-			"package/style/theme.css": ":root{--color-border:var(--acme-grey-8)}",
-		}),
+		uiPath: tgz(t, ui),
 		tokensPath: tgz(t, map[string]string{
 			"package/package.json": `{"name":"@acme/tokens","version":"2.0.1"}`,
 			"package/vars.css":     varsCSS,
@@ -174,6 +186,91 @@ func TestGather_EndToEnd(t *testing.T) {
 	require.Len(t, r.Brand, 1)
 	assert.Equal(t, "portal/frontend/src/logo.svg", r.Brand[0].Path)
 	assert.Equal(t, []string{tokensDir, uiDir}, r.Packages)
+}
+
+func TestGather_TokensInImportOrder(t *testing.T) {
+	const grey = ":root{--acme-grey-8:#ebebeb}"
+
+	tests := []struct {
+		name  string
+		style map[string]string // @acme/ui's style files
+		vars  string
+		own   map[string]string // frontend files
+		want  string
+	}{
+		{
+			name:  "a file's own declarations come after its imports",
+			style: map[string]string{"core.css": "@import './theme.css';\n:root{--color-border:#ff0000}"},
+			vars:  grey,
+			want:  "#ff0000",
+		},
+		{
+			name: "the later of two relative imports wins",
+			style: map[string]string{
+				"core.css":    "@import './z-base.css';\n@import './a-brand.css';",
+				"z-base.css":  ":root{--color-border:#111111}",
+				"a-brand.css": ":root{--color-border:#222222}",
+			},
+			vars: grey,
+			want: "#222222",
+		},
+		{
+			name:  "a package imported after a relative import wins",
+			style: map[string]string{"core.css": "@import './theme.css';\n@import '@acme/tokens/vars.css';"},
+			vars:  ":root{--color-border:#555555}",
+			want:  "#555555",
+		},
+		{
+			name:  "the root's own CSS overrides a package token",
+			style: map[string]string{"core.css": "@import './theme.css';\n@import '@acme/tokens/vars.css';"},
+			vars:  grey,
+			own: map[string]string{
+				"frontend/src/index.css": "@import '" + coreImport + "';\n:root{--acme-grey-8:#000000}\n" +
+					".tile{border:1px solid var(--color-border)}\n",
+			},
+			want: "#000000",
+		},
+		{
+			name:  "a package the root imports after its own file wins",
+			style: map[string]string{"core.css": "@import './theme.css';\n@import '@acme/tokens/vars.css';"},
+			vars:  grey,
+			own: map[string]string{
+				"frontend/src/brand.css": ":root{--color-border:#333333}",
+				"frontend/src/index.css": "@import './brand.css';\n@import '" + coreImport + "';\n" +
+					".tile{border:1px solid var(--color-border)}\n",
+			},
+			want: "#ebebeb",
+		},
+		{
+			name:  "own files that import each other are read",
+			style: map[string]string{"core.css": "@import './theme.css';\n@import '@acme/tokens/vars.css';"},
+			vars:  grey,
+			own: map[string]string{
+				"frontend/src/a.css": "@import './b.css';\n:root{--color-border:#666666}",
+				"frontend/src/b.css": "@import './a.css';",
+			},
+			want: "#666666",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tarballs := acmeStyleTarballs(t, tc.style, tc.vars)
+			srv := registryServer(t, tarballs, 0)
+
+			files := portalTree(t, srv.URL, tarballs)
+			for name, content := range tc.own {
+				files[name] = content
+			}
+
+			m, err := gatherPortal(t, srv, t.TempDir(), files)
+			require.NoError(t, err)
+
+			assert.Empty(t, m.Gaps)
+			require.Len(t, m.Roots, 1)
+			assert.Equal(t, tc.want, tokenValue(t, m.Roots[0], "--color-border"))
+		})
+	}
 }
 
 func TestGather_Gaps(t *testing.T) {

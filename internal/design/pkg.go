@@ -2,7 +2,6 @@ package design
 
 import (
 	"archive/tar"
-	"cmp"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -301,11 +300,12 @@ func (p *pkgFiles) declares(name string) (string, bool) {
 	return "", false
 }
 
-// closure follows the @imports of the start files inside the package. files
-// holds the start files that exist and every CSS file reached from them. bare
-// holds the package imports found, one per package and path, for the caller to
-// resolve in the package that declares them.
-func (p *pkgFiles) closure(start []string) (files []string, bare []entry) {
+// closure follows the relative @imports of the start files inside the
+// package. It returns the start files that exist and every CSS file reached
+// from them, sorted.
+func (p *pkgFiles) closure(start []string) []string {
+	var files []string
+
 	seen := map[string]bool{}
 
 	for _, f := range start {
@@ -319,34 +319,16 @@ func (p *pkgFiles) closure(start []string) (files []string, bare []entry) {
 		file := files[i]
 
 		for _, spec := range cssImports(p.css[file]) {
-			if rel, ok := p.sibling(file, spec); ok {
-				if !seen[rel] {
-					seen[rel] = true
-					files = append(files, rel)
-				}
-
-				continue
-			}
-
-			if name, subpath, ok := splitBare(spec); ok {
-				bare = append(bare, entry{File: file, Spec: spec, Name: name, Subpath: subpath})
+			if rel, ok := p.sibling(file, spec); ok && !seen[rel] {
+				seen[rel] = true
+				files = append(files, rel)
 			}
 		}
 	}
 
 	slices.Sort(files)
-	slices.SortFunc(bare, func(a, b entry) int {
-		return cmp.Or(
-			strings.Compare(a.Name, b.Name),
-			strings.Compare(a.Subpath, b.Subpath),
-			strings.Compare(a.File, b.File),
-			strings.Compare(a.Spec, b.Spec),
-		)
-	})
 
-	bare = slices.CompactFunc(bare, func(a, b entry) bool { return a.Name == b.Name && a.Subpath == b.Subpath })
-
-	return files, bare
+	return files
 }
 
 // sibling resolves spec against the directory of file. A CSS file found there

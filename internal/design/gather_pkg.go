@@ -70,40 +70,53 @@ func (s *gathering) visit(ctx context.Context, w *rootWalk, l locked, spec, subp
 	return s.walk(ctx, w, p, l, start)
 }
 
-// walk keeps start and the files it imports and adds their declarations to
-// the root's: start first, then the rest in closure order, each followed by
-// the packages it imports.
+// walk keeps the files start reaches in p and adds their declarations to the
+// root's in import order.
 func (s *gathering) walk(ctx context.Context, w *rootWalk, p *keptPkg, l locked, start string) error {
-	if w.starts[p.dir+"/"+start] {
+	if w.seen[p.dir+"/"+start] {
 		return nil
 	}
 
-	w.starts[p.dir+"/"+start] = true
 	w.reached[p.dir] = true
 
-	files, bare := p.files.closure([]string{start})
-
-	imports := map[string][]entry{}
-	for _, b := range bare {
-		imports[b.File] = append(imports[b.File], b)
+	for _, file := range p.files.closure([]string{start}) {
+		p.keep[file] = true
 	}
 
-	order := append([]string{start}, slices.DeleteFunc(files, func(f string) bool { return f == start })...)
+	return w.importOrder(p.files, p.dir, start, p.rootDecls, func(b entry) error {
+		return s.bare(ctx, w, p, l, b)
+	})
+}
 
-	for _, file := range order {
-		p.keep[file] = true
+// importOrder adds the declarations of file and of everything it imports to
+// w.decls in import order: depth first in source order, a file after its
+// imports, each once. files holds file and its relative imports, and dir, its
+// tool-root-relative directory, keys them in w.seen; pkg gets each package
+// import where it is imported.
+func (w *rootWalk) importOrder(files *pkgFiles, dir, file string, declsOf func(string) []decl, pkg func(entry) error) error {
+	if w.seen[dir+"/"+file] {
+		return nil
+	}
 
-		if !w.seen[p.dir+"/"+file] {
-			w.seen[p.dir+"/"+file] = true
-			w.decls = append(w.decls, p.rootDecls(file)...)
+	w.seen[dir+"/"+file] = true
+
+	for _, spec := range cssImports(files.css[file]) {
+		if rel, ok := files.sibling(file, spec); ok {
+			if err := w.importOrder(files, dir, rel, declsOf, pkg); err != nil {
+				return err
+			}
+
+			continue
 		}
 
-		for _, b := range imports[file] {
-			if err := s.bare(ctx, w, p, l, b); err != nil {
+		if name, subpath, ok := splitBare(spec); ok {
+			if err := pkg(entry{File: file, Spec: spec, Name: name, Subpath: subpath}); err != nil {
 				return err
 			}
 		}
 	}
+
+	w.decls = append(w.decls, declsOf(file)...)
 
 	return nil
 }

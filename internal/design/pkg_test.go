@@ -479,10 +479,9 @@ func TestClosure(t *testing.T) {
 		css       map[string]string
 		start     []string
 		wantFiles []string
-		wantBare  []entry
 	}{
 		{
-			name: "relative followed and bare returned",
+			name: "relative imports followed and package imports not",
 			css: map[string]string{
 				"a.css":     `@import "./b.css"; @import "@acme/tokens/vars.css";`,
 				"b.css":     `@import "./sub/c.css"; @import "theme.css";`,
@@ -490,9 +489,6 @@ func TestClosure(t *testing.T) {
 			},
 			start:     []string{"a.css"},
 			wantFiles: []string{"a.css", "b.css", "theme.css"},
-			wantBare: []entry{
-				{File: "a.css", Spec: "@acme/tokens/vars.css", Name: "@acme/tokens", Subpath: "vars.css"},
-			},
 		},
 		{
 			name: "an existing relative file wins over a package reading",
@@ -504,13 +500,12 @@ func TestClosure(t *testing.T) {
 			wantFiles: []string{"a.css", "sub/c.css"},
 		},
 		{
-			name: "missing path-like import is a bare package",
+			name: "missing path-like import is not followed",
 			css: map[string]string{
 				"a.css": `@import "sub/c.css";`,
 			},
 			start:     []string{"a.css"},
 			wantFiles: []string{"a.css"},
-			wantBare:  []entry{{File: "a.css", Spec: "sub/c.css", Name: "sub", Subpath: "c.css"}},
 		},
 		{
 			name: "parent directory and nested directory",
@@ -540,7 +535,7 @@ func TestClosure(t *testing.T) {
 			wantFiles: []string{"a.css"},
 		},
 		{
-			name: "urls are neither followed nor bare",
+			name: "urls are not followed",
 			css: map[string]string{
 				"a.css": `@import "https://example.test/a.css"; @import url(data:text/css,a{});`,
 			},
@@ -548,30 +543,13 @@ func TestClosure(t *testing.T) {
 			wantFiles: []string{"a.css"},
 		},
 		{
-			name: "tilde prefix is a package",
+			name: "a tilde prefix is a package, not a file",
 			css: map[string]string{
-				"a.css":        `@import "~@acme/tokens/vars.css";`,
+				"a.css":        `@import "~@acme/x.css";`,
 				"~@acme/x.css": `a{}`,
 			},
 			start:     []string{"a.css"},
 			wantFiles: []string{"a.css"},
-			wantBare: []entry{
-				{File: "a.css", Spec: "~@acme/tokens/vars.css", Name: "@acme/tokens", Subpath: "vars.css"},
-			},
-		},
-		{
-			name: "bare imports are deduplicated by package and path and sorted",
-			css: map[string]string{
-				"a.css": `@import "@acme/z/b.css"; @import "@acme/tokens/vars.css"; @import "./b.css";`,
-				"b.css": `@import "@acme/tokens/vars.css"; @import "@acme/tokens";`,
-			},
-			start:     []string{"a.css"},
-			wantFiles: []string{"a.css", "b.css"},
-			wantBare: []entry{
-				{File: "b.css", Spec: "@acme/tokens", Name: "@acme/tokens"},
-				{File: "a.css", Spec: "@acme/tokens/vars.css", Name: "@acme/tokens", Subpath: "vars.css"},
-				{File: "a.css", Spec: "@acme/z/b.css", Name: "@acme/z", Subpath: "b.css"},
-			},
 		},
 		{
 			name: "several starts and an unknown start",
@@ -594,9 +572,7 @@ func TestClosure(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &pkgFiles{css: tt.css}
 
-			files, bare := p.closure(tt.start)
-			assert.Equal(t, tt.wantFiles, files)
-			assert.Equal(t, tt.wantBare, bare)
+			assert.Equal(t, tt.wantFiles, p.closure(tt.start))
 		})
 	}
 }
