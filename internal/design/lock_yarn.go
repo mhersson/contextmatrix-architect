@@ -104,9 +104,10 @@ func (l *yarnLock) resolve(name, rangeSpec string) (locked, bool) {
 		// told apart from its name and version; git, tarball, patch: and
 		// file: resolutions are some other package.
 		protocol := strings.TrimPrefix(entry.Resolution, n+"@")
+		registry := "npm:" + entry.Version
 
 		switch {
-		case strings.HasPrefix(protocol, "npm:"):
+		case protocol == registry || strings.HasPrefix(protocol, registry+"::"):
 		case strings.HasPrefix(protocol, "workspace:"),
 			strings.HasPrefix(protocol, "link:"),
 			strings.HasPrefix(protocol, "portal:"):
@@ -116,7 +117,9 @@ func (l *yarnLock) resolve(name, rangeSpec string) (locked, bool) {
 		}
 
 		realName = n
-	} else if target, ok := strings.CutPrefix(rangeSpec, "npm:"); ok {
+	} else if target, ok := strings.CutPrefix(rangeSpec, "npm:"); ok && target != "" {
+		// npm:<name> without a range names the package whole.
+		realName = target
 		if n := yarnDescriptorName(target); n != "" {
 			realName = n
 		}

@@ -36,6 +36,11 @@ left-pad@^1.0.0, left-pad@~1.0.1:
   version "1.2.3"
   resolved "https://registry.example.test/@acme/ui/-/ui-1.2.3.tgz#abc"
   integrity sha512-ui123
+
+"ui-bare@npm:@acme/ui":
+  version "1.2.3"
+  resolved "https://registry.example.test/@acme/ui/-/ui-1.2.3.tgz#abc"
+  integrity sha512-ui123
 `
 
 func TestYarnClassicLock(t *testing.T) {
@@ -81,6 +86,11 @@ func TestYarnClassicLock(t *testing.T) {
 		{
 			name:    "an alias resolves to the real package name",
 			resolve: func() (locked, bool) { return lock.fromRoot("", "ui-cjs", "npm:@acme/ui@^1.2.0") },
+			wantOK:  true, wantName: "@acme/ui", wantVer: "1.2.3", wantFull: "abc|ui123",
+		},
+		{
+			name:    "an alias without a range resolves to the real package name",
+			resolve: func() (locked, bool) { return lock.fromRoot("", "ui-bare", "npm:@acme/ui") },
 			wantOK:  true, wantName: "@acme/ui", wantVer: "1.2.3", wantFull: "abc|ui123",
 		},
 		{
@@ -284,6 +294,18 @@ const yarnBerryProtocolsFixture = `__metadata:
   version: 1.0.0
   resolution: "@acme/vendored@file:./vendor/vendored#./vendor/vendored::hash=abc"
 
+"@acme/archived@npm:^1.2.3":
+  version: 1.2.3
+  resolution: "@acme/archived@npm:1.2.3::__archiveUrl=https%3A%2F%2Fregistry.example.test%2Farchived.tgz"
+
+"@acme/mismatch@npm:^1.2.3":
+  version: 1.2.3
+  resolution: "@acme/mismatch@npm:other"
+
+"@acme/longer@npm:^1.2.3":
+  version: 1.2.3
+  resolution: "@acme/longer@npm:1.2.30"
+
 "@acme/linked@link:../linked":
   version: 0.0.0-use.local
   resolution: "@acme/linked@link:../linked::locator=app%40workspace%3A."
@@ -306,13 +328,17 @@ func TestYarnBerryLock_Protocols(t *testing.T) {
 		pkg       string
 		rangeSpec string
 		wantOK    bool
+		local     bool
 	}{
 		{name: "a patch is not the registry package", pkg: "@acme/patched", rangeSpec: "patch:@acme/patched@npm%3A1.0.0#./patches/p.patch"},
 		{name: "a git package is not the registry package", pkg: "@acme/forked", rangeSpec: "github:acme/forked#main"},
 		{name: "a tarball package is not the registry package", pkg: "@acme/tarball", rangeSpec: "https://example.test/tarball.tgz"},
 		{name: "a file package is not the registry package", pkg: "@acme/vendored", rangeSpec: "file:./vendor/vendored"},
-		{name: "a link is local", pkg: "@acme/linked", rangeSpec: "link:../linked", wantOK: true},
-		{name: "a portal is local", pkg: "@acme/portaled", rangeSpec: "portal:../portaled", wantOK: true},
+		{name: "a registry resolution may carry params", pkg: "@acme/archived", rangeSpec: "^1.2.3", wantOK: true},
+		{name: "an npm resolution of another version is not the package", pkg: "@acme/mismatch", rangeSpec: "^1.2.3"},
+		{name: "an npm resolution that only starts with the version is not the package", pkg: "@acme/longer", rangeSpec: "^1.2.3"},
+		{name: "a link is local", pkg: "@acme/linked", rangeSpec: "link:../linked", wantOK: true, local: true},
+		{name: "a portal is local", pkg: "@acme/portaled", rangeSpec: "portal:../portaled", wantOK: true, local: true},
 	}
 
 	for _, tt := range tests {
@@ -322,7 +348,7 @@ func TestYarnBerryLock_Protocols(t *testing.T) {
 
 			if tt.wantOK {
 				assert.Equal(t, tt.pkg, got.Name)
-				assert.True(t, got.Local)
+				assert.Equal(t, tt.local, got.Local)
 			}
 		})
 	}
