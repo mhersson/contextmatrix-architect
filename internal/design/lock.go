@@ -38,8 +38,11 @@ func readLockfile(treeDir string) (lockfile, error) {
 			return nil, fmt.Errorf("design: stat %s: %w", name, err)
 		}
 
-		if name == "package-lock.json" {
+		switch name {
+		case "package-lock.json":
 			return readNPMLock(path)
+		case "yarn.lock":
+			return readYarnLock(path)
 		}
 
 		return nil, fmt.Errorf("design: %s is not supported yet", name)
