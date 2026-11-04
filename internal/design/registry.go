@@ -27,9 +27,9 @@ type registries struct {
 }
 
 // readRegistries reads the registry config from rootDir and each parent up to
-// treeDir, never above it. Per kind of file the nearest value wins; a scope
-// registry comes from .yarnrc.yml, else .npmrc, and the default from
-// .yarnrc.yml, else .npmrc, else a classic .yarnrc, else the public registry.
+// treeDir, never above it. Per kind of file the nearest value wins; each scope
+// registry and the default come from .yarnrc.yml, else .npmrc, else a classic
+// .yarnrc, and a default found in none is the public registry.
 func readRegistries(treeDir, rootDir string) (registries, error) {
 	treeDir, rootDir = filepath.Clean(treeDir), filepath.Clean(rootDir)
 
@@ -157,19 +157,8 @@ func parseNPMRC(data []byte) registries {
 			continue
 		}
 
-		key, value, ok := strings.Cut(line, "=")
-		value = strings.TrimSpace(value)
-
-		if !ok || value == "" {
-			continue
-		}
-
-		key = strings.TrimSpace(key)
-
-		if key == "registry" {
-			regs.def = value
-		} else if scope, ok := strings.CutSuffix(key, ":registry"); ok && len(scope) > 1 && scope[0] == '@' {
-			regs.scopes[scope[1:]] = value
+		if key, value, ok := strings.Cut(line, "="); ok {
+			regs.set(strings.TrimSpace(key), unquote(strings.TrimSpace(value)))
 		}
 	}
 
@@ -180,17 +169,35 @@ func parseYarnrc(data []byte) registries {
 	regs := registries{scopes: map[string]string{}}
 
 	for line := range strings.Lines(string(data)) {
-		fields := strings.Fields(line)
-		if len(fields) != 2 || fields[0] != "registry" {
-			continue
-		}
-
-		if value := strings.Trim(fields[1], `"`); value != "" {
-			regs.def = value
+		if fields := strings.Fields(line); len(fields) == 2 {
+			regs.set(unquote(fields[0]), unquote(fields[1]))
 		}
 	}
 
 	return regs
+}
+
+// set records a non-empty value of the default registry key or a scope's
+// "@<scope>:registry" key, and ignores every other key.
+func (r *registries) set(key, value string) {
+	if value == "" {
+		return
+	}
+
+	if key == "registry" {
+		r.def = value
+	} else if scope, ok := strings.CutSuffix(key, ":registry"); ok && len(scope) > 1 && scope[0] == '@' {
+		r.scopes[scope[1:]] = value
+	}
+}
+
+// unquote drops one pair of matching quotes around s.
+func unquote(s string) string {
+	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
+		return s[1 : len(s)-1]
+	}
+
+	return s
 }
 
 // forPackage returns the registry url that serves name.

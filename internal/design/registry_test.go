@@ -54,6 +54,27 @@ func TestReadRegistries(t *testing.T) {
 			want:  map[string]string{"@acme/ui": "https://classic.example.test/"},
 		},
 		{
+			name: "classic yarnrc scope registry, quoted or not",
+			files: map[string]string{".yarnrc": "registry \"https://classic.example.test/\"\n" +
+				"\"@acme:registry\" \"https://acme.example.test/\"\n" +
+				"@other:registry https://other.example.test/\n"},
+			root: "frontend",
+			want: map[string]string{
+				"@acme/ui":     "https://acme.example.test/",
+				"@other/thing": "https://other.example.test/",
+				"left-pad":     "https://classic.example.test/",
+			},
+		},
+		{
+			name:  "quoted npmrc values",
+			files: map[string]string{".npmrc": "registry=\"https://npm.example.test/\"\n@acme:registry = 'https://acme.example.test/'\n"},
+			root:  "",
+			want: map[string]string{
+				"@acme/ui": "https://acme.example.test/",
+				"left-pad": "https://npm.example.test/",
+			},
+		},
+		{
 			name: "the nearest file wins",
 			files: map[string]string{
 				".npmrc":          "registry=https://root.example.test/\n",

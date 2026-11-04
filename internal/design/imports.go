@@ -49,8 +49,9 @@ func jsCSSImports(src string) []string {
 
 // splitBare splits a package specifier into the package name (including its
 // scope) and the path inside the package. ok is false for anything that is not
-// a package: relative and absolute paths, urls, and a bare .css file name,
-// which is a sibling file.
+// a package: relative and absolute paths, urls, a bare .css file name, which
+// is a sibling file, and a scope or name left empty, as in a bundler's "@/"
+// alias.
 func splitBare(spec string) (name, subpath string, ok bool) {
 	spec = strings.TrimPrefix(spec, "~")
 
@@ -68,7 +69,7 @@ func splitBare(spec string) (name, subpath string, ok bool) {
 	}
 
 	parts := strings.SplitN(spec, "/", segments+1)
-	if len(parts) < segments {
+	if len(parts) < segments || parts[segments-1] == "" || parts[0] == "@" {
 		return "", "", false
 	}
 
