@@ -360,3 +360,36 @@ func TestBrandFiles_CapAndRootDir(t *testing.T) {
 		assert.Contains(t, a.Path, "web/")
 	}
 }
+
+func writeNestedPackageTree(t *testing.T) string {
+	t.Helper()
+
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"app/package.json":                   `{}`,
+		"app/src/Footer.tsx":                 ``,
+		"app/packages/server/package.json":   `{}`,
+		"app/packages/server/src/Header.tsx": ``,
+		"app/packages/server/logo.svg":       `<svg/>`,
+	})
+
+	return root
+}
+
+func TestFrameFiles_SkipNestedPackages(t *testing.T) {
+	root := writeNestedPackageTree(t)
+
+	assert.Equal(t, []string{"app/src/Footer.tsx"}, frameFiles(root, frontend{Dir: "app"}))
+	assert.Equal(t,
+		[]string{"app/packages/server/src/Header.tsx"},
+		frameFiles(root, frontend{Dir: "app/packages/server"}))
+}
+
+func TestBrandFiles_SkipNestedPackages(t *testing.T) {
+	root := writeNestedPackageTree(t)
+
+	assert.Empty(t, brandFiles(root, frontend{Dir: "app"}))
+	assert.Equal(t,
+		[]Asset{{Path: "app/packages/server/logo.svg", Size: int64(len(`<svg/>`))}},
+		brandFiles(root, frontend{Dir: "app/packages/server"}))
+}

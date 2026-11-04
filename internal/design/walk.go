@@ -76,7 +76,7 @@ func scanTree(treeDir string) ([]frontend, error) {
 		candidates []candidate
 	)
 
-	err := walkFiles(treeDir, "", func(rel string, d fs.DirEntry) error {
+	err := walkFiles(treeDir, "", false, func(rel string, d fs.DirEntry) error {
 		name := d.Name()
 		if name == "package.json" {
 			pkgDirs[parentDir(rel)] = true
@@ -200,7 +200,7 @@ func isLocalFile(treeDir, file, spec string) bool {
 func frameFiles(treeDir string, f frontend) []string {
 	var files []string
 
-	err := walkFiles(treeDir, f.Dir, func(rel string, _ fs.DirEntry) error {
+	err := walkFiles(treeDir, f.Dir, true, func(rel string, _ fs.DirEntry) error {
 		if isFrameFile(rel) {
 			files = append(files, rel)
 		}
@@ -220,7 +220,7 @@ func frameFiles(treeDir string, f frontend) []string {
 func brandFiles(treeDir string, f frontend) []Asset {
 	var assets []Asset
 
-	err := walkFiles(treeDir, f.Dir, func(rel string, d fs.DirEntry) error {
+	err := walkFiles(treeDir, f.Dir, true, func(rel string, d fs.DirEntry) error {
 		name := d.Name()
 		if ext := strings.ToLower(path.Ext(name)); ext != ".svg" && ext != ".png" {
 			return nil
@@ -319,8 +319,9 @@ func comparePaths(a, b string) int {
 
 // walkFiles visits every regular file under treeDir/dir. Directories named
 // node_modules, dist, build, out, coverage or vendor and hidden directories are
-// skipped. rel is the slash-separated path relative to treeDir.
-func walkFiles(treeDir, dir string, visit func(rel string, d fs.DirEntry) error) error {
+// skipped, and with ownOnly so is every subdirectory holding its own
+// package.json. rel is the slash-separated path relative to treeDir.
+func walkFiles(treeDir, dir string, ownOnly bool, visit func(rel string, d fs.DirEntry) error) error {
 	start := filepath.Join(treeDir, filepath.FromSlash(dir))
 
 	return filepath.WalkDir(start, func(p string, d fs.DirEntry, err error) error {
@@ -329,7 +330,7 @@ func walkFiles(treeDir, dir string, visit func(rel string, d fs.DirEntry) error)
 		}
 
 		if d.IsDir() {
-			if p != start && skipDir(d.Name()) {
+			if p != start && (skipDir(d.Name()) || ownOnly && hasPackageJSON(p)) {
 				return filepath.SkipDir
 			}
 
@@ -347,6 +348,12 @@ func walkFiles(treeDir, dir string, visit func(rel string, d fs.DirEntry) error)
 
 		return visit(filepath.ToSlash(rel), d)
 	})
+}
+
+func hasPackageJSON(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, "package.json"))
+
+	return err == nil && info.Mode().IsRegular()
 }
 
 func skipDir(name string) bool {
