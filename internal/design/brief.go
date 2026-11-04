@@ -1,7 +1,9 @@
 package design
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -26,12 +28,22 @@ type briefer struct {
 
 // Brief renders m as the "Design material" section of the mockup designer's
 // task, or "" when m has no root. tags maps a Package.Dir to its source tag.
+// Each root's tokens are listed by usefulness (resolved first, then colour,
+// spacing, radius, shadow, font, the rest), so the cut keeps the most useful.
 // The section stays within 16 KiB: token lists are cut from the last root
 // backwards. Every string from the target repository or a package is rendered
 // on one line, so none of it can start a heading of its own.
 func Brief(m Material, tags map[string]string) string {
 	if len(m.Roots) == 0 {
 		return ""
+	}
+
+	// The cut drops the last tokens, so order each root's by use first, on a
+	// copy: the caller's Material is left as it is.
+	m.Roots = slices.Clone(m.Roots)
+	for i := range m.Roots {
+		m.Roots[i].Tokens = slices.Clone(m.Roots[i].Tokens)
+		sortTokens(m.Roots[i].Tokens)
 	}
 
 	b := briefer{m: m, tags: tags, pkgs: make(map[string]Package, len(m.Packages))}
@@ -253,4 +265,57 @@ func clip(s string, n int) string {
 	}
 
 	return s[:n] + "..."
+}
+
+// sortTokens orders tokens resolved before unresolved, then by tokenRank, then
+// by name.
+func sortTokens(tokens []Token) {
+	slices.SortStableFunc(tokens, func(a, b Token) int {
+		if a.Unresolved != b.Unresolved {
+			if a.Unresolved {
+				return 1
+			}
+
+			return -1
+		}
+
+		if c := cmp.Compare(tokenRank(a), tokenRank(b)); c != 0 {
+			return c
+		}
+
+		return cmp.Compare(a.Name, b.Name)
+	})
+}
+
+var (
+	colourWords  = []string{"color", "colour", "bg", "background", "foreground", "fg", "fill", "stroke"}
+	spacingWords = []string{"space", "spacing", "gap", "gutter", "padding", "margin", "inset"}
+	radiusWords  = []string{"radius", "radii", "rounded", "corner"}
+	shadowWords  = []string{"shadow", "elevation"}
+	fontWords    = []string{"font", "family", "leading", "tracking", "weight", "text", "typography", "letter", "line"}
+
+	colourValuePrefixes = []string{
+		"#", "rgb(", "rgba(", "hsl(", "hsla(", "hwb(", "lab(", "lch(", "oklab(", "oklch(", "color(", "color-mix(",
+	}
+)
+
+// tokenRank is how much a designer needs a token: 0 colour, 1 spacing,
+// 2 radius, 3 shadow, 4 font, 5 the rest. The name decides, then the value.
+func tokenRank(t Token) int {
+	words := nameWords(strings.TrimPrefix(t.Name, "--"))
+
+	for rank, set := range [][]string{colourWords, spacingWords, radiusWords, shadowWords, fontWords} {
+		if slices.ContainsFunc(words, func(w string) bool { return slices.Contains(set, w) }) {
+			return rank
+		}
+	}
+
+	v := strings.ToLower(strings.TrimSpace(t.Value))
+	for _, p := range colourValuePrefixes {
+		if strings.HasPrefix(v, p) {
+			return 0
+		}
+	}
+
+	return 5
 }

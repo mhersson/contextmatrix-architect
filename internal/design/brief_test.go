@@ -2,6 +2,7 @@ package design
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -299,6 +300,82 @@ func TestBrief_LongTokenValueIsCut(t *testing.T) {
 			assert.True(t, utf8.ValidString(out))
 			assert.Contains(t, out, tt.wantKeep)
 			assert.NotContains(t, out, tt.wantGone)
+		})
+	}
+}
+
+func TestBrief_CutKeepsTheUsefulTokens(t *testing.T) {
+	m := briefMaterial()
+
+	var tokens []Token
+
+	for _, prefix := range []string{"animate", "aspect", "blur", "breakpoint", "container"} {
+		for i := range 80 {
+			tokens = append(tokens, Token{
+				Name:  fmt.Sprintf("--%s-%03d", prefix, i),
+				Value: "calc(var(--spacing) * 1000000000000)",
+			})
+		}
+	}
+
+	tokens = append(tokens,
+		Token{Name: "--color-ghost", Value: "var(--missing)", Unresolved: true},
+		Token{Name: "--color-red-500", Value: "oklch(63.7% 0.237 25.331)"},
+		Token{Name: "--spacing", Value: "0.25rem"},
+		Token{Name: "--radius-lg", Value: "0.5rem"},
+		Token{Name: "--shadow-md", Value: "0 4px 6px -1px rgb(0 0 0 / 0.1)"},
+		Token{Name: "--font-sans", Value: "ui-sans-serif"},
+	)
+	m.Roots[0].Tokens = tokens
+
+	before := slices.Clone(tokens)
+	out := Brief(m, nil)
+
+	assert.LessOrEqual(t, len(out), maxBriefBytes)
+	assert.Equal(t, before, m.Roots[0].Tokens)
+
+	for _, name := range []string{"--color-red-500:", "--spacing:", "--radius-lg:", "--shadow-md:", "--font-sans:"} {
+		assert.Contains(t, out, name)
+	}
+
+	assert.NotContains(t, out, "--container-079:")
+	assert.Contains(t, out, "--animate-000:")
+	assert.NotContains(t, out, "--color-ghost:", "an unresolved token is cut before any resolved one")
+
+	small := briefMaterial()
+	small.Roots[0].Tokens = []Token{
+		{Name: "--color-ghost", Value: "var(--missing)", Unresolved: true},
+		{Name: "--color-red-500", Value: "oklch(63.7% 0.237 25.331)"},
+	}
+	list := Brief(small, nil)
+	assert.Less(t, strings.Index(list, "--color-red-500:"), strings.Index(list, "--color-ghost:"))
+}
+
+func TestTokenRank(t *testing.T) {
+	tests := []struct {
+		name, value string
+		rank        int
+	}{
+		{"--color-x", "var(--y)", 0},
+		{"--primary", "#0055ff", 0},
+		{"--brand", "oklch(60% 0.1 20)", 0},
+		{"--brand", "COLOR-MIX(in srgb, red, blue)", 0},
+		{"--shadow-md", "0 1px rgb(0 0 0)", 3},
+		{"--shadow-color", "#000", 0},
+		{"--space-4", "1rem", 1},
+		{"--gap", "1rem", 1},
+		{"--radius-sm", "2px", 2},
+		{"--rounded", "2px", 2},
+		{"--font-sans", "ui-sans-serif", 4},
+		{"--leading-tight", "1.25", 4},
+		{"--tracking-wide", "0.05em", 4},
+		{"--text-sm", "0.875rem", 4},
+		{"--ease-out", "cubic-bezier(0, 0, 0.2, 1)", 5},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name+" "+tc.value, func(t *testing.T) {
+			assert.Equal(t, tc.rank, tokenRank(Token{Name: tc.name, Value: tc.value}))
 		})
 	}
 }
