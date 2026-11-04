@@ -33,7 +33,13 @@ const npmLockFixture = `{
       "resolved": "https://registry.example.test/@acme/tokens/-/tokens-1.0.0.tgz",
       "integrity": "sha512-tok100"
     },
-    "node_modules/@acme/shared": {"resolved": "packages/shared", "link": true}
+    "node_modules/@acme/shared": {"resolved": "packages/shared", "link": true},
+    "node_modules/ui-cjs": {
+      "name": "@acme/ui",
+      "version": "1.2.3",
+      "resolved": "https://registry.example.test/@acme/ui/-/ui-1.2.3.tgz",
+      "integrity": "sha512-ui123"
+    }
   }
 }`
 
@@ -53,6 +59,7 @@ func TestNPMLock(t *testing.T) {
 		name     string
 		resolve  func() (locked, bool)
 		wantOK   bool
+		wantName string
 		wantVer  string
 		wantFull bool
 		local    bool
@@ -60,27 +67,40 @@ func TestNPMLock(t *testing.T) {
 		{
 			name:    "nearest node_modules wins",
 			resolve: func() (locked, bool) { return lock.fromRoot("frontend", "@acme/ui", "^1.3.0") },
-			wantOK:  true, wantVer: "1.3.0",
+			wantOK:  true, wantName: "@acme/ui", wantVer: "1.3.0",
 		},
 		{
 			name:    "root resolves the hoisted package with its tarball",
 			resolve: func() (locked, bool) { return lock.fromRoot("", "@acme/ui", "^1.2.0") },
-			wantOK:  true, wantVer: "1.2.3", wantFull: true,
+			wantOK:  true, wantName: "@acme/ui", wantVer: "1.2.3", wantFull: true,
 		},
 		{
 			name:    "a dependency prefers the copy nested under its parent",
 			resolve: func() (locked, bool) { return lock.fromPackage(ui123, "@acme/tokens") },
-			wantOK:  true, wantVer: "2.0.1",
+			wantOK:  true, wantName: "@acme/tokens", wantVer: "2.0.1",
 		},
 		{
 			name:    "a nested root falls back to the hoisted package",
 			resolve: func() (locked, bool) { return lock.fromRoot("frontend", "@acme/tokens", "*") },
-			wantOK:  true, wantVer: "1.0.0",
+			wantOK:  true, wantName: "@acme/tokens", wantVer: "1.0.0",
 		},
 		{
 			name:    "a link is local",
 			resolve: func() (locked, bool) { return lock.fromRoot("", "@acme/shared", "*") },
-			wantOK:  true, local: true,
+			wantOK:  true, wantName: "@acme/shared", local: true,
+		},
+		{
+			name:    "an alias resolves to the real package name",
+			resolve: func() (locked, bool) { return lock.fromRoot("", "ui-cjs", "npm:@acme/ui@^1.2.0") },
+			wantOK:  true, wantName: "@acme/ui", wantVer: "1.2.3", wantFull: true,
+		},
+		{
+			name:    "a name that escapes node_modules does not reach a workspace entry",
+			resolve: func() (locked, bool) { return lock.fromRoot("", "../frontend", "*") },
+		},
+		{
+			name:    "a name that escapes node_modules from a nested root does not reach a workspace entry",
+			resolve: func() (locked, bool) { return lock.fromRoot("frontend", "../frontend", "*") },
 		},
 		{
 			name:    "an unknown package is not found",
@@ -101,11 +121,11 @@ func TestNPMLock(t *testing.T) {
 				return
 			}
 
+			assert.Equal(t, tt.wantName, got.Name)
 			assert.Equal(t, tt.local, got.Local)
 			assert.Equal(t, tt.wantVer, got.Version)
 
 			if tt.wantFull {
-				assert.Equal(t, "@acme/ui", got.Name)
 				assert.Equal(t, "https://registry.example.test/@acme/ui/-/ui-1.2.3.tgz", got.Resolved)
 				assert.Equal(t, "sha512-ui123", got.Integrity)
 			}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
 )
 
 type npmLock struct {
@@ -12,6 +13,7 @@ type npmLock struct {
 }
 
 type npmLockEntry struct {
+	Name      string `json:"name"`
 	Version   string `json:"version"`
 	Resolved  string `json:"resolved"`
 	Integrity string `json:"integrity"`
@@ -55,8 +57,20 @@ func (l *npmLock) resolve(base, name string) (locked, bool) {
 
 		key := path.Join(dir, "node_modules", name)
 		if entry, ok := l.packages[key]; ok {
+			// A name that climbs out of node_modules (../frontend) lands on a
+			// key that is not a package of that name.
+			if keyTail(key) != name {
+				return locked{}, false
+			}
+
+			// An alias is keyed by the alias; the entry carries the real name.
+			realName := name
+			if entry.Name != "" {
+				realName = entry.Name
+			}
+
 			return locked{
-				Name:      name,
+				Name:      realName,
 				Version:   entry.Version,
 				Resolved:  entry.Resolved,
 				Integrity: entry.Integrity,
@@ -69,4 +83,14 @@ func (l *npmLock) resolve(base, name string) (locked, bool) {
 			return locked{}, false
 		}
 	}
+}
+
+// keyTail is the package name a packages key ends in: the text after its last
+// node_modules/, or the whole key when it has none.
+func keyTail(key string) string {
+	if i := strings.LastIndex(key, "node_modules/"); i >= 0 {
+		return key[i+len("node_modules/"):]
+	}
+
+	return key
 }
