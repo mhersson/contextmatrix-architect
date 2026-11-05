@@ -294,37 +294,370 @@ func TestScanTree_MissingDir(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func assetPaths(as []Asset) []string {
+	var paths []string
+
+	for _, a := range as {
+		paths = append(paths, a.Path)
+	}
+
+	return paths
+}
+
 func TestFrameFiles(t *testing.T) {
 	root := t.TempDir()
-	writeTree(t, root, map[string]string{
-		"src/components/BaseLayout/index.tsx":           ``,
-		"src/components/NavigationBar/index.module.css": ``,
-		"src/App.tsx":                                ``,
-		"src/components/Footer/Footer.tsx":           ``,
-		"src/pages/profile/Teams.tsx":                ``,
-		"src/components/Header/Header.test.tsx":      ``,
-		"src/components/Header/Header.stories.tsx":   ``,
-		"src/components/Header/Header.spec.ts":       ``,
-		"src/components/Application/Application.tsx": ``,
-		"src/main-menu.vue":                          ``,
-		"src/theme/nav_item.svelte":                  ``,
-		"src/theme/HTMLHero.html":                    ``,
-		"src/notes.md":                               ``,
-		"node_modules/pkg/Layout.tsx":                ``,
-		"dist/App.js":                                ``,
-	})
+	files := map[string]string{}
 
-	got := frameFiles(root, frontend{Dir: ""})
+	for _, rel := range []string{
+		"app/layout.tsx",
+		"src/routes/+layout.svelte",
+		"src/layouts/default.vue",
+		"src/components/BaseLayout/index.tsx",
+		"src/components/BaseLayout/index.module.css",
+		"src/components/TopBar/TopBar.tsx",
+		"src/components/NavigationBar/index.tsx",
+		"src/components/NavigationBar/index.module.css",
+		"src/components/NavigationBar/NavigationButton/index.tsx",
+		"src/components/NavigationBar/RecentDropdown.tsx",
+		"src/components/Footer/Footer.tsx",
+		"src/components/Footer/Footer.module.css",
+		"src/components/SideBar.tsx",
+		"src/components/HeroPage/index.tsx",
+		"src/App.tsx",
+		"src/App.module.css",
+		"src/api/app.ts",
+		"src/constants/navHistory.ts",
+		"src/components/hooks/navState.ts",
+		"src/components/Header/useHeader.ts",
+		"src/components/Header/Header.d.ts",
+		"src/components/Header/Header.test.tsx",
+		"src/components/Header/Header.stories.tsx",
+		"src/components/__tests__/Footer.tsx",
+		"src/pages/teams/components/TeamHeader.tsx",
+		"src/utils/menu.ts",
+		"src/theme/nav_item.svelte",
+		"node_modules/pkg/Layout.tsx",
+		"dist/Layout.js",
+	} {
+		files[rel] = "x"
+	}
+
+	writeTree(t, root, files)
 
 	assert.Equal(t, []string{
 		"src/App.tsx",
-		"src/main-menu.vue",
-		"src/theme/HTMLHero.html",
-		"src/theme/nav_item.svelte",
-		"src/components/Footer/Footer.tsx",
+		"src/App.module.css",
+		"app/layout.tsx",
+		"src/routes/+layout.svelte",
+		"src/layouts/default.vue",
 		"src/components/BaseLayout/index.tsx",
+		"src/components/BaseLayout/index.module.css",
+		"src/theme/nav_item.svelte",
+		"src/components/TopBar/TopBar.tsx",
+		"src/components/NavigationBar/index.tsx",
 		"src/components/NavigationBar/index.module.css",
-	}, got)
+		"src/components/Footer/Footer.tsx",
+		"src/components/Footer/Footer.module.css",
+		"src/components/SideBar.tsx",
+		"src/components/HeroPage/index.tsx",
+		"src/components/NavigationBar/NavigationButton/index.tsx",
+	}, assetPaths(frameFiles(root, frontend{Dir: ""})))
+}
+
+func TestFrameFiles_Layouts(t *testing.T) {
+	tests := []struct {
+		name  string
+		files []string
+		want  []string
+	}{
+		{
+			name: "angular",
+			files: []string{
+				"src/app/header/header.component.ts",
+				"src/app/header/header.component.html",
+				"src/app/app.component.html",
+				"src/app/app.component.ts",
+				"src/main.ts",
+			},
+			want: []string{
+				"src/app/app.component.html",
+				"src/app/header/header.component.ts",
+				"src/app/header/header.component.html",
+			},
+		},
+		{
+			name:  "create-vue",
+			files: []string{"src/App.vue", "src/main.ts", "src/components/HelloWorld.vue"},
+			want:  []string{"src/App.vue"},
+		},
+		{
+			name:  "nuxt",
+			files: []string{"app.vue", "nuxt.config.ts", "pages/index.vue"},
+			want:  []string{"app.vue"},
+		},
+		{
+			name:  "flat react",
+			files: []string{"src/App.tsx", "src/Header.tsx", "src/Footer.tsx", "src/Nav.tsx", "src/main.tsx"},
+			want:  []string{"src/App.tsx", "src/Nav.tsx", "src/Header.tsx", "src/Footer.tsx"},
+		},
+		{
+			name:  "feature folder",
+			files: []string{"src/shared/ui/Navbar/index.tsx"},
+			want:  []string{"src/shared/ui/Navbar/index.tsx"},
+		},
+		{
+			name:  "email templates",
+			files: []string{"src/emails/components/Header.tsx", "src/mail/layouts/Base.tsx"},
+		},
+		{
+			name: "files beside a layout",
+			files: []string{
+				"src/components/BaseLayout/index.tsx",
+				"src/components/BaseLayout/types.ts",
+				"src/components/BaseLayout/constants.ts",
+				"src/components/BaseLayout/utils.ts",
+			},
+			want: []string{"src/components/BaseLayout/index.tsx"},
+		},
+		{
+			name:  "a hook folder",
+			files: []string{"src/components/useNav/index.ts"},
+		},
+		{
+			name:  "a frame word in a script file needs a component or own folder",
+			files: []string{"src/nav.ts", "src/shared/header.js"},
+		},
+		{
+			name: "next app router colocates frame files",
+			files: []string{
+				"app/(marketing)/site-header.tsx",
+				"app/dashboard/sidebar.tsx",
+				"app/dashboard/page.tsx",
+				"app/ui/dashboard/nav-links.tsx",
+			},
+			want: []string{
+				"app/(marketing)/site-header.tsx",
+				"app/dashboard/sidebar.tsx",
+				"app/ui/dashboard/nav-links.tsx",
+			},
+		},
+		{
+			name: "shared ui folders",
+			files: []string{
+				"src/shared/Header.tsx",
+				"src/common/Header.tsx",
+				"src/containers/Header.tsx",
+				"src/widgets/Header.tsx",
+				"src/ui/Header.tsx",
+			},
+			want: []string{
+				"src/ui/Header.tsx",
+				"src/common/Header.tsx",
+				"src/shared/Header.tsx",
+				"src/widgets/Header.tsx",
+				"src/containers/Header.tsx",
+			},
+		},
+		{
+			name:  "feature-sliced widget",
+			files: []string{"widgets/header/ui/Header.tsx"},
+			want:  []string{"widgets/header/ui/Header.tsx"},
+		},
+		{
+			name:  "sveltekit lib and routes",
+			files: []string{"src/lib/Footer.svelte", "src/routes/Header.svelte", "src/routes/+page.svelte"},
+			want:  []string{"src/routes/Header.svelte", "src/lib/Footer.svelte"},
+		},
+		{
+			name:  "django partials",
+			files: []string{"templates/partials/footer.html"},
+			want:  []string{"templates/partials/footer.html"},
+		},
+		{
+			name: "next pages router",
+			files: []string{
+				"pages/_app.tsx",
+				"pages/_document.tsx",
+				"pages/index.tsx",
+				"pages/api/hello.ts",
+			},
+			want: []string{"pages/_app.tsx"},
+		},
+		{
+			name:  "next pages router under src",
+			files: []string{"src/pages/_app.jsx"},
+			want:  []string{"src/pages/_app.jsx"},
+		},
+		{
+			name:  "next pages router app in plain script",
+			files: []string{"src/pages/_app.js"},
+			want:  []string{"src/pages/_app.js"},
+		},
+		{
+			name:  "remix root",
+			files: []string{"app/root.tsx", "app/entry.client.tsx", "app/routes/_index.tsx"},
+			want:  []string{"app/root.tsx"},
+		},
+		{
+			name: "astro",
+			files: []string{
+				"src/layouts/Layout.astro",
+				"src/components/Header.astro",
+				"src/components/Footer.astro",
+				"src/pages/index.astro",
+				"src/ui/Header.astro",
+			},
+			want: []string{
+				"src/layouts/Layout.astro",
+				"src/ui/Header.astro",
+				"src/components/Header.astro",
+				"src/components/Footer.astro",
+			},
+		},
+		{
+			name:  "create react app",
+			files: []string{"src/App.js", "src/App.css", "src/index.js"},
+			want:  []string{"src/App.js", "src/App.css"},
+		},
+		{
+			name:  "a lower-case app.js is a server",
+			files: []string{"app.js", "src/app.js"},
+		},
+		{
+			name: "a folder word that is not the last name word",
+			files: []string{
+				"src/components/StoreHeader.tsx",
+				"src/components/MailLayout.tsx",
+				"src/components/ServicesNav.tsx",
+				"src/components/EmailFooter.tsx",
+			},
+			want: []string{
+				"src/components/MailLayout.tsx",
+				"src/components/ServicesNav.tsx",
+				"src/components/StoreHeader.tsx",
+				"src/components/EmailFooter.tsx",
+			},
+		},
+		{
+			name: "a folder word as the last name word",
+			files: []string{
+				"src/components/Header/headerTypes.ts",
+				"src/components/navUtils.ts",
+				"src/components/sidebarStore.ts",
+				"src/layouts/layoutUtils.ts",
+			},
+		},
+		{
+			name:  "cypress tests",
+			files: []string{"src/components/Header.cy.tsx"},
+		},
+		{
+			name:  "side and top navigation",
+			files: []string{"src/app/sidenav/sidenav.component.html", "src/components/topnav.tsx"},
+			want:  []string{"src/app/sidenav/sidenav.component.html", "src/components/topnav.tsx"},
+		},
+		{
+			name: "a name ending in logo",
+			files: []string{
+				"src/components/Logo.tsx",
+				"src/components/SiteLogo.tsx",
+				"src/components/acme-logo.tsx",
+				"src/components/LogoCloud.tsx",
+				"components/icons/logo.tsx",
+				"src/components/icons/Logo.tsx",
+			},
+			want: []string{
+				"src/components/Logo.tsx",
+				"components/icons/logo.tsx",
+				"src/components/SiteLogo.tsx",
+				"src/components/acme-logo.tsx",
+				"src/components/icons/Logo.tsx",
+			},
+		},
+		{
+			name: "react router layout under pages",
+			files: []string{
+				"src/pages/Layout.jsx",
+				"src/pages/Layout.js",
+				"src/pages/RootLayout.jsx",
+				"src/pages/Layout/index.jsx",
+				"src/pages/Home.jsx",
+				"pages/api/hello.js",
+				"pages/api/layout.js",
+			},
+			want: []string{
+				"src/pages/Layout.js",
+				"src/pages/Layout.jsx",
+				"src/pages/Layout/index.jsx",
+				"src/pages/RootLayout.jsx",
+			},
+		},
+		{
+			name: "demo, icon, context and provider files",
+			files: []string{
+				"stories/Header.tsx",
+				"stories/header.css",
+				"src/components/MenuIcon.tsx",
+				"src/components/icons/Menu.tsx",
+				"src/components/SidebarContext.tsx",
+				"src/contexts/Nav.tsx",
+				"src/providers/Header.tsx",
+				"src/components/NavProvider.tsx",
+			},
+		},
+		{
+			name:  "the app shell sits at most one level down",
+			files: []string{"src/lib/deep/app.tsx", "src/lib/deep/App.js", "src/lib/deep/root.tsx"},
+		},
+		{
+			name:  "a unit's stylesheet follows its other files",
+			files: []string{"src/components/Header/Header.css", "src/components/Header/Header.tsx"},
+			want:  []string{"src/components/Header/Header.tsx", "src/components/Header/Header.css"},
+		},
+		{
+			// Path order alone puts the Nav unit first; footer alone ranks after it.
+			name:  "a file of a layout folder ranks as a layout",
+			files: []string{"src/components/Nav.tsx", "src/layouts/Footer.vue"},
+			want:  []string{"src/layouts/Footer.vue", "src/components/Nav.tsx"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			files := map[string]string{}
+
+			for _, rel := range tt.files {
+				files[rel] = "x"
+			}
+
+			writeTree(t, root, files)
+
+			assert.Equal(t, tt.want, assetPaths(frameFiles(root, frontend{Dir: ""})))
+		})
+	}
+}
+
+func TestFrameFiles_RulesReadFromTheRoot(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"pages/site/package.json":              `{}`,
+		"pages/site/src/components/Footer.tsx": ``,
+		"pages/site/src/api/Header.tsx":        ``,
+	})
+
+	got := frameFiles(root, frontend{Dir: "pages/site"})
+
+	assert.Equal(t, []string{"pages/site/src/components/Footer.tsx"}, assetPaths(got))
+}
+
+func TestFrameFiles_Size(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"src/components/Footer.tsx": "0123456789"})
+
+	assert.Equal(t,
+		[]Asset{{Path: "src/components/Footer.tsx", Size: 10}},
+		frameFiles(root, frontend{Dir: ""}))
 }
 
 func TestFrameFiles_UnderRootDir(t *testing.T) {
@@ -336,30 +669,28 @@ func TestFrameFiles_UnderRootDir(t *testing.T) {
 
 	got := frameFiles(root, frontend{Dir: "admin"})
 
-	assert.Equal(t, []string{"admin/src/Layout.tsx"}, got)
+	assert.Equal(t, []string{"admin/src/Layout.tsx"}, assetPaths(got))
 }
 
 func TestFrameFiles_CapAndOrder(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{}
 
+	// The hyphen keeps "Nav" a word of its own; nameWords does not split at digits.
 	for i := range 25 {
-		files[fmt.Sprintf("src/layout%02d/Layout.tsx", i)] = ``
+		files[fmt.Sprintf("src/components/Nav-%02d/index.tsx", i)] = ``
 	}
 
-	files["src/App.tsx"] = ``
+	files["app/layout.tsx"] = ``
 
 	writeTree(t, root, files)
 
-	got := frameFiles(root, frontend{Dir: ""})
+	got := assetPaths(frameFiles(root, frontend{Dir: ""}))
 
 	require.Len(t, got, 20)
-	assert.Equal(t, "src/App.tsx", got[0])
-
-	rest := got[1:]
-	assert.IsIncreasing(t, rest)
-	assert.Equal(t, "src/layout00/Layout.tsx", rest[0])
-	assert.Equal(t, "src/layout18/Layout.tsx", rest[len(rest)-1])
+	assert.Equal(t, "app/layout.tsx", got[0])
+	assert.Equal(t, "src/components/Nav-00/index.tsx", got[1])
+	assert.Equal(t, "src/components/Nav-18/index.tsx", got[19])
 }
 
 func TestBrandFiles(t *testing.T) {
@@ -379,10 +710,23 @@ func TestBrandFiles(t *testing.T) {
 	got := brandFiles(root, frontend{Dir: ""})
 
 	assert.Equal(t, []Asset{
+		{Path: "src/components/DeveloperLogo/logo.svg", Size: int64(len(logo))},
 		{Path: "public/brand-mark.png", Size: 3},
 		{Path: "public/companyLogo.PNG", Size: 3},
-		{Path: "src/components/DeveloperLogo/logo.svg", Size: int64(len(logo))},
 	}, got)
+}
+
+func TestBrandFiles_NamedJustLogoFirst(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"public/google-logo.svg":     `<svg/>`,
+		"src/assets/images/logo.svg": `<svg/>`,
+		"public/brand.svg":           `<svg/>`,
+	})
+
+	assert.Equal(t,
+		[]string{"public/brand.svg", "src/assets/images/logo.svg", "public/google-logo.svg"},
+		assetPaths(brandFiles(root, frontend{Dir: ""})))
 }
 
 func TestBrandFiles_CapAndRootDir(t *testing.T) {
@@ -409,11 +753,11 @@ func writeNestedPackageTree(t *testing.T) string {
 
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{
-		"app/package.json":                   `{}`,
-		"app/src/Footer.tsx":                 ``,
-		"app/packages/server/package.json":   `{}`,
-		"app/packages/server/src/Header.tsx": ``,
-		"app/packages/server/logo.svg":       `<svg/>`,
+		"app/package.json":                              `{}`,
+		"app/src/components/Footer.tsx":                 ``,
+		"app/packages/server/package.json":              `{}`,
+		"app/packages/server/src/components/Header.tsx": ``,
+		"app/packages/server/logo.svg":                  `<svg/>`,
 	})
 
 	return root
@@ -422,10 +766,12 @@ func writeNestedPackageTree(t *testing.T) string {
 func TestFrameFiles_SkipNestedPackages(t *testing.T) {
 	root := writeNestedPackageTree(t)
 
-	assert.Equal(t, []string{"app/src/Footer.tsx"}, frameFiles(root, frontend{Dir: "app"}))
 	assert.Equal(t,
-		[]string{"app/packages/server/src/Header.tsx"},
-		frameFiles(root, frontend{Dir: "app/packages/server"}))
+		[]string{"app/src/components/Footer.tsx"},
+		assetPaths(frameFiles(root, frontend{Dir: "app"})))
+	assert.Equal(t,
+		[]string{"app/packages/server/src/components/Header.tsx"},
+		assetPaths(frameFiles(root, frontend{Dir: "app/packages/server"})))
 }
 
 func TestBrandFiles_SkipNestedPackages(t *testing.T) {

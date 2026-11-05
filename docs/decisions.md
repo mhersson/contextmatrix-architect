@@ -226,6 +226,50 @@ HEAD.
   research tools add; the pack loader refuses the key without the code
   tools. Why: the brief points at files read with those tools, and no model
   picks a download.
+- Frame files are found by name. A file named for a frame word (layout, shell,
+  header, navigation bar, footer, sidebar, hero and the like) counts when it
+  is a `.tsx`, `.jsx`, `.vue`, `.svelte`, `.astro`, `.html` or `.css` file in
+  any folder; a `.ts` or `.js` one counts only in a component or layout folder
+  or as its folder's own file (`Navbar/index.ts`,
+  `header/header.component.ts`), a folder's own file counted as its folder. So
+  do layout files anywhere, any file of a layout folder and the app shell: a
+  `.tsx`, `.jsx`, `.js` (`App.js`), `.vue`, `.svelte`, `.astro`, `.html` or
+  `.css` file named App at the root or one directory below, counted as its
+  folder when it is its folder's own file (`app.vue`, `src/App.tsx`,
+  `src/app/app.component.html`); so do a Remix or React Router `root` file
+  there and Next's `pages/_app` (or `src/pages/_app`). A name ending in logo
+  counts as a frame word (`SiteLogo.tsx`, not `LogoCloud.tsx`), and so do side
+  and top navigation (`sidenav`, `topnav`). Other files under api, constants,
+  utils, hooks, pages, services, store, types, stories, icon, context,
+  provider, test, email or mail folders, hooks (`use...`), test, spec, story
+  and Cypress files, and files whose last name word is one of those folder
+  words (`headerTypes.ts`, `MenuIcon.tsx`, not `StoreHeader.tsx`) never count,
+  though a logo under an icon folder or a layout under a pages folder counts.
+  They are ranked by depth, frame word and path, at most 20. Known limit: a
+  frame component with an unusual name is missed, and the design-system
+  components in the frame source are translated to HTML by the designer from
+  the kept CSS. Why: the designer drew a made-up frame when noise outranked
+  the real components, and flat, Vue, Angular, Next app-router, SvelteKit,
+  Feature-Sliced and Django apps keep their frame files outside component
+  folders.
+- The brief carries the text of the top frame files and of the first SVG logo
+  outside its 16 KiB cap, within a quarter of the run's model window (the
+  default window when it is unknown), at most 128 KiB: frame files take three
+  quarters of it and logos one. Logos go in smallest first while each fits what
+  is left of theirs, at most 16 KiB per root. Frame files are shared among the
+  roots by need, at most 32 KiB per root, and what the shares leave goes to
+  files still left out, by rank across the roots. Each file is counted with its
+  label and fence; a file over budget, binary or not UTF-8 is listed by path,
+  and a root none of whose text fits gets no frame source. Why: told where the
+  frame was, designers on more than one model still invented it, and the task
+  must still fit a small window.
+- Repository text in the frame source sits in a backtick fence longer than any
+  run of backticks in it and tagged by the file's extension, every line break
+  is `\n`, and a line that, trimmed, starts with one or more `#` and then
+  white space or its end has its first `#` written as `&#35;`. Why: the text
+  lands in the architect's own task prompt, whose sections are `## ` headings,
+  so repository text must not open one, and the designer copies frame text
+  into a mockup source that cards carry.
 - The only packages downloaded are those the project's own CSS imports (a CSS
   `@import`, or a JavaScript side-effect import of a package's `.css` file)
   and the importing frontend's package.json declares, at the version the

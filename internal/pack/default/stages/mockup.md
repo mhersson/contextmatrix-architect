@@ -13,12 +13,16 @@ Read the code first (repo_info, read, grep, glob), starting from the
 "Design material" brief when the task has one: per frontend root it lists the
 files that build the page frame, the logo and brand files, the resolved
 tokens, the fonts, the kept CSS of the packages the project's styles import,
-and the gaps, what could not be gathered. Find whether a target
-project already has the interface the need changes, and read its UI code and
-design material: theme and colour tokens, shared components, layout,
-spacing, wording and any design docs. Then draw the existing screens with the
-change in place, in the existing theme and colours, honouring the design
-decisions already made, and keep every suggestion inside that design
+and the gaps, what could not be gathered. After those lists a "Frame source"
+part per root holds the source of its top frame files and its logo SVG, as
+much as fits, with plain line breaks and the first `#` of a line that reads as
+a heading written `&#35;`, which HTML and SVG show as `#`; a frame file left
+out of it is listed by path. Find
+whether a target project already has the interface the need changes, and read
+its UI code and design material: theme and colour tokens, shared components,
+layout, spacing, wording and any design docs. Then draw the existing screens
+with the change in place, in the existing theme and colours, honouring the
+design decisions already made, and keep every suggestion inside that design
 language: never a new theme, palette or component style. Only when intake's
 data holds `redesign: true` may the look depart from the existing one, and
 then the look itself may be among the suggestions. When no target project
@@ -28,12 +32,19 @@ its kind of screen.
 While the look stays the project's:
 
 - Draw every screen whole, inside the project's page frame (header,
-  navigation, sidebar, footer), with the frame files as the reference.
+  navigation, sidebar, footer).
+- Rebuild the header, navigation, sidebar and footer from the frame source, with
+  the same items, in the same order, with the same labels. Never invent a
+  navigation item, link or label.
+- Translate the design-system components the frame source uses (a button, a
+  dropdown) to HTML styled from the kept package CSS.
+- Read a frame file that is listed but not included with the code tools.
 - Take every colour, radius, spacing and shadow from the resolved tokens,
   the kept package CSS and the project's own styles, never an invented value;
   grep the kept CSS for a component's rules.
-- Inline the real logo from its file, as inline SVG or a `data:` URI (a
-  third larger than the file), when it fits the 64 KiB budget.
+- Paste the brief's logo SVG into the mockup as it is. Without one, inline
+  the real logo from its file, as inline SVG or a `data:` URI (a third larger
+  than the file), when it fits the 64 KiB budget.
 - Draw text in the family each font's "draw with" names.
 
 What to draw:

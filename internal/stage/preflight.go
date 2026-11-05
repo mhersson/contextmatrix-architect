@@ -30,6 +30,21 @@ func EstimateTokens(s string) int {
 	return int(float64(len(s)) / bytesPerToken)
 }
 
+// WindowBytes is the estimated size in bytes of a context window of window
+// tokens; 0 or less is unknown and sizes the default window.
+func WindowBytes(window int) int {
+	return int(float64(contextWindow(window)) * bytesPerToken)
+}
+
+// contextWindow is window, or defaultContextWindow when it is unknown.
+func contextWindow(window int) int {
+	if window <= 0 {
+		return defaultContextWindow
+	}
+
+	return window
+}
+
 // compactionLimit is the prompt size at which the harness stops a run it
 // cannot summarize. On small windows it starts summarizing earlier, at the
 // lesser of this and the window less its summary reserve.

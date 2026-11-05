@@ -10,13 +10,13 @@ import (
 )
 
 const (
-	// maxBriefBytes bounds the brief: it opens a prompt.
+	// maxBriefBytes bounds the brief's capped part: it opens a prompt.
 	maxBriefBytes = 16 << 10
 	// maxValueBytes bounds one token value or font stack.
 	maxValueBytes = 300
-	// cutNote ends a brief that still passes the cap once every token list is
-	// cut.
-	cutNote = "(the rest of the brief does not fit and was left out)\n"
+	// cutNote ends a capped part that still passes the cap once every token
+	// list is cut.
+	cutNote = "(the rest of the lists does not fit and was left out)\n"
 )
 
 // briefer renders a Material.
@@ -27,13 +27,16 @@ type briefer struct {
 }
 
 // Brief renders m as the "Design material" section of the mockup designer's
-// task, or "" when m has no root. tags maps a Package.Dir to its source tag.
-// Each root's tokens are listed by usefulness (resolved first, then colour,
-// spacing, radius, shadow, font, the rest), so the cut keeps the most useful.
-// The section stays within 16 KiB: token lists are cut from the last root
-// backwards. Every string from the target repository or a package is rendered
-// on one line, so none of it can start a heading of its own.
-func Brief(m Material, tags map[string]string) string {
+// task, or "" when m has no root. tags maps a Package.Dir to its source tag;
+// windowBytes is the run's model window in bytes.
+//
+// The section opens with a part capped at 16 KiB. There each root's tokens are
+// listed by usefulness (resolved first, then colour, spacing, radius, shadow,
+// font, the rest) and cut from the last root backwards, so the cut keeps the
+// most useful, and every string from the target repository or a package is
+// rendered on one line, so none of it can start a heading of its own. The frame
+// source follows that part under its own budget; see frameSource.
+func Brief(m Material, tags map[string]string, windowBytes int) string {
 	if len(m.Roots) == 0 {
 		return ""
 	}
@@ -59,11 +62,11 @@ func Brief(m Material, tags map[string]string) string {
 	// The fewest cut tokens that fit; with every token cut, fit takes over.
 	cut := min(sort.Search(tokens+1, func(k int) bool { return len(b.render(k)) <= maxBriefBytes }), tokens)
 
-	return fit(b.render(cut))
+	return fit(b.render(cut)) + frameSource(m.Roots, windowBytes)
 }
 
-// render writes the section with the last cut tokens left out, the last root's
-// first.
+// render writes the section's capped part with the last cut tokens left out,
+// the last root's first.
 func (b briefer) render(cut int) string {
 	keep := make([]int, len(b.m.Roots))
 
@@ -105,7 +108,7 @@ func (b briefer) render(cut int) string {
 			}
 		}
 
-		list(&sb, "Frame", oneLines(r.Frame))
+		list(&sb, "Frame", frameLines(r.Frame))
 		list(&sb, "Brand", brands(r.Brand))
 		list(&sb, "Tokens", tokenLines(r.Tokens, keep[i]))
 		list(&sb, "Fonts", fontLines(r.Fonts))
@@ -163,10 +166,10 @@ func list(sb *strings.Builder, label string, items []string) {
 	}
 }
 
-func oneLines(paths []string) []string {
-	out := make([]string, len(paths))
-	for i, p := range paths {
-		out[i] = oneLine(p)
+func frameLines(assets []Asset) []string {
+	out := make([]string, len(assets))
+	for i, a := range assets {
+		out[i] = oneLine(a.Path)
 	}
 
 	return out

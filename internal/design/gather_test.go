@@ -187,10 +187,105 @@ func TestGather_EndToEnd(t *testing.T) {
 	assert.Equal(t, "portal", r.Project)
 	assert.Equal(t, "portal/frontend", r.Path)
 	assert.Equal(t, "#ebebeb", tokenValue(t, r, "--color-border"))
-	assert.Contains(t, r.Frame, "portal/frontend/src/components/Footer/index.tsx")
+	assert.Contains(t, assetPaths(r.Frame), "portal/frontend/src/components/Footer/index.tsx")
 	require.Len(t, r.Brand, 1)
 	assert.Equal(t, "portal/frontend/src/logo.svg", r.Brand[0].Path)
 	assert.Equal(t, []string{tokensDir, uiDir}, r.Packages)
+}
+
+func TestGather_FrameAndLogoText(t *testing.T) {
+	const (
+		footer = "export const Footer = () => null\n"
+		logo   = `<svg id="a"/>`
+	)
+
+	tests := []struct {
+		name     string
+		logo     string // src/logo.svg
+		wantLogo string
+	}{
+		{name: "a logo within the limit", logo: logo, wantLogo: logo},
+		{name: "a logo over the limit", logo: strings.Repeat("a", 17<<10)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tarballs := defaultTarballs(t)
+			srv := registryServer(t, tarballs, 0)
+
+			files := portalTree(t, srv.URL, tarballs)
+			files["frontend/src/components/Footer/index.tsx"] = footer
+			files["frontend/src/components/Header/index.tsx"] = strings.Repeat("a", 33<<10)
+			files["frontend/src/components/Menu/index.tsx"] = "a\x00b"
+			files["frontend/src/components/Nav/index.tsx"] = "\xff\xfe"
+			files["frontend/src/logo.svg"] = tt.logo
+			files["frontend/src/assets/brand/logo.svg"] = "<svg/>"
+			files["frontend/public/logo.png"] = "png"
+
+			m, err := gatherPortal(t, srv, t.TempDir(), files)
+			require.NoError(t, err)
+			require.Len(t, m.Roots, 1)
+
+			frame := map[string]Asset{}
+			for _, a := range m.Roots[0].Frame {
+				frame[a.Path] = a
+			}
+
+			const dir = "portal/frontend/src/components/"
+
+			require.Len(t, frame, 4)
+			assert.Equal(t, Asset{Path: dir + "Footer/index.tsx", Size: int64(len(footer)), Text: footer}, frame[dir+"Footer/index.tsx"])
+			assert.Equal(t, Asset{Path: dir + "Header/index.tsx", Size: 33 << 10}, frame[dir+"Header/index.tsx"], "over the limit")
+			assert.Equal(t, Asset{Path: dir + "Menu/index.tsx", Size: 3}, frame[dir+"Menu/index.tsx"], "a NUL byte")
+			assert.Equal(t, Asset{Path: dir + "Nav/index.tsx", Size: 2}, frame[dir+"Nav/index.tsx"], "invalid UTF-8")
+
+			brand := m.Roots[0].Brand
+			require.Len(t, brand, 3)
+			assert.Equal(t, []string{
+				"portal/frontend/src/logo.svg", "portal/frontend/public/logo.png", "portal/frontend/src/assets/brand/logo.svg",
+			}, assetPaths(brand))
+			assert.Equal(t, tt.wantLogo, brand[0].Text)
+			assert.Empty(t, brand[1].Text, "a PNG")
+			assert.Empty(t, brand[2].Text, "only the first SVG is read")
+		})
+	}
+}
+
+func TestGather_LogoTextIsTheFirstSVGNotTheFirstImage(t *testing.T) {
+	tarballs := defaultTarballs(t)
+	srv := registryServer(t, tarballs, 0)
+
+	files := portalTree(t, srv.URL, tarballs)
+	files["frontend/logo.png"] = "png"
+	files["frontend/src/logo.svg"] = "<svg/>"
+
+	m, err := gatherPortal(t, srv, t.TempDir(), files)
+	require.NoError(t, err)
+	require.Len(t, m.Roots, 1)
+
+	brand := m.Roots[0].Brand
+	require.Equal(t, []string{"portal/frontend/logo.png", "portal/frontend/src/logo.svg"}, assetPaths(brand))
+	assert.Empty(t, brand[0].Text)
+	assert.Equal(t, "<svg/>", brand[1].Text)
+}
+
+func TestGather_LogoIsTheFileNamedLogo(t *testing.T) {
+	tarballs := defaultTarballs(t)
+	srv := registryServer(t, tarballs, 0)
+
+	files := portalTree(t, srv.URL, tarballs)
+	files["frontend/public/google-logo.svg"] = `<svg id="g"/>`
+	files["frontend/src/assets/images/logo.svg"] = `<svg id="l"/>`
+
+	m, err := gatherPortal(t, srv, t.TempDir(), files)
+	require.NoError(t, err)
+	require.Len(t, m.Roots, 1)
+
+	brand := m.Roots[0].Brand
+	require.Len(t, brand, 2)
+	assert.Equal(t, "portal/frontend/src/assets/images/logo.svg", brand[0].Path)
+	assert.Equal(t, `<svg id="l"/>`, brand[0].Text)
+	assert.Empty(t, brand[1].Text)
 }
 
 func TestGather_TokensInImportOrder(t *testing.T) {
@@ -1551,7 +1646,7 @@ func TestGather_StyleLanguageRoots(t *testing.T) {
 			require.Len(t, m.Roots, 1)
 
 			r := rootAt(t, m, tt.root)
-			assert.Equal(t, tt.frame, r.Frame)
+			assert.Equal(t, tt.frame, assetPaths(r.Frame))
 
 			var brand []string
 			for _, a := range r.Brand {

@@ -13,10 +13,19 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
-// maxTokenNames bounds the custom property names one root resolves.
-const maxTokenNames = 2000
+const (
+	// maxTokenNames bounds the custom property names one root resolves.
+	maxTokenNames = 2000
+	// maxFrameSourceBytes is the largest frame file whose text is read, and the
+	// cap on a root's frame files in the frame source.
+	maxFrameSourceBytes = 32 << 10
+	// maxLogoSourceBytes is the largest logo SVG whose text is read, and the cap
+	// on a root's logo in the frame source.
+	maxLogoSourceBytes = 16 << 10
+)
 
 // Tree is a repository checked out at Dir, its top-level directory under the
 // tool root.
@@ -40,7 +49,7 @@ type Material struct {
 // Root is one frontend root of a tree.
 type Root struct {
 	Project, Path string // Path is tool-root-relative, e.g. "portal/frontend"
-	Frame         []string
+	Frame         []Asset
 	Brand         []Asset
 	Tokens        []Token
 	Fonts         []Font
@@ -229,11 +238,33 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 	treePrefix := filepath.ToSlash(tree.Dir)
 	root := Root{Project: tree.Project, Path: w.path}
 
-	for _, rel := range frameFiles(treeDir, f) {
-		root.Frame = append(root.Frame, path.Join(treePrefix, rel))
+	for _, a := range frameFiles(treeDir, f) {
+		text, err := readText(treeDir, a, maxFrameSourceBytes)
+		if err != nil {
+			return Root{}, err
+		}
+
+		a.Text = text
+		a.Path = path.Join(treePrefix, a.Path)
+		root.Frame = append(root.Frame, a)
 	}
 
+	// Only the first SVG is the logo the designer may copy, even when it is too
+	// large to read.
+	logoSeen := false
+
 	for _, a := range brandFiles(treeDir, f) {
+		if !logoSeen && strings.EqualFold(path.Ext(a.Path), ".svg") {
+			logoSeen = true
+
+			text, err := readText(treeDir, a, maxLogoSourceBytes)
+			if err != nil {
+				return Root{}, err
+			}
+
+			a.Text = text
+		}
+
 		a.Path = path.Join(treePrefix, a.Path)
 		root.Brand = append(root.Brand, a)
 	}
@@ -476,6 +507,26 @@ func readTreeFile(treeDir, rel string) (string, error) {
 	}
 
 	return string(data), nil
+}
+
+// readText returns the text of the tree-relative file a, or "" when it is over
+// limit bytes, holds a NUL byte or is not UTF-8.
+func readText(treeDir string, a Asset, limit int64) (string, error) {
+	if a.Size > limit {
+		return "", nil
+	}
+
+	text, err := readTreeFile(treeDir, a.Path)
+	if err != nil {
+		return "", err
+	}
+
+	// The file may have grown since it was listed.
+	if int64(len(text)) > limit || !utf8.ValidString(text) || strings.IndexByte(text, 0) >= 0 {
+		return "", nil
+	}
+
+	return text, nil
 }
 
 // declaredDeps returns the range of each dependency, dev dependency and peer

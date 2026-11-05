@@ -671,7 +671,7 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 		if st.Design {
 			var tags map[string]keptPackage
 
-			brief, tags = c.prepareDesign(ctx, sess, bp, st.ID, facts)
+			brief, tags = c.prepareDesign(ctx, sess, bp, st.ID, facts, c.modelFor(sess, st.Persona).window)
 			maps.Copy(facts.packages, tags)
 		}
 

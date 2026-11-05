@@ -15,6 +15,7 @@ import (
 
 	designpkg "github.com/mhersson/contextmatrix-architect/internal/design"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
+	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -141,7 +142,7 @@ func TestDesign_TheDesignerGetsTheBrief(t *testing.T) {
 	require.Len(t, srcs, 1)
 
 	task := mockupTask(t, runner)
-	assert.True(t, strings.HasPrefix(task, designpkg.Brief(designMaterial(), map[string]string{designPkgDir: srcs[0].Tag()})),
+	assert.True(t, strings.HasPrefix(task, designpkg.Brief(designMaterial(), map[string]string{designPkgDir: srcs[0].Tag()}, stage.WindowBytes(0))),
 		"the brief opens the task, before the checkout lines:\n%s", task)
 	assert.Contains(t, task, designTokenValue)
 	assert.Contains(t, task, "sha-alpha", "the checkout lines follow it")
@@ -154,6 +155,60 @@ func TestDesign_TheDesignerGetsTheBrief(t *testing.T) {
 		if in := runner.input(i); in.Stage != "mockup" {
 			assert.NotContains(t, in.Task, designTokenValue, "%s is given the brief", in.Stage)
 		}
+	}
+}
+
+func TestDesign_TheBriefFitsTheRunsWindow(t *testing.T) {
+	// Four 10 KiB frame files: a 128k window carries three of them, a 64k one two.
+	material := designMaterial()
+	for _, letter := range []string{"a", "b", "c", "d"} {
+		material.Roots[0].Frame = append(material.Roots[0].Frame, designpkg.Asset{
+			Path: "alpha/src/" + letter + ".tsx", Size: 10 << 10, Text: strings.Repeat(letter, 10<<10),
+		})
+	}
+
+	tests := []struct {
+		name     string
+		window   int
+		override string
+		third    bool
+	}{
+		{"an unknown window is the default", 0, "", true},
+		{"a 64k window", 64_000, "", false},
+		{"an overridden model's window is unknown", 64_000, "other/model", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, runner, _, _ := newDesign(t, &fakeDesigner{material: material})
+			if tt.override != "" {
+				c.opts.Models = map[string]string{"designer": tt.override}
+			}
+
+			in := startInput("BP1")
+			in.ContextWindow = tt.window
+			driveIn(t, c, in)
+			takeOffer(t, c)
+
+			srcs := packageSources(t, st)
+			require.Len(t, srcs, 1)
+
+			window := tt.window
+			if tt.override != "" {
+				window = 0
+			}
+
+			task := mockupTask(t, runner)
+			assert.True(t, strings.HasPrefix(task, designpkg.Brief(material, map[string]string{designPkgDir: srcs[0].Tag()}, stage.WindowBytes(window))),
+				"the brief is sized by the run's window")
+			assert.Contains(t, task, strings.Repeat("b", 10<<10))
+
+			if tt.third {
+				assert.Contains(t, task, strings.Repeat("c", 10<<10))
+			} else {
+				assert.NotContains(t, task, strings.Repeat("c", 100))
+			}
+		})
 	}
 }
 
