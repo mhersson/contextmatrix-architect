@@ -295,7 +295,8 @@ func TestScanTree_MissingDir(t *testing.T) {
 }
 
 func assetPaths(as []Asset) []string {
-	paths := make([]string, 0, len(as))
+	var paths []string
+
 	for _, a := range as {
 		paths = append(paths, a.Path)
 	}

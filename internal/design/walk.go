@@ -108,10 +108,12 @@ type entry struct {
 	Local                     string
 }
 
-// Asset is a file found under a frontend root and its size in bytes.
+// Asset is a file found under a frontend root and its size in bytes. Text is
+// the file's text when the brief may carry it, else "".
 type Asset struct {
 	Path string
 	Size int64
+	Text string
 }
 
 // scanTree finds the frontend roots under treeDir in a single walk. A root is

@@ -105,7 +105,7 @@ func (b briefer) render(cut int) string {
 			}
 		}
 
-		list(&sb, "Frame", oneLines(r.Frame))
+		list(&sb, "Frame", frameLines(r.Frame))
 		list(&sb, "Brand", brands(r.Brand))
 		list(&sb, "Tokens", tokenLines(r.Tokens, keep[i]))
 		list(&sb, "Fonts", fontLines(r.Fonts))
@@ -163,10 +163,10 @@ func list(sb *strings.Builder, label string, items []string) {
 	}
 }
 
-func oneLines(paths []string) []string {
-	out := make([]string, len(paths))
-	for i, p := range paths {
-		out[i] = oneLine(p)
+func frameLines(assets []Asset) []string {
+	out := make([]string, len(assets))
+	for i, a := range assets {
+		out[i] = oneLine(a.Path)
 	}
 
 	return out

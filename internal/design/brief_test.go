@@ -21,7 +21,7 @@ func briefMaterial() Material {
 		Roots: []Root{{
 			Project: "portal",
 			Path:    "portal/frontend",
-			Frame:   []string{"portal/frontend/src/components/Footer.tsx"},
+			Frame:   []Asset{{Path: "portal/frontend/src/components/Footer.tsx"}},
 			Brand:   []Asset{{Path: "portal/frontend/public/logo.svg", Size: 4096}},
 			Tokens: []Token{
 				{Name: "--color-border", Value: "#ebebeb"},
@@ -142,8 +142,8 @@ func TestBrief_Order(t *testing.T) {
 
 func TestBrief_PartPerRoot(t *testing.T) {
 	m := Material{Roots: []Root{
-		{Project: "alpha", Path: "alpha/web", Frame: []string{"alpha/web/a.tsx"}},
-		{Project: "beta", Path: "beta/ui", Frame: []string{"beta/ui/b.tsx"}},
+		{Project: "alpha", Path: "alpha/web", Frame: []Asset{{Path: "alpha/web/a.tsx"}}},
+		{Project: "beta", Path: "beta/ui", Frame: []Asset{{Path: "beta/ui/b.tsx"}}},
 	}}
 
 	out := Brief(m, nil)
@@ -243,7 +243,7 @@ func TestBrief_UntrustedTextStaysOnOneLine(t *testing.T) {
 		Roots: []Root{{
 			Project: "portal" + inject,
 			Path:    "portal/frontend" + inject,
-			Frame:   []string{"portal/frontend/a" + inject + ".tsx"},
+			Frame:   []Asset{{Path: "portal/frontend/a" + inject + ".tsx"}},
 			Brand:   []Asset{{Path: "portal/frontend/logo" + inject + ".svg", Size: 7}},
 			Tokens: []Token{
 				{Name: "--name" + inject, Value: "#fff" + inject},
