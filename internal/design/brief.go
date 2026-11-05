@@ -30,9 +30,11 @@ type briefer struct {
 // task, or "" when m has no root. tags maps a Package.Dir to its source tag.
 // Each root's tokens are listed by usefulness (resolved first, then colour,
 // spacing, radius, shadow, font, the rest), so the cut keeps the most useful.
-// The section stays within 16 KiB: token lists are cut from the last root
-// backwards. Every string from the target repository or a package is rendered
-// on one line, so none of it can start a heading of its own.
+// The section's lists stay within 16 KiB: token lists are cut from the last
+// root backwards. Every string from the target repository or a package is
+// rendered on one line, so none of it can start a heading of its own. The frame
+// files' source and the logo SVG follow that part under their own budgets,
+// fenced and with their heading lines escaped.
 func Brief(m Material, tags map[string]string) string {
 	if len(m.Roots) == 0 {
 		return ""
@@ -59,7 +61,7 @@ func Brief(m Material, tags map[string]string) string {
 	// The fewest cut tokens that fit; with every token cut, fit takes over.
 	cut := min(sort.Search(tokens+1, func(k int) bool { return len(b.render(k)) <= maxBriefBytes }), tokens)
 
-	return fit(b.render(cut))
+	return fit(b.render(cut)) + frameSource(m.Roots)
 }
 
 // render writes the section with the last cut tokens left out, the last root's
