@@ -294,37 +294,92 @@ func TestScanTree_MissingDir(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func assetPaths(as []Asset) []string {
+	paths := make([]string, 0, len(as))
+	for _, a := range as {
+		paths = append(paths, a.Path)
+	}
+
+	return paths
+}
+
 func TestFrameFiles(t *testing.T) {
 	root := t.TempDir()
-	writeTree(t, root, map[string]string{
-		"src/components/BaseLayout/index.tsx":           ``,
-		"src/components/NavigationBar/index.module.css": ``,
-		"src/App.tsx":                                ``,
-		"src/components/Footer/Footer.tsx":           ``,
-		"src/pages/profile/Teams.tsx":                ``,
-		"src/components/Header/Header.test.tsx":      ``,
-		"src/components/Header/Header.stories.tsx":   ``,
-		"src/components/Header/Header.spec.ts":       ``,
-		"src/components/Application/Application.tsx": ``,
-		"src/main-menu.vue":                          ``,
-		"src/theme/nav_item.svelte":                  ``,
-		"src/theme/HTMLHero.html":                    ``,
-		"src/notes.md":                               ``,
-		"node_modules/pkg/Layout.tsx":                ``,
-		"dist/App.js":                                ``,
-	})
+	files := map[string]string{}
 
-	got := frameFiles(root, frontend{Dir: ""})
+	for _, rel := range []string{
+		"app/layout.tsx",
+		"src/routes/+layout.svelte",
+		"src/layouts/default.vue",
+		"src/components/BaseLayout/index.tsx",
+		"src/components/BaseLayout/index.module.css",
+		"src/components/TopBar/TopBar.tsx",
+		"src/components/NavigationBar/index.tsx",
+		"src/components/NavigationBar/index.module.css",
+		"src/components/NavigationBar/NavigationButton/index.tsx",
+		"src/components/NavigationBar/RecentDropdown.tsx",
+		"src/components/Footer/Footer.tsx",
+		"src/components/Footer/Footer.module.css",
+		"src/components/SideBar.tsx",
+		"src/components/HeroPage/index.tsx",
+		"src/App.tsx",
+		"src/App.module.css",
+		"src/api/app.ts",
+		"src/constants/navHistory.ts",
+		"src/components/hooks/navState.ts",
+		"src/components/Header/useHeader.ts",
+		"src/components/Header/Header.d.ts",
+		"src/components/Header/Header.test.tsx",
+		"src/components/Header/Header.stories.tsx",
+		"src/components/__tests__/Footer.tsx",
+		"src/pages/teams/components/TeamHeader.tsx",
+		"src/utils/menu.ts",
+		"src/theme/nav_item.svelte",
+		"node_modules/pkg/Layout.tsx",
+		"dist/Layout.js",
+	} {
+		files[rel] = "x"
+	}
+
+	writeTree(t, root, files)
 
 	assert.Equal(t, []string{
-		"src/App.tsx",
-		"src/main-menu.vue",
-		"src/theme/HTMLHero.html",
-		"src/theme/nav_item.svelte",
-		"src/components/Footer/Footer.tsx",
+		"app/layout.tsx",
+		"src/routes/+layout.svelte",
+		"src/layouts/default.vue",
 		"src/components/BaseLayout/index.tsx",
+		"src/components/BaseLayout/index.module.css",
+		"src/components/TopBar/TopBar.tsx",
+		"src/components/NavigationBar/index.tsx",
 		"src/components/NavigationBar/index.module.css",
-	}, got)
+		"src/components/Footer/Footer.tsx",
+		"src/components/Footer/Footer.module.css",
+		"src/components/SideBar.tsx",
+		"src/components/HeroPage/index.tsx",
+		"src/components/NavigationBar/NavigationButton/index.tsx",
+	}, assetPaths(frameFiles(root, frontend{Dir: ""})))
+}
+
+func TestFrameFiles_RulesReadFromTheRoot(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"pages/site/package.json":              `{}`,
+		"pages/site/src/components/Footer.tsx": ``,
+		"pages/site/src/api/Header.tsx":        ``,
+	})
+
+	got := frameFiles(root, frontend{Dir: "pages/site"})
+
+	assert.Equal(t, []string{"pages/site/src/components/Footer.tsx"}, assetPaths(got))
+}
+
+func TestFrameFiles_Size(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"src/components/Footer.tsx": "0123456789"})
+
+	assert.Equal(t,
+		[]Asset{{Path: "src/components/Footer.tsx", Size: 10}},
+		frameFiles(root, frontend{Dir: ""}))
 }
 
 func TestFrameFiles_UnderRootDir(t *testing.T) {
@@ -336,30 +391,28 @@ func TestFrameFiles_UnderRootDir(t *testing.T) {
 
 	got := frameFiles(root, frontend{Dir: "admin"})
 
-	assert.Equal(t, []string{"admin/src/Layout.tsx"}, got)
+	assert.Equal(t, []string{"admin/src/Layout.tsx"}, assetPaths(got))
 }
 
 func TestFrameFiles_CapAndOrder(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{}
 
+	// The hyphen keeps "Nav" a word of its own; nameWords does not split at digits.
 	for i := range 25 {
-		files[fmt.Sprintf("src/layout%02d/Layout.tsx", i)] = ``
+		files[fmt.Sprintf("src/components/Nav-%02d/index.tsx", i)] = ``
 	}
 
-	files["src/App.tsx"] = ``
+	files["app/layout.tsx"] = ``
 
 	writeTree(t, root, files)
 
-	got := frameFiles(root, frontend{Dir: ""})
+	got := assetPaths(frameFiles(root, frontend{Dir: ""}))
 
 	require.Len(t, got, 20)
-	assert.Equal(t, "src/App.tsx", got[0])
-
-	rest := got[1:]
-	assert.IsIncreasing(t, rest)
-	assert.Equal(t, "src/layout00/Layout.tsx", rest[0])
-	assert.Equal(t, "src/layout18/Layout.tsx", rest[len(rest)-1])
+	assert.Equal(t, "app/layout.tsx", got[0])
+	assert.Equal(t, "src/components/Nav-00/index.tsx", got[1])
+	assert.Equal(t, "src/components/Nav-18/index.tsx", got[19])
 }
 
 func TestBrandFiles(t *testing.T) {
@@ -409,11 +462,11 @@ func writeNestedPackageTree(t *testing.T) string {
 
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{
-		"app/package.json":                   `{}`,
-		"app/src/Footer.tsx":                 ``,
-		"app/packages/server/package.json":   `{}`,
-		"app/packages/server/src/Header.tsx": ``,
-		"app/packages/server/logo.svg":       `<svg/>`,
+		"app/package.json":                              `{}`,
+		"app/src/components/Footer.tsx":                 ``,
+		"app/packages/server/package.json":              `{}`,
+		"app/packages/server/src/components/Header.tsx": ``,
+		"app/packages/server/logo.svg":                  `<svg/>`,
 	})
 
 	return root
@@ -422,10 +475,12 @@ func writeNestedPackageTree(t *testing.T) string {
 func TestFrameFiles_SkipNestedPackages(t *testing.T) {
 	root := writeNestedPackageTree(t)
 
-	assert.Equal(t, []string{"app/src/Footer.tsx"}, frameFiles(root, frontend{Dir: "app"}))
 	assert.Equal(t,
-		[]string{"app/packages/server/src/Header.tsx"},
-		frameFiles(root, frontend{Dir: "app/packages/server"}))
+		[]string{"app/src/components/Footer.tsx"},
+		assetPaths(frameFiles(root, frontend{Dir: "app"})))
+	assert.Equal(t,
+		[]string{"app/packages/server/src/components/Header.tsx"},
+		assetPaths(frameFiles(root, frontend{Dir: "app/packages/server"})))
 }
 
 func TestBrandFiles_SkipNestedPackages(t *testing.T) {

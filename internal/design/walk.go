@@ -49,10 +49,27 @@ var (
 		"@linaria/", "@stitches/", "@pandacss/", "@stylexjs/",
 	}
 
-	frameWords = map[string]bool{
-		"layout": true, "shell": true, "app": true, "header": true, "navigation": true,
-		"navbar": true, "nav": true, "menu": true, "sidebar": true, "hero": true, "footer": true,
+	// Frame words by rank class: the lower the class, the earlier the file.
+	frameWords = map[string]int{
+		"layout": 0, "shell": 0,
+		"header": 1, "masthead": 1, "topbar": 1, "appbar": 1, "navigation": 1, "navbar": 1, "nav": 1,
+		"footer":  2,
+		"sidebar": 3, "menu": 3,
+		"hero": 4,
 	}
+
+	// Directories whose files are logic, data or tests, never the page frame.
+	nonFrameDirs = map[string]bool{
+		"api": true, "constants": true, "utils": true, "hooks": true, "pages": true,
+		"services": true, "store": true, "types": true, "test": true, "tests": true,
+		"__tests__": true, "__mocks__": true,
+	}
+
+	componentDirWords = map[string]bool{
+		"component": true, "components": true, "layout": true, "layouts": true,
+	}
+
+	layoutDirWords = map[string]bool{"layout": true, "layouts": true}
 
 	brandWords = map[string]bool{"logo": true, "brand": true}
 
@@ -411,14 +428,36 @@ func isRegularFile(p string) bool {
 }
 
 // frameFiles lists the files of f that most likely hold the page frame (layout,
-// shell, navigation, header, footer), shortest path first.
-func frameFiles(treeDir string, f frontend) []string {
-	var files []string
+// shell, navigation, header, footer), best first.
+func frameFiles(treeDir string, f frontend) []Asset {
+	type hit struct {
+		asset        Asset
+		unit         string
+		class        int
+		depth        int
+		isStylesheet bool
+	}
 
-	err := walkFiles(treeDir, f.Dir, true, func(rel string, _ fs.DirEntry) error {
-		if isFrameFile(rel) {
-			files = append(files, rel)
+	var hits []hit
+
+	err := walkFiles(treeDir, f.Dir, true, func(rel string, d fs.DirEntry) error {
+		unit, class, ok := frameUnit(relDir(f.Dir, rel))
+		if !ok {
+			return nil
 		}
+
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+
+		hits = append(hits, hit{
+			asset:        Asset{Path: rel, Size: info.Size()},
+			unit:         unit,
+			class:        class,
+			depth:        strings.Count(unit, "/"),
+			isStylesheet: strings.EqualFold(path.Ext(rel), ".css"),
+		})
 
 		return nil
 	})
@@ -426,9 +465,31 @@ func frameFiles(treeDir string, f frontend) []string {
 		slog.Warn("design: walk frame files", "dir", f.Dir, "error", err)
 	}
 
-	slices.SortFunc(files, comparePaths)
+	// A unit's files stay together; its stylesheet follows its other files.
+	slices.SortFunc(hits, func(a, b hit) int {
+		return cmp.Or(
+			cmp.Compare(a.depth, b.depth),
+			cmp.Compare(a.class, b.class),
+			comparePaths(a.unit, b.unit),
+			cmp.Compare(boolInt(a.isStylesheet), boolInt(b.isStylesheet)),
+			comparePaths(a.asset.Path, b.asset.Path),
+		)
+	})
 
-	return files[:min(len(files), maxFrameFiles)]
+	assets := make([]Asset, 0, min(len(hits), maxFrameFiles))
+	for _, h := range hits[:min(len(hits), maxFrameFiles)] {
+		assets = append(assets, h.asset)
+	}
+
+	return assets
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+
+	return 0
 }
 
 // brandFiles lists the logo and brand images of f, shortest path first.
@@ -463,25 +524,85 @@ func brandFiles(treeDir string, f frontend) []Asset {
 	return assets[:min(len(assets), maxBrandFiles)]
 }
 
-func isFrameFile(rel string) bool {
-	name := path.Base(rel)
+// frameUnit decides whether rootRel, a file path relative to the frontend root,
+// is a real frame file. The unit is the directory of an index file or of a file
+// named after its directory, else the directory and the file's stem; class is
+// the rank class of its best frame word.
+func frameUnit(rootRel string) (unit string, class int, ok bool) {
+	dir, name := path.Split(rootRel)
+	dir = strings.TrimSuffix(dir, "/")
 	lower := strings.ToLower(name)
 
-	if !frameExts[path.Ext(lower)] {
-		return false
+	if !frameExts[path.Ext(lower)] || strings.HasSuffix(lower, ".d.ts") {
+		return "", 0, false
 	}
 
 	for _, marker := range nonFrameMarkers {
 		if strings.Contains(lower, marker) {
-			return false
+			return "", 0, false
 		}
 	}
 
-	if strings.HasPrefix(lower, "index.") {
-		return hasWord(nameWords(path.Base(path.Dir(rel))), frameWords)
+	var segments []string
+
+	dirName := ""
+
+	if dir != "" {
+		segments = strings.Split(dir, "/")
+		dirName = path.Base(dir)
 	}
 
-	return hasWord(nameWords(strings.TrimSuffix(name, path.Ext(name))), frameWords)
+	if slices.ContainsFunc(segments, func(s string) bool { return nonFrameDirs[strings.ToLower(s)] }) {
+		return "", 0, false
+	}
+
+	stem, _, _ := strings.Cut(name, ".")
+	isIndex := strings.EqualFold(stem, "index")
+
+	var words []string
+
+	if isIndex || strings.EqualFold(stem, dirName) {
+		unit, words = dir, nameWords(dirName)
+	} else {
+		unit, words = path.Join(dir, stem), nameWords(stem)
+	}
+
+	if !isIndex && len(words) > 0 && words[0] == "use" {
+		return "", 0, false
+	}
+
+	class, hasFrameWord := frameClass(words)
+	inComponentDir := slices.ContainsFunc(segments, func(s string) bool {
+		return hasWord(nameWords(s), componentDirWords)
+	})
+
+	switch {
+	case hasWord(nameWords(dirName), layoutDirWords), slices.Contains(words, "layout"):
+		return unit, 0, true
+	case hasFrameWord && inComponentDir:
+		return unit, class, true
+	}
+
+	return "", 0, false
+}
+
+// frameClass is the lowest class among the frame words of words, each taken
+// alone or joined with the word after it.
+func frameClass(words []string) (class int, ok bool) {
+	for i, w := range words {
+		candidates := []string{w}
+		if i+1 < len(words) {
+			candidates = append(candidates, w+words[i+1])
+		}
+
+		for _, c := range candidates {
+			if k, found := frameWords[c]; found && (!ok || k < class) {
+				class, ok = k, true
+			}
+		}
+	}
+
+	return class, ok
 }
 
 func hasWord(words []string, set map[string]bool) bool {

@@ -229,8 +229,8 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 	treePrefix := filepath.ToSlash(tree.Dir)
 	root := Root{Project: tree.Project, Path: w.path}
 
-	for _, rel := range frameFiles(treeDir, f) {
-		root.Frame = append(root.Frame, path.Join(treePrefix, rel))
+	for _, a := range frameFiles(treeDir, f) {
+		root.Frame = append(root.Frame, path.Join(treePrefix, a.Path))
 	}
 
 	for _, a := range brandFiles(treeDir, f) {
