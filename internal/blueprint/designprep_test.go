@@ -285,6 +285,23 @@ func TestDesign_CodeStagesTagThePackage(t *testing.T) {
 	}
 }
 
+// Every designer run, its chat runs too, inserts images from the checked-out
+// trees alone: the kept package beside them is no tree.
+func TestDesign_EveryDesignerRunTakesTheTreesImages(t *testing.T) {
+	c, _, runner, _, ws := newDesign(t, &fakeDesigner{material: designMaterial()})
+	drive(t, c, "BP1")
+	takeOffer(t, c)
+	chatMockup(t, c, "Make the key bar darker.", nil)
+
+	runs := inputsOf(runner, "mockup")
+	require.Len(t, runs, 2)
+	assert.True(t, runs[1].Chat)
+
+	for _, in := range runs {
+		assert.Equal(t, stage.ImageFiles{Root: ws.TreeRoot("BP1"), Trees: []string{"alpha"}}, in.Images)
+	}
+}
+
 // The package dir sits under the tool root beside the checkouts, so a later
 // code stage is told what it is.
 func TestDesign_LaterCodeStagesAreToldThePackageDir(t *testing.T) {

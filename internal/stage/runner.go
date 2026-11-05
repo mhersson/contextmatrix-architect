@@ -64,6 +64,8 @@ type Input struct {
 	// Designer shows a mockup stage's revisions: show_mockup takes the place
 	// of ask_questions and submit_artifact. nil offers no show_mockup.
 	Designer Designer
+	// Images resolves a mockup's asset: references; nil refuses them.
+	Images Images
 	// PlainLanguage offers the round tools' plain-language forms: a tab
 	// entry's {text, consequence}, and ask_questions' reasks; off it, an
 	// entry is a sentence.

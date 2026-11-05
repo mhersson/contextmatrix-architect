@@ -139,15 +139,16 @@ registry. Each package kept is a source, and the chat names it when it is first
 fetched.
 
 The designer rebuilds the header, navigation, sidebar and footer from the frame
-source, with their own items and labels, and pastes in the logo as it is. The
-frame source takes at most a quarter of the model's context window, shared among
-the frontends by need, with the smallest logos first; a file it leaves out is
-listed by path, and the designer reads it from the checkout. A frame component
-that is its own folder brings the files it imports from that folder along,
-ahead of lesser frame files. Frame files are found by name, so a frame
-component with an unusual name is missed, and the designer translates the
-design-system components the frame source uses (a button, a dropdown) to HTML
-from the packages' CSS.
+source, with their own items and labels, and pastes in the logo as it is. It
+references the project's other images by path, and the architect inserts the
+exact files into the mockup. The frame source takes at most a quarter of the
+model's context window, shared among the frontends by need, with the smallest
+logos first; a file it leaves out is listed by path, and the designer reads it
+from the checkout. A frame component that is its own folder brings the files it
+imports from that folder along, ahead of lesser frame files. Frame files are
+found by name, so a frame component with an unusual name is missed, and the
+designer translates the design-system components the frame source uses (a
+button, a dropdown) to HTML from the packages' CSS.
 
 ### In a question round
 

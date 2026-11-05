@@ -84,15 +84,27 @@ show_mockup refuses a source that would not run in it as drawn, naming the
 rule; fix it and show again in the same run.
 
 - One document of at most 64 KiB: inline `<script>` and `<style>` elements
-  and style attributes only. Images are `data:` URIs or inline SVG. System
-  fonts only.
+  and style attributes only. Images are `asset:` references to the
+  repository's image files, `data:` URIs or inline SVG. System fonts only.
+- Reference an image file of a checked-out tree as `asset:` followed by its
+  path relative to the tool root, as the brief and the code tools show it:
+  `<img src="asset:shop/web/src/assets/logo.svg">`, `<image href="asset:...">`
+  or `background: url(asset:...)`. A reference works in an attribute value, a
+  style or a script, never in the markup's text or a comment. show_mockup
+  inserts the file as a `data:` URI before it checks the source: an `.svg`,
+  `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` or `.avif` file of at most 32 KiB
+  whose content is its extension's, never through a symlink, `.git`,
+  `node_modules` or a kept package directory. The 64 KiB counts the inserted
+  images, each a third larger than its file, and each reference inserts the
+  whole file: when the screen shows an image more than once, reference it
+  once, in a CSS class.
 - No `link`, `iframe`, `frame`, `object`, `embed`, `form` or `base` element,
   and no `meta` with `http-equiv`. Every `src`, `href`, `srcset`, `poster`,
-  `action`, `formaction`, `data` and `xlink:href` value is a `data:` URI; an
-  `href` or `xlink:href` may also be a `#` fragment. Switch views in script,
-  never with a navigating link.
-- In styles, no `@import` and no `url(` that is not a `data:` URI or a
-  fragment.
+  `action`, `formaction`, `data` and `xlink:href` value is a `data:` URI or
+  an `asset:` reference; an `href` or `xlink:href` may also be a `#`
+  fragment. Switch views in script, never with a navigating link.
+- In styles, no `@import` and no `url(` that is not a `data:` URI, an
+  `asset:` reference or a fragment.
 - In script, a script element's or an `on...` attribute's, no network call
   (`fetch(`, `XMLHttpRequest`, `WebSocket`, `EventSource`). No popup and no
   `alert(`, `confirm(`, `prompt(` or `window.open(`; show a message on the

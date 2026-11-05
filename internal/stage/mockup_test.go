@@ -264,3 +264,53 @@ func TestShowMockup_TakesAHeadingWrittenWithAnEntity(t *testing.T) {
 	require.Len(t, d.got, 1)
 	assert.Equal(t, source, d.got[0].Source)
 }
+
+// The Designer gets the source with each referenced image inserted, and the
+// frame contract holds for that source.
+func TestShowMockup_InsertsTheImagesTheSourceReferences(t *testing.T) {
+	const logo = "shop/web/src/assets/logo.svg"
+
+	d := &fakeDesigner{}
+	mark := &terminalMark{}
+	img := knownImages(logo)
+
+	source := strings.Replace(terminalSource, `data:image/png;base64,iVBORw0KGgo=`, "asset:"+logo, 1)
+
+	_, err := showMockupTool{d: d, mark: mark, images: img}.Execute(context.Background(), mockupArgs(source))
+	require.NoError(t, err)
+	require.Len(t, d.got, 1)
+	assert.Equal(t, strings.Replace(source, "asset:"+logo, testURI(logo), 1), d.got[0].Source)
+	assert.True(t, mark.asked)
+}
+
+func TestShowMockup_RefusesAReferenceItCannotShow(t *testing.T) {
+	const logo = "shop/web/src/assets/logo.svg"
+
+	withLogo := strings.Replace(terminalSource, `data:image/png;base64,iVBORw0KGgo=`, "asset:"+logo, 1)
+	huge := &fakeImages{uris: map[string]string{logo: "data:image/png;base64," + strings.Repeat("A", MaxMockupBytes)}}
+
+	tests := []struct {
+		name   string
+		source string
+		img    Images
+		want   string
+	}{
+		{"a file it cannot insert", withLogo, knownImages("shop/other.svg"), "asset:" + logo},
+		{"a run without trees", withLogo, nil, "asset:" + logo},
+		{"images that pass the size cap", withLogo, huge, "with its images inserted"},
+		{"an inserted image the frame still blocks", strings.Replace(withLogo, `<img src=`, `<iframe src=`, 1), knownImages(logo), "<iframe>"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := &fakeDesigner{}
+			mark := &terminalMark{}
+
+			_, err := showMockupTool{d: d, mark: mark, images: tt.img}.Execute(context.Background(), mockupArgs(tt.source))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+			assert.Empty(t, d.got)
+			assert.False(t, mark.asked, "a refused revision ends nothing")
+		})
+	}
+}
