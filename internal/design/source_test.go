@@ -449,6 +449,7 @@ func TestBrief_FrameSourceLanguage(t *testing.T) {
 		"a.js":     "js",
 		"a.vue":    "vue",
 		"a.svelte": "svelte",
+		"a.astro":  "astro",
 		"a.html":   "html",
 		"a.css":    "css",
 		"a.svg":    "svg",

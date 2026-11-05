@@ -474,6 +474,56 @@ func TestFrameFiles_Layouts(t *testing.T) {
 			want:  []string{"templates/partials/footer.html"},
 		},
 		{
+			name: "next pages router",
+			files: []string{
+				"pages/_app.tsx",
+				"pages/_document.tsx",
+				"pages/index.tsx",
+				"pages/api/hello.ts",
+			},
+			want: []string{"pages/_app.tsx"},
+		},
+		{
+			name:  "next pages router under src",
+			files: []string{"src/pages/_app.jsx"},
+			want:  []string{"src/pages/_app.jsx"},
+		},
+		{
+			name:  "next pages router app in plain script",
+			files: []string{"src/pages/_app.js"},
+			want:  []string{"src/pages/_app.js"},
+		},
+		{
+			name:  "remix root",
+			files: []string{"app/root.tsx", "app/entry.client.tsx", "app/routes/_index.tsx"},
+			want:  []string{"app/root.tsx"},
+		},
+		{
+			name: "astro",
+			files: []string{
+				"src/layouts/Layout.astro",
+				"src/components/Header.astro",
+				"src/components/Footer.astro",
+				"src/pages/index.astro",
+				"src/ui/Header.astro",
+			},
+			want: []string{
+				"src/layouts/Layout.astro",
+				"src/ui/Header.astro",
+				"src/components/Header.astro",
+				"src/components/Footer.astro",
+			},
+		},
+		{
+			name:  "create react app",
+			files: []string{"src/App.js", "src/App.css", "src/index.js"},
+			want:  []string{"src/App.js", "src/App.css"},
+		},
+		{
+			name:  "a lower-case app.js is a server",
+			files: []string{"app.js", "src/app.js"},
+		},
+		{
 			name: "demo, icon, context and provider files",
 			files: []string{
 				"stories/Header.tsx",
@@ -488,7 +538,7 @@ func TestFrameFiles_Layouts(t *testing.T) {
 		},
 		{
 			name:  "the app shell sits at most one level down",
-			files: []string{"src/lib/deep/app.tsx"},
+			files: []string{"src/lib/deep/app.tsx", "src/lib/deep/App.js", "src/lib/deep/root.tsx"},
 		},
 		{
 			name:  "a unit's stylesheet follows its other files",

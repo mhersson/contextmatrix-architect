@@ -226,24 +226,28 @@ HEAD.
   research tools add; the pack loader refuses the key without the code
   tools. Why: the brief points at files read with those tools, and no model
   picks a download.
-- Frame files are found by name. A file named for a frame word (layout,
-  shell, header, navigation bar, footer, sidebar, hero and the like) counts
-  when it is a `.tsx`, `.jsx`, `.vue`, `.svelte`, `.html` or `.css` file in
-  any folder; a `.ts` or `.js` one counts only in a component or layout
-  folder or as its folder's own file (`Navbar/index.ts`,
-  `header/header.component.ts`), a folder's own file counted as its folder.
-  So do layout files anywhere, any file of a layout folder and the app shell,
-  such as a file named `App` at the root or one directory below (`app.vue`,
-  `src/App.tsx`, `src/app/app.component.html`). Files under api, constants,
-  utils, hooks, pages, services, store, types, stories, icon, context,
-  provider, test, email or mail folders, hooks (`use...`) and files named for
-  those folders (`types.ts` beside a layout) never count. They are ranked by
-  depth, frame word and path, at most 20. Known limit: a frame component with
-  an unusual name is missed, and the design-system components in the frame
-  source are translated to HTML by the designer from the kept CSS. Why: the
-  designer drew a made-up frame when noise outranked the real components, and
-  flat, Vue, Angular, Next app-router, SvelteKit, Feature-Sliced and Django
-  apps keep their frame files outside component folders.
+- Frame files are found by name. A file named for a frame word (layout, shell,
+  header, navigation bar, footer, sidebar, hero and the like) counts when it
+  is a `.tsx`, `.jsx`, `.vue`, `.svelte`, `.astro`, `.html` or `.css` file in
+  any folder; a `.ts` or `.js` one counts only in a component or layout folder
+  or as its folder's own file (`Navbar/index.ts`,
+  `header/header.component.ts`), a folder's own file counted as its folder. So
+  do layout files anywhere, any file of a layout folder and the app shell: a
+  `.tsx`, `.jsx`, `.js` (`App.js`), `.vue`, `.svelte`, `.astro`, `.html` or
+  `.css` file named App at the root or one directory below, counted as its
+  folder when it is its folder's own file (`app.vue`, `src/App.tsx`,
+  `src/app/app.component.html`); so do a Remix or React Router `root` file
+  there and Next's `pages/_app` (or `src/pages/_app`). Other files under api,
+  constants, utils, hooks, pages, services, store, types, stories, icon,
+  context, provider, test, email or mail folders, hooks (`use...`) and files
+  named for those folders (`types.ts` beside a layout) never count. They are
+  ranked by depth, frame word and path, at most 20. Known limit: a frame
+  component with an unusual name is missed, and the design-system components
+  in the frame source are translated to HTML by the designer from the kept
+  CSS. Why: the designer drew a made-up frame when noise outranked the real
+  components, and flat, Vue, Angular, Next app-router, SvelteKit,
+  Feature-Sliced and Django apps keep their frame files outside component
+  folders.
 - The brief carries the text of the top frame files and of the first SVG
   logo outside its 16 KiB cap, within a quarter of the run's model window
   (the default window when it is unknown), at most 128 KiB: frame files take

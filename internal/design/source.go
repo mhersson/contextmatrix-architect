@@ -17,7 +17,7 @@ const maxFrameSourceBudget = 128 << 10
 // sourceLangs names a fence's language by a file's lower-cased extension.
 var sourceLangs = map[string]string{
 	".tsx": "tsx", ".jsx": "jsx", ".ts": "ts", ".js": "js", ".vue": "vue",
-	".svelte": "svelte", ".html": "html", ".css": "css", ".svg": "svg",
+	".svelte": "svelte", ".astro": "astro", ".html": "html", ".css": "css", ".svg": "svg",
 }
 
 // lineBreaks turns every line break a reader may split on into a newline.

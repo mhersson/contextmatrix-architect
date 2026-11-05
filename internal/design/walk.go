@@ -26,12 +26,12 @@ var (
 
 	frameExts = map[string]bool{
 		".tsx": true, ".jsx": true, ".ts": true, ".js": true,
-		".vue": true, ".svelte": true, ".html": true, ".css": true,
+		".vue": true, ".svelte": true, ".astro": true, ".html": true, ".css": true,
 	}
 
 	// Frame extensions that hold markup or styles, never plain script.
 	uiExts = map[string]bool{
-		".tsx": true, ".jsx": true, ".vue": true, ".svelte": true, ".html": true, ".css": true,
+		".tsx": true, ".jsx": true, ".vue": true, ".svelte": true, ".astro": true, ".html": true, ".css": true,
 	}
 
 	// Style files the walk finds but never reads, by the language they name.
@@ -564,11 +564,17 @@ func frameUnit(rootRel string) (unit string, class int, ok bool) {
 		dirName = path.Base(dir)
 	}
 
+	stem, _, _ := strings.Cut(name, ".")
+
+	// Next's pages/_app is the shell though pages holds routes.
+	if stem == "_app" && (dir == "pages" || dir == "src/pages") && (ext == ".tsx" || ext == ".jsx" || ext == ".js") {
+		return path.Join(dir, stem), 0, true
+	}
+
 	if slices.ContainsFunc(segments, func(s string) bool { return nonFrameDirs[strings.ToLower(s)] }) {
 		return "", 0, false
 	}
 
-	stem, _, _ := strings.Cut(name, ".")
 	stemWords := nameWords(stem)
 	ownFolder := strings.EqualFold(stem, "index") || strings.EqualFold(stem, dirName)
 
@@ -593,7 +599,9 @@ func frameUnit(rootRel string) (unit string, class int, ok bool) {
 	switch {
 	case hasWord(nameWords(dirName), layoutDirWords), slices.Contains(words, "layout"):
 		return unit, 0, true
-	case strings.Count(unit, "/") <= 1 && uiExts[ext] && slices.Equal(words, []string{"app"}):
+	// Only App.js among script names: a lower-case app.js is usually a Node server.
+	case strings.Count(unit, "/") <= 1 && (uiExts[ext] || name == "App.js") &&
+		(slices.Equal(words, []string{"app"}) || slices.Equal(words, []string{"root"})):
 		return unit, 0, true
 	case hasFrameWord && (inComponentDir || ownFolder || uiExts[ext]):
 		return unit, class, true
