@@ -84,11 +84,12 @@ func (c *Controller) mockupCarriersOf(ctx context.Context, id string) (map[strin
 	return mockupCarriers(drafts), nil
 }
 
-// withMockup appends a Mockup section to a card body: two fixed sentences
-// and the source of m's revision, whose data is d, in a mockup block, its
-// settings fixed to the chosen ones. screens are the ids of the screens the
-// card builds; with none the card is told it builds none and the design is
-// its target.
+// withMockup appends a Mockup section to a card body: fixed sentences and
+// the source of m's revision, whose data is d, in a mockup block, its
+// settings fixed to the chosen ones and its viewport meta kept, as
+// ContextMatrix reads it to draw the block. screens are the ids of the
+// screens the card builds; with none the card is told it builds none and the
+// design is its target.
 func withMockup(body string, m mockupResult, d mockupData, screens []string) string {
 	fixed := make(map[string]string, len(d.Suggestions))
 
@@ -129,7 +130,8 @@ func withMockup(body string, m mockupResult, d mockupData, screens []string) str
 		b.WriteString("This is the design the person approved for the screens this card builds, as one HTML document whose first comment lists the chosen settings and those screens.")
 	}
 
-	b.WriteString(" Build for the chosen variant only: the source also holds code for variants nobody chose.\n\n")
+	b.WriteString(" Build for the chosen variant only: the source also holds code for variants nobody chose.")
+	b.WriteString(" A `<meta name=\"viewport\" content=\"width=N\">` in the source is only the width ContextMatrix draws the mockup at, never part of the build: an HTML document this card writes declares `width=device-width, initial-scale=1`, and a page the project already has keeps the viewport it has.\n\n")
 	b.WriteString(mockupFence(bakeMockup(d.Source, fixed, words.String())))
 
 	return b.String()
