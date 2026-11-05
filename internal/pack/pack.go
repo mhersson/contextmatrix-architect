@@ -180,6 +180,10 @@ type Stage struct {
 	// fewer than two slices it collapses: recorded, never run, its decisions
 	// settled by the first slice's design.
 	Shared bool `yaml:"shared"`
+	// Design gives each run the target projects' design material: a brief in
+	// its task and the CSS of the packages their styles import, kept under
+	// the tool root. It is read with the code tools, so it needs them.
+	Design bool `yaml:"design"`
 }
 
 type manifest struct {
@@ -515,6 +519,10 @@ func validateStage(s Stage, seen map[string]Stage) error {
 	// only a stage with the code tools has.
 	if slices.Contains(s.Checks, CheckCards) && !slices.Contains(s.Tools, ToolCode) {
 		return fmt.Errorf("pack: stage %q checks cards, so it needs tools: [code]", s.ID)
+	}
+
+	if s.Design && !slices.Contains(s.Tools, ToolCode) {
+		return fmt.Errorf("pack: stage %q has design, so it needs tools: [code]", s.ID)
 	}
 
 	if s.LoopsTo != "" {

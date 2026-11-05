@@ -929,6 +929,15 @@ func TestSourceLine(t *testing.T) {
 	}
 }
 
+func TestSourceLine_APackageNamesItsVersion(t *testing.T) {
+	line := sourceLine(store.Source{Number: 5, Kind: "package", Identity: "npm:@acme/ui", Version: "1.2.3"}, nil)
+
+	assert.True(t, strings.HasPrefix(line, "S5: "), line)
+	assert.Contains(t, line, "@acme/ui")
+	assert.Contains(t, line, "1.2.3")
+	assert.NotContains(t, line, "npm:", "the identity's scheme is the record's, not the reader's")
+}
+
 // followupCards is twoCards with its manual check after the last card, so it
 // is stored as a follow-up.
 func followupCards(note string) map[string]any {

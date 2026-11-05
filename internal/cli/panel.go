@@ -50,8 +50,9 @@ func waitsOnUser(e blueprint.Event) bool {
 		return true
 	case blueprint.EventError:
 		// A refused responder leaves the asking stage running, a failed
-		// mockup responder leaves its revision to be used, and a stale reply
-		// that lands while a run works leaves it working.
+		// mockup responder leaves its revision to be used, a failed design
+		// gather leaves its run going, and a stale reply that lands while a
+		// run works leaves it working.
 		duringRun, _ := e.Payload["during_run"].(bool)
 
 		return !goesOn(str(e.Payload["reason"])) && !duringRun

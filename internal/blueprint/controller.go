@@ -22,6 +22,7 @@ import (
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/code"
+	designpkg "github.com/mhersson/contextmatrix-architect/internal/design"
 	"github.com/mhersson/contextmatrix-architect/internal/export"
 	"github.com/mhersson/contextmatrix-architect/internal/pack"
 	"github.com/mhersson/contextmatrix-architect/internal/research"
@@ -117,6 +118,12 @@ type Workspace interface {
 	Remove(ctx context.Context, blueprintID string) error
 }
 
+// Designer gathers the design material of the trees under a blueprint's tool
+// root. internal/design implements it; tests fake it.
+type Designer interface {
+	Gather(ctx context.Context, req designpkg.Request) (designpkg.Material, error)
+}
+
 // CMClient is the ContextMatrix surface emission, its preflight, the run
 // start, the watch and the retrospective use. internal/cm's Client
 // implements it; tests fake it.
@@ -155,6 +162,9 @@ type Options struct {
 	// Projects lists CM's projects with the session's MCP key; code stages
 	// need it for repository urls and verify commands. nil disables them.
 	Projects func(ctx context.Context, mcpAPIKey string) ([]cm.Project, error)
+	// Design gathers the design material of a stage with the design key.
+	// nil leaves such a stage with its checkouts alone.
+	Design Designer
 	// Credentials builds the git credential source for a session's token.
 	// Without it, or without the session's token, a checkout or a sign-off
 	// that reads a repository fails: nothing is fetched anonymously.

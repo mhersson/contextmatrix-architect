@@ -37,11 +37,12 @@ HEAD.
 - Personas are prompt text on stages, not an agent system. Why: a
   composer-and-agents layer would be a second decision engine that has not
   earned its place.
-- No memory or knowledge store of its own: retrieval is live, from the code,
-  the board, web pages and, through ContextMatrix, a project's knowledge
-  provider, and each blueprint records the sources it used with their kind
-  and, where one exists, version. Why: live retrieval with recorded sources
-  needs no layer, and one could be fed only approved outputs.
+- No memory or knowledge store of its own: retrieval is live, from the code
+  and the packages its styles import, the board, web pages and, through
+  ContextMatrix, a project's knowledge provider, and each blueprint records
+  the sources it used with their kind and, where one exists, version. Why:
+  live retrieval with recorded sources needs no layer, and one could be fed
+  only approved outputs.
 - The knowledge tools are offered wherever ContextMatrix serves them, and a
   knowledge session that fails to open leaves the run without them. Why:
   knowledge never fails a blueprint, and a ContextMatrix that serves none (an
@@ -219,6 +220,78 @@ HEAD.
 - Where a UI exists the mockup keeps its look unless intake's data holds
   `redesign: true`, and an intake without the flag reads as no re-design.
   Why: a change to an existing UI fits the look people already use.
+- A stage with the `design` key, the default pack's mockup, gets the target
+  projects' design material gathered by the controller before each run, as a
+  brief that opens the task after any lead the stage's cm, knowledge or
+  research tools add; the pack loader refuses the key without the code
+  tools. Why: the brief points at files read with those tools, and no model
+  picks a download.
+- The only packages downloaded are those the project's own CSS imports (a CSS
+  `@import`, or a JavaScript side-effect import of a package's `.css` file)
+  and the importing frontend's package.json declares, at the version the
+  nearest lockfile (package-lock.json at lockfileVersion 2 or 3, yarn.lock or
+  pnpm-lock.yaml) at or above that frontend, up to the repository root,
+  records; the same rules apply to the packages a kept package's CSS imports,
+  checked against that package's own package.json and its lock entry. Only a
+  registry package is fetched, never a git or file entry. A workspace package
+  (an npm link, a pnpm `link:` or `workspace:` dependency, a Yarn Berry
+  `workspace:` one) the root imports by name is found in the tree by its
+  package.json `name`, and the file its exports or the plain subpath names is
+  read like a relative import, its package imports checked against its own
+  package.json and lock entry; no package of that name, or more than one, is
+  a gap. Why: the architect gets exactly what the project installs, and pnpm
+  records no workspace path, so one rule by name serves every lockfile.
+- Package downloads are anonymous: no credential setting is read from any
+  config and no Authorization header is sent, a lockfile url that is used is
+  requested as written, query included, and an address carrying a username is
+  refused. Why: the architect's secrets are its HMAC key and what
+  ContextMatrix sends, and a repository's token is neither.
+- The registry comes only from the repository's own `.yarnrc.yml`, `.npmrc`
+  or `.yarnrc`, else the public npm registry; a registry value using an
+  environment variable is not used, and a lockfile's tarball url only when it
+  is https on the registry's host. A lockfile url on another host gives way
+  to the registry's own url only when the download is checked against the
+  lockfile's integrity or the url has the registry's tarball path; otherwise
+  the package is a gap. Why: the machine's config and environment are not the
+  project's, a lockfile must not steer a download elsewhere, and a url
+  elsewhere, such as a git host's archive, can hold another package than the
+  registry's of that name and version.
+- The package client may reach a private address and trusts `ca_cert_file`,
+  unlike web research, and fetches https only, with at most 5 redirects and
+  100 MiB per archive. Why: the url is the project's own, like a repository
+  url, never a model's.
+- Of a package only the CSS the project imports, and what that imports, is
+  kept, reflowed with a line break after every brace and semicolon, under a
+  directory such as `_npm+@acme+ui@1.2.3` at the blueprint's tool root, at
+  most 8 MiB per gather, and each kept package is a source of kind `package`.
+  Why: the designer needs only the styles, a grep match on a minified
+  stylesheet would return the whole file, and `_` starts no project name.
+- A package is checked against its npm integrity when its lock entry records
+  one, and a mismatch is a gap; a package-lock or classic yarn.lock entry
+  without one, and a Yarn Berry package, is kept unverified. Why: Berry's
+  checksum covers its own repackaged archive, not the registry's.
+- A registry host that fails with a network error is skipped for 5 minutes,
+  and a gather's downloads stop after 3 minutes, each a gap. Why: an
+  unreachable registry costs one wait every 5 minutes, not one per package.
+- A frontend's token values come from the CSS its HTML links and script
+  imports load, in load order, following `@import` anywhere in the
+  repository but never through a symlink; a relative or aliased link or
+  import the tree does not hold is a gap, and a remote or templated link is
+  skipped without one. The root's own CSS files none of them reaches are read
+  beneath the loaded CSS and count only for tokens it does not declare, with
+  a gap when they add one; when none reaches the root's own CSS, every CSS
+  file is read in path order, with a gap when there is more than one. Why: an
+  unimported theme or a vendored copy must not override the values the app
+  shows, and CSS that config or a file the scan skips loads still counts.
+- A frontend styled with SCSS, Less, Stylus, Vue or Svelte style blocks or
+  CSS-in-JS is a root even with no CSS file of its own, with its frame and
+  brand files, and gets a gap naming the style language whether or not it
+  also has CSS. Why: those styles are not read, so its tokens and fonts leave
+  them out, and a frontend with no root would reach the designer as an empty
+  brief.
+- Design material that cannot be had is a gap in the brief, and a gather that
+  fails is posted as an error the run goes on after. Why: the checkouts alone
+  still make a mockup.
 - ContextMatrix's sealed frame is the boundary, and show_mockup's source
   check is only a quality guard. Why: the check keeps a revision from showing
   broken; the frame is what contains it.
@@ -294,7 +367,8 @@ HEAD.
 - web_fetch dials directly, never through a proxy. Why: its public-address
   check must see the page's own address.
 - web_search and web_fetch trust the system store alone, never
-  `ca_cert_file`, which the LLM, ContextMatrix and git clients add to it.
+  `ca_cert_file`, which the LLM, ContextMatrix, git and package clients add to
+  it.
   Why: research reaches public hosts only.
 - The leak guard refuses paths, file names, code punctuation, declared
   identifiers, module, project and repository names, card ids, and more than

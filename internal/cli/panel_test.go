@@ -108,6 +108,7 @@ func TestEventSink_IdleFollowsEveryWaitOnTheUser(t *testing.T) {
 		{"error", blueprint.EventError, nil, true},
 		{"a refused responder, the stage runs on", blueprint.EventError, map[string]any{"reason": "responder_refused"}, false},
 		{"a failed mockup responder, the step goes on", blueprint.EventError, map[string]any{"stage": "mockup", "reason": "responder_failed"}, false},
+		{"design material that could not be gathered, the run goes on", blueprint.EventError, map[string]any{"stage": "mockup", "reason": "design"}, false},
 		{"note on an idle blueprint", blueprint.EventNote, map[string]any{"during_run": false}, true},
 		{"note while a stage runs", blueprint.EventNote, map[string]any{"during_run": true}, false},
 		{"aborted", blueprint.EventAborted, nil, true},

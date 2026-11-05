@@ -597,11 +597,11 @@ func (c *Controller) stageDraft(ctx context.Context, id, stageID string) func(st
 
 // stageInput builds what a run of st is given besides its model and limits:
 // the persona, the instructions, the task from the artifacts it consumes,
-// the code tools over the blueprint's checkouts, the CM read tools, the
-// research tools when the session has research on, and the card contract on
-// submit with the card template, and the states of its checks. The closer
-// ends the run's CM session; it is a no-op without cm tools and never nil
-// when err is nil.
+// the code tools over the blueprint's checkouts and, with the design key,
+// the design material, the CM read tools, the research tools when the
+// session has research on, and the card contract on submit with the card
+// template, and the states of its checks. The closer ends the run's CM
+// session; it is a no-op without cm tools and never nil when err is nil.
 func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blueprint, runID int64, st pipelineStep) (stage.Input, stageChecks, func(), error) {
 	noop := func() {}
 
@@ -666,8 +666,17 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 			return stage.Input{}, stageChecks{}, nil, err
 		}
 
-		in.Tools = append(in.Tools, stage.CodeTools(facts.root, facts.repos)...)
-		in.Task = checkoutLines(facts) + in.Task
+		brief := ""
+
+		if st.Design {
+			var tags map[string]keptPackage
+
+			brief, tags = c.prepareDesign(ctx, sess, bp, st.ID, facts)
+			maps.Copy(facts.packages, tags)
+		}
+
+		in.Tools = append(in.Tools, stage.CodeTools(facts.root, facts.repos, tagsByDir(facts.packages))...)
+		in.Task = brief + checkoutLines(facts) + in.Task
 	}
 
 	closeCM := noop

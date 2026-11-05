@@ -1,0 +1,262 @@
+package design
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+const defaultRegistry = "https://registry.npmjs.org"
+
+// errEnvRegistry means the registry url holds a ${VAR} reference, which the
+// architect cannot expand.
+var errEnvRegistry = errors.New("design: registry url uses an environment variable")
+
+// registries holds the default registry and the per-scope registries (keyed by
+// the scope without "@"). Only registry urls are ever read from the config
+// files, which come from a repository the architect does not control.
+type registries struct {
+	def    string
+	scopes map[string]string
+}
+
+// readRegistries reads the registry config from rootDir and each parent up to
+// treeDir, never above it. Per kind of file the nearest value wins; each scope
+// registry and the default come from .yarnrc.yml, else .npmrc, else a classic
+// .yarnrc, and a default found in none is the public registry.
+func readRegistries(treeDir, rootDir string) (registries, error) {
+	treeDir, rootDir = filepath.Clean(treeDir), filepath.Clean(rootDir)
+
+	rel, err := filepath.Rel(treeDir, rootDir)
+	if err != nil || !filepath.IsLocal(rel) {
+		return registries{}, fmt.Errorf("design: registry root %s is outside the tree", rootDir)
+	}
+
+	var dirs []string
+
+	for dir := rootDir; ; dir = filepath.Dir(dir) {
+		dirs = append(dirs, dir)
+
+		if dir == treeDir {
+			break
+		}
+	}
+
+	kinds := []struct {
+		file  string
+		parse func([]byte) (registries, error)
+	}{
+		{".yarnrc.yml", parseYarnrcYML},
+		{".npmrc", func(b []byte) (registries, error) { return parseNPMRC(b), nil }},
+		{".yarnrc", func(b []byte) (registries, error) { return parseYarnrc(b), nil }},
+	}
+
+	merged := registries{scopes: map[string]string{}}
+
+	for _, kind := range kinds {
+		found := registries{scopes: map[string]string{}}
+
+		for _, dir := range dirs {
+			regs, err := readRegistryFile(filepath.Join(dir, kind.file), kind.parse)
+			if err != nil {
+				return registries{}, err
+			}
+
+			found.fill(regs)
+		}
+
+		merged.fill(found)
+	}
+
+	if merged.def == "" {
+		merged.def = defaultRegistry
+	}
+
+	return merged, nil
+}
+
+// readRegistryFile ignores a missing file and anything that is not a regular
+// file, so a symlink cannot lead the read out of the repository tree.
+func readRegistryFile(path string, parse func([]byte) (registries, error)) (registries, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return registries{}, nil
+	}
+
+	if err != nil {
+		return registries{}, fmt.Errorf("design: stat %s: %w", path, err)
+	}
+
+	if !info.Mode().IsRegular() {
+		return registries{}, nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return registries{}, fmt.Errorf("design: read %s: %w", path, err)
+	}
+
+	regs, err := parse(data)
+	if err != nil {
+		// The cause is dropped: a decoder error can quote the offending value,
+		// and the file holds credentials.
+		return registries{}, fmt.Errorf("design: parse %s: not a valid registry config", path)
+	}
+
+	return regs, nil
+}
+
+// fill adds the values of o that r does not have yet.
+func (r *registries) fill(o registries) {
+	if r.def == "" {
+		r.def = o.def
+	}
+
+	for scope, registry := range o.scopes {
+		if _, ok := r.scopes[scope]; !ok {
+			r.scopes[scope] = registry
+		}
+	}
+}
+
+func parseYarnrcYML(data []byte) (registries, error) {
+	var doc struct {
+		Server string `yaml:"npmRegistryServer"`
+		Scopes map[string]struct {
+			Server string `yaml:"npmRegistryServer"`
+		} `yaml:"npmScopes"`
+	}
+
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return registries{}, errors.New("invalid yaml")
+	}
+
+	regs := registries{def: strings.TrimSpace(doc.Server), scopes: map[string]string{}}
+
+	for scope, entry := range doc.Scopes {
+		if server := strings.TrimSpace(entry.Server); server != "" {
+			regs.scopes[scope] = server
+		}
+	}
+
+	return regs, nil
+}
+
+func parseNPMRC(data []byte) registries {
+	regs := registries{scopes: map[string]string{}}
+
+	for line := range strings.Lines(string(data)) {
+		line = strings.TrimSpace(line)
+		if line == "" || line[0] == ';' || line[0] == '#' {
+			continue
+		}
+
+		if key, value, ok := strings.Cut(line, "="); ok {
+			regs.set(strings.TrimSpace(key), unquote(strings.TrimSpace(value)))
+		}
+	}
+
+	return regs
+}
+
+func parseYarnrc(data []byte) registries {
+	regs := registries{scopes: map[string]string{}}
+
+	for line := range strings.Lines(string(data)) {
+		if fields := strings.Fields(line); len(fields) == 2 {
+			regs.set(unquote(fields[0]), unquote(fields[1]))
+		}
+	}
+
+	return regs
+}
+
+// set records a non-empty value of the default registry key or a scope's
+// "@<scope>:registry" key, and ignores every other key.
+func (r *registries) set(key, value string) {
+	if value == "" {
+		return
+	}
+
+	if key == "registry" {
+		r.def = value
+	} else if scope, ok := strings.CutSuffix(key, ":registry"); ok && len(scope) > 1 && scope[0] == '@' {
+		r.scopes[scope[1:]] = value
+	}
+}
+
+// unquote drops one pair of matching quotes around s.
+func unquote(s string) string {
+	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
+		return s[1 : len(s)-1]
+	}
+
+	return s
+}
+
+// forPackage returns the registry url that serves name.
+func (r registries) forPackage(name string) (string, error) {
+	registry := r.def
+
+	if scope, _, ok := strings.Cut(name, "/"); ok && strings.HasPrefix(scope, "@") {
+		if scoped, ok := r.scopes[scope[1:]]; ok {
+			registry = scoped
+		}
+	}
+
+	if strings.Contains(registry, "${") {
+		return "", errEnvRegistry
+	}
+
+	return registry, nil
+}
+
+// tarballURL is the conventional registry location of a package tarball.
+func tarballURL(registry, name, version string) string {
+	return strings.TrimRight(registry, "/") + "/" + tarballPath(name, version)
+}
+
+func tarballPath(name, version string) string {
+	unscoped := name[strings.LastIndex(name, "/")+1:]
+
+	return name + "/-/" + unscoped + "-" + version + ".tgz"
+}
+
+// pickURL returns the url to fetch l from: the lockfile's url when it is
+// https on the registry's host, else the registry's conventional url. A url
+// on another host may name some other package, so it is replaced only when
+// checked (the download is checked against the lockfile's integrity) or it
+// has the registry's tarball path; ok is false otherwise.
+func pickURL(registry string, l locked, checked bool) (string, bool) {
+	conventional := tarballURL(registry, l.Name, l.Version)
+	if l.Resolved == "" {
+		return conventional, true
+	}
+
+	resolved, _, _ := strings.Cut(l.Resolved, "#")
+
+	u, err := url.Parse(resolved)
+	if err != nil {
+		u = &url.URL{}
+	}
+
+	if reg, err := url.Parse(registry); err == nil && reg.Host != "" && strings.EqualFold(u.Host, reg.Host) {
+		if u.Scheme == "https" {
+			return resolved, true
+		}
+
+		return conventional, true
+	}
+
+	if checked || strings.HasSuffix(u.Path, "/"+tarballPath(l.Name, l.Version)) {
+		return conventional, true
+	}
+
+	return "", false
+}

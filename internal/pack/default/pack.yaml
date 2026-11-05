@@ -1,5 +1,5 @@
 name: default
-version: "0.35"
+version: "0.36"
 stages:
   - id: intake
     persona: product_owner
@@ -14,6 +14,7 @@ stages:
     persona: designer
     consumes: [intake]
     tools: [code]
+    design: true
     checks: [mockup]
     policy: human
   - id: slicing

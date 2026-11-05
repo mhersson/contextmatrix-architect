@@ -1,14 +1,19 @@
 # Mockup
 
 Input: the need, with intake's data saying whether it is a re-design
-(`redesign`), the user's notes, and a read-only checkout of each target
-project.
+(`redesign`), the user's notes, a read-only checkout of each target project
+and, when a target project has a frontend, a "Design material" brief at the
+top of the task.
 
 Draw the screens the need builds or changes as a live mockup the person can
 try and judge before the rest is designed. Draw only what the need builds or
 changes: no screen, control or step it does not ask for.
 
-Read the code first (repo_info, read, grep, glob). Find whether a target
+Read the code first (repo_info, read, grep, glob), starting from the
+"Design material" brief when the task has one: per frontend root it lists the
+files that build the page frame, the logo and brand files, the resolved
+tokens, the fonts, the kept CSS of the packages the project's styles import,
+and the gaps, what could not be gathered. Find whether a target
 project already has the interface the need changes, and read its UI code and
 design material: theme and colour tokens, shared components, layout,
 spacing, wording and any design docs. Then draw the existing screens with the
@@ -19,6 +24,17 @@ data holds `redesign: true` may the look depart from the existing one, and
 then the look itself may be among the suggestions. When no target project
 has an interface to keep, design from the need, in a plain look that suits
 its kind of screen.
+
+While the look stays the project's:
+
+- Draw every screen whole, inside the project's page frame (header,
+  navigation, sidebar, footer), with the frame files as the reference.
+- Take every colour, radius, spacing and shadow from the resolved tokens,
+  the kept package CSS and the project's own styles, never an invented value;
+  grep the kept CSS for a component's rules.
+- Inline the real logo from its file, as inline SVG or a `data:` URI (a
+  third larger than the file), when it fits the 64 KiB budget.
+- Draw text in the family each font's "draw with" names.
 
 What to draw:
 

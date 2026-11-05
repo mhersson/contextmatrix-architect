@@ -18,9 +18,9 @@ import (
 type runtimeDeps struct {
 	pack *pack.Pack
 	// transport trusts ca_cert_file with the system store, for the LLM,
-	// ContextMatrix and git-credentials clients; nil without the file, so
-	// they keep http.DefaultTransport. Web research reaches public hosts
-	// and never uses it.
+	// ContextMatrix, git-credentials and package registry clients; nil
+	// without the file, so they keep http.DefaultTransport. Web research
+	// reaches public hosts and never uses it.
 	transport http.RoundTripper
 	// caBundle is ca_cert_file's PEM for go-git's fetches and lists; nil
 	// without the file.
