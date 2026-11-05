@@ -143,8 +143,8 @@ func fence(text string) string {
 }
 
 // escapeSource puts text on newline-only lines, drops its trailing line breaks
-// and writes the first # of each line that a card's reader would take for a
-// heading as &#35;. That reader trims each line and does not track fences.
+// and writes the first # of each line that could open a section of the task
+// prompt as &#35;. Leading white space and fences do not stop a heading.
 func escapeSource(text string) string {
 	lines := strings.Split(strings.TrimRight(lineBreaks.Replace(text), "\n"), "\n")
 

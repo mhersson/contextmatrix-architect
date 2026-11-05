@@ -243,10 +243,11 @@ HEAD.
   model still invented it.
 - Repository text in the frame source sits in a backtick fence longer than any
   run of backticks in it and tagged by the file's extension, every line break
-  is `\n`, and a line that, trimmed, starts with `#` and then white space or
-  its end has its first `#` written as `&#35;`. Why: the text lands in a
-  prompt whose sections are `## ` headings, and the agent's section parser
-  trims lines and does not track fences.
+  is `\n`, and a line that, trimmed, starts with one or more `#` and then
+  white space or its end has its first `#` written as `&#35;`. Why: the text
+  lands in the architect's own task prompt, whose sections are `## ` headings,
+  so repository text must not open one, and the designer copies frame text
+  into a mockup source that cards carry.
 - The only packages downloaded are those the project's own CSS imports (a CSS
   `@import`, or a JavaScript side-effect import of a package's `.css` file)
   and the importing frontend's package.json declares, at the version the
