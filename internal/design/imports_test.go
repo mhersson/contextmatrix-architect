@@ -244,3 +244,104 @@ func TestHTMLStylesheets(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalImports(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{name: "default", src: `import Menu from './Menu'`, want: []string{"./Menu"}},
+		{name: "named", src: `import { Item, Link } from './Items'`, want: []string{"./Items"}},
+		{name: "namespace", src: `import * as Icons from './Icons'`, want: []string{"./Icons"}},
+		{name: "default and named", src: `import Menu, { Item } from './Menu'`, want: []string{"./Menu"}},
+		{name: "side effect", src: `import './Menu'`, want: []string{"./Menu"}},
+		{name: "type only", src: `import type { Props } from './types'`, want: []string{"./types"}},
+		{name: "re-export", src: `export { default as Menu } from './Menu'`, want: []string{"./Menu"}},
+		{name: "re-export all", src: `export * from './Menu'`, want: []string{"./Menu"}},
+		{name: "re-export namespace", src: `export * as Menu from './Menu'`, want: []string{"./Menu"}},
+		{
+			name: "multi-line list",
+			src:  "import {\n  Item,\n  Link,\n} from './Items'\n",
+			want: []string{"./Items"},
+		},
+		{name: "double quotes", src: `import Menu from "./Menu"`, want: []string{"./Menu"}},
+		{name: "minified", src: `import Menu from'./Menu';import'./Brand';`, want: []string{"./Menu", "./Brand"}},
+		{name: "nested path", src: `import { A } from './Menu/Items'`, want: []string{"./Menu/Items"}},
+		{
+			name: "source order",
+			src:  "import B from './B'\nimport A from './A'\nexport { C } from './C'\n",
+			want: []string{"./B", "./A", "./C"},
+		},
+		{
+			name: "duplicates once",
+			src:  "import A from './A'\nimport { B } from './A'\nexport * from './A'\n",
+			want: []string{"./A"},
+		},
+		{
+			name: "block comment ignored",
+			src:  "/* import Old from './Old' */\nimport New from './New'\n",
+			want: []string{"./New"},
+		},
+		{
+			name: "multi-line block comment ignored",
+			src:  "/*\n * import Old from './Old'\n */\nimport New from './New'\n",
+			want: []string{"./New"},
+		},
+		{
+			name: "commented-out import ignored",
+			src:  "// import Old from './Old'\n  // import Older from './Older'\nimport New from './New'\n",
+			want: []string{"./New"},
+		},
+		{
+			name: "block comment opener inside a line comment",
+			src:  "// for /docs/*\nimport A from './A'\n/** @returns the bar */\nimport B from './B'\n",
+			want: []string{"./A", "./B"},
+		},
+		{
+			name: "line comment inside a block comment",
+			src:  "/*\n// import Old from './Old'\n*/\nimport New from './New'\n",
+			want: []string{"./New"},
+		},
+		{
+			name: "block comment closer inside a line comment",
+			src:  "/* import Old from './Old'\n// done */\nimport New from './New'\n",
+			want: []string{"./New"},
+		},
+		{name: "parent directory", src: `import Footer from '../Footer'`},
+		{name: "parent directory inside", src: `import Menu from './a/../Menu'`},
+		{name: "alias", src: `import Menu from '@/components/Menu'`},
+		{name: "tilde alias", src: `import Menu from '~/components/Menu'`},
+		{name: "package", src: `import React from 'react'`},
+		{name: "scoped package", src: `import { Button } from '@acme/ui'`},
+		{name: "bare directory", src: `import Menu from './'`},
+		{name: "query", src: `import raw from './Menu?raw'`},
+		{name: "dynamic import", src: `const Menu = lazy(() => import('./Menu'))`},
+		{name: "require", src: `const Menu = require('./Menu')`},
+		{name: "default export", src: "export default function NavBar() {\n  return <nav className=\"bar\" />\n}\n"},
+		{name: "string holding the word import", src: `const hint = 'import it from ./here'`},
+		{
+			name: "mixed",
+			src: "import React from 'react'\nimport { Menu } from './Menu'\nimport Footer from '../Footer'\n" +
+				"import styles from './index.module.css'\nimport '@/styles.css'\n",
+			want: []string{"./Menu", "./index.module.css"},
+		},
+		{
+			name: "vue script",
+			src: "<template><nav><Menu /></nav></template>\n" +
+				"<script setup lang=\"ts\">\nimport Menu from './Menu.vue'\nimport { ref } from 'vue'\n</script>\n",
+			want: []string{"./Menu.vue"},
+		},
+		{
+			name: "svelte script",
+			src:  "<script>\n  import Menu from './Menu.svelte';\n</script>\n<Menu />\n",
+			want: []string{"./Menu.svelte"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, localImports(tt.src))
+		})
+	}
+}

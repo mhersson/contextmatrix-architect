@@ -24,6 +24,9 @@ var (
 		".js": true, ".jsx": true, ".ts": true, ".tsx": true, ".vue": true, ".svelte": true,
 	}
 
+	// The extensions tried, in order, for an import written without one.
+	childExts = []string{".tsx", ".ts", ".jsx", ".js", ".vue", ".svelte"}
+
 	frameExts = map[string]bool{
 		".tsx": true, ".jsx": true, ".ts": true, ".js": true,
 		".vue": true, ".svelte": true, ".astro": true, ".html": true, ".css": true,
@@ -438,21 +441,29 @@ func isRegularFile(p string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-// frameFiles lists the files of f that most likely hold the page frame (layout,
-// shell, navigation, header, footer), best first.
-func frameFiles(treeDir string, f frontend) []Asset {
-	type hit struct {
-		asset        Asset
-		unit         string
-		class        int
-		depth        int
-		isStylesheet bool
-	}
+// frameHit is a frame file found by name.
+type frameHit struct {
+	asset        Asset
+	unit         string
+	class        int
+	depth        int
+	ownFolder    bool
+	isStylesheet bool
+}
 
-	var hits []hit
+// frameFiles lists the files of f that most likely hold the page frame (layout,
+// shell, navigation, header, footer), best first. A frame component that is its
+// own folder is followed by the files it imports with ./, one level.
+func frameFiles(treeDir string, f frontend) []Asset {
+	var (
+		hits    []frameHit
+		visited = map[string]fs.DirEntry{}
+	)
 
 	err := walkFiles(treeDir, f.Dir, true, func(rel string, d fs.DirEntry) error {
-		unit, class, ok := frameUnit(relDir(f.Dir, rel))
+		visited[rel] = d
+
+		unit, class, ownFolder, ok := frameUnit(relDir(f.Dir, rel))
 		if !ok {
 			return nil
 		}
@@ -462,11 +473,12 @@ func frameFiles(treeDir string, f frontend) []Asset {
 			return err
 		}
 
-		hits = append(hits, hit{
+		hits = append(hits, frameHit{
 			asset:        Asset{Path: rel, Size: info.Size()},
 			unit:         unit,
 			class:        class,
 			depth:        strings.Count(unit, "/"),
+			ownFolder:    ownFolder,
 			isStylesheet: strings.EqualFold(path.Ext(rel), ".css"),
 		})
 
@@ -477,7 +489,7 @@ func frameFiles(treeDir string, f frontend) []Asset {
 	}
 
 	// A unit's files stay together; its stylesheet follows its other files.
-	slices.SortFunc(hits, func(a, b hit) int {
+	slices.SortFunc(hits, func(a, b frameHit) int {
 		return cmp.Or(
 			cmp.Compare(a.depth, b.depth),
 			cmp.Compare(a.class, b.class),
@@ -487,12 +499,124 @@ func frameFiles(treeDir string, f frontend) []Asset {
 		)
 	})
 
-	assets := make([]Asset, 0, min(len(hits), maxFrameFiles))
-	for _, h := range hits[:min(len(hits), maxFrameFiles)] {
-		assets = append(assets, h.asset)
+	var (
+		assets  = make([]Asset, 0, len(hits))
+		emitted = map[string]bool{}
+		// Files brought in as a child, which are never parents: one level.
+		viaParent = map[string]bool{}
+	)
+
+	emit := func(a Asset) bool {
+		if emitted[a.Path] {
+			return false
+		}
+
+		emitted[a.Path] = true
+		assets = append(assets, a)
+
+		return true
 	}
 
-	return assets
+	for start := 0; start < len(hits); {
+		end := start + 1
+		for end < len(hits) && hits[end].unit == hits[start].unit {
+			end++
+		}
+
+		for _, h := range hits[start:end] {
+			emit(h.asset)
+		}
+
+		// A parent ranked past the cap puts its children past it too: not read.
+		for i := start; i < min(end, maxFrameFiles); i++ {
+			if viaParent[hits[i].asset.Path] {
+				continue
+			}
+
+			for _, c := range frameChildren(treeDir, f.Dir, hits[i], visited) {
+				if emit(c) {
+					viaParent[c.Path] = true
+				}
+			}
+		}
+
+		start = end
+	}
+
+	return assets[:min(len(assets), maxFrameFiles)]
+}
+
+// frameChildren lists the files the frame file h imports with ./ that the frame
+// walk visited and the frame rules allow, in import order. Only a frame file
+// that is its own folder and not a stylesheet has children; one whose text
+// cannot be read, as for the frame source, has none.
+func frameChildren(treeDir, rootDir string, h frameHit, visited map[string]fs.DirEntry) []Asset {
+	if !h.ownFolder || h.isStylesheet {
+		return nil
+	}
+
+	text, err := readText(treeDir, h.asset, maxFrameSourceBytes)
+	if err != nil {
+		slog.Warn("design: read frame file", "path", h.asset.Path, "error", err)
+
+		return nil
+	}
+
+	var children []Asset
+
+	for _, spec := range localImports(text) {
+		rel, ok := resolveChild(path.Dir(h.asset.Path), spec, visited)
+		if !ok || !isChildFile(splitFrameName(relDir(rootDir, rel))) {
+			continue
+		}
+
+		info, err := visited[rel].Info()
+		if err != nil {
+			slog.Warn("design: stat frame child", "path", rel, "error", err)
+
+			continue
+		}
+
+		children = append(children, Asset{Path: rel, Size: info.Size()})
+	}
+
+	return children
+}
+
+// resolveChild finds the visited file a ./ specifier names from dir: the
+// specifier itself when it has a source extension, else with each extension,
+// else as a folder's index.
+func resolveChild(dir, spec string, visited map[string]fs.DirEntry) (string, bool) {
+	target := path.Join(dir, spec)
+
+	isVisited := func(rel string) bool {
+		_, ok := visited[rel]
+
+		return ok
+	}
+
+	if sourceExts[strings.ToLower(path.Ext(target))] {
+		return target, isVisited(target)
+	}
+
+	for _, ext := range childExts {
+		if rel := target + ext; isVisited(rel) {
+			return rel, true
+		}
+	}
+
+	for _, ext := range childExts {
+		if rel := path.Join(target, "index"+ext); isVisited(rel) {
+			return rel, true
+		}
+	}
+
+	return "", false
+}
+
+// isChildFile applies the frame rules that are not about frame words.
+func isChildFile(n frameName) bool {
+	return sourceExts[n.ext] && !n.isTestOrDeclaration() && !n.isLogic()
 }
 
 func boolInt(b bool) int {
@@ -549,60 +673,66 @@ func namedJustBrand(p string) bool {
 	return len(words) == 1 && brandWords[words[0]]
 }
 
-// frameUnit decides whether rootRel, a file path relative to the frontend root,
-// is a real frame file. The unit is the directory of an index file or of a file
-// named after its directory (a unit that is its own folder), else the directory
-// and the file's stem; class is the rank class of its best frame word, 0 for a
-// layout or the app shell.
-func frameUnit(rootRel string) (unit string, class int, ok bool) {
+// frameName is what the frame rules read of a path relative to a frontend root.
+// ext is lower-case. unit is the directory of an index file or of a file named
+// after its directory (ownFolder), else the directory and the file's stem; words
+// are the name words of the unit's own name.
+type frameName struct {
+	dir, name, ext, stem string
+	dirName              string
+	segments             []string
+	stemWords, words     []string
+	ownFolder            bool
+	unit                 string
+}
+
+func splitFrameName(rootRel string) frameName {
 	dir, name := path.Split(rootRel)
 	dir = strings.TrimSuffix(dir, "/")
-	lower := strings.ToLower(name)
-	ext := path.Ext(lower)
 
-	if !frameExts[ext] || strings.HasSuffix(lower, ".d.ts") {
-		return "", 0, false
-	}
-
-	for _, marker := range nonFrameMarkers {
-		if strings.Contains(lower, marker) {
-			return "", 0, false
-		}
-	}
-
-	var segments []string
-
-	dirName := ""
+	n := frameName{dir: dir, name: name, ext: strings.ToLower(path.Ext(name))}
 
 	if dir != "" {
-		segments = strings.Split(dir, "/")
-		dirName = path.Base(dir)
+		n.segments = strings.Split(dir, "/")
+		n.dirName = path.Base(dir)
 	}
 
-	stem, _, _ := strings.Cut(name, ".")
+	n.stem, _, _ = strings.Cut(name, ".")
+	n.stemWords = nameWords(n.stem)
+	n.ownFolder = strings.EqualFold(n.stem, "index") || strings.EqualFold(n.stem, n.dirName)
 
-	// Next's pages/_app is the shell though pages holds routes.
-	if stem == "_app" && (dir == "pages" || dir == "src/pages") && (ext == ".tsx" || ext == ".jsx" || ext == ".js") {
-		return path.Join(dir, stem), 0, true
-	}
-
-	stemWords := nameWords(stem)
-	ownFolder := strings.EqualFold(stem, "index") || strings.EqualFold(stem, dirName)
-
-	var words []string
-
-	if ownFolder {
-		unit, words = dir, nameWords(dirName)
+	if n.ownFolder {
+		n.unit, n.words = dir, nameWords(n.dirName)
 	} else {
-		unit, words = path.Join(dir, stem), stemWords
+		n.unit, n.words = path.Join(dir, n.stem), n.stemWords
 	}
 
-	// A logo kept in an icon folder and a layout kept in a pages folder are
-	// still the frame.
-	isLogo := len(words) > 0 && words[len(words)-1] == "logo"
-	isLayout := hasWord(nameWords(dirName), layoutDirWords) || slices.Contains(words, "layout")
+	return n
+}
 
-	if slices.ContainsFunc(segments, func(s string) bool {
+// isTestOrDeclaration reports a type declaration file and the marker names of
+// files that are not part of the running frontend.
+func (n frameName) isTestOrDeclaration() bool {
+	lower := strings.ToLower(n.name)
+
+	return strings.HasSuffix(lower, ".d.ts") ||
+		slices.ContainsFunc(nonFrameMarkers, func(m string) bool { return strings.Contains(lower, m) })
+}
+
+func (n frameName) isLayout() bool {
+	return hasWord(nameWords(n.dirName), layoutDirWords) || slices.Contains(n.words, "layout")
+}
+
+// isLogic reports a file in a folder of logic, data, tests, demos, icons,
+// providers or email templates, a hook, and a file such as types.ts or
+// headerTypes.ts beside a component; only the last word counts, so StoreHeader
+// stays. A logo kept in an icon folder and a layout kept in a pages folder are
+// still the frame.
+func (n frameName) isLogic() bool {
+	isLogo := len(n.words) > 0 && n.words[len(n.words)-1] == "logo"
+	isLayout := n.isLayout()
+
+	inLogicDir := slices.ContainsFunc(n.segments, func(s string) bool {
 		switch s = strings.ToLower(s); s {
 		case "icon", "icons":
 			return !isLogo
@@ -611,33 +741,50 @@ func frameUnit(rootRel string) (unit string, class int, ok bool) {
 		}
 
 		return nonFrameDirs[s]
-	}) {
-		return "", 0, false
+	})
+
+	isHook := len(n.words) > 0 && n.words[0] == "use"
+	endsInLogicWord := len(n.stemWords) > 0 && nonFrameDirs[n.stemWords[len(n.stemWords)-1]]
+
+	return inLogicDir || isHook || endsInLogicWord
+}
+
+// frameUnit decides whether rootRel, a file path relative to the frontend root,
+// is a real frame file. ownFolder says its unit is its own folder; class is the
+// rank class of its best frame word, 0 for a layout or the app shell.
+func frameUnit(rootRel string) (unit string, class int, ownFolder, ok bool) {
+	n := splitFrameName(rootRel)
+
+	if !frameExts[n.ext] || n.isTestOrDeclaration() {
+		return "", 0, false, false
 	}
 
-	// A hook, or a file such as types.ts or headerTypes.ts beside a component;
-	// only the last word counts, so StoreHeader stays.
-	if (len(words) > 0 && words[0] == "use") || (len(stemWords) > 0 && nonFrameDirs[stemWords[len(stemWords)-1]]) {
-		return "", 0, false
+	// Next's pages/_app is the shell though pages holds routes.
+	if n.stem == "_app" && (n.dir == "pages" || n.dir == "src/pages") && (n.ext == ".tsx" || n.ext == ".jsx" || n.ext == ".js") {
+		return path.Join(n.dir, n.stem), 0, false, true
 	}
 
-	class, hasFrameWord := frameClass(words)
-	inComponentDir := slices.ContainsFunc(segments, func(s string) bool {
+	if n.isLogic() {
+		return "", 0, false, false
+	}
+
+	class, hasFrameWord := frameClass(n.words)
+	inComponentDir := slices.ContainsFunc(n.segments, func(s string) bool {
 		return hasWord(nameWords(s), componentDirWords)
 	})
 
 	switch {
-	case isLayout:
-		return unit, 0, true
+	case n.isLayout():
+		return n.unit, 0, n.ownFolder, true
 	// Only App.js among script names: a lower-case app.js is usually a Node server.
-	case strings.Count(unit, "/") <= 1 && (uiExts[ext] || name == "App.js") &&
-		(slices.Equal(words, []string{"app"}) || slices.Equal(words, []string{"root"})):
-		return unit, 0, true
-	case hasFrameWord && (inComponentDir || ownFolder || uiExts[ext]):
-		return unit, class, true
+	case strings.Count(n.unit, "/") <= 1 && (uiExts[n.ext] || n.name == "App.js") &&
+		(slices.Equal(n.words, []string{"app"}) || slices.Equal(n.words, []string{"root"})):
+		return n.unit, 0, n.ownFolder, true
+	case hasFrameWord && (inComponentDir || n.ownFolder || uiExts[n.ext]):
+		return n.unit, class, n.ownFolder, true
 	}
 
-	return "", 0, false
+	return "", 0, false, false
 }
 
 // frameClass is the lowest class among the frame words of words, each taken
