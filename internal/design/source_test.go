@@ -91,7 +91,7 @@ func TestBrief_FrameSource(t *testing.T) {
 	assert.Less(t, logo, a)
 	assert.Less(t, a, b)
 	assert.Greater(t, strings.LastIndex(out, "portal/frontend/src/big.tsx"), b)
-	assert.Contains(t, out, "File portal/frontend/src/a.tsx:")
+	assert.Contains(t, out[strings.LastIndex(out[:a-1], "\n")+1:a], "portal/frontend/src/a.tsx")
 
 	bare := Brief(textless(m), nil, window128k)
 
@@ -141,7 +141,7 @@ func TestBrief_FrameSourceLogoWithoutFrameText(t *testing.T) {
 	out := frameSource([]Root{r}, window128k)
 
 	assert.Contains(t, out, "```svg\n<svg/>\n```")
-	assert.NotContains(t, out, "File p/web/a.tsx")
+	assert.Equal(t, 1, strings.Count(out, "p/web/a.tsx"))
 	assert.Contains(t, out, "- p/web/a.tsx\n")
 }
 
@@ -482,7 +482,7 @@ func TestBrief_FrameSourcePathsStayOnOneLine(t *testing.T) {
 		assert.False(t, strings.HasPrefix(line, "## rtal"), line)
 	}
 
-	assert.Contains(t, out, "File portal/web/a ## x.tsx:")
+	assert.Contains(t, frameSource(m.Roots, window128k), "portal/web/a ## x.tsx")
 }
 
 func TestBrief_FrameSourceLanguage(t *testing.T) {

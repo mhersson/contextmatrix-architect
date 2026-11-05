@@ -35,9 +35,7 @@ type briefer struct {
 // font, the rest) and cut from the last root backwards, so the cut keeps the
 // most useful, and every string from the target repository or a package is
 // rendered on one line, so none of it can start a heading of its own. The frame
-// files' source and the logo SVGs follow that part under their own budget, a
-// quarter of windowBytes and at most 128 KiB, fenced and with their heading
-// lines escaped.
+// source follows that part under its own budget; see frameSource.
 func Brief(m Material, tags map[string]string, windowBytes int) string {
 	if len(m.Roots) == 0 {
 		return ""

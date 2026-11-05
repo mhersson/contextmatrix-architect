@@ -33,8 +33,8 @@ While the look stays the project's:
 
 - Draw every screen whole, inside the project's page frame (header,
   navigation, sidebar, footer).
-- Rebuild the header, navigation and footer from the frame source, with the
-  same items, in the same order, with the same labels. Never invent a
+- Rebuild the header, navigation, sidebar and footer from the frame source, with
+  the same items, in the same order, with the same labels. Never invent a
   navigation item, link or label.
 - Translate the design-system components the frame source uses (a button, a
   dropdown) to HTML styled from the kept package CSS.

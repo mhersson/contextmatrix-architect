@@ -131,20 +131,21 @@ kept as a note, and the offer stays open.
 
 When a target project has a web frontend, the designer draws from its design
 material: the source of the files that build its page frame and the SVG of its
-logo, its design tokens and fonts, and the CSS of the design-system packages
-its styles import, downloaded at the version its lockfile (package-lock.json
-at lockfileVersion 2 or 3, yarn.lock or pnpm-lock.yaml) records from the
-registry its repository configures, else the public npm registry. Each package
-kept is a source, and the chat names it when it is first fetched.
+logo, when it has one, its design tokens and fonts, and the CSS of the
+design-system packages its styles import, downloaded at the version its lockfile
+(package-lock.json at lockfileVersion 2 or 3, yarn.lock or pnpm-lock.yaml)
+records from the registry its repository configures, else the public npm
+registry. Each package kept is a source, and the chat names it when it is first
+fetched.
 
-The designer rebuilds the header, navigation and footer from the frame source,
-with their own items and labels, and pastes in the logo as it is. The frame
-source takes at most a quarter of the model's context window, shared among the
-frontends by need; a file it leaves out is listed by path, and the designer
-reads it from the checkout. Frame files are found by name, so a frame component
-with an unusual name is missed, and the designer translates the design-system
-components the frame source uses (a button, a dropdown) to HTML from the
-packages' CSS.
+The designer rebuilds the header, navigation, sidebar and footer from the frame
+source, with their own items and labels, and pastes in the logo as it is. The
+frame source takes at most a quarter of the model's context window, shared among
+the frontends by need, with the smallest logos first; a file it leaves out is
+listed by path, and the designer reads it from the checkout. Frame files are
+found by name, so a frame component with an unusual name is missed, and the
+designer translates the design-system components the frame source uses (a
+button, a dropdown) to HTML from the packages' CSS.
 
 ### In a question round
 
