@@ -237,17 +237,20 @@ HEAD.
   `.css` file named App at the root or one directory below, counted as its
   folder when it is its folder's own file (`app.vue`, `src/App.tsx`,
   `src/app/app.component.html`); so do a Remix or React Router `root` file
-  there and Next's `pages/_app` (or `src/pages/_app`). Other files under api,
-  constants, utils, hooks, pages, services, store, types, stories, icon,
-  context, provider, test, email or mail folders, hooks (`use...`) and files
-  named for those folders (`types.ts` beside a layout) never count. They are
-  ranked by depth, frame word and path, at most 20. Known limit: a frame
-  component with an unusual name is missed, and the design-system components
-  in the frame source are translated to HTML by the designer from the kept
-  CSS. Why: the designer drew a made-up frame when noise outranked the real
-  components, and flat, Vue, Angular, Next app-router, SvelteKit,
-  Feature-Sliced and Django apps keep their frame files outside component
-  folders.
+  there and Next's `pages/_app` (or `src/pages/_app`). A name ending in logo
+  counts as a frame word (`SiteLogo.tsx`, not `LogoCloud.tsx`), and so do side
+  and top navigation (`sidenav`, `topnav`). Other files under api, constants,
+  utils, hooks, pages, services, store, types, stories, icon, context,
+  provider, test, email or mail folders, hooks (`use...`), test, spec, story
+  and Cypress files, and files whose last name word is one of those folder
+  words (`headerTypes.ts`, `MenuIcon.tsx`, not `StoreHeader.tsx`) never count,
+  though a logo under an icon folder counts. They are ranked by depth, frame
+  word and path, at most 20. Known limit: a frame component with an unusual
+  name is missed, and the design-system components in the frame source are
+  translated to HTML by the designer from the kept CSS. Why: the designer drew
+  a made-up frame when noise outranked the real components, and flat, Vue,
+  Angular, Next app-router, SvelteKit, Feature-Sliced and Django apps keep
+  their frame files outside component folders.
 - The brief carries the text of the top frame files and of the first SVG
   logo outside its 16 KiB cap, within a quarter of the run's model window
   (the default window when it is unknown), at most 128 KiB: frame files take

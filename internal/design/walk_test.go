@@ -524,6 +524,57 @@ func TestFrameFiles_Layouts(t *testing.T) {
 			files: []string{"app.js", "src/app.js"},
 		},
 		{
+			name: "a folder word that is not the last name word",
+			files: []string{
+				"src/components/StoreHeader.tsx",
+				"src/components/MailLayout.tsx",
+				"src/components/ServicesNav.tsx",
+				"src/components/EmailFooter.tsx",
+			},
+			want: []string{
+				"src/components/MailLayout.tsx",
+				"src/components/ServicesNav.tsx",
+				"src/components/StoreHeader.tsx",
+				"src/components/EmailFooter.tsx",
+			},
+		},
+		{
+			name: "a folder word as the last name word",
+			files: []string{
+				"src/components/Header/headerTypes.ts",
+				"src/components/navUtils.ts",
+				"src/components/sidebarStore.ts",
+				"src/layouts/layoutUtils.ts",
+			},
+		},
+		{
+			name:  "cypress tests",
+			files: []string{"src/components/Header.cy.tsx"},
+		},
+		{
+			name:  "side and top navigation",
+			files: []string{"src/app/sidenav/sidenav.component.html", "src/components/topnav.tsx"},
+			want:  []string{"src/app/sidenav/sidenav.component.html", "src/components/topnav.tsx"},
+		},
+		{
+			name: "a name ending in logo",
+			files: []string{
+				"src/components/Logo.tsx",
+				"src/components/SiteLogo.tsx",
+				"src/components/acme-logo.tsx",
+				"src/components/LogoCloud.tsx",
+				"components/icons/logo.tsx",
+				"src/components/icons/Logo.tsx",
+			},
+			want: []string{
+				"src/components/Logo.tsx",
+				"components/icons/logo.tsx",
+				"src/components/SiteLogo.tsx",
+				"src/components/acme-logo.tsx",
+				"src/components/icons/Logo.tsx",
+			},
+		},
+		{
 			name: "demo, icon, context and provider files",
 			files: []string{
 				"stories/Header.tsx",

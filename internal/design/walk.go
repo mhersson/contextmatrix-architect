@@ -58,6 +58,7 @@ var (
 	frameWords = map[string]int{
 		"layout": 0, "shell": 0,
 		"header": 1, "masthead": 1, "topbar": 1, "appbar": 1, "navigation": 1, "navbar": 1, "nav": 1,
+		"sidenav": 1, "topnav": 1,
 		"footer":  2,
 		"sidebar": 3, "menu": 3,
 		"hero": 4,
@@ -89,7 +90,7 @@ var (
 	templateMarks = []string{"{{", "{%", "<%", "${"}
 
 	// Marker segments of files that are not part of the running frontend.
-	nonFrameMarkers = []string{".test.", ".spec.", ".stories."}
+	nonFrameMarkers = []string{".test.", ".spec.", ".stories.", ".cy."}
 )
 
 // frontend is one frontend root: a directory with a package.json that owns CSS,
@@ -571,10 +572,6 @@ func frameUnit(rootRel string) (unit string, class int, ok bool) {
 		return path.Join(dir, stem), 0, true
 	}
 
-	if slices.ContainsFunc(segments, func(s string) bool { return nonFrameDirs[strings.ToLower(s)] }) {
-		return "", 0, false
-	}
-
 	stemWords := nameWords(stem)
 	ownFolder := strings.EqualFold(stem, "index") || strings.EqualFold(stem, dirName)
 
@@ -586,8 +583,20 @@ func frameUnit(rootRel string) (unit string, class int, ok bool) {
 		unit, words = path.Join(dir, stem), stemWords
 	}
 
-	// A hook, or a file such as types.ts or constants.ts beside a component.
-	if len(words) > 0 && words[0] == "use" || hasWord(stemWords, nonFrameDirs) {
+	// A logo kept in an icon folder is still the logo.
+	isLogo := len(words) > 0 && words[len(words)-1] == "logo"
+
+	if slices.ContainsFunc(segments, func(s string) bool {
+		s = strings.ToLower(s)
+
+		return nonFrameDirs[s] && (!isLogo || (s != "icon" && s != "icons"))
+	}) {
+		return "", 0, false
+	}
+
+	// A hook, or a file such as types.ts or headerTypes.ts beside a component;
+	// only the last word counts, so StoreHeader stays.
+	if (len(words) > 0 && words[0] == "use") || (len(stemWords) > 0 && nonFrameDirs[stemWords[len(stemWords)-1]]) {
 		return "", 0, false
 	}
 
@@ -611,8 +620,12 @@ func frameUnit(rootRel string) (unit string, class int, ok bool) {
 }
 
 // frameClass is the lowest class among the frame words of words, each taken
-// alone or joined with the word after it.
+// alone or joined with the word after it. A last word logo ranks as a header.
 func frameClass(words []string) (class int, ok bool) {
+	if len(words) > 0 && words[len(words)-1] == "logo" {
+		class, ok = frameWords["header"], true
+	}
+
 	for i, w := range words {
 		candidates := []string{w}
 		if i+1 < len(words) {
