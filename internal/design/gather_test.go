@@ -269,6 +269,25 @@ func TestGather_LogoTextIsTheFirstSVGNotTheFirstImage(t *testing.T) {
 	assert.Equal(t, "<svg/>", brand[1].Text)
 }
 
+func TestGather_LogoIsTheFileNamedLogo(t *testing.T) {
+	tarballs := defaultTarballs(t)
+	srv := registryServer(t, tarballs, 0)
+
+	files := portalTree(t, srv.URL, tarballs)
+	files["frontend/public/google-logo.svg"] = `<svg id="g"/>`
+	files["frontend/src/assets/images/logo.svg"] = `<svg id="l"/>`
+
+	m, err := gatherPortal(t, srv, t.TempDir(), files)
+	require.NoError(t, err)
+	require.Len(t, m.Roots, 1)
+
+	brand := m.Roots[0].Brand
+	require.Len(t, brand, 2)
+	assert.Equal(t, "portal/frontend/src/assets/images/logo.svg", brand[0].Path)
+	assert.Equal(t, `<svg id="l"/>`, brand[0].Text)
+	assert.Empty(t, brand[1].Text)
+}
+
 func TestGather_TokensInImportOrder(t *testing.T) {
 	const grey = ":root{--acme-grey-8:#ebebeb}"
 

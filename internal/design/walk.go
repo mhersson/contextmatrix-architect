@@ -503,7 +503,8 @@ func boolInt(b bool) int {
 	return 0
 }
 
-// brandFiles lists the logo and brand images of f, shortest path first.
+// brandFiles lists the logo and brand images of f: files named just logo or
+// brand first, then shortest path first.
 func brandFiles(treeDir string, f frontend) []Asset {
 	var assets []Asset
 
@@ -530,9 +531,22 @@ func brandFiles(treeDir string, f frontend) []Asset {
 		slog.Warn("design: walk brand files", "dir", f.Dir, "error", err)
 	}
 
-	slices.SortFunc(assets, func(a, b Asset) int { return comparePaths(a.Path, b.Path) })
+	slices.SortFunc(assets, func(a, b Asset) int {
+		return cmp.Or(
+			cmp.Compare(boolInt(!namedJustBrand(a.Path)), boolInt(!namedJustBrand(b.Path))),
+			comparePaths(a.Path, b.Path),
+		)
+	})
 
 	return assets[:min(len(assets), maxBrandFiles)]
+}
+
+// namedJustBrand reports whether the file's stem is the single word logo or
+// brand.
+func namedJustBrand(p string) bool {
+	words := nameWords(strings.TrimSuffix(path.Base(p), path.Ext(p)))
+
+	return len(words) == 1 && brandWords[words[0]]
 }
 
 // frameUnit decides whether rootRel, a file path relative to the frontend root,

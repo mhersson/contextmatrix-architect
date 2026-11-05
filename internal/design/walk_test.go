@@ -692,10 +692,23 @@ func TestBrandFiles(t *testing.T) {
 	got := brandFiles(root, frontend{Dir: ""})
 
 	assert.Equal(t, []Asset{
+		{Path: "src/components/DeveloperLogo/logo.svg", Size: int64(len(logo))},
 		{Path: "public/brand-mark.png", Size: 3},
 		{Path: "public/companyLogo.PNG", Size: 3},
-		{Path: "src/components/DeveloperLogo/logo.svg", Size: int64(len(logo))},
 	}, got)
+}
+
+func TestBrandFiles_NamedJustLogoFirst(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"public/google-logo.svg":     `<svg/>`,
+		"src/assets/images/logo.svg": `<svg/>`,
+		"public/brand.svg":           `<svg/>`,
+	})
+
+	assert.Equal(t,
+		[]string{"public/brand.svg", "src/assets/images/logo.svg", "public/google-logo.svg"},
+		assetPaths(brandFiles(root, frontend{Dir: ""})))
 }
 
 func TestBrandFiles_CapAndRootDir(t *testing.T) {
