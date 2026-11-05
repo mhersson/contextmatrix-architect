@@ -150,7 +150,9 @@ frame component that is its own folder brings the files it imports from that
 folder along, ahead of lesser frame files. Frame files are found by name, so a
 frame component with an unusual name is missed, and the designer translates the
 design-system components the frame source uses (a button, a dropdown) to HTML
-from the packages' CSS.
+from the packages' CSS. The designer declares the screen's width (1280 pixels
+for a desktop web page, for example), and ContextMatrix scales a mockup wider
+than its pane down to fit.
 
 ### In a question round
 
