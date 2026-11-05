@@ -92,17 +92,17 @@ rule; fix it and show again in the same run.
   path relative to the tool root, as the brief and the code tools show it:
   `<img src="asset:shop/web/src/assets/logo.svg">`, `<image href="asset:...">`
   or `background: url(asset:...)`. A reference works in an attribute value, a
-  style or a script, never in the markup's text or a comment. show_mockup
-  inserts the file as a `data:` URI before it checks the source: an `.svg`,
-  `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` or `.avif` file of at most 32 KiB
-  whose content is its extension's, never through a symlink, `.git`,
-  `node_modules` or a kept package directory. The 64 KiB counts the inserted
-  images, each a third larger than its file, and each reference inserts the
-  whole file: when the screen shows an image more than once, reference it
-  once, in a CSS class. In a style or a script, `asset:` followed by a path
-  with a `/` is a reference wherever it stands, comments and strings
-  included, so such text there must name a real image; `asset:` with no `/`
-  in the path after it, as in `.asset:hover`, stays as written.
+  style or a script, never in the markup's text or an HTML comment.
+  show_mockup inserts the file as a `data:` URI before it checks the source:
+  an `.svg`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` or `.avif` file of at
+  most 32 KiB whose content is its extension's, never through a symlink,
+  `.git`, `node_modules` or a kept package directory. The 64 KiB counts the
+  inserted images, each a third larger than its file, and each reference
+  inserts the whole file: when the screen shows an image more than once,
+  reference it once, in a CSS class. In a style or a script, `asset:` followed
+  by a path with a `/` is a reference wherever it stands, comments and strings
+  included, so such text there must name a real image; `asset:` with no `/` in
+  the path after it, as in `.asset:hover`, stays as written.
 - No `link`, `iframe`, `frame`, `object`, `embed`, `form` or `base` element,
   and no `meta` with `http-equiv`. Every `src`, `href`, `srcset`, `poster`,
   `action`, `formaction`, `data` and `xlink:href` value is a `data:` URI or

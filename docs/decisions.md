@@ -367,7 +367,7 @@ HEAD.
 - A mockup source references a repository image as `asset:` and its path
   relative to the tool root, and show_mockup inserts the file as a base64
   `data:` URI before the frame check, in attribute values, styles and
-  scripts, never in markup text or comments. A path with no `/` is no
+  scripts, never in markup text or HTML comments. A path with no `/` is no
   reference, so CSS such as `.asset:hover` and script such as `{asset:src}`
   stay as written. Only an image file of a checked-out tree is taken: no
   symlink, `.git`, `node_modules` or kept package on its path, at most

@@ -204,6 +204,12 @@ func parseMockup(ctx context.Context, args map[string]any, images Images) (Mocku
 		return MockupRevision{}, err
 	}
 
+	// Refused as given before any image is read, so the insertion never
+	// starts from more than the cap.
+	if len(m.Source) > MaxMockupBytes {
+		return MockupRevision{}, sourceTooLarge(len(m.Source))
+	}
+
 	src, err := inlineImages(ctx, m.Source, images)
 	if err != nil {
 		return MockupRevision{}, err
@@ -483,7 +489,7 @@ func checkSource(src string, settings bool) error {
 	case strings.TrimSpace(src) == "":
 		return errors.New("source is required: the screen as one HTML document")
 	case len(src) > MaxMockupBytes:
-		return fmt.Errorf("the source is %d bytes and a mockup takes at most %d; inline less, or draw fewer screens", len(src), MaxMockupBytes)
+		return sourceTooLarge(len(src))
 	}
 
 	// The agent's section parser trims each card line and does not track
@@ -534,6 +540,11 @@ func checkSource(src string, settings bool) error {
 	}
 
 	return nil
+}
+
+// sourceTooLarge refuses a source of n bytes, over MaxMockupBytes.
+func sourceTooLarge(n int) error {
+	return fmt.Errorf("the source is %d bytes and a mockup takes at most %d; inline less, or draw fewer screens", n, MaxMockupBytes)
 }
 
 // piece is css or script a source holds, and where it holds it.

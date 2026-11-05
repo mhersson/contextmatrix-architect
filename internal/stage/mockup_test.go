@@ -314,3 +314,41 @@ func TestShowMockup_RefusesAReferenceItCannotShow(t *testing.T) {
 		})
 	}
 }
+
+// A source over the cap as given is refused before any image is read; one at
+// the cap has its images inserted and is held to the cap after.
+func TestShowMockup_RefusesAnOversizedSourceBeforeReadingItsImages(t *testing.T) {
+	const logo = "shop/web/src/assets/logo.svg"
+
+	withLogo := strings.Replace(terminalSource, `data:image/png;base64,iVBORw0KGgo=`, "asset:"+logo, 1)
+	sized := func(n int) string {
+		head := withLogo + "<!--"
+
+		return head + strings.Repeat("x", n-len(head)-len("-->")) + "-->"
+	}
+
+	tests := []struct {
+		name     string
+		size     int
+		reads    int
+		inserted bool
+	}{
+		{"one byte over the cap", MaxMockupBytes + 1, 0, false},
+		{"at the cap", MaxMockupBytes, 1, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := &fakeDesigner{}
+			img := knownImages(logo)
+			source := sized(tt.size)
+			require.Len(t, source, tt.size)
+
+			_, err := showMockupTool{d: d, mark: &terminalMark{}, images: img}.Execute(context.Background(), mockupArgs(source))
+			require.Error(t, err)
+			assert.Equal(t, tt.reads, img.calls[logo])
+			assert.Equal(t, tt.inserted, strings.Contains(err.Error(), "with its images inserted"), err.Error())
+			assert.Empty(t, d.got)
+		})
+	}
+}
