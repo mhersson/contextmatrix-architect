@@ -7,7 +7,10 @@ import (
 )
 
 var (
-	cssCommentRE = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	blockCommentRE = regexp.MustCompile(`(?s)/\*.*?\*/`)
+
+	// A line whose first non-space characters are `//`.
+	lineCommentRE = regexp.MustCompile(`(?m)^[ \t]*//.*$`)
 
 	// Groups: 1-3 url(...) as double-quoted, single-quoted, bare; 4-5 a plain
 	// string as double-quoted, single-quoted.
@@ -16,6 +19,11 @@ var (
 	// Groups: 1 double-quoted, 2 single-quoted. Requiring a quote straight
 	// after `import` leaves out default, named and dynamic imports.
 	jsCSSImportRE = regexp.MustCompile(`\bimport\s*(?:"([^"]+\.css)"|'([^']+\.css)')`)
+
+	// Groups: 1 double-quoted, 2 single-quoted. A static import or re-export:
+	// the binding list, if any, ends in `from` and holds no quote or semicolon,
+	// which leaves out a dynamic import.
+	staticImportRE = regexp.MustCompile(`\b(?:import|export)\b(?:[^;'"]*?\bfrom\s*)?\s*(?:"([^"\n]*)"|'([^'\n]*)')`)
 
 	schemeRE = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
 
@@ -29,7 +37,7 @@ var (
 // cssImports returns every @import specifier in css, in order, ignoring
 // comments. Trailing layer(), supports() and media lists are not part of it.
 func cssImports(css string) []string {
-	css = cssCommentRE.ReplaceAllString(css, "")
+	css = blockCommentRE.ReplaceAllString(css, "")
 
 	var specs []string
 
@@ -49,6 +57,29 @@ func jsCSSImports(src string) []string {
 
 	for _, m := range jsCSSImportRE.FindAllStringSubmatch(src, -1) {
 		specs = append(specs, firstNonEmpty(m[1:]...))
+	}
+
+	return specs
+}
+
+// localImports returns the specifiers of the static imports and re-exports in
+// src that start with ./, in order and once each, ignoring comments. A
+// specifier with a query or a .. segment is left out.
+func localImports(src string) []string {
+	src = lineCommentRE.ReplaceAllString(blockCommentRE.ReplaceAllString(src, ""), "")
+
+	var specs []string
+
+	for _, m := range staticImportRE.FindAllStringSubmatch(src, -1) {
+		spec := firstNonEmpty(m[1:]...)
+
+		rest, local := strings.CutPrefix(spec, "./")
+		if !local || rest == "" || strings.Contains(spec, "?") ||
+			slices.Contains(strings.Split(rest, "/"), "..") || slices.Contains(specs, spec) {
+			continue
+		}
+
+		specs = append(specs, spec)
 	}
 
 	return specs

@@ -3,7 +3,9 @@ package design
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -691,6 +693,350 @@ func TestFrameFiles_CapAndOrder(t *testing.T) {
 	assert.Equal(t, "app/layout.tsx", got[0])
 	assert.Equal(t, "src/components/Nav-00/index.tsx", got[1])
 	assert.Equal(t, "src/components/Nav-18/index.tsx", got[19])
+}
+
+// importing is the text of a component that imports each of specs.
+func importing(specs ...string) string {
+	var b strings.Builder
+
+	for i, spec := range specs {
+		fmt.Fprintf(&b, "import M%d from '%s'\n", i, spec)
+	}
+
+	return b.String() + "export default function Component() { return null }\n"
+}
+
+func TestFrameFiles_ChildrenFollowTheirParent(t *testing.T) {
+	root := t.TempDir()
+	parent := importing("./Menu", "./Brand/Brand", "./index.module.css", "../Footer")
+	writeTree(t, root, map[string]string{
+		"src/components/NavBar/index.tsx":        parent,
+		"src/components/NavBar/index.module.css": `.bar { color: red }`,
+		"src/components/NavBar/Menu.tsx":         "export default () => null\n",
+		"src/components/NavBar/Brand/Brand.tsx":  "export default () => null\n",
+		"src/components/Footer/index.tsx":        `x`,
+		"src/components/HeroBanner/index.tsx":    `x`,
+	})
+
+	got := frameFiles(root, frontend{Dir: ""})
+
+	assert.Equal(t, []string{
+		"src/components/NavBar/index.tsx",
+		"src/components/NavBar/index.module.css",
+		"src/components/NavBar/Menu.tsx",
+		"src/components/NavBar/Brand/Brand.tsx",
+		"src/components/Footer/index.tsx",
+		"src/components/HeroBanner/index.tsx",
+	}, assetPaths(got))
+	assert.Equal(t, int64(len("export default () => null\n")), got[2].Size)
+}
+
+func TestFrameFiles_ChildResolution(t *testing.T) {
+	tests := []struct {
+		name  string
+		spec  string
+		files []string
+		want  string
+	}{
+		{
+			name:  "a file before a folder",
+			spec:  "./Items",
+			files: []string{"Items.tsx", "Items/index.tsx"},
+			want:  "Items.tsx",
+		},
+		{name: "a folder index", spec: "./Items", files: []string{"Items/index.tsx"}, want: "Items/index.tsx"},
+		{
+			name:  "a folder index in extension order",
+			spec:  "./Items",
+			files: []string{"Items/index.js", "Items/index.ts"},
+			want:  "Items/index.ts",
+		},
+		{name: "tsx before ts", spec: "./Items", files: []string{"Items.ts", "Items.tsx"}, want: "Items.tsx"},
+		{name: "ts before jsx", spec: "./Items", files: []string{"Items.jsx", "Items.ts"}, want: "Items.ts"},
+		{name: "jsx before js", spec: "./Items", files: []string{"Items.js", "Items.jsx"}, want: "Items.jsx"},
+		{name: "js before vue", spec: "./Items", files: []string{"Items.vue", "Items.js"}, want: "Items.js"},
+		{name: "vue before svelte", spec: "./Items", files: []string{"Items.svelte", "Items.vue"}, want: "Items.vue"},
+		{name: "svelte", spec: "./Items", files: []string{"Items.svelte"}, want: "Items.svelte"},
+		{name: "a spec with its extension", spec: "./Items.vue", files: []string{"Items.vue"}, want: "Items.vue"},
+		{
+			name:  "a spec with its extension is not extended",
+			spec:  "./Items.js",
+			files: []string{"Items.js", "Items.js.tsx"},
+			want:  "Items.js",
+		},
+		{
+			name:  "a spec with a dotted name",
+			spec:  "./Items.component",
+			files: []string{"Items.component.ts"},
+			want:  "Items.component.ts",
+		},
+		{name: "a nested path", spec: "./Items/List", files: []string{"Items/List.tsx"}, want: "Items/List.tsx"},
+		{name: "a trailing slash", spec: "./Items/", files: []string{"Items/index.tsx"}, want: "Items/index.tsx"},
+		{name: "nothing found", spec: "./Items", files: []string{"Other.tsx"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			files := map[string]string{"src/components/NavBar/index.tsx": importing(tt.spec)}
+
+			for _, f := range tt.files {
+				files["src/components/NavBar/"+f] = "x"
+			}
+
+			writeTree(t, root, files)
+
+			want := []string{"src/components/NavBar/index.tsx"}
+			if tt.want != "" {
+				want = append(want, "src/components/NavBar/"+tt.want)
+			}
+
+			assert.Equal(t, want, assetPaths(frameFiles(root, frontend{Dir: ""})))
+		})
+	}
+}
+
+func TestFrameFiles_ChildThatIsAFrameFile(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"src/components/NavBar/index.tsx":                importing("./NavMenu"),
+		"src/components/NavBar/NavMenu/index.tsx":        `x`,
+		"src/components/NavBar/NavMenu/index.module.css": `x`,
+		"src/components/Footer/index.tsx":                `x`,
+	})
+
+	assert.Equal(t, []string{
+		"src/components/NavBar/index.tsx",
+		"src/components/NavBar/NavMenu/index.tsx",
+		"src/components/Footer/index.tsx",
+		"src/components/NavBar/NavMenu/index.module.css",
+	}, assetPaths(frameFiles(root, frontend{Dir: ""})))
+}
+
+func TestFrameFiles_ChildrenNotFollowed(t *testing.T) {
+	tests := []struct {
+		name  string
+		spec  string
+		files []string
+	}{
+		{name: "a hook", spec: "./useNav", files: []string{"useNav.ts"}},
+		{name: "a hook folder", spec: "./useNav", files: []string{"useNav/index.ts"}},
+		{name: "types", spec: "./types", files: []string{"types.ts"}},
+		{name: "constants", spec: "./constants", files: []string{"constants.ts"}},
+		{name: "a last name word that is a folder word", spec: "./navApi", files: []string{"navApi.ts"}},
+		{name: "a declaration", spec: "./Items.d", files: []string{"Items.d.ts"}},
+		{name: "a test", spec: "./Items.test", files: []string{"Items.test.tsx"}},
+		{name: "a spec file", spec: "./Items.spec", files: []string{"Items.spec.tsx"}},
+		{name: "a story", spec: "./Items.stories", files: []string{"Items.stories.tsx"}},
+		{name: "a hooks folder", spec: "./hooks/items", files: []string{"hooks/items.ts"}},
+		{name: "a utils folder", spec: "./utils/items", files: []string{"utils/items.ts"}},
+		{name: "an icons folder", spec: "./icons/Arrow", files: []string{"icons/Arrow.tsx"}},
+		{name: "a pages folder", spec: "./pages/Items", files: []string{"pages/Items.tsx"}},
+		{name: "a stylesheet", spec: "./Items.css", files: []string{"Items.css"}},
+		{name: "a data file", spec: "./items.json", files: []string{"items.json"}},
+		{name: "the parent directory", spec: "../Shared", files: []string{"../Shared.tsx"}},
+		{name: "an alias", spec: "@/components/Shared", files: []string{"../Shared.tsx"}},
+		{name: "a package", spec: "shared", files: []string{"shared.tsx"}},
+		{name: "a query", spec: "./Items?raw", files: []string{"Items.tsx"}},
+		{name: "a dotted segment", spec: "./Items/../Shared", files: []string{"Shared.tsx"}},
+		{
+			name:  "a nested package",
+			spec:  "./widget",
+			files: []string{"widget/package.json", "widget/index.tsx"},
+		},
+		{name: "a dependency folder", spec: "./node_modules/pkg/index", files: []string{"node_modules/pkg/index.tsx"}},
+		{name: "a build folder", spec: "./dist/Items", files: []string{"dist/Items.js"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			files := map[string]string{
+				"src/components/NavBar/index.tsx":   importing(tt.spec, "./Control"),
+				"src/components/NavBar/Control.tsx": `x`,
+			}
+
+			for _, f := range tt.files {
+				files[path.Clean("src/components/NavBar/"+f)] = "x"
+			}
+
+			writeTree(t, root, files)
+
+			assert.Equal(t, []string{
+				"src/components/NavBar/index.tsx",
+				"src/components/NavBar/Control.tsx",
+			}, assetPaths(frameFiles(root, frontend{Dir: ""})))
+		})
+	}
+}
+
+func TestFrameFiles_ChildrenFollowOnlyOneLevelAndOnlyAFolder(t *testing.T) {
+	t.Run("a child's own imports", func(t *testing.T) {
+		root := t.TempDir()
+		writeTree(t, root, map[string]string{
+			"src/components/NavBar/index.tsx": importing("./Links"),
+			"src/components/NavBar/Links.tsx": importing("./Item"),
+			"src/components/NavBar/Item.tsx":  `x`,
+		})
+
+		assert.Equal(t, []string{
+			"src/components/NavBar/index.tsx",
+			"src/components/NavBar/Links.tsx",
+		}, assetPaths(frameFiles(root, frontend{Dir: ""})))
+	})
+
+	t.Run("a loose file", func(t *testing.T) {
+		root := t.TempDir()
+		writeTree(t, root, map[string]string{
+			"src/App.tsx":                importing("./Routes", "./Providers/Theme"),
+			"src/Routes.tsx":             `x`,
+			"src/Providers/Theme.tsx":    `x`,
+			"src/components/Footer.tsx":  importing("./Columns"),
+			"src/components/Columns.tsx": `x`,
+		})
+
+		assert.Equal(t, []string{
+			"src/App.tsx",
+			"src/components/Footer.tsx",
+		}, assetPaths(frameFiles(root, frontend{Dir: ""})))
+	})
+
+	t.Run("a stylesheet", func(t *testing.T) {
+		root := t.TempDir()
+		writeTree(t, root, map[string]string{
+			"src/components/NavBar/index.module.css": "@import './Links';\n",
+			"src/components/NavBar/Links.tsx":        `x`,
+		})
+
+		assert.Equal(t, []string{"src/components/NavBar/index.module.css"},
+			assetPaths(frameFiles(root, frontend{Dir: ""})))
+	})
+}
+
+func TestFrameFiles_ChildLogoInAnIconFolder(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"src/components/NavBar/index.tsx":       importing("./icons/Arrow", "./icons/Logo"),
+		"src/components/NavBar/icons/Arrow.tsx": `x`,
+		"src/components/NavBar/icons/Logo.tsx":  `x`,
+		"src/components/Footer/index.tsx":       `x`,
+	})
+
+	assert.Equal(t, []string{
+		"src/components/NavBar/index.tsx",
+		"src/components/NavBar/icons/Logo.tsx",
+		"src/components/Footer/index.tsx",
+	}, assetPaths(frameFiles(root, frontend{Dir: ""})))
+}
+
+func TestFrameFiles_ChildrenReadRulesFromTheRoot(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"pages/site/package.json":                    `{}`,
+		"pages/site/src/components/NavBar/index.tsx": importing("./Links"),
+		"pages/site/src/components/NavBar/Links.tsx": `x`,
+		"pages/site/admin/package.json":              `{}`,
+		"pages/site/admin/Layout/index.tsx":          importing("./Links"),
+		"pages/site/admin/Layout/Links.tsx":          `x`,
+	})
+
+	assert.Equal(t, []string{
+		"pages/site/src/components/NavBar/index.tsx",
+		"pages/site/src/components/NavBar/Links.tsx",
+	}, assetPaths(frameFiles(root, frontend{Dir: "pages/site"})))
+}
+
+func TestFrameFiles_SharedChildFollowsTheFirstParent(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"src/components/NavBar/index.tsx":      importing("./Menu/Links"),
+		"src/components/NavBar/Menu/index.tsx": importing("./Links"),
+		"src/components/NavBar/Menu/Links.tsx": `x`,
+		"src/components/Footer/index.tsx":      `x`,
+	})
+
+	assert.Equal(t, []string{
+		"src/components/NavBar/index.tsx",
+		"src/components/NavBar/Menu/Links.tsx",
+		"src/components/Footer/index.tsx",
+		"src/components/NavBar/Menu/index.tsx",
+	}, assetPaths(frameFiles(root, frontend{Dir: ""})))
+}
+
+func TestFrameFiles_ChildrenKeepImportOrder(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"src/components/NavBar/index.tsx": importing("./Zeta", "./Alpha", "./Mid"),
+		"src/components/NavBar/Alpha.tsx": `x`,
+		"src/components/NavBar/Mid.tsx":   `x`,
+		"src/components/NavBar/Zeta.tsx":  `x`,
+	})
+
+	assert.Equal(t, []string{
+		"src/components/NavBar/index.tsx",
+		"src/components/NavBar/Zeta.tsx",
+		"src/components/NavBar/Alpha.tsx",
+		"src/components/NavBar/Mid.tsx",
+	}, assetPaths(frameFiles(root, frontend{Dir: ""})))
+}
+
+func TestFrameFiles_ChildrenAreCapped(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{}
+	specs := make([]string, 0, 25)
+
+	for i := range 25 {
+		specs = append(specs, fmt.Sprintf("./Item%02d", i))
+		files[fmt.Sprintf("src/components/NavBar/Item%02d.tsx", i)] = `x`
+	}
+
+	files["src/components/NavBar/index.tsx"] = importing(specs...)
+	writeTree(t, root, files)
+
+	got := assetPaths(frameFiles(root, frontend{Dir: ""}))
+
+	require.Len(t, got, 20)
+	assert.Equal(t, "src/components/NavBar/index.tsx", got[0])
+	assert.Equal(t, "src/components/NavBar/Item00.tsx", got[1])
+	assert.Equal(t, "src/components/NavBar/Item18.tsx", got[19])
+}
+
+func TestFrameFiles_ParentWithoutText(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{name: "binary", content: importing("./Links") + "\x00"},
+		{name: "not UTF-8", content: importing("./Links") + "\xff\xfe"},
+		{name: "over the frame source limit", content: importing("./Links") + "// " + strings.Repeat("x", maxFrameSourceBytes)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{
+				"src/components/NavBar/index.tsx": tt.content,
+				"src/components/NavBar/Links.tsx": `x`,
+			})
+
+			assert.Equal(t, []string{"src/components/NavBar/index.tsx"},
+				assetPaths(frameFiles(root, frontend{Dir: ""})))
+		})
+	}
+}
+
+func TestFrameFiles_SymlinkedChildNotFollowed(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"src/components/NavBar/index.tsx": importing("./Links"),
+		"src/Shared.tsx":                  `x`,
+	})
+	require.NoError(t, os.Symlink(
+		filepath.Join(root, "src", "Shared.tsx"),
+		filepath.Join(root, "src", "components", "NavBar", "Links.tsx")))
+
+	assert.Equal(t, []string{"src/components/NavBar/index.tsx"},
+		assetPaths(frameFiles(root, frontend{Dir: ""})))
 }
 
 func TestBrandFiles(t *testing.T) {

@@ -11,7 +11,8 @@ changes: no screen, control or step it does not ask for.
 
 Read the code first (repo_info, read, grep, glob), starting from the
 "Design material" brief when the task has one: per frontend root it lists the
-files that build the page frame, the logo and brand files, the resolved
+files that build the page frame (after each frame component, the parts it
+imports from its own folder), the logo and brand files, the resolved
 tokens, the fonts, the kept CSS of the packages the project's styles import,
 and the gaps, what could not be gathered. After those lists a "Frame source"
 part per root holds the source of its top frame files and its logo SVG, as
