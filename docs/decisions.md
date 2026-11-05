@@ -244,13 +244,14 @@ HEAD.
   provider, test, email or mail folders, hooks (`use...`), test, spec, story
   and Cypress files, and files whose last name word is one of those folder
   words (`headerTypes.ts`, `MenuIcon.tsx`, not `StoreHeader.tsx`) never count,
-  though a logo under an icon folder counts. They are ranked by depth, frame
-  word and path, at most 20. Known limit: a frame component with an unusual
-  name is missed, and the design-system components in the frame source are
-  translated to HTML by the designer from the kept CSS. Why: the designer drew
-  a made-up frame when noise outranked the real components, and flat, Vue,
-  Angular, Next app-router, SvelteKit, Feature-Sliced and Django apps keep
-  their frame files outside component folders.
+  though a logo under an icon folder or a layout under a pages folder counts.
+  They are ranked by depth, frame word and path, at most 20. Known limit: a
+  frame component with an unusual name is missed, and the design-system
+  components in the frame source are translated to HTML by the designer from
+  the kept CSS. Why: the designer drew a made-up frame when noise outranked
+  the real components, and flat, Vue, Angular, Next app-router, SvelteKit,
+  Feature-Sliced and Django apps keep their frame files outside component
+  folders.
 - The brief carries the text of the top frame files and of the first SVG logo
   outside its 16 KiB cap, within a quarter of the run's model window (the
   default window when it is unknown), at most 128 KiB: frame files take three

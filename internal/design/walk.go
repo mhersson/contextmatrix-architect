@@ -597,13 +597,20 @@ func frameUnit(rootRel string) (unit string, class int, ok bool) {
 		unit, words = path.Join(dir, stem), stemWords
 	}
 
-	// A logo kept in an icon folder is still the logo.
+	// A logo kept in an icon folder and a layout kept in a pages folder are
+	// still the frame.
 	isLogo := len(words) > 0 && words[len(words)-1] == "logo"
+	isLayout := hasWord(nameWords(dirName), layoutDirWords) || slices.Contains(words, "layout")
 
 	if slices.ContainsFunc(segments, func(s string) bool {
-		s = strings.ToLower(s)
+		switch s = strings.ToLower(s); s {
+		case "icon", "icons":
+			return !isLogo
+		case "pages":
+			return !isLayout
+		}
 
-		return nonFrameDirs[s] && (!isLogo || (s != "icon" && s != "icons"))
+		return nonFrameDirs[s]
 	}) {
 		return "", 0, false
 	}
@@ -620,7 +627,7 @@ func frameUnit(rootRel string) (unit string, class int, ok bool) {
 	})
 
 	switch {
-	case hasWord(nameWords(dirName), layoutDirWords), slices.Contains(words, "layout"):
+	case isLayout:
 		return unit, 0, true
 	// Only App.js among script names: a lower-case app.js is usually a Node server.
 	case strings.Count(unit, "/") <= 1 && (uiExts[ext] || name == "App.js") &&

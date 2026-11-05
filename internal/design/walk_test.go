@@ -575,6 +575,24 @@ func TestFrameFiles_Layouts(t *testing.T) {
 			},
 		},
 		{
+			name: "react router layout under pages",
+			files: []string{
+				"src/pages/Layout.jsx",
+				"src/pages/Layout.js",
+				"src/pages/RootLayout.jsx",
+				"src/pages/Layout/index.jsx",
+				"src/pages/Home.jsx",
+				"pages/api/hello.js",
+				"pages/api/layout.js",
+			},
+			want: []string{
+				"src/pages/Layout.js",
+				"src/pages/Layout.jsx",
+				"src/pages/Layout/index.jsx",
+				"src/pages/RootLayout.jsx",
+			},
+		},
+		{
 			name: "demo, icon, context and provider files",
 			files: []string{
 				"stories/Header.tsx",
