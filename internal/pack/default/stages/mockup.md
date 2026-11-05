@@ -48,6 +48,10 @@ While the look stays the project's:
   redraw or paste it, and reference the images the frame files use, from the
   Images list, the same way. Approximate an image marked too large to
   reference from the tokens: a gradient or a flat shape in its colours.
+- A single-colour logo, an SVG with `currentColor` or no fill, draws black in
+  an `<img>` and vanishes on a dark header: give an element the logo's size,
+  `mask: url(asset:...) center / contain no-repeat` and a `background-color`
+  from the tokens.
 - Draw text in the family each font's "draw with" names.
 
 What to draw:
