@@ -265,17 +265,29 @@ HEAD.
   outside component folders, and a nav bar's items or a footer's columns live
   in a child of the component, which fell off the list while lesser frame
   files made it, so the designer invented them.
-- The brief carries the text of the top frame files and of the first SVG logo
-  outside its 16 KiB cap, within a quarter of the run's model window (the
-  default window when it is unknown), at most 128 KiB: frame files take three
-  quarters of it and logos one. Logos go in smallest first while each fits what
-  is left of theirs, at most 16 KiB per root. Frame files are shared among the
-  roots by need, at most 32 KiB per root, and what the shares leave goes to
-  files still left out, by rank across the roots. Each file is counted with its
-  label and fence; a file over budget, binary or not UTF-8 is listed by path,
-  and a root none of whose text fits gets no frame source. Why: told where the
-  frame was, designers on more than one model still invented it, and the task
-  must still fit a small window.
+- The brief carries the text of the top frame files outside its 16 KiB cap,
+  within a quarter of the run's model window (the default window when it is
+  unknown), at most 128 KiB. Frame files are shared among the roots by need,
+  at most 48 KiB per root, and what the shares leave goes to files still left
+  out, by rank across the roots. A file over 32 KiB is never read. Each file
+  is counted with its label and fence; a file over budget, binary or not UTF-8
+  is listed by path, and a root none of whose text fits gets no frame source.
+  Why: told where the frame was, designers on more than one model still
+  invented it, and the task must still fit a small window.
+- Each root's part of the capped brief lists, right after its Brand files, the
+  images its frame files with text use: a JavaScript `import` or `require`, a
+  CSS `url()` or an HTML, Vue, Svelte or Astro `src` naming an `.svg`, `.png`,
+  `.jpg`, `.jpeg`, `.gif`, `.webp` or `.avif` file. A relative path, an `@/`
+  or `~/` alias and a root-absolute path (against the root's `public` folder)
+  resolve; a package's image is not followed, and a file counts only when it
+  is a regular file of the tree with no symlink, `.git` or `node_modules` on
+  its path. Each image is listed once, in frame rank order then import order,
+  at most 20 per root, with its size; one over the mockup's 32 KiB cap, a
+  Brand file too, is marked too large to reference. The logo is referenced
+  from the Brand list and its SVG is not in the frame source. Why: models do
+  not copy long image data reliably and a pasted logo came out broken, so
+  the designer names the files and the architect inserts them, and the brief
+  says which files exist and which cannot be inserted.
 - Repository text in the frame source sits in a backtick fence longer than any
   run of backticks in it and tagged by the file's extension, every line break
   is `\n`, and a line that, trimmed, starts with one or more `#` and then
@@ -355,13 +367,15 @@ HEAD.
 - A mockup source references a repository image as `asset:` and its path
   relative to the tool root, and show_mockup inserts the file as a base64
   `data:` URI before the frame check, in attribute values, styles and
-  scripts, never in markup text or comments. Only an image file of a
-  checked-out tree is taken: no symlink, `.git`, `node_modules` or kept
-  package on its path, at most 32 KiB, its content matching its extension.
-  The source stored, posted and baked into cards is the substituted one, and
-  the designer's own conversation keeps the reference. Why: models do not
-  copy long image data reliably, and a logo the designer copied came out as
-  hand-rounded path data, broken.
+  scripts, never in markup text or comments. A path with no `/` is no
+  reference, so CSS such as `.asset:hover` and script such as `{asset:src}`
+  stay as written. Only an image file of a checked-out tree is taken: no
+  symlink, `.git`, `node_modules` or kept package on its path, at most
+  32 KiB, its content matching its extension. The source stored, posted and
+  baked into cards is the substituted one, and the designer's own
+  conversation keeps the reference. Why: models do not copy long image data
+  reliably, and a logo the designer copied came out as hand-rounded path
+  data, broken.
 - No mockup source line, trimmed, starts with `## `, and a screen's or a
   suggestion's title and an option's label are one line not starting with
   `#`. Why: the agent's section parser trims lines and does not track fences.

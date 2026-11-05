@@ -14,6 +14,9 @@ import (
 
 const briefUIDir = "_npm+@acme+ui@1.2.3"
 
+// testImageCap is the largest image a mockup can reference.
+const testImageCap = 32 << 10
+
 // briefMaterial returns a fresh Material with one root that reaches one
 // package, one of its gaps, and nothing else.
 func briefMaterial() Material {
@@ -23,6 +26,7 @@ func briefMaterial() Material {
 			Path:    "portal/frontend",
 			Frame:   []Asset{{Path: "portal/frontend/src/components/Footer.tsx"}},
 			Brand:   []Asset{{Path: "portal/frontend/public/logo.svg", Size: 4096}},
+			Images:  []Asset{{Path: "portal/frontend/src/img/hero.avif", Size: 20000}},
 			Tokens: []Token{
 				{Name: "--color-border", Value: "#ebebeb"},
 				{Name: "--space-dyn", Value: "var(--missing)", Unresolved: true},
@@ -70,18 +74,19 @@ func TestBrief_Empty(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Empty(t, Brief(tt.m, map[string]string{briefUIDir: "S2"}, window128k))
+			assert.Empty(t, Brief(tt.m, map[string]string{briefUIDir: "S2"}, window128k, testImageCap))
 		})
 	}
 }
 
 func TestBrief_CarriesTheMaterial(t *testing.T) {
-	out := Brief(briefMaterial(), map[string]string{briefUIDir: "S2"}, window128k)
+	out := Brief(briefMaterial(), map[string]string{briefUIDir: "S2"}, window128k, testImageCap)
 
 	assert.Contains(t, out, "--color-border: #ebebeb")
 	assert.Contains(t, out, "portal/frontend/src/components/Footer.tsx")
 	assert.Contains(t, out, "portal/frontend/public/logo.svg")
 	assert.Contains(t, out, strconv.Itoa(4096))
+	assert.Contains(t, out, "portal/frontend/src/img/hero.avif (20000 bytes)")
 	assert.Contains(t, out, `"Acme Sans", sans-serif`)
 	assert.Contains(t, out, "Arial")
 	assert.Contains(t, out, briefUIDir+"/style/core.css")
@@ -105,7 +110,7 @@ func TestBrief_TheFlagsChangeTheOutput(t *testing.T) {
 			changed := briefMaterial()
 			tt.mutate(&changed)
 
-			assert.NotEqual(t, Brief(briefMaterial(), tags, window128k), Brief(changed, tags, window128k))
+			assert.NotEqual(t, Brief(briefMaterial(), tags, window128k, testImageCap), Brief(changed, tags, window128k, testImageCap))
 		})
 	}
 }
@@ -115,12 +120,13 @@ func TestBrief_Order(t *testing.T) {
 	m.Packages = append(m.Packages, Package{Name: "@acme/loose", Version: "9.9.9", Dir: "_npm+@acme+loose@9.9.9"})
 	m.Gaps = append(m.Gaps, Gap{Root: "", Import: "@acme/orphan/x.css", Reason: "no root"})
 
-	out := Brief(m, nil, window128k)
+	out := Brief(m, nil, window128k, testImageCap)
 
 	// Each marker is a value from the Material, in the order the parts come.
 	markers := []string{
 		"portal/frontend/src/components/Footer.tsx", // frame
 		"portal/frontend/public/logo.svg",           // brand
+		"portal/frontend/src/img/hero.avif",         // images
 		"--color-border",                            // tokens
 		"Acme Sans",                                 // fonts
 		"@acme/ui",                                  // the root's packages
@@ -140,13 +146,77 @@ func TestBrief_Order(t *testing.T) {
 	}
 }
 
+func TestBrief_ImagesList(t *testing.T) {
+	m := briefMaterial()
+	m.Roots[0].Brand = []Asset{
+		{Path: "portal/frontend/public/logo.svg", Size: 4096},
+		{Path: "portal/frontend/public/logo-large.png", Size: testImageCap + 1},
+	}
+	m.Roots[0].Images = []Asset{
+		{Path: "portal/frontend/src/img/hero.avif", Size: 20000},
+		{Path: "portal/frontend/src/img/edge.png", Size: testImageCap},
+		{Path: "portal/frontend/src/img/bg.jpg", Size: testImageCap + 1},
+	}
+
+	out := Brief(m, nil, window128k, testImageCap)
+
+	for _, line := range []string{
+		"- portal/frontend/public/logo.svg (4096 bytes)",
+		"- portal/frontend/public/logo-large.png (32769 bytes, too large to reference)",
+		"- portal/frontend/src/img/hero.avif (20000 bytes)",
+		"- portal/frontend/src/img/edge.png (32768 bytes)",
+		"- portal/frontend/src/img/bg.jpg (32769 bytes, too large to reference)",
+	} {
+		assert.Contains(t, strings.Split(out, "\n"), line)
+	}
+
+	brand := strings.Index(out, "\nBrand:\n")
+	images := strings.Index(out, "\nImages the frame files use:\n")
+	tokens := strings.Index(out, "\nTokens:\n")
+
+	require.NotEqual(t, -1, brand)
+	require.NotEqual(t, -1, images)
+	assert.Less(t, brand, images)
+	assert.Less(t, images, tokens)
+	assert.Less(t, strings.Index(out, "bg.jpg"), tokens)
+
+	// The order given is kept.
+	assert.Less(t, strings.Index(out, "hero.avif"), strings.Index(out, "edge.png"))
+	assert.Less(t, strings.Index(out, "edge.png"), strings.Index(out, "bg.jpg"))
+}
+
+func TestBrief_ImagesListNeedsAnImage(t *testing.T) {
+	m := briefMaterial()
+	m.Roots[0].Images = nil
+
+	assert.NotContains(t, Brief(m, nil, window128k, testImageCap), "Images the frame files use")
+}
+
+func TestBrief_ImagesCountInTheCap(t *testing.T) {
+	m := briefMaterial()
+
+	for i := range 20 {
+		m.Roots[0].Images = append(m.Roots[0].Images, Asset{
+			Path: fmt.Sprintf("portal/frontend/src/img/%02d-%s.png", i, strings.Repeat("a", 900)), Size: 100,
+		})
+	}
+
+	out := Brief(m, nil, window128k, testImageCap)
+
+	assert.LessOrEqual(t, len(out), maxBriefBytes)
+	assert.True(t, strings.HasPrefix(out, "## Design material"))
+	assert.Contains(t, out, "Images the frame files use:")
+	assert.Contains(t, out, "00-aaa")
+	assert.True(t, strings.HasSuffix(out, cutNote), "the part is cut at a line end like any other")
+}
+
 func TestBrief_PartPerRoot(t *testing.T) {
 	m := Material{Roots: []Root{
 		{Project: "alpha", Path: "alpha/web", Frame: []Asset{{Path: "alpha/web/a.tsx"}}},
 		{Project: "beta", Path: "beta/ui", Frame: []Asset{{Path: "beta/ui/b.tsx"}}},
 	}}
 
-	out := Brief(m, nil, window128k)
+	out := Brief(m, nil, window128k, testImageCap)
 
 	alpha := strings.Index(out, "### alpha alpha/web")
 	beta := strings.Index(out, "### beta beta/ui")
@@ -179,7 +249,7 @@ func TestBrief_Cap(t *testing.T) {
 		m.Roots = append(m.Roots, root)
 	}
 
-	out := Brief(m, nil, window128k)
+	out := Brief(m, nil, window128k, testImageCap)
 
 	assert.LessOrEqual(t, len(out), 16<<10)
 
@@ -229,7 +299,7 @@ func TestBrief_CapHoldsWithoutTokens(t *testing.T) {
 		m.Packages[0].Files = append(m.Packages[0].Files, fmt.Sprintf("%s/style/component-%04d.css", briefUIDir, i))
 	}
 
-	out := Brief(m, nil, window128k)
+	out := Brief(m, nil, window128k, testImageCap)
 
 	assert.LessOrEqual(t, len(out), 16<<10)
 	assert.True(t, strings.HasPrefix(out, "## Design material"))
@@ -259,7 +329,7 @@ func TestBrief_UntrustedTextStaysOnOneLine(t *testing.T) {
 		Gaps: []Gap{{Root: "portal/frontend" + inject, Import: "@acme/x" + inject, Reason: "why" + inject}},
 	}
 
-	out := Brief(m, map[string]string{briefUIDir: "S2"}, window128k)
+	out := Brief(m, map[string]string{briefUIDir: "S2"}, window128k, testImageCap)
 
 	var headings []string
 
@@ -295,7 +365,7 @@ func TestBrief_LongTokenValueIsCut(t *testing.T) {
 				Tokens: []Token{{Name: "--long", Value: tt.value}},
 			}}}
 
-			out := Brief(m, nil, window128k)
+			out := Brief(m, nil, window128k, testImageCap)
 
 			assert.True(t, utf8.ValidString(out))
 			assert.Contains(t, out, tt.wantKeep)
@@ -329,7 +399,7 @@ func TestBrief_CutKeepsTheUsefulTokens(t *testing.T) {
 	m.Roots[0].Tokens = tokens
 
 	before := slices.Clone(tokens)
-	out := Brief(m, nil, window128k)
+	out := Brief(m, nil, window128k, testImageCap)
 
 	assert.LessOrEqual(t, len(out), maxBriefBytes)
 	assert.Equal(t, before, m.Roots[0].Tokens)
@@ -347,7 +417,7 @@ func TestBrief_CutKeepsTheUsefulTokens(t *testing.T) {
 		{Name: "--color-ghost", Value: "var(--missing)", Unresolved: true},
 		{Name: "--color-red-500", Value: "oklch(63.7% 0.237 25.331)"},
 	}
-	list := Brief(small, nil, window128k)
+	list := Brief(small, nil, window128k, testImageCap)
 	assert.Less(t, strings.Index(list, "--color-red-500:"), strings.Index(list, "--color-ghost:"))
 }
 
@@ -384,7 +454,7 @@ func TestBrief_ARootGapWithoutImport(t *testing.T) {
 	m := briefMaterial()
 	m.Gaps = []Gap{{Root: m.Roots[0].Path, Reason: "x"}}
 
-	lines := strings.Split(Brief(m, nil, window128k), "\n")
+	lines := strings.Split(Brief(m, nil, window128k, testImageCap), "\n")
 
 	assert.Contains(t, lines, "- x")
 	assert.Empty(t, linesWith(strings.Join(lines, "\n"), ": x"))

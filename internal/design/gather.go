@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
@@ -19,12 +20,10 @@ import (
 const (
 	// maxTokenNames bounds the custom property names one root resolves.
 	maxTokenNames = 2000
-	// maxFrameSourceBytes is the largest frame file whose text is read, and the
-	// cap on a root's frame files in the frame source.
+	// maxFrameSourceBytes is the largest frame file whose text is read.
 	maxFrameSourceBytes = 32 << 10
-	// maxLogoSourceBytes is the largest logo SVG whose text is read, and the cap
-	// on a root's logo in the frame source.
-	maxLogoSourceBytes = 16 << 10
+	// maxFrameImages bounds the images listed for one root.
+	maxFrameImages = 20
 )
 
 // Tree is a repository checked out at Dir, its top-level directory under the
@@ -51,6 +50,7 @@ type Root struct {
 	Project, Path string // Path is tool-root-relative, e.g. "portal/frontend"
 	Frame         []Asset
 	Brand         []Asset
+	Images        []Asset // the images the frame files with text use, each once
 	Tokens        []Token
 	Fonts         []Font
 	Packages      []string // Dir of each package this root's CSS reaches
@@ -238,10 +238,16 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 	treePrefix := filepath.ToSlash(tree.Dir)
 	root := Root{Project: tree.Project, Path: w.path}
 
+	var imageSources []imageSource
+
 	for _, a := range frameFiles(treeDir, f) {
 		text, err := readText(treeDir, a, maxFrameSourceBytes)
 		if err != nil {
 			return Root{}, err
+		}
+
+		if text != "" {
+			imageSources = append(imageSources, imageSource{file: a.Path, text: text})
 		}
 
 		a.Text = text
@@ -249,22 +255,9 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 		root.Frame = append(root.Frame, a)
 	}
 
-	// Only the first SVG is the logo the designer may copy, even when it is too
-	// large to read.
-	logoSeen := false
+	root.Images = frameImages(treeDir, f.Dir, treePrefix, imageSources)
 
 	for _, a := range brandFiles(treeDir, f) {
-		if !logoSeen && strings.EqualFold(path.Ext(a.Path), ".svg") {
-			logoSeen = true
-
-			text, err := readText(treeDir, a, maxLogoSourceBytes)
-			if err != nil {
-				return Root{}, err
-			}
-
-			a.Text = text
-		}
-
 		a.Path = path.Join(treePrefix, a.Path)
 		root.Brand = append(root.Brand, a)
 	}
@@ -354,6 +347,88 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 	root.Packages = slices.Sorted(maps.Keys(w.reached))
 
 	return root, nil
+}
+
+// imageSource is a frame file's tree-relative path and text.
+type imageSource struct{ file, text string }
+
+// frameImages lists, as tool-root-relative assets, the images the sources use:
+// each source's in import order, the sources in order, once each, at most
+// maxFrameImages. rootDir is the frontend root's tree-relative directory.
+func frameImages(treeDir, rootDir, treePrefix string, sources []imageSource) []Asset {
+	var images []Asset
+
+	seen := map[string]bool{}
+
+	for _, src := range sources {
+		for _, spec := range imageSpecs(src.text, path.Ext(src.file)) {
+			rel, ok := imageTarget(treeDir, rootDir, src.file, spec)
+			if !ok || seen[rel] {
+				continue
+			}
+
+			size, ok := imageSize(treeDir, rel)
+			if !ok {
+				continue
+			}
+
+			seen[rel] = true
+			images = append(images, Asset{Path: path.Join(treePrefix, rel), Size: size})
+
+			if len(images) == maxFrameImages {
+				return images
+			}
+		}
+	}
+
+	return images
+}
+
+// imageTarget resolves an image spec of the tree-relative file from: ./ and
+// ../ against its directory, an @/ or ~/ alias as a style import's, and a
+// leading / against the root's public folder. ok is false for a package.
+func imageTarget(treeDir, rootDir, from, spec string) (string, bool) {
+	switch {
+	case strings.HasPrefix(spec, "./"), strings.HasPrefix(spec, "../"):
+		return path.Join(path.Dir(from), spec), true
+	case strings.HasPrefix(spec, "@/"), strings.HasPrefix(spec, "~/"):
+		rel := aliasTarget(treeDir, rootDir, spec[2:])
+
+		return rel, rel != ""
+	case strings.HasPrefix(spec, "/"):
+		return path.Join(rootDir, "public", spec), true
+	}
+
+	return "", false
+}
+
+// imageSize returns the size of the tree-relative file rel when a mockup may
+// reference it: a regular file reached through no symlink, none of its
+// segments .git or node_modules, as show_mockup requires.
+func imageSize(treeDir, rel string) (int64, bool) {
+	if !filepath.IsLocal(rel) {
+		return 0, false
+	}
+
+	var (
+		p    = treeDir
+		info fs.FileInfo
+	)
+
+	for part := range strings.SplitSeq(rel, "/") {
+		if strings.EqualFold(part, ".git") || strings.EqualFold(part, "node_modules") {
+			return 0, false
+		}
+
+		p = filepath.Join(p, part)
+
+		var err error
+		if info, err = os.Lstat(p); err != nil || info.Mode()&fs.ModeSymlink != 0 {
+			return 0, false
+		}
+	}
+
+	return info.Size(), info.Mode().IsRegular()
 }
 
 // rootImport resolves a package import of the root's own files through the

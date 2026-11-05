@@ -3,6 +3,7 @@ package blueprint
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -142,7 +143,7 @@ func TestDesign_TheDesignerGetsTheBrief(t *testing.T) {
 	require.Len(t, srcs, 1)
 
 	task := mockupTask(t, runner)
-	assert.True(t, strings.HasPrefix(task, designpkg.Brief(designMaterial(), map[string]string{designPkgDir: srcs[0].Tag()}, stage.WindowBytes(0))),
+	assert.True(t, strings.HasPrefix(task, designpkg.Brief(designMaterial(), map[string]string{designPkgDir: srcs[0].Tag()}, stage.WindowBytes(0), stage.MaxImageBytes)),
 		"the brief opens the task, before the checkout lines:\n%s", task)
 	assert.Contains(t, task, designTokenValue)
 	assert.Contains(t, task, "sha-alpha", "the checkout lines follow it")
@@ -158,10 +159,27 @@ func TestDesign_TheDesignerGetsTheBrief(t *testing.T) {
 	}
 }
 
-func TestDesign_TheBriefFitsTheRunsWindow(t *testing.T) {
-	// Four 10 KiB frame files: a 128k window carries three of them, a 64k one two.
+func TestDesign_TheBriefMarksAnImageOverTheMockupsCap(t *testing.T) {
 	material := designMaterial()
-	for _, letter := range []string{"a", "b", "c", "d"} {
+	material.Roots[0].Images = []designpkg.Asset{
+		{Path: "alpha/src/img/mark.svg", Size: stage.MaxImageBytes},
+		{Path: "alpha/src/img/hero.avif", Size: stage.MaxImageBytes + 1},
+	}
+
+	c, _, runner, _, _ := newDesign(t, &fakeDesigner{material: material})
+	drive(t, c, "BP1")
+	takeOffer(t, c)
+	useMockup(t, c, nil)
+
+	task := mockupTask(t, runner)
+	assert.Contains(t, task, fmt.Sprintf("- alpha/src/img/mark.svg (%d bytes)\n", stage.MaxImageBytes))
+	assert.Contains(t, task, fmt.Sprintf("- alpha/src/img/hero.avif (%d bytes, too large to reference)\n", stage.MaxImageBytes+1))
+}
+
+func TestDesign_TheBriefFitsTheRunsWindow(t *testing.T) {
+	// Five 10 KiB frame files: a 128k window carries four of them, a 64k one three.
+	material := designMaterial()
+	for _, letter := range []string{"a", "b", "c", "d", "e"} {
 		material.Roots[0].Frame = append(material.Roots[0].Frame, designpkg.Asset{
 			Path: "alpha/src/" + letter + ".tsx", Size: 10 << 10, Text: strings.Repeat(letter, 10<<10),
 		})
@@ -171,7 +189,7 @@ func TestDesign_TheBriefFitsTheRunsWindow(t *testing.T) {
 		name     string
 		window   int
 		override string
-		third    bool
+		fourth   bool
 	}{
 		{"an unknown window is the default", 0, "", true},
 		{"a 64k window", 64_000, "", false},
@@ -199,14 +217,14 @@ func TestDesign_TheBriefFitsTheRunsWindow(t *testing.T) {
 			}
 
 			task := mockupTask(t, runner)
-			assert.True(t, strings.HasPrefix(task, designpkg.Brief(material, map[string]string{designPkgDir: srcs[0].Tag()}, stage.WindowBytes(window))),
+			assert.True(t, strings.HasPrefix(task, designpkg.Brief(material, map[string]string{designPkgDir: srcs[0].Tag()}, stage.WindowBytes(window), stage.MaxImageBytes)),
 				"the brief is sized by the run's window")
-			assert.Contains(t, task, strings.Repeat("b", 10<<10))
+			assert.Contains(t, task, strings.Repeat("c", 10<<10))
 
-			if tt.third {
-				assert.Contains(t, task, strings.Repeat("c", 10<<10))
+			if tt.fourth {
+				assert.Contains(t, task, strings.Repeat("d", 10<<10))
 			} else {
-				assert.NotContains(t, task, strings.Repeat("c", 100))
+				assert.NotContains(t, task, strings.Repeat("d", 100))
 			}
 		})
 	}
