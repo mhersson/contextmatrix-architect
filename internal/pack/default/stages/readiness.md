@@ -89,10 +89,15 @@ source), the architect itself attaches the whole mockup, when it emits the
 cards, to every card of a slice that builds a screen. A card's `mockup`
 field names only the screens that card builds or changes, and a card that
 builds none names none, so never judge whether a card carries the mockup.
-Two mockup findings exist, and no other: a card that builds or changes a
-screen of the mockup without naming it in `mockup`; and a card that builds or
+Three mockup findings exist, and no other: a card that builds or changes a
+screen of the mockup without naming it in `mockup`; a card that builds or
 changes a screen on which the mockup shows something the decisions dropped,
-when its Solution does not say not to build that part.
+when its Solution does not say not to build that part; and a card whose
+Solution or criteria copy the mockup's fixed
+`<meta name="viewport" content="width=N">` into the build, which is only the
+width ContextMatrix draws the mockup at: an HTML document a card writes
+declares `width=device-width, initial-scale=1`. A card that says nothing of
+the viewport is no finding.
 
 Then judge the blueprint as a whole, each artifact against the others:
 decisions, contracts, cards and assumptions that disagree; two assumptions

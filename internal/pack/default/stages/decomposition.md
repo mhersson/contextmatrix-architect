@@ -93,6 +93,11 @@ source):
   Solution says which part not to build, or how it differs.
 - Never paste the mockup's source into a card and never write a fenced
   block whose info string is `mockup`: describe the screen in words.
+- The source's `<meta name="viewport" content="width=N">` is the width
+  ContextMatrix draws the mockup at, never part of the build, so no card's
+  Solution or criteria carry it: an HTML document a card writes declares
+  `width=device-width, initial-scale=1`, and a page the project already has
+  keeps the viewport it has.
 
 Setup is work the cards carry, never a reason to stop. Read repo_info and
 the checkout:
