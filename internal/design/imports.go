@@ -9,8 +9,9 @@ import (
 var (
 	blockCommentRE = regexp.MustCompile(`(?s)/\*.*?\*/`)
 
-	// A line whose first non-space characters are `//`.
-	lineCommentRE = regexp.MustCompile(`(?m)^[ \t]*//.*$`)
+	// A block comment or a line whose first non-space characters are `//`, in
+	// one pass so that whichever opens first hides the other's marks.
+	jsCommentRE = regexp.MustCompile(`(?ms)/\*.*?\*/|^[ \t]*//[^\n]*`)
 
 	// Groups: 1-3 url(...) as double-quoted, single-quoted, bare; 4-5 a plain
 	// string as double-quoted, single-quoted.
@@ -66,7 +67,7 @@ func jsCSSImports(src string) []string {
 // src that start with ./, in order and once each, ignoring comments. A
 // specifier with a query or a .. segment is left out.
 func localImports(src string) []string {
-	src = lineCommentRE.ReplaceAllString(blockCommentRE.ReplaceAllString(src, ""), "")
+	src = jsCommentRE.ReplaceAllString(src, "")
 
 	var specs []string
 

@@ -293,6 +293,21 @@ func TestLocalImports(t *testing.T) {
 			src:  "// import Old from './Old'\n  // import Older from './Older'\nimport New from './New'\n",
 			want: []string{"./New"},
 		},
+		{
+			name: "block comment opener inside a line comment",
+			src:  "// for /docs/*\nimport A from './A'\n/** @returns the bar */\nimport B from './B'\n",
+			want: []string{"./A", "./B"},
+		},
+		{
+			name: "line comment inside a block comment",
+			src:  "/*\n// import Old from './Old'\n*/\nimport New from './New'\n",
+			want: []string{"./New"},
+		},
+		{
+			name: "block comment closer inside a line comment",
+			src:  "/* import Old from './Old'\n// done */\nimport New from './New'\n",
+			want: []string{"./New"},
+		},
 		{name: "parent directory", src: `import Footer from '../Footer'`},
 		{name: "parent directory inside", src: `import Menu from './a/../Menu'`},
 		{name: "alias", src: `import Menu from '@/components/Menu'`},

@@ -260,11 +260,11 @@ HEAD.
   Known limit: a frame component with an unusual name is missed, and the
   design-system components in the frame source are translated to HTML by the
   designer from the kept CSS. Why: the designer drew a made-up frame when
-  noise outranked the real components, flat, Vue, Angular, Next app-router,
-  SvelteKit, Feature-Sliced and Django apps keep their frame files outside
-  component folders, and a nav bar's items or a footer's columns live in a
-  child of the component, which fell off the list while lesser frame files
-  made it, so the designer invented them.
+  noise outranked the real components, and flat, Vue, Angular, Next
+  app-router, SvelteKit, Feature-Sliced and Django apps keep their frame files
+  outside component folders, and a nav bar's items or a footer's columns live
+  in a child of the component, which fell off the list while lesser frame
+  files made it, so the designer invented them.
 - The brief carries the text of the top frame files and of the first SVG logo
   outside its 16 KiB cap, within a quarter of the run's model window (the
   default window when it is unknown), at most 128 KiB: frame files take three
