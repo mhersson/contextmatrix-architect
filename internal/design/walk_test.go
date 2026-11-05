@@ -352,6 +352,7 @@ func TestFrameFiles(t *testing.T) {
 		"src/layouts/default.vue",
 		"src/components/BaseLayout/index.tsx",
 		"src/components/BaseLayout/index.module.css",
+		"src/theme/nav_item.svelte",
 		"src/components/TopBar/TopBar.tsx",
 		"src/components/NavigationBar/index.tsx",
 		"src/components/NavigationBar/index.module.css",
@@ -423,8 +424,67 @@ func TestFrameFiles_Layouts(t *testing.T) {
 			files: []string{"src/components/useNav/index.ts"},
 		},
 		{
-			name:  "a shallow frame word needs a UI file",
-			files: []string{"src/nav.ts"},
+			name:  "a frame word in a script file needs a component or own folder",
+			files: []string{"src/nav.ts", "src/shared/header.js"},
+		},
+		{
+			name: "next app router colocates frame files",
+			files: []string{
+				"app/(marketing)/site-header.tsx",
+				"app/dashboard/sidebar.tsx",
+				"app/dashboard/page.tsx",
+				"app/ui/dashboard/nav-links.tsx",
+			},
+			want: []string{
+				"app/(marketing)/site-header.tsx",
+				"app/dashboard/sidebar.tsx",
+				"app/ui/dashboard/nav-links.tsx",
+			},
+		},
+		{
+			name: "shared ui folders",
+			files: []string{
+				"src/shared/Header.tsx",
+				"src/common/Header.tsx",
+				"src/containers/Header.tsx",
+				"src/widgets/Header.tsx",
+				"src/ui/Header.tsx",
+			},
+			want: []string{
+				"src/ui/Header.tsx",
+				"src/common/Header.tsx",
+				"src/shared/Header.tsx",
+				"src/widgets/Header.tsx",
+				"src/containers/Header.tsx",
+			},
+		},
+		{
+			name:  "feature-sliced widget",
+			files: []string{"widgets/header/ui/Header.tsx"},
+			want:  []string{"widgets/header/ui/Header.tsx"},
+		},
+		{
+			name:  "sveltekit lib and routes",
+			files: []string{"src/lib/Footer.svelte", "src/routes/Header.svelte", "src/routes/+page.svelte"},
+			want:  []string{"src/routes/Header.svelte", "src/lib/Footer.svelte"},
+		},
+		{
+			name:  "django partials",
+			files: []string{"templates/partials/footer.html"},
+			want:  []string{"templates/partials/footer.html"},
+		},
+		{
+			name: "demo, icon, context and provider files",
+			files: []string{
+				"stories/Header.tsx",
+				"stories/header.css",
+				"src/components/MenuIcon.tsx",
+				"src/components/icons/Menu.tsx",
+				"src/components/SidebarContext.tsx",
+				"src/contexts/Nav.tsx",
+				"src/providers/Header.tsx",
+				"src/components/NavProvider.tsx",
+			},
 		},
 		{
 			name:  "the app shell sits at most one level down",

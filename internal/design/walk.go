@@ -63,12 +63,14 @@ var (
 		"hero": 4,
 	}
 
-	// Directories whose files are logic, data, tests or email templates, never
-	// the page frame.
+	// Directories whose files are logic, data, tests, demos, icons, providers or
+	// email templates, never the page frame.
 	nonFrameDirs = map[string]bool{
 		"api": true, "constants": true, "utils": true, "hooks": true, "pages": true,
 		"services": true, "store": true, "types": true, "test": true, "tests": true,
 		"__tests__": true, "__mocks__": true, "email": true, "emails": true, "mail": true, "mails": true,
+		"stories": true, "icon": true, "icons": true, "context": true, "contexts": true,
+		"provider": true, "providers": true,
 	}
 
 	componentDirWords = map[string]bool{
@@ -584,7 +586,6 @@ func frameUnit(rootRel string) (unit string, class int, ok bool) {
 	}
 
 	class, hasFrameWord := frameClass(words)
-	shallowUI := strings.Count(unit, "/") <= 1 && uiExts[ext]
 	inComponentDir := slices.ContainsFunc(segments, func(s string) bool {
 		return hasWord(nameWords(s), componentDirWords)
 	})
@@ -592,9 +593,9 @@ func frameUnit(rootRel string) (unit string, class int, ok bool) {
 	switch {
 	case hasWord(nameWords(dirName), layoutDirWords), slices.Contains(words, "layout"):
 		return unit, 0, true
-	case shallowUI && slices.Equal(words, []string{"app"}):
+	case strings.Count(unit, "/") <= 1 && uiExts[ext] && slices.Equal(words, []string{"app"}):
 		return unit, 0, true
-	case hasFrameWord && (inComponentDir || ownFolder || shallowUI):
+	case hasFrameWord && (inComponentDir || ownFolder || uiExts[ext]):
 		return unit, class, true
 	}
 
