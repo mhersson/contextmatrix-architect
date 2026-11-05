@@ -226,6 +226,27 @@ HEAD.
   research tools add; the pack loader refuses the key without the code
   tools. Why: the brief points at files read with those tools, and no model
   picks a download.
+- Frame files are found by name: files named for a frame word (layout, shell,
+  header, navigation bar, footer, sidebar, hero and the like) in a component
+  or layout folder, layout files anywhere and any file of a layout folder,
+  never under api, constants, utils, hooks, pages, services, store, types or
+  test folders, ranked by depth, frame word and path, at most 20. Known
+  limit: a frame component with an unusual name is missed, and the
+  design-system components in the frame source are translated to HTML by the
+  designer from the kept CSS. Why: the designer drew a made-up frame when
+  noise outranked the real components.
+- The brief carries the text of the top frame files, up to 32 KiB per root
+  (96 KiB shared past three roots), and of the first SVG logo, up to 16 KiB
+  (32 KiB shared past two), each file counted with its label and fence, all
+  outside the brief's 16 KiB cap; a file over budget, binary or not UTF-8 is
+  listed by path. Why: told where the frame was, designers on more than one
+  model still invented it.
+- Repository text in the frame source sits in a backtick fence longer than any
+  run of backticks in it and tagged by the file's extension, every line break
+  is `\n`, and a line that, trimmed, starts with `#` and then white space or
+  its end has its first `#` written as `&#35;`. Why: the text lands in a
+  prompt whose sections are `## ` headings, and the agent's section parser
+  trims lines and does not track fences.
 - The only packages downloaded are those the project's own CSS imports (a CSS
   `@import`, or a JavaScript side-effect import of a package's `.css` file)
   and the importing frontend's package.json declares, at the version the

@@ -13,9 +13,11 @@ and any design docs in the repository. Show the existing screens whole,
 inside the project's own page frame, with the change in place, in the
 existing theme and colours, honouring the design decisions already made:
 every colour, radius, spacing and shadow comes from the project's tokens and
-CSS, never an invented value, the logo is the real one where it fits, and
-text is drawn in the system family the brief names. Every suggestion stays
-inside that design language: never a new theme, palette or component style.
+CSS, never an invented value, and text is drawn in the system family the
+brief names. The frame is rebuilt from the brief's frame source with its own
+items and labels, and the logo is the brief's SVG pasted as it is. Every
+suggestion stays inside that design language: never a new theme, palette or
+component style.
 Only on a need that intake marks `redesign: true` may the look depart from
 the existing one, and then the look itself may be among the suggestions.
 
