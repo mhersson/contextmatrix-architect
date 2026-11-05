@@ -913,6 +913,39 @@ func TestFrameFiles_ChildrenFollowOnlyOneLevelAndOnlyAFolder(t *testing.T) {
 	})
 }
 
+func TestFrameFiles_ChildThatIsAFrameFileIsNotAParent(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"src/components/NavBar/index.tsx":                importing("./NavMenu"),
+		"src/components/NavBar/NavMenu/index.tsx":        importing("./Items"),
+		"src/components/NavBar/NavMenu/Items.tsx":        `x`,
+		"src/components/NavBar/NavMenu/index.module.css": `x`,
+		"src/components/Footer/index.tsx":                `x`,
+	})
+
+	assert.Equal(t, []string{
+		"src/components/NavBar/index.tsx",
+		"src/components/NavBar/NavMenu/index.tsx",
+		"src/components/Footer/index.tsx",
+		"src/components/NavBar/NavMenu/index.module.css",
+	}, assetPaths(frameFiles(root, frontend{Dir: ""})))
+}
+
+func TestFrameFiles_ReExportingIndexLeavesTheComponentAParent(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"src/components/NavBar/index.tsx":  "export { default } from './NavBar'\n",
+		"src/components/NavBar/NavBar.tsx": importing("./Links"),
+		"src/components/NavBar/Links.tsx":  `x`,
+	})
+
+	assert.Equal(t, []string{
+		"src/components/NavBar/index.tsx",
+		"src/components/NavBar/NavBar.tsx",
+		"src/components/NavBar/Links.tsx",
+	}, assetPaths(frameFiles(root, frontend{Dir: ""})))
+}
+
 func TestFrameFiles_ChildLogoInAnIconFolder(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{

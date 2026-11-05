@@ -499,20 +499,22 @@ func frameFiles(treeDir string, f frontend) []Asset {
 		)
 	})
 
-	// A parent ranked past the cap puts its children past it too: not read.
-	children := frameChildren(treeDir, f.Dir, hits[:min(len(hits), maxFrameFiles)], visited)
-
 	var (
 		assets  = make([]Asset, 0, len(hits))
 		emitted = map[string]bool{}
+		// Files brought in as a child, which are never parents: one level.
+		viaParent = map[string]bool{}
 	)
 
-	emit := func(a Asset) {
-		if !emitted[a.Path] {
-			emitted[a.Path] = true
-
-			assets = append(assets, a)
+	emit := func(a Asset) bool {
+		if emitted[a.Path] {
+			return false
 		}
+
+		emitted[a.Path] = true
+		assets = append(assets, a)
+
+		return true
 	}
 
 	for start := 0; start < len(hits); {
@@ -525,9 +527,16 @@ func frameFiles(treeDir string, f frontend) []Asset {
 			emit(h.asset)
 		}
 
-		for _, h := range hits[start:end] {
-			for _, c := range children[h.asset.Path] {
-				emit(c)
+		// A parent ranked past the cap puts its children past it too: not read.
+		for i := start; i < min(end, maxFrameFiles); i++ {
+			if viaParent[hits[i].asset.Path] {
+				continue
+			}
+
+			for _, c := range frameChildren(treeDir, f.Dir, hits[i], visited) {
+				if emit(c) {
+					viaParent[c.Path] = true
+				}
 			}
 		}
 
@@ -537,40 +546,38 @@ func frameFiles(treeDir string, f frontend) []Asset {
 	return assets[:min(len(assets), maxFrameFiles)]
 }
 
-// frameChildren maps the path of each parent among hits to the files it imports
-// with ./ that the frame walk visited and the frame rules allow, in import
-// order. A parent is a frame file that is its own folder and not a stylesheet;
-// one whose text cannot be read, as for the frame source, has no children.
-func frameChildren(treeDir, rootDir string, hits []frameHit, visited map[string]fs.DirEntry) map[string][]Asset {
-	children := map[string][]Asset{}
+// frameChildren lists the files the frame file h imports with ./ that the frame
+// walk visited and the frame rules allow, in import order. Only a frame file
+// that is its own folder and not a stylesheet has children; one whose text
+// cannot be read, as for the frame source, has none.
+func frameChildren(treeDir, rootDir string, h frameHit, visited map[string]fs.DirEntry) []Asset {
+	if !h.ownFolder || h.isStylesheet {
+		return nil
+	}
 
-	for _, h := range hits {
-		if !h.ownFolder || h.isStylesheet {
+	text, err := readText(treeDir, h.asset, maxFrameSourceBytes)
+	if err != nil {
+		slog.Warn("design: read frame file", "path", h.asset.Path, "error", err)
+
+		return nil
+	}
+
+	var children []Asset
+
+	for _, spec := range localImports(text) {
+		rel, ok := resolveChild(path.Dir(h.asset.Path), spec, visited)
+		if !ok || !isChildFile(splitFrameName(relDir(rootDir, rel))) {
 			continue
 		}
 
-		text, err := readText(treeDir, h.asset, maxFrameSourceBytes)
+		info, err := visited[rel].Info()
 		if err != nil {
-			slog.Warn("design: read frame file", "path", h.asset.Path, "error", err)
+			slog.Warn("design: stat frame child", "path", rel, "error", err)
 
 			continue
 		}
 
-		for _, spec := range localImports(text) {
-			rel, ok := resolveChild(path.Dir(h.asset.Path), spec, visited)
-			if !ok || !isChildFile(splitFrameName(relDir(rootDir, rel))) {
-				continue
-			}
-
-			info, err := visited[rel].Info()
-			if err != nil {
-				slog.Warn("design: stat frame child", "path", rel, "error", err)
-
-				continue
-			}
-
-			children[h.asset.Path] = append(children[h.asset.Path], Asset{Path: rel, Size: info.Size()})
-		}
+		children = append(children, Asset{Path: rel, Size: info.Size()})
 	}
 
 	return children
