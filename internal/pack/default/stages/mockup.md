@@ -56,7 +56,8 @@ What to draw:
   use it: a phone-sized column for a phone app, a tablet's width for a tablet,
   a window with its title bar for a desktop app, a grid of characters in a
   monospace system font for a full-screen terminal interface, a full-width
-  page for a web page. HTML is the medium only.
+  page for a web page, drawn at the width it declares (see the frame
+  contract). HTML is the medium only.
 - The screens are tabs, steps or views inside the one document, 1 to 8 of
   them, each named in `screens` with an id and a title. An id is lower case
   letters, digits and `_`, starting with a letter, at most 32 characters; a
@@ -108,6 +109,13 @@ rule; fix it and show again in the same run.
   `action`, `formaction`, `data` and `xlink:href` value is a `data:` URI or
   an `asset:` reference; an `href` or `xlink:href` may also be a `#`
   fragment. Switch views in script, never with a navigating link.
+- Width: declare the screen's width with
+  `<meta name="viewport" content="width=N">` in the head, N a whole number of
+  CSS pixels from 320 to 2560: 1280 for a desktop web page, 390 for a phone
+  app, 820 for a tablet, the window's width for a desktop app; a full-screen
+  terminal interface declares none. ContextMatrix draws a document wider than
+  its pane at that width and scales it down to fit, never up, so draw at the
+  real width and never squeeze a desktop page to the pane.
 - In styles, no `@import` and no `url(` that is not a `data:` URI, an
   `asset:` reference or a fragment.
 - In script, a script element's or an `on...` attribute's, no network call
