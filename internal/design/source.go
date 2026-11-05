@@ -23,30 +23,23 @@ var sourceLangs = map[string]string{
 // lineBreaks turns every line break a reader may split on into a newline.
 var lineBreaks = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\u0085", "\n", "\u2028", "\n", "\u2029", "\n")
 
-// frameSource renders, per root whose logo or a frame file fits its share, the
-// logo and the frame files that fit as fenced source and the rest by path, or
-// "" when nothing fits. It is not part of the capped brief: it takes at most a
-// quarter of windowBytes, the run's window in bytes, and each total is shared
-// among the roots by need, every block counted whole.
+// frameSource renders, per root with something included, the logo and the frame
+// files that fit as fenced source and the rest by path, or "" when nothing
+// fits. It is not part of the capped brief: it takes at most a quarter of
+// windowBytes, the run's window in bytes; logos take a quarter of that, smallest
+// first while each fits, and frame files the rest, shared by need, then the
+// leftover by rank across the roots. Every block counts whole.
 func frameSource(roots []Root, windowBytes int) string {
 	budget := min(maxFrameSourceBudget, max(windowBytes, 0)/4)
 
 	logos, frames := make([]string, len(roots)), make([][]string, len(roots))
-	logoNeeds, frameNeeds := make([]int, len(roots)), make([]int, len(roots))
 
 	for i, r := range roots {
 		logos[i], frames[i] = rootBlocks(r)
-		logoNeeds[i] = min(len(logos[i]), maxLogoSourceBytes)
-
-		for _, block := range frames[i] {
-			frameNeeds[i] += len(block)
-		}
-
-		frameNeeds[i] = min(frameNeeds[i], maxFrameSourceBytes)
 	}
 
-	logoShares := shareByNeed(logoNeeds, budget/4)
-	frameShares := shareByNeed(frameNeeds, budget*3/4)
+	logoIn := logosThatFit(logos, budget/4)
+	frameIn := framesThatFit(frames, budget*3/4)
 
 	var sb strings.Builder
 
@@ -56,23 +49,16 @@ func frameSource(roots []Root, windowBytes int) string {
 			left     []string
 		)
 
-		logoLeft := len(logos[i]) > logoShares[i]
-		if !logoLeft {
+		if logoIn[i] {
 			included.WriteString(logos[i])
 		}
 
-		share := frameShares[i]
-
 		for j, block := range frames[i] {
-			if block == "" || len(block) > share {
+			if frameIn[i][j] {
+				included.WriteString(block)
+			} else {
 				left = append(left, oneLine(r.Frame[j].Path))
-
-				continue
 			}
-
-			included.WriteString(block)
-
-			share -= len(block)
 		}
 
 		// The capped part already lists every path this part would.
@@ -80,7 +66,7 @@ func frameSource(roots []Root, windowBytes int) string {
 			continue
 		}
 
-		if logoLeft {
+		if logos[i] != "" && !logoIn[i] {
 			logo, _ := logoOf(r)
 			left = append(left, oneLine(logo.Path))
 		}
@@ -92,6 +78,77 @@ func frameSource(roots []Root, windowBytes int) string {
 	}
 
 	return sb.String()
+}
+
+// logosThatFit marks the logos that go in: smallest first, each non-empty one
+// that is at most maxLogoSourceBytes and fits what is left of pool.
+func logosThatFit(logos []string, pool int) []bool {
+	order := make([]int, len(logos))
+	for i := range order {
+		order[i] = i
+	}
+
+	slices.SortStableFunc(order, func(a, b int) int { return cmp.Compare(len(logos[a]), len(logos[b])) })
+
+	in := make([]bool, len(logos))
+
+	for _, i := range order {
+		if n := len(logos[i]); n > 0 && n <= maxLogoSourceBytes && n <= pool {
+			in[i] = true
+			pool -= n
+		}
+	}
+
+	return in
+}
+
+// framesThatFit marks the frame blocks that go in. Each root first takes its
+// blocks in rank order from its share of pool; what the shares leave then goes
+// by rank across the roots to blocks still out, none past maxFrameSourceBytes
+// for its root.
+func framesThatFit(frames [][]string, pool int) [][]bool {
+	needs := make([]int, len(frames))
+
+	for i, blocks := range frames {
+		for _, b := range blocks {
+			needs[i] += len(b)
+		}
+
+		needs[i] = min(needs[i], maxFrameSourceBytes)
+	}
+
+	shares := shareByNeed(needs, pool)
+	in, taken, maxRank := make([][]bool, len(frames)), make([]int, len(frames)), 0
+
+	for i, blocks := range frames {
+		in[i] = make([]bool, len(blocks))
+		maxRank = max(maxRank, len(blocks))
+
+		for j, b := range blocks {
+			if b != "" && len(b) <= shares[i]-taken[i] {
+				in[i][j] = true
+				taken[i] += len(b)
+			}
+		}
+
+		pool -= taken[i]
+	}
+
+	for j := range maxRank {
+		for i, blocks := range frames {
+			if j >= len(blocks) || in[i][j] || blocks[j] == "" {
+				continue
+			}
+
+			if n := len(blocks[j]); n <= pool && taken[i]+n <= maxFrameSourceBytes {
+				in[i][j] = true
+				taken[i] += n
+				pool -= n
+			}
+		}
+	}
+
+	return in
 }
 
 // rootBlocks renders r's logo, "" without one, and each of its frame files, ""

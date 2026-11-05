@@ -205,31 +205,33 @@ func TestBrief_FrameSourceShare(t *testing.T) {
 	tests := []struct {
 		name   string
 		window int
-		roots  int
-		blocks int // the blocks each root gets
+		blocks []int // the blocks each root gets
 	}{
-		{"a 64k window gives 30,000 bytes", window128k / 2, 1, 2},
-		{"a 128k window gives 60,000 bytes, one root stops at its cap", window128k, 1, 3},
-		{"two roots split them", window128k, 2, 2},
-		{"four roots split them", window128k, 4, 1},
-		{"a million-token window gives 96 KiB", 2_500_000, 4, 2},
-		{"two roots stop at their cap", 2_500_000, 2, 3},
+		{"a 64k window gives 30,000 bytes", window128k / 2, []int{2}},
+		{"a 128k window gives 60,000 bytes, one root stops at its cap", window128k, []int{3}},
+		{"two roots split them, the leftover goes to the first", window128k, []int{3, 2}},
+		{"four roots split them, the leftover goes by rank", window128k, []int{2, 1, 1, 1}},
+		{"a million-token window gives 96 KiB", 2_500_000, []int{3, 2, 2, 2}},
+		{"two roots stop at their cap", 2_500_000, []int{3, 3}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out := frameSource(roots(tt.roots), tt.window)
+			out := frameSource(roots(len(tt.blocks)), tt.window)
 
 			for i, letter := range letters {
 				want := 0
-				if i < tt.blocks {
-					want = tt.roots
+
+				for _, n := range tt.blocks {
+					if n > i {
+						want++
+					}
 				}
 
 				assert.Equal(t, want, strings.Count(out, marked(letter, 10<<10)), letter)
 			}
 
-			for i := range tt.roots {
+			for i := range tt.blocks {
 				name := "r" + string(rune('1'+i))
 				assert.Contains(t, out, "- "+name+"/web/z.tsx\n")
 			}
@@ -237,8 +239,33 @@ func TestBrief_FrameSourceShare(t *testing.T) {
 	}
 }
 
+func TestBrief_FrameSourceSpendsWhatSharesLeave(t *testing.T) {
+	var roots []Root
+
+	for i := range 4 {
+		name := "r" + string(rune('1'+i))
+		roots = append(roots, frameRoot(name,
+			Asset{Path: name + "/web/app.tsx", Text: marked("a", 8<<10)},
+			Asset{Path: name + "/web/header.tsx", Text: marked("h", 8<<10)},
+			Asset{Path: name + "/web/footer.tsx", Text: marked("f", 8<<10)},
+		))
+	}
+
+	out := frameSource(roots, window128k)
+
+	assert.Equal(t, 4, strings.Count(out, marked("a", 8<<10)))
+	assert.Equal(t, 3, strings.Count(out, marked("h", 8<<10)))
+	assert.Equal(t, 0, strings.Count(out, marked("f", 8<<10)))
+	assert.Contains(t, out, "- r4/web/header.tsx\n")
+	assert.NotContains(t, out, "- r1/web/header.tsx")
+
+	for _, name := range []string{"r1", "r2", "r3", "r4"} {
+		assert.Contains(t, out, "- "+name+"/web/footer.tsx\n")
+	}
+}
+
 func TestBrief_FrameSourceSharedByNeed(t *testing.T) {
-	// 36,000 bytes of frame files: an equal split gives the big root one block.
+	// 36,000 bytes of frame budget: the big root gets what the small one leaves.
 	const window = 192_000
 
 	big := frameRoot("big",
@@ -307,7 +334,7 @@ func TestBrief_LogoShare(t *testing.T) {
 		assert.Contains(t, out, marked("b", 1<<10))
 	})
 
-	t.Run("a logo over its share is listed by path", func(t *testing.T) {
+	t.Run("logos go in while they fit", func(t *testing.T) {
 		var roots []Root
 
 		for i := range 3 {
@@ -317,10 +344,27 @@ func TestBrief_LogoShare(t *testing.T) {
 
 		out := frameSource(roots, window128k)
 
-		for i, letter := range []string{"a", "b", "c"} {
-			assert.NotContains(t, out, marked(letter, 100))
-			assert.Contains(t, out, "- r"+string(rune('1'+i))+"/web/logo.svg\n")
+		assert.Equal(t, 1, strings.Count(out, marked("a", 12<<10)))
+		assert.NotContains(t, out, marked("b", 100))
+		assert.NotContains(t, out, marked("c", 100))
+		assert.Contains(t, out, "- r2/web/logo.svg\n")
+		assert.Contains(t, out, "- r3/web/logo.svg\n")
+	})
+
+	t.Run("a smaller logo goes in first", func(t *testing.T) {
+		var roots []Root
+
+		for i, kb := range []int{12, 7, 7} {
+			name := "r" + string(rune('1'+i))
+			roots = append(roots, withLogo(frameRoot(name, Asset{Path: name + "/web/x.tsx", Text: "x"}), marked(string(rune('a'+i)), kb<<10)))
 		}
+
+		out := frameSource(roots, window128k)
+
+		assert.Contains(t, out, marked("b", 7<<10))
+		assert.Contains(t, out, marked("c", 7<<10))
+		assert.NotContains(t, out, marked("a", 100))
+		assert.Contains(t, out, "- r1/web/logo.svg\n")
 	})
 }
 

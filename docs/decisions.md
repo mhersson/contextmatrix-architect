@@ -251,16 +251,17 @@ HEAD.
   a made-up frame when noise outranked the real components, and flat, Vue,
   Angular, Next app-router, SvelteKit, Feature-Sliced and Django apps keep
   their frame files outside component folders.
-- The brief carries the text of the top frame files and of the first SVG
-  logo outside its 16 KiB cap, within a quarter of the run's model window
-  (the default window when it is unknown), at most 128 KiB: frame files take
-  three quarters of it and logos one, each shared among the roots by need,
-  so a root that needs little leaves the rest to the others, up to 32 KiB of
-  frame files and 16 KiB of logo per root. Each file is counted with its
+- The brief carries the text of the top frame files and of the first SVG logo
+  outside its 16 KiB cap, within a quarter of the run's model window (the
+  default window when it is unknown), at most 128 KiB: frame files take three
+  quarters of it and logos one. Logos go in smallest first while each fits what
+  is left of theirs, at most 16 KiB per root. Frame files are shared among the
+  roots by need, at most 32 KiB per root, and what the shares leave goes to
+  files still left out, by rank across the roots. Each file is counted with its
   label and fence; a file over budget, binary or not UTF-8 is listed by path,
-  and a root none of whose text fits gets no frame source. Why: told where
-  the frame was, designers on more than one model still invented it, and the
-  task must still fit a small window.
+  and a root none of whose text fits gets no frame source. Why: told where the
+  frame was, designers on more than one model still invented it, and the task
+  must still fit a small window.
 - Repository text in the frame source sits in a backtick fence longer than any
   run of backticks in it and tagged by the file's extension, every line break
   is `\n`, and a line that, trimmed, starts with one or more `#` and then
