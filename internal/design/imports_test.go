@@ -345,3 +345,81 @@ func TestLocalImports(t *testing.T) {
 		})
 	}
 }
+
+func TestImageSpecs(t *testing.T) {
+	tests := []struct {
+		name string
+		ext  string
+		src  string
+		want []string
+	}{
+		{name: "default import", ext: ".tsx", src: `import logo from './logo.svg'`, want: []string{"./logo.svg"}},
+		{name: "import with a react query", ext: ".tsx", src: `import Logo from './logo.svg?react'`, want: []string{"./logo.svg"}},
+		{name: "alias import with a url query", ext: ".ts", src: `import url from '@/img/x.svg?url'`, want: []string{"@/img/x.svg"}},
+		{name: "tilde alias", ext: ".js", src: `import hero from "~/img/hero.webp"`, want: []string{"~/img/hero.webp"}},
+		{name: "side-effect import", ext: ".js", src: `import './sprite.svg'`, want: []string{"./sprite.svg"}},
+		{name: "namespace import", ext: ".ts", src: `import * as art from "../art/a.png"`, want: []string{"../art/a.png"}},
+		{name: "require", ext: ".js", src: `const hero = require('./hero.jpg')`, want: []string{"./hero.jpg"}},
+		{name: "re-export", ext: ".ts", src: `export { default as Mark } from './mark.gif'`, want: []string{"./mark.gif"}},
+		{name: "fragment", ext: ".js", src: `import sprite from './sprite.svg#icon'`, want: []string{"./sprite.svg"}},
+		{name: "upper-case extension", ext: ".js", src: `import a from './A.PNG'`, want: []string{"./A.PNG"}},
+		{name: "avif", ext: ".js", src: `import a from './a.avif'`, want: []string{"./a.avif"}},
+		{name: "jpeg", ext: ".js", src: `import a from './a.jpeg'`, want: []string{"./a.jpeg"}},
+		{
+			name: "not an image",
+			ext:  ".tsx",
+			src: "import Menu from './Menu'\nimport s from './a.css'\nimport m from './logo.svg.map'\n" +
+				"import p from './logo.svgz'\nimport d from './data.json'\nimport i from './img.png/index'\n",
+		},
+		{name: "package", ext: ".tsx", src: `import icon from 'pkg/icon.svg'`, want: []string{"pkg/icon.svg"}},
+		{name: "remote and data", ext: ".js", src: `import a from 'https://cdn.example.test/a.png'` + "\n" + `import b from 'data:image/png;base64,AAAA'`},
+		{name: "dynamic import", ext: ".js", src: `const a = await import('./a.png')`},
+		{name: "once each, in order", ext: ".js", src: "import b from './b.png'\nimport a from './a.png'\nimport b2 from './b.png'\n", want: []string{"./b.png", "./a.png"}},
+		{name: "line comment", ext: ".js", src: "// import old from './old.png'\nimport a from './a.png'", want: []string{"./a.png"}},
+		{name: "block comment", ext: ".js", src: "/* import old from './old.png' */\nimport a from './a.png'", want: []string{"./a.png"}},
+
+		{name: "css url double quoted", ext: ".css", src: `a{background:url("../../img/bg.png")}`, want: []string{"../../img/bg.png"}},
+		{name: "css url single quoted", ext: ".css", src: `a{background:url('./bg.png')}`, want: []string{"./bg.png"}},
+		{name: "css url bare", ext: ".css", src: `a{background:url(/bg/wave.svg) no-repeat}`, want: []string{"/bg/wave.svg"}},
+		{name: "css url padded", ext: ".css", src: `a{background:URL(  "./a.webp"  )}`, want: []string{"./a.webp"}},
+		{name: "css url with a query", ext: ".css", src: `a{background:url(./f.png?v=2)}`, want: []string{"./f.png"}},
+		{name: "css url of a fragment", ext: ".css", src: `a{fill:url(#grad)}`},
+		{name: "css url of a font", ext: ".css", src: `@font-face{src:url(./f.woff2) format("woff2")}`},
+		{name: "css url remote", ext: ".css", src: `a{background:url(//cdn.example.test/a.png)} b{background:url(http://x.test/b.png)}`},
+		{name: "css url data", ext: ".css", src: `a{background:url(data:image/svg+xml;utf8,<svg/>)}`},
+		{name: "css two urls", ext: ".css", src: `a{background:url(./a.png),url(./b.png)}`, want: []string{"./a.png", "./b.png"}},
+		{name: "css comment", ext: ".css", src: "/* a{background:url(./old.png)} */\nb{background:url(./b.png)}", want: []string{"./b.png"}},
+		{name: "css has no script imports", ext: ".css", src: `import a from './a.png'`},
+
+		{name: "html src double quoted", ext: ".html", src: `<img src="./a.png">`, want: []string{"./a.png"}},
+		{name: "html src single quoted", ext: ".html", src: `<img alt="x" src='/img/a.svg'>`, want: []string{"/img/a.svg"}},
+		{name: "html script src", ext: ".html", src: `<script src="./main.js"></script>`},
+		{name: "html srcset is not src", ext: ".html", src: `<img srcset="./a.png 1x">`},
+		{name: "html remote", ext: ".html", src: `<img src="https://x.test/a.png"><img src="//x.test/b.png"><img src="data:image/png;base64,AA">`},
+		{name: "html comment", ext: ".html", src: `<!-- <img src="./old.png"> --><img src="./a.png">`, want: []string{"./a.png"}},
+		{name: "html style url", ext: ".html", src: `<div style="background:url(./a.png)"></div>`, want: []string{"./a.png"}},
+		{name: "jsx src is not read", ext: ".tsx", src: `<img src="./a.png" />`},
+		{
+			name: "vue in source order",
+			ext:  ".vue",
+			src: "<template><img src=\"./b.png\"></template>\n" +
+				"<script setup>\nimport a from './a.svg'\n</script>\n" +
+				"<style>.hero{background:url(../c.avif)}</style>\n",
+			want: []string{"./b.png", "./a.svg", "../c.avif"},
+		},
+		{
+			name: "svelte",
+			ext:  ".svelte",
+			src:  "<script>\n  import logo from './logo.svg?url';\n</script>\n<img src=\"./logo.svg\" alt=\"\"><img src='./b.gif'>\n",
+			want: []string{"./logo.svg", "./b.gif"},
+		},
+		{name: "astro", ext: ".astro", src: "---\nimport hero from '../hero.png'\n---\n<img src=\"./a.png\">\n", want: []string{"../hero.png", "./a.png"}},
+		{name: "unknown extension", ext: ".md", src: `import a from './a.png'`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, imageSpecs(tt.src, tt.ext))
+		})
+	}
+}

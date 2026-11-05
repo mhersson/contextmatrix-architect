@@ -120,8 +120,8 @@ type entry struct {
 	Local                     string
 }
 
-// Asset is a file found under a frontend root and its size in bytes. Text is
-// the file's text when the brief may carry it, else "".
+// Asset is a file found under a frontend root and its size in bytes. Text is a
+// frame file's text when the brief may carry it, else "".
 type Asset struct {
 	Path string
 	Size int64

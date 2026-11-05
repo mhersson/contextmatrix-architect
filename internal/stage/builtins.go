@@ -25,10 +25,10 @@ func builtinTools(in Input, mark *terminalMark, drafts *draftExtractor) []tools.
 	case in.Designer != nil && in.Interviewer != nil:
 		set = []builtin{
 			{answerChatTool{iv: in.Interviewer, mark: mark, plain: in.PlainLanguage}, in.Chat},
-			{showMockupTool{d: in.Designer, mark: mark}, true},
+			{showMockupTool{d: in.Designer, images: in.Images, mark: mark}, true},
 		}
 	case in.Designer != nil:
-		set = []builtin{{showMockupTool{d: in.Designer, mark: mark}, true}}
+		set = []builtin{{showMockupTool{d: in.Designer, images: in.Images, mark: mark}, true}}
 	case in.Interviewer != nil:
 		set = []builtin{
 			{askQuestionsTool{iv: in.Interviewer, mark: mark, plain: in.PlainLanguage}, !in.Chat},

@@ -1,6 +1,8 @@
 package design
 
 import (
+	"cmp"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -33,6 +35,24 @@ var (
 
 	// Groups: 1 the name; 2-4 the value as double-quoted, single-quoted, bare.
 	htmlAttrRE = regexp.MustCompile(`([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>=` + "`" + `]+)))?`)
+
+	// Groups: 1 double-quoted, 2 single-quoted.
+	requireRE = regexp.MustCompile(`\brequire\(\s*(?:"([^"\n]*)"|'([^'\n]*)')\s*\)`)
+
+	// Groups: 1-3 as double-quoted, single-quoted, bare.
+	cssURLRE = regexp.MustCompile(`(?i)\burl\(\s*(?:"([^"\n]*)"|'([^'\n]*)'|([^)\s'"]*))\s*\)`)
+
+	// Groups: 1 double-quoted, 2 single-quoted.
+	htmlSrcRE = regexp.MustCompile(`(?i)\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+
+	imageExts = map[string]bool{".svg": true, ".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true, ".avif": true}
+
+	// The syntaxes imageSpecs reads in a file, by its lower-cased extension.
+	imageSyntaxes = map[string]struct{ script, style, markup bool }{
+		".js": {script: true}, ".jsx": {script: true}, ".ts": {script: true}, ".tsx": {script: true},
+		".css":  {style: true},
+		".html": {true, true, true}, ".vue": {true, true, true}, ".svelte": {true, true, true}, ".astro": {true, true, true},
+	}
 )
 
 // cssImports returns every @import specifier in css, in order, ignoring
@@ -156,4 +176,79 @@ func firstNonEmpty(ss ...string) string {
 	}
 
 	return ""
+}
+
+// imageSpecs returns, in source order and once each, the specifiers in src, a
+// file with the lower-cased extension ext, of an image: a script's import or
+// require, a style's url() and a markup file's src attribute, each less any
+// query or fragment. A remote, data or protocol-relative specifier is left out.
+func imageSpecs(src, ext string) []string {
+	syntax := imageSyntaxes[strings.ToLower(ext)]
+
+	type hit struct {
+		at   int
+		spec string
+	}
+
+	var hits []hit
+
+	add := func(re *regexp.Regexp, text string) {
+		for _, m := range re.FindAllStringSubmatchIndex(text, -1) {
+			for g := 2; g+1 < len(m); g += 2 {
+				if m[g] >= 0 {
+					hits = append(hits, hit{m[g], text[m[g]:m[g+1]]})
+
+					break
+				}
+			}
+		}
+	}
+
+	if syntax.script {
+		text := blank(jsCommentRE, src)
+
+		add(staticImportRE, text)
+		add(requireRE, text)
+	}
+
+	if syntax.style {
+		add(cssURLRE, blank(blockCommentRE, src))
+	}
+
+	if syntax.markup {
+		add(htmlSrcRE, blank(htmlCommentRE, src))
+	}
+
+	slices.SortStableFunc(hits, func(a, b hit) int { return cmp.Compare(a.at, b.at) })
+
+	var specs []string
+
+	for _, h := range hits {
+		spec, _, _ := strings.Cut(h.spec, "?")
+		spec, _, _ = strings.Cut(spec, "#")
+
+		if spec == "" || strings.HasPrefix(spec, "//") || schemeRE.MatchString(spec) ||
+			!imageExts[strings.ToLower(path.Ext(spec))] || slices.Contains(specs, spec) {
+			continue
+		}
+
+		specs = append(specs, spec)
+	}
+
+	return specs
+}
+
+// blank replaces each match of re in s with spaces, line breaks kept, so
+// offsets in the result are offsets in s.
+func blank(re *regexp.Regexp, s string) string {
+	return re.ReplaceAllStringFunc(s, func(m string) string {
+		out := []byte(m)
+		for i, b := range out {
+			if b != '\n' {
+				out[i] = ' '
+			}
+		}
+
+		return string(out)
+	})
 }

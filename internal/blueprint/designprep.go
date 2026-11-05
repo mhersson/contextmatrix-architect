@@ -74,7 +74,7 @@ func (c *Controller) prepareDesign(ctx context.Context, sess *session, bp store.
 		return "", nil
 	}
 
-	brief := designpkg.Brief(m, tagsByDir(tags), stage.WindowBytes(window))
+	brief := designpkg.Brief(m, tagsByDir(tags), stage.WindowBytes(window), stage.MaxImageBytes)
 	if brief == "" {
 		return "", tags
 	}

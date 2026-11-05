@@ -21,14 +21,16 @@ const (
 
 // briefer renders a Material.
 type briefer struct {
-	m    Material
-	tags map[string]string // Package.Dir to source tag
-	pkgs map[string]Package
+	m        Material
+	tags     map[string]string // Package.Dir to source tag
+	pkgs     map[string]Package
+	imageCap int
 }
 
 // Brief renders m as the "Design material" section of the mockup designer's
 // task, or "" when m has no root. tags maps a Package.Dir to its source tag;
-// windowBytes is the run's model window in bytes.
+// windowBytes is the run's model window in bytes; a Brand or Images file over
+// imageCap bytes is marked too large to reference.
 //
 // The section opens with a part capped at 16 KiB. There each root's tokens are
 // listed by usefulness (resolved first, then colour, spacing, radius, shadow,
@@ -36,7 +38,7 @@ type briefer struct {
 // most useful, and every string from the target repository or a package is
 // rendered on one line, so none of it can start a heading of its own. The frame
 // source follows that part under its own budget; see frameSource.
-func Brief(m Material, tags map[string]string, windowBytes int) string {
+func Brief(m Material, tags map[string]string, windowBytes, imageCap int) string {
 	if len(m.Roots) == 0 {
 		return ""
 	}
@@ -49,7 +51,7 @@ func Brief(m Material, tags map[string]string, windowBytes int) string {
 		sortTokens(m.Roots[i].Tokens)
 	}
 
-	b := briefer{m: m, tags: tags, pkgs: make(map[string]Package, len(m.Packages))}
+	b := briefer{m: m, tags: tags, pkgs: make(map[string]Package, len(m.Packages)), imageCap: imageCap}
 	for _, p := range m.Packages {
 		b.pkgs[p.Dir] = p
 	}
@@ -109,7 +111,8 @@ func (b briefer) render(cut int) string {
 		}
 
 		list(&sb, "Frame", frameLines(r.Frame))
-		list(&sb, "Brand", brands(r.Brand))
+		list(&sb, "Brand", b.sizedLines(r.Brand))
+		list(&sb, "Images the frame files use", b.sizedLines(r.Images))
 		list(&sb, "Tokens", tokenLines(r.Tokens, keep[i]))
 		list(&sb, "Fonts", fontLines(r.Fonts))
 		list(&sb, "Package CSS", b.packageLines(pkgs))
@@ -175,10 +178,18 @@ func frameLines(assets []Asset) []string {
 	return out
 }
 
-func brands(assets []Asset) []string {
+// sizedLines lists each asset with its size, marking one a mockup cannot
+// reference for its size.
+func (b briefer) sizedLines(assets []Asset) []string {
 	out := make([]string, len(assets))
+
 	for i, a := range assets {
-		out[i] = fmt.Sprintf("%s (%d bytes)", oneLine(a.Path), a.Size)
+		note := ""
+		if a.Size > int64(b.imageCap) {
+			note = ", too large to reference"
+		}
+
+		out[i] = fmt.Sprintf("%s (%d bytes%s)", oneLine(a.Path), a.Size, note)
 	}
 
 	return out

@@ -1058,16 +1058,20 @@ func offered(req llm.Request) []string {
 }
 
 func TestRun_ADesignerGetsShowMockupInPlaceOfSubmit(t *testing.T) {
-	args, err := json.Marshal(mockupArgs(terminalSource))
+	const logo = "shop/web/src/assets/logo.svg"
+
+	source := strings.Replace(terminalSource, `data:image/png;base64,iVBORw0KGgo=`, "asset:"+logo, 1)
+	args, err := json.Marshal(mockupArgs(source))
 	require.NoError(t, err)
 
 	tests := []struct {
-		name string
-		chat bool
-		want []string
+		name              string
+		interviewer, chat bool
+		want              []string
 	}{
-		{"a first run", false, []string{AnswerChatName, ShowMockupName}},
-		{"a chat run", true, []string{AnswerChatName, ShowMockupName}},
+		{"a first run", true, false, []string{AnswerChatName, ShowMockupName}},
+		{"a chat run", true, true, []string{AnswerChatName, ShowMockupName}},
+		{"a designer without an interviewer", false, false, []string{ShowMockupName}},
 	}
 
 	for _, tt := range tests {
@@ -1076,12 +1080,17 @@ func TestRun_ADesignerGetsShowMockupInPlaceOfSubmit(t *testing.T) {
 			d := &fakeDesigner{}
 
 			in := baseInput(&bytes.Buffer{})
-			in.Interviewer, in.Designer, in.Chat = &stubInterviewer{}, d, tt.chat
+			in.Designer, in.Chat, in.Images = d, tt.chat, knownImages(logo)
+
+			if tt.interviewer {
+				in.Interviewer = &stubInterviewer{}
+			}
 
 			out, err := runnerWith(f).Run(context.Background(), in)
 			require.NoError(t, err)
 			assert.True(t, out.Asked, "a shown revision ends the run asked")
-			assert.Len(t, d.got, 1)
+			require.Len(t, d.got, 1)
+			assert.Equal(t, strings.Replace(source, "asset:"+logo, testURI(logo), 1), d.got[0].Source, "the run's images are inserted")
 
 			require.NotEmpty(t, f.requests)
 			assert.ElementsMatch(t, tt.want, offered(f.requests[0]))

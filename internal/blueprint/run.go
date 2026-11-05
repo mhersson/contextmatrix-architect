@@ -597,11 +597,12 @@ func (c *Controller) stageDraft(ctx context.Context, id, stageID string) func(st
 
 // stageInput builds what a run of st is given besides its model and limits:
 // the persona, the instructions, the task from the artifacts it consumes,
-// the code tools over the blueprint's checkouts and, with the design key,
-// the design material, the CM read tools, the research tools when the
-// session has research on, and the card contract on submit with the card
-// template, and the states of its checks. The closer ends the run's CM
-// session; it is a no-op without cm tools and never nil when err is nil.
+// the code tools over the blueprint's checkouts, the images a mockup inserts
+// from them and, with the design key, the design material, the CM read
+// tools, the research tools when the session has research on, and the card
+// contract on submit with the card template, and the states of its checks.
+// The closer ends the run's CM session; it is a no-op without cm tools and
+// never nil when err is nil.
 func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blueprint, runID int64, st pipelineStep) (stage.Input, stageChecks, func(), error) {
 	noop := func() {}
 
@@ -677,6 +678,16 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 
 		in.Tools = append(in.Tools, stage.CodeTools(facts.root, facts.repos, tagsByDir(facts.packages))...)
 		in.Task = brief + checkoutLines(facts) + in.Task
+
+		// A kept package sits under the root too, and is no tree.
+		if len(facts.repos) > 0 {
+			trees := make([]string, 0, len(facts.repos))
+			for _, r := range facts.repos {
+				trees = append(trees, r.Dir)
+			}
+
+			in.Images = stage.ImageFiles{Root: facts.root, Trees: trees}
+		}
 	}
 
 	closeCM := noop

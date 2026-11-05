@@ -15,10 +15,10 @@ existing theme and colours, honouring the design decisions already made:
 every colour, radius, spacing and shadow comes from the project's tokens and
 CSS, never an invented value, and text is drawn in the system family the
 brief names. When the brief carries the frame's source, the frame is rebuilt
-from it with its own items and labels, and when it carries the logo's SVG,
-the logo is that SVG pasted as it is. Every
-suggestion stays inside that design language: never a new theme, palette or
-component style.
+from it with its own items and labels. The logo and any other image the
+repository holds are referenced with `asset:` and their path, never redrawn
+or pasted. Every suggestion stays inside that design language: never a new
+theme, palette or component style.
 Only on a need that intake marks `redesign: true` may the look depart from
 the existing one, and then the look itself may be among the suggestions.
 

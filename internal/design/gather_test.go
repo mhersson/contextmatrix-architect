@@ -3,6 +3,7 @@ package design
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -193,80 +194,46 @@ func TestGather_EndToEnd(t *testing.T) {
 	assert.Equal(t, []string{tokensDir, uiDir}, r.Packages)
 }
 
-func TestGather_FrameAndLogoText(t *testing.T) {
-	const (
-		footer = "export const Footer = () => null\n"
-		logo   = `<svg id="a"/>`
-	)
+func TestGather_FrameText(t *testing.T) {
+	const footer = "export const Footer = () => null\n"
 
-	tests := []struct {
-		name     string
-		logo     string // src/logo.svg
-		wantLogo string
-	}{
-		{name: "a logo within the limit", logo: logo, wantLogo: logo},
-		{name: "a logo over the limit", logo: strings.Repeat("a", 17<<10)},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tarballs := defaultTarballs(t)
-			srv := registryServer(t, tarballs, 0)
-
-			files := portalTree(t, srv.URL, tarballs)
-			files["frontend/src/components/Footer/index.tsx"] = footer
-			files["frontend/src/components/Header/index.tsx"] = strings.Repeat("a", 33<<10)
-			files["frontend/src/components/Menu/index.tsx"] = "a\x00b"
-			files["frontend/src/components/Nav/index.tsx"] = "\xff\xfe"
-			files["frontend/src/logo.svg"] = tt.logo
-			files["frontend/src/assets/brand/logo.svg"] = "<svg/>"
-			files["frontend/public/logo.png"] = "png"
-
-			m, err := gatherPortal(t, srv, t.TempDir(), files)
-			require.NoError(t, err)
-			require.Len(t, m.Roots, 1)
-
-			frame := map[string]Asset{}
-			for _, a := range m.Roots[0].Frame {
-				frame[a.Path] = a
-			}
-
-			const dir = "portal/frontend/src/components/"
-
-			require.Len(t, frame, 4)
-			assert.Equal(t, Asset{Path: dir + "Footer/index.tsx", Size: int64(len(footer)), Text: footer}, frame[dir+"Footer/index.tsx"])
-			assert.Equal(t, Asset{Path: dir + "Header/index.tsx", Size: 33 << 10}, frame[dir+"Header/index.tsx"], "over the limit")
-			assert.Equal(t, Asset{Path: dir + "Menu/index.tsx", Size: 3}, frame[dir+"Menu/index.tsx"], "a NUL byte")
-			assert.Equal(t, Asset{Path: dir + "Nav/index.tsx", Size: 2}, frame[dir+"Nav/index.tsx"], "invalid UTF-8")
-
-			brand := m.Roots[0].Brand
-			require.Len(t, brand, 3)
-			assert.Equal(t, []string{
-				"portal/frontend/src/logo.svg", "portal/frontend/public/logo.png", "portal/frontend/src/assets/brand/logo.svg",
-			}, assetPaths(brand))
-			assert.Equal(t, tt.wantLogo, brand[0].Text)
-			assert.Empty(t, brand[1].Text, "a PNG")
-			assert.Empty(t, brand[2].Text, "only the first SVG is read")
-		})
-	}
-}
-
-func TestGather_LogoTextIsTheFirstSVGNotTheFirstImage(t *testing.T) {
 	tarballs := defaultTarballs(t)
 	srv := registryServer(t, tarballs, 0)
 
 	files := portalTree(t, srv.URL, tarballs)
-	files["frontend/logo.png"] = "png"
-	files["frontend/src/logo.svg"] = "<svg/>"
+	files["frontend/src/components/Footer/index.tsx"] = footer
+	files["frontend/src/components/Header/index.tsx"] = strings.Repeat("a", 33<<10)
+	files["frontend/src/components/Menu/index.tsx"] = "a\x00b"
+	files["frontend/src/components/Nav/index.tsx"] = "\xff\xfe"
+	files["frontend/src/logo.svg"] = `<svg id="a"/>`
+	files["frontend/src/assets/brand/logo.svg"] = "<svg/>"
+	files["frontend/public/logo.png"] = "png"
 
 	m, err := gatherPortal(t, srv, t.TempDir(), files)
 	require.NoError(t, err)
 	require.Len(t, m.Roots, 1)
 
+	frame := map[string]Asset{}
+	for _, a := range m.Roots[0].Frame {
+		frame[a.Path] = a
+	}
+
+	const dir = "portal/frontend/src/components/"
+
+	require.Len(t, frame, 4)
+	assert.Equal(t, Asset{Path: dir + "Footer/index.tsx", Size: int64(len(footer)), Text: footer}, frame[dir+"Footer/index.tsx"])
+	assert.Equal(t, Asset{Path: dir + "Header/index.tsx", Size: 33 << 10}, frame[dir+"Header/index.tsx"], "over the limit")
+	assert.Equal(t, Asset{Path: dir + "Menu/index.tsx", Size: 3}, frame[dir+"Menu/index.tsx"], "a NUL byte")
+	assert.Equal(t, Asset{Path: dir + "Nav/index.tsx", Size: 2}, frame[dir+"Nav/index.tsx"], "invalid UTF-8")
+
 	brand := m.Roots[0].Brand
-	require.Equal(t, []string{"portal/frontend/logo.png", "portal/frontend/src/logo.svg"}, assetPaths(brand))
-	assert.Empty(t, brand[0].Text)
-	assert.Equal(t, "<svg/>", brand[1].Text)
+	assert.Equal(t, []string{
+		"portal/frontend/src/logo.svg", "portal/frontend/public/logo.png", "portal/frontend/src/assets/brand/logo.svg",
+	}, assetPaths(brand))
+
+	for _, a := range brand {
+		assert.Empty(t, a.Text, a.Path)
+	}
 }
 
 func TestGather_LogoIsTheFileNamedLogo(t *testing.T) {
@@ -284,8 +251,144 @@ func TestGather_LogoIsTheFileNamedLogo(t *testing.T) {
 	brand := m.Roots[0].Brand
 	require.Len(t, brand, 2)
 	assert.Equal(t, "portal/frontend/src/assets/images/logo.svg", brand[0].Path)
-	assert.Equal(t, `<svg id="l"/>`, brand[0].Text)
+	assert.Equal(t, int64(len(`<svg id="l"/>`)), brand[0].Size)
+	assert.Empty(t, brand[0].Text)
 	assert.Empty(t, brand[1].Text)
+}
+
+// imageTree is a frontend whose frame files import images, with the files
+// they name and a few they do not resolve to.
+func imageTree() map[string]string {
+	return map[string]string{
+		"frontend/package.json":  `{"name":"frontend"}`,
+		"frontend/src/main.tsx":  "import './index.css'\n",
+		"frontend/src/index.css": ":root{--brand:#123456}\n",
+
+		"frontend/src/components/SiteHeader/index.tsx": "import logo from './logo.svg'\n" +
+			"import gone from './gone.png'\n" +
+			"import icon from 'some-package/icon.svg'\n" +
+			"import out from '../../../../../outside.png'\n" +
+			"export const SiteHeader = () => null\n",
+		"frontend/src/components/SiteHeader/logo.svg": `<svg id="logo"/>`,
+
+		"frontend/src/components/HeroBanner/index.tsx": "import hero from '@/img/hero.svg?url'\nexport const HeroBanner = () => null\n",
+		"frontend/src/components/HeroBanner/index.module.css": ".hero{background:url(../../img/bg.png)}\n" +
+			".wave{background:url(/bg/wave.svg)}\n",
+
+		"frontend/src/img/hero.svg":   `<svg id="hero"/>`,
+		"frontend/src/img/bg.png":     "png-bytes",
+		"frontend/public/bg/wave.svg": `<svg id="wave"/>`,
+	}
+}
+
+func TestGather_FrameImages(t *testing.T) {
+	srv := registryServer(t, nil, 0)
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "outside.png"), []byte("png"), 0o600))
+
+	m, err := gatherPortal(t, srv, root, imageTree())
+	require.NoError(t, err)
+	require.Len(t, m.Roots, 1)
+
+	const dir = "portal/frontend/"
+
+	// In frame rank order, then import order; each with its size.
+	assert.Equal(t, []Asset{
+		{Path: dir + "src/components/SiteHeader/logo.svg", Size: int64(len(`<svg id="logo"/>`))},
+		{Path: dir + "src/img/hero.svg", Size: int64(len(`<svg id="hero"/>`))},
+		{Path: dir + "src/img/bg.png", Size: int64(len("png-bytes"))},
+		{Path: dir + "public/bg/wave.svg", Size: int64(len(`<svg id="wave"/>`))},
+	}, m.Roots[0].Images)
+}
+
+func TestGather_FrameImagesAreFilesOfTheTreeAMockupMayTake(t *testing.T) {
+	srv := registryServer(t, nil, 0)
+
+	files := imageTree()
+	files["frontend/src/components/SiteHeader/index.tsx"] = "import logo from './logo.svg'\n" +
+		"import link from './link.svg'\n" +
+		"import via from '../../linked/hero.svg'\n" +
+		"import pkg from '../../../node_modules/pkg/a.svg'\n" +
+		"import dir from './folder.svg'\n"
+	files["frontend/node_modules/pkg/a.svg"] = "<svg/>"
+
+	root := t.TempDir()
+	writeTree(t, filepath.Join(root, "portal"), files)
+	require.NoError(t, os.Symlink("logo.svg", filepath.Join(root, "portal/frontend/src/components/SiteHeader/link.svg")))
+	require.NoError(t, os.Symlink("img", filepath.Join(root, "portal/frontend/src/linked")))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "portal/frontend/src/components/SiteHeader/folder.svg"), 0o750))
+
+	m, err := NewGatherer(t.TempDir(), srv.Client().Transport).Gather(t.Context(), portalRequest(root))
+	require.NoError(t, err)
+	require.Len(t, m.Roots, 1)
+
+	assert.Equal(t, []string{
+		"portal/frontend/src/components/SiteHeader/logo.svg",
+		"portal/frontend/src/img/hero.svg",
+		"portal/frontend/src/img/bg.png",
+		"portal/frontend/public/bg/wave.svg",
+	}, assetPaths(m.Roots[0].Images), "a symlink, a file under node_modules and a directory are not listed")
+}
+
+func TestGather_FrameImagesAreListedOnceAndCapped(t *testing.T) {
+	srv := registryServer(t, nil, 0)
+
+	files := map[string]string{
+		"frontend/package.json":                     `{"name":"frontend"}`,
+		"frontend/src/index.css":                    ":root{--brand:#123456}\n",
+		"frontend/src/components/Footer/index.tsx":  "import a from '../Header/shared.png'\nimport b from './own.png'\n",
+		"frontend/src/components/Footer/own.png":    "png",
+		"frontend/src/components/Header/shared.png": "png",
+	}
+
+	var header strings.Builder
+
+	header.WriteString("import shared from './shared.png'\n")
+
+	for i := range maxFrameImages + 5 {
+		name := fmt.Sprintf("img%02d.png", i)
+		header.WriteString("import i" + name[3:5] + " from './" + name + "'\n")
+
+		files["frontend/src/components/Header/"+name] = "png"
+	}
+
+	files["frontend/src/components/Header/index.tsx"] = header.String()
+
+	m, err := gatherPortal(t, srv, t.TempDir(), files)
+	require.NoError(t, err)
+	require.Len(t, m.Roots, 1)
+
+	images := assetPaths(m.Roots[0].Images)
+	require.Len(t, images, maxFrameImages)
+	assert.Equal(t, "portal/frontend/src/components/Header/shared.png", images[0])
+	assert.Equal(t, "portal/frontend/src/components/Header/img18.png", images[maxFrameImages-1])
+	assert.NotContains(t, images, "portal/frontend/src/components/Footer/own.png")
+
+	// Without the crowd of the header's, the shared image is listed once.
+	files["frontend/src/components/Header/index.tsx"] = "import shared from './shared.png'\n"
+
+	m, err = gatherPortal(t, srv, t.TempDir(), files)
+	require.NoError(t, err)
+	require.Len(t, m.Roots, 1)
+	assert.Equal(t, []string{
+		"portal/frontend/src/components/Header/shared.png",
+		"portal/frontend/src/components/Footer/own.png",
+	}, assetPaths(m.Roots[0].Images))
+}
+
+func TestGather_ImagesOfAFrameFileWithoutText(t *testing.T) {
+	srv := registryServer(t, nil, 0)
+
+	files := imageTree()
+	files["frontend/src/components/SiteHeader/index.tsx"] = "import logo from './logo.svg'\n" + strings.Repeat("a", 33<<10)
+
+	m, err := gatherPortal(t, srv, t.TempDir(), files)
+	require.NoError(t, err)
+	require.Len(t, m.Roots, 1)
+
+	assert.NotContains(t, assetPaths(m.Roots[0].Images), "portal/frontend/src/components/SiteHeader/logo.svg", "its text was not read")
+	assert.Contains(t, assetPaths(m.Roots[0].Images), "portal/frontend/src/img/hero.svg")
 }
 
 func TestGather_TokensInImportOrder(t *testing.T) {

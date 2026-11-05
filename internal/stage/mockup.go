@@ -120,8 +120,9 @@ type Designer interface {
 }
 
 type showMockupTool struct {
-	d    Designer
-	mark *terminalMark
+	d      Designer
+	images Images
+	mark   *terminalMark
 }
 
 func (showMockupTool) Name() string   { return ShowMockupName }
@@ -150,6 +151,7 @@ func (showMockupTool) Schema() llm.Tool {
 			"source":{"type":"string","description":"the screen people will use, imitated in one HTML document: a phone or tablet app, a desktop window, a full-screen terminal interface, a web page, whatever the need has. ` +
 			`At most 64 KiB and self-contained, as it runs sealed in a frame: inline script and style elements and style attributes only, images as data: URIs or inline SVG, system fonts only; ` +
 			`no network calls, form submission, popups, alert, confirm or prompt, nested frames, navigating links (switch views in script), localStorage, sessionStorage or cookies. ` +
+			`Reference a repository image file as asset:<path relative to the tool root> in an attribute, a style or a script; the architect inserts the file. ` +
 			`With suggestions it renders from window.mockupSettings (each suggestion id to its value) at load, and again on every window mockup:settings event, whose detail is the settings, without resetting the screen or tab the person is on."},
 			"screens":{"type":"array","items":{"type":"object","properties":{
 				"id":{"type":"string","description":"lower case letters, digits and _, starting with a letter"},
@@ -161,7 +163,7 @@ func (showMockupTool) Schema() llm.Tool {
 }
 
 func (t showMockupTool) Execute(ctx context.Context, args map[string]any) (tools.Result, error) {
-	m, err := parseMockup(args)
+	m, err := parseMockup(ctx, args, t.images)
 	if err != nil {
 		return tools.Result{}, fmt.Errorf("%s: %w", ShowMockupName, err)
 	}
@@ -176,9 +178,10 @@ func (t showMockupTool) Execute(ctx context.Context, args map[string]any) (tools
 	return tools.Result{Text: text}, nil
 }
 
-// parseMockup reads show_mockup's arguments, every text trimmed, and checks
-// the source against the frame contract.
-func parseMockup(args map[string]any) (MockupRevision, error) {
+// parseMockup reads show_mockup's arguments, every text trimmed, inserts the
+// images the source references and checks the result against the frame
+// contract.
+func parseMockup(ctx context.Context, args map[string]any, images Images) (MockupRevision, error) {
 	m := MockupRevision{
 		Notes:  strings.TrimSpace(stringArg(args, "notes")),
 		Source: strings.TrimSpace(stringArg(args, "source")),
@@ -201,11 +204,26 @@ func parseMockup(args map[string]any) (MockupRevision, error) {
 		return MockupRevision{}, err
 	}
 
-	if err := checkSource(m.Source, len(sugs) > 0); err != nil {
+	// Refused as given before any image is read, so the insertion never
+	// starts from more than the cap.
+	if len(m.Source) > MaxMockupBytes {
+		return MockupRevision{}, sourceTooLarge(len(m.Source))
+	}
+
+	src, err := inlineImages(ctx, m.Source, images)
+	if err != nil {
 		return MockupRevision{}, err
 	}
 
-	m.Screens, m.Suggestions = screens, sugs
+	if src != m.Source && len(src) > MaxMockupBytes {
+		return MockupRevision{}, fmt.Errorf("the source is %d bytes with its images inserted and a mockup takes at most %d; reference fewer or smaller images, inline less, or draw fewer screens", len(src), MaxMockupBytes)
+	}
+
+	if err := checkSource(src, len(sugs) > 0); err != nil {
+		return MockupRevision{}, err
+	}
+
+	m.Source, m.Screens, m.Suggestions = src, screens, sugs
 
 	return m, nil
 }
@@ -471,7 +489,7 @@ func checkSource(src string, settings bool) error {
 	case strings.TrimSpace(src) == "":
 		return errors.New("source is required: the screen as one HTML document")
 	case len(src) > MaxMockupBytes:
-		return fmt.Errorf("the source is %d bytes and a mockup takes at most %d; inline less, or draw fewer screens", len(src), MaxMockupBytes)
+		return sourceTooLarge(len(src))
 	}
 
 	// The agent's section parser trims each card line and does not track
@@ -522,6 +540,11 @@ func checkSource(src string, settings bool) error {
 	}
 
 	return nil
+}
+
+// sourceTooLarge refuses a source of n bytes, over MaxMockupBytes.
+func sourceTooLarge(n int) error {
+	return fmt.Errorf("the source is %d bytes and a mockup takes at most %d; inline less, or draw fewer screens", n, MaxMockupBytes)
 }
 
 // piece is css or script a source holds, and where it holds it.
