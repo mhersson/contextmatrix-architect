@@ -115,7 +115,12 @@ rule; fix it and show again in the same run.
   app, 820 for a tablet, the window's width for a desktop app; a full-screen
   terminal interface declares none. ContextMatrix draws a document wider than
   its pane at that width and scales it down to fit, never up, so draw at the
-  real width and never squeeze a desktop page to the pane.
+  real width and never squeeze a desktop page to the pane. A width the pane
+  already holds (a phone's 390, a tablet's 820 in a wide pane) shows at the
+  pane's width, unscaled, so give a phone or tablet screen its own width in
+  CSS, a fixed-width column, never a fluid `100%` that stretches across the
+  pane. show_mockup does not check the width: a source without one still runs,
+  at the pane's width.
 - In styles, no `@import` and no `url(` that is not a `data:` URI, an
   `asset:` reference or a fragment.
 - In script, a script element's or an `on...` attribute's, no network call
