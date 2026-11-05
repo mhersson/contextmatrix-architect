@@ -5,7 +5,8 @@
 # jobs to pass before merge - and run only the image job, which builds on the
 # self-hosted runner and pushes <short sha> and latest to the registry in the
 # REGISTRY repository variable. A workflow_dispatch run builds after the
-# checks and pushes <branch>-<short sha> only.
+# checks and pushes <branch>-<short sha> only. The -race suite runs nightly
+# (.github/workflows/nightly.yaml), not here.
 #
 # GitHub Actions are pinned to exact release tags; Dependabot
 # (.github/dependabot.yml) keeps them current.
@@ -46,9 +47,6 @@ jobs:
 
       - name: go test
         run: make test
-
-      - name: go test -race
-        run: make test-race
 
   lint:
     name: lint
