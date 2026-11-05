@@ -14,8 +14,9 @@ inside the project's own page frame, with the change in place, in the
 existing theme and colours, honouring the design decisions already made:
 every colour, radius, spacing and shadow comes from the project's tokens and
 CSS, never an invented value, and text is drawn in the system family the
-brief names. The frame is rebuilt from the brief's frame source with its own
-items and labels, and the logo is the brief's SVG pasted as it is. Every
+brief names. When the brief carries the frame's source, the frame is rebuilt
+from it with its own items and labels, and when it carries the logo's SVG,
+the logo is that SVG pasted as it is. Every
 suggestion stays inside that design language: never a new theme, palette or
 component style.
 Only on a need that intake marks `redesign: true` may the look depart from

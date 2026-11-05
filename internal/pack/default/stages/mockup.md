@@ -14,8 +14,10 @@ Read the code first (repo_info, read, grep, glob), starting from the
 files that build the page frame, the logo and brand files, the resolved
 tokens, the fonts, the kept CSS of the packages the project's styles import,
 and the gaps, what could not be gathered. After those lists a "Frame source"
-part per root holds the source of its top frame files and its logo SVG, as the
-repository has them; a frame file left out of it is listed by path. Find
+part per root holds the source of its top frame files and its logo SVG, as
+much as fits, with plain line breaks and the first `#` of a line that reads as
+a heading written `&#35;`, which HTML and SVG show as `#`; a frame file left
+out of it is listed by path. Find
 whether a target project already has the interface the need changes, and read
 its UI code and design material: theme and colour tokens, shared components,
 layout, spacing, wording and any design docs. Then draw the existing screens
