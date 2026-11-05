@@ -398,7 +398,7 @@ func skipHTMLSpace(s string, i int) int {
 
 // replaceReferences replaces each reference in s with its data: URI: asset:
 // not preceded by a letter, digit, _, $ or -, and the longest run of path
-// characters after it.
+// characters after it, holding a /.
 func replaceReferences(s string, resolve func(string) (string, error)) (string, error) {
 	var (
 		b    strings.Builder
@@ -416,7 +416,9 @@ func replaceReferences(s string, resolve func(string) (string, error)) (string, 
 		end := start + pathRun(s[start:])
 		from = start
 
-		if end == start || !referenceStart(s[:at]) {
+		// A tree's directory leads every path, so a run without a slash, such
+		// as CSS's .asset:hover or a script's {asset:src}, is no reference.
+		if !strings.Contains(s[start:end], "/") || !referenceStart(s[:at]) {
 			continue
 		}
 

@@ -241,9 +241,9 @@ func TestInlineImages_LeavesWhatIsNoReference(t *testing.T) {
 		{"a textarea", `<textarea>asset:shop/x.svg</textarea>`},
 		{"a title", `<title>asset:shop/x.svg</title>`},
 		{"a prefix of letters", `<img alt="myasset:shop/x.svg"><script>var u = "myasset:shop/x.svg"</script>`},
-		{"a prefix with a dash, underscore or dollar", `<img alt="data-asset:shop/x.svg" title="my_asset:x $asset:x 1asset:x">`},
+		{"a prefix with a dash, underscore or dollar", `<img alt="data-asset:shop/x.svg" title="my_asset:shop/x.svg $asset:shop/x.svg 1asset:shop/x.svg">`},
 		{"no path after the prefix", `<img alt="asset:" title="asset: shop"><style>a{content:"asset:"}</style>`},
-		{"an attribute named like a reference", `<div asset:shop="1"></div>`},
+		{"an attribute named like a reference", `<div asset:shop/x.svg="1"></div>`},
 		{"no reference at all", terminalSource},
 	}
 
@@ -254,6 +254,39 @@ func TestInlineImages_LeavesWhatIsNoReference(t *testing.T) {
 			assert.Equal(t, tt.src, got)
 		})
 	}
+}
+
+// A path starts with a tree's directory, so a run without a slash is CSS or
+// script that only looks like a reference, whatever images the run has.
+func TestInlineImages_LeavesAPathWithoutASlash(t *testing.T) {
+	root, files := imageRoot(t)
+	trees := ImageFiles{Root: root, Trees: []string{"shop", "shop@api"}}
+
+	const (
+		src  = `<style>.asset:hover{color:red}</style><a title="asset:home">Home</a><script>var o = {asset:src}; var x = obj.asset:x;</script>`
+		logo = "shop/web/src/assets/logo.svg"
+	)
+
+	tests := []struct {
+		name string
+		img  Images
+	}{
+		{"a run without trees", nil},
+		{"a run with trees", trees},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := inlineImages(context.Background(), src, tt.img)
+			require.NoError(t, err)
+			assert.Equal(t, src, got)
+		})
+	}
+
+	got, err := inlineImages(context.Background(), src+`<img src="asset:`+logo+`">`, trees)
+	require.NoError(t, err)
+	assert.Equal(t, src+`<img src="data:image/svg+xml;base64,`+base64.StdEncoding.EncodeToString(files[logo])+`">`, got,
+		"a path with a slash is still a reference")
 }
 
 func TestInlineImages_ResolvesEachPathOnce(t *testing.T) {
