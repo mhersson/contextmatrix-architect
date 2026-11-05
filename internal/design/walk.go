@@ -29,6 +29,11 @@ var (
 		".vue": true, ".svelte": true, ".html": true, ".css": true,
 	}
 
+	// Frame extensions that hold markup or styles, never plain script.
+	uiExts = map[string]bool{
+		".tsx": true, ".jsx": true, ".vue": true, ".svelte": true, ".html": true, ".css": true,
+	}
+
 	// Style files the walk finds but never reads, by the language they name.
 	styleLangExts = map[string]string{
 		".scss": "SCSS", ".sass": "SCSS", ".less": "Less", ".styl": "Stylus",
@@ -58,11 +63,12 @@ var (
 		"hero": 4,
 	}
 
-	// Directories whose files are logic, data or tests, never the page frame.
+	// Directories whose files are logic, data, tests or email templates, never
+	// the page frame.
 	nonFrameDirs = map[string]bool{
 		"api": true, "constants": true, "utils": true, "hooks": true, "pages": true,
 		"services": true, "store": true, "types": true, "test": true, "tests": true,
-		"__tests__": true, "__mocks__": true,
+		"__tests__": true, "__mocks__": true, "email": true, "emails": true, "mail": true, "mails": true,
 	}
 
 	componentDirWords = map[string]bool{
@@ -528,14 +534,16 @@ func brandFiles(treeDir string, f frontend) []Asset {
 
 // frameUnit decides whether rootRel, a file path relative to the frontend root,
 // is a real frame file. The unit is the directory of an index file or of a file
-// named after its directory, else the directory and the file's stem; class is
-// the rank class of its best frame word.
+// named after its directory (a unit that is its own folder), else the directory
+// and the file's stem; class is the rank class of its best frame word, 0 for a
+// layout or the app shell.
 func frameUnit(rootRel string) (unit string, class int, ok bool) {
 	dir, name := path.Split(rootRel)
 	dir = strings.TrimSuffix(dir, "/")
 	lower := strings.ToLower(name)
+	ext := path.Ext(lower)
 
-	if !frameExts[path.Ext(lower)] || strings.HasSuffix(lower, ".d.ts") {
+	if !frameExts[ext] || strings.HasSuffix(lower, ".d.ts") {
 		return "", 0, false
 	}
 
@@ -559,21 +567,24 @@ func frameUnit(rootRel string) (unit string, class int, ok bool) {
 	}
 
 	stem, _, _ := strings.Cut(name, ".")
-	isIndex := strings.EqualFold(stem, "index")
+	stemWords := nameWords(stem)
+	ownFolder := strings.EqualFold(stem, "index") || strings.EqualFold(stem, dirName)
 
 	var words []string
 
-	if isIndex || strings.EqualFold(stem, dirName) {
+	if ownFolder {
 		unit, words = dir, nameWords(dirName)
 	} else {
-		unit, words = path.Join(dir, stem), nameWords(stem)
+		unit, words = path.Join(dir, stem), stemWords
 	}
 
-	if !isIndex && len(words) > 0 && words[0] == "use" {
+	// A hook, or a file such as types.ts or constants.ts beside a component.
+	if len(words) > 0 && words[0] == "use" || hasWord(stemWords, nonFrameDirs) {
 		return "", 0, false
 	}
 
 	class, hasFrameWord := frameClass(words)
+	shallowUI := strings.Count(unit, "/") <= 1 && uiExts[ext]
 	inComponentDir := slices.ContainsFunc(segments, func(s string) bool {
 		return hasWord(nameWords(s), componentDirWords)
 	})
@@ -581,7 +592,9 @@ func frameUnit(rootRel string) (unit string, class int, ok bool) {
 	switch {
 	case hasWord(nameWords(dirName), layoutDirWords), slices.Contains(words, "layout"):
 		return unit, 0, true
-	case hasFrameWord && inComponentDir:
+	case shallowUI && slices.Equal(words, []string{"app"}):
+		return unit, 0, true
+	case hasFrameWord && (inComponentDir || ownFolder || shallowUI):
 		return unit, class, true
 	}
 

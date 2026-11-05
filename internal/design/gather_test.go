@@ -1556,6 +1556,7 @@ func TestGather_StyleLanguageRoots(t *testing.T) {
 			},
 			root:     "portal/web",
 			language: "Vue",
+			frame:    []string{"portal/web/src/App.vue"},
 		},
 		{
 			name: "svelte style block with a lang",
@@ -1566,6 +1567,7 @@ func TestGather_StyleLanguageRoots(t *testing.T) {
 			},
 			root:     "portal/web",
 			language: "Less",
+			frame:    []string{"portal/web/src/App.svelte"},
 		},
 		{
 			name: "css-in-js",
@@ -1575,6 +1577,7 @@ func TestGather_StyleLanguageRoots(t *testing.T) {
 			},
 			root:     "portal/ui",
 			language: "styled-components",
+			frame:    []string{"portal/ui/src/App.tsx"},
 		},
 		{
 			name: "not a frontend",
@@ -1593,6 +1596,7 @@ func TestGather_StyleLanguageRoots(t *testing.T) {
 			},
 			root:     "portal/app",
 			language: "SCSS",
+			frame:    []string{"portal/app/src/app.css"},
 		},
 		{
 			name: "template css and styled-components",

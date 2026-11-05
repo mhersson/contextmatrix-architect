@@ -226,15 +226,22 @@ HEAD.
   research tools add; the pack loader refuses the key without the code
   tools. Why: the brief points at files read with those tools, and no model
   picks a download.
-- Frame files are found by name: files named for a frame word (layout, shell,
-  header, navigation bar, footer, sidebar, hero and the like) in a component
-  or layout folder, layout files anywhere and any file of a layout folder,
-  never under api, constants, utils, hooks, pages, services, store, types or
-  test folders, ranked by depth, frame word and path, at most 20. Known
-  limit: a frame component with an unusual name is missed, and the
-  design-system components in the frame source are translated to HTML by the
-  designer from the kept CSS. Why: the designer drew a made-up frame when
-  noise outranked the real components.
+- Frame files are found by name. A file named for a frame word (layout,
+  shell, header, navigation bar, footer, sidebar, hero and the like) counts
+  in a component or layout folder, as its folder's own file
+  (`Navbar/index.tsx`, `header/header.component.ts`), or as a `.tsx`, `.jsx`,
+  `.vue`, `.svelte`, `.html` or `.css` file at the root or one directory below
+  it, a folder's own file counted as its folder (`src/Header.tsx`). So do
+  layout files anywhere, any file of a layout folder and the app shell, such a
+  file named `App` (`app.vue`, `src/App.tsx`, `src/app/app.component.html`).
+  Files under api, constants, utils, hooks, pages, services, store, types,
+  test, email or mail folders, hooks (`use...`) and files named for those
+  folders (`types.ts` beside a layout) never count. They are ranked by depth,
+  frame word and path, at most 20. Known limit: a frame component with an
+  unusual name is missed, and the design-system components in the frame
+  source are translated to HTML by the designer from the kept CSS. Why: the
+  designer drew a made-up frame when noise outranked the real components, and
+  flat, Vue and Angular apps keep their frame outside component folders.
 - The brief carries the text of the top frame files, up to 32 KiB per root
   (96 KiB shared past three roots), and of the first SVG logo, up to 16 KiB
   (32 KiB shared past two), each file counted with its label and fence, all

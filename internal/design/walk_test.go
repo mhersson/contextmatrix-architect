@@ -345,6 +345,8 @@ func TestFrameFiles(t *testing.T) {
 	writeTree(t, root, files)
 
 	assert.Equal(t, []string{
+		"src/App.tsx",
+		"src/App.module.css",
 		"app/layout.tsx",
 		"src/routes/+layout.svelte",
 		"src/layouts/default.vue",
@@ -359,6 +361,102 @@ func TestFrameFiles(t *testing.T) {
 		"src/components/HeroPage/index.tsx",
 		"src/components/NavigationBar/NavigationButton/index.tsx",
 	}, assetPaths(frameFiles(root, frontend{Dir: ""})))
+}
+
+func TestFrameFiles_Layouts(t *testing.T) {
+	tests := []struct {
+		name  string
+		files []string
+		want  []string
+	}{
+		{
+			name: "angular",
+			files: []string{
+				"src/app/header/header.component.ts",
+				"src/app/header/header.component.html",
+				"src/app/app.component.html",
+				"src/app/app.component.ts",
+				"src/main.ts",
+			},
+			want: []string{
+				"src/app/app.component.html",
+				"src/app/header/header.component.ts",
+				"src/app/header/header.component.html",
+			},
+		},
+		{
+			name:  "create-vue",
+			files: []string{"src/App.vue", "src/main.ts", "src/components/HelloWorld.vue"},
+			want:  []string{"src/App.vue"},
+		},
+		{
+			name:  "nuxt",
+			files: []string{"app.vue", "nuxt.config.ts", "pages/index.vue"},
+			want:  []string{"app.vue"},
+		},
+		{
+			name:  "flat react",
+			files: []string{"src/App.tsx", "src/Header.tsx", "src/Footer.tsx", "src/Nav.tsx", "src/main.tsx"},
+			want:  []string{"src/App.tsx", "src/Nav.tsx", "src/Header.tsx", "src/Footer.tsx"},
+		},
+		{
+			name:  "feature folder",
+			files: []string{"src/shared/ui/Navbar/index.tsx"},
+			want:  []string{"src/shared/ui/Navbar/index.tsx"},
+		},
+		{
+			name:  "email templates",
+			files: []string{"src/emails/components/Header.tsx", "src/mail/layouts/Base.tsx"},
+		},
+		{
+			name: "files beside a layout",
+			files: []string{
+				"src/components/BaseLayout/index.tsx",
+				"src/components/BaseLayout/types.ts",
+				"src/components/BaseLayout/constants.ts",
+				"src/components/BaseLayout/utils.ts",
+			},
+			want: []string{"src/components/BaseLayout/index.tsx"},
+		},
+		{
+			name:  "a hook folder",
+			files: []string{"src/components/useNav/index.ts"},
+		},
+		{
+			name:  "a shallow frame word needs a UI file",
+			files: []string{"src/nav.ts"},
+		},
+		{
+			name:  "the app shell sits at most one level down",
+			files: []string{"src/lib/deep/app.tsx"},
+		},
+		{
+			name:  "a unit's stylesheet follows its other files",
+			files: []string{"src/components/Header/Header.css", "src/components/Header/Header.tsx"},
+			want:  []string{"src/components/Header/Header.tsx", "src/components/Header/Header.css"},
+		},
+		{
+			// Path order alone puts the Nav unit first; footer alone ranks after it.
+			name:  "a file of a layout folder ranks as a layout",
+			files: []string{"src/components/Nav.tsx", "src/layouts/Footer.vue"},
+			want:  []string{"src/layouts/Footer.vue", "src/components/Nav.tsx"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			files := map[string]string{}
+
+			for _, rel := range tt.files {
+				files[rel] = "x"
+			}
+
+			writeTree(t, root, files)
+
+			assert.Equal(t, tt.want, assetPaths(frameFiles(root, frontend{Dir: ""})))
+		})
+	}
 }
 
 func TestFrameFiles_RulesReadFromTheRoot(t *testing.T) {
