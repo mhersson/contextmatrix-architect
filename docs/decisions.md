@@ -242,12 +242,16 @@ HEAD.
   source are translated to HTML by the designer from the kept CSS. Why: the
   designer drew a made-up frame when noise outranked the real components, and
   flat, Vue and Angular apps keep their frame outside component folders.
-- The brief carries the text of the top frame files, up to 32 KiB per root
-  (96 KiB shared past three roots), and of the first SVG logo, up to 16 KiB
-  (32 KiB shared past two), each file counted with its label and fence, all
-  outside the brief's 16 KiB cap; a file over budget, binary or not UTF-8 is
-  listed by path. Why: told where the frame was, designers on more than one
-  model still invented it.
+- The brief carries the text of the top frame files and of the first SVG
+  logo outside its 16 KiB cap, within a quarter of the run's model window
+  (the default window when it is unknown), at most 128 KiB: frame files take
+  three quarters of it and logos one, each shared among the roots by need,
+  so a root that needs little leaves the rest to the others, up to 32 KiB of
+  frame files and 16 KiB of logo per root. Each file is counted with its
+  label and fence; a file over budget, binary or not UTF-8 is listed by path,
+  and a root none of whose text fits gets no frame source. Why: told where
+  the frame was, designers on more than one model still invented it, and the
+  task must still fit a small window.
 - Repository text in the frame source sits in a backtick fence longer than any
   run of backticks in it and tagged by the file's extension, every line break
   is `\n`, and a line that, trimmed, starts with one or more `#` and then

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	designpkg "github.com/mhersson/contextmatrix-architect/internal/design"
+	"github.com/mhersson/contextmatrix-architect/internal/stage"
 	"github.com/mhersson/contextmatrix-architect/internal/store"
 )
 
@@ -42,10 +43,11 @@ func packageTags(sources []store.Source) map[string]keptPackage {
 
 // prepareDesign gathers the design material of facts' trees for a run of
 // stageID and records each kept package as a source. It returns the brief
-// that opens the run's task and each kept package by its directory. A
-// failure is logged and posted and leaves the run without the material; it
-// never fails the run.
-func (c *Controller) prepareDesign(ctx context.Context, sess *session, bp store.Blueprint, stageID string, facts *codeFacts) (string, map[string]keptPackage) {
+// that opens the run's task, sized by window, the run's model window in
+// tokens (0 when unknown), and each kept package by its directory. A failure
+// is logged and posted and leaves the run without the material; it never
+// fails the run.
+func (c *Controller) prepareDesign(ctx context.Context, sess *session, bp store.Blueprint, stageID string, facts *codeFacts, window int) (string, map[string]keptPackage) {
 	if c.opts.Design == nil {
 		return "", nil
 	}
@@ -72,7 +74,7 @@ func (c *Controller) prepareDesign(ctx context.Context, sess *session, bp store.
 		return "", nil
 	}
 
-	brief := designpkg.Brief(m, tagsByDir(tags))
+	brief := designpkg.Brief(m, tagsByDir(tags), stage.WindowBytes(window))
 	if brief == "" {
 		return "", tags
 	}

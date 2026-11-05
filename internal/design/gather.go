@@ -19,9 +19,11 @@ import (
 const (
 	// maxTokenNames bounds the custom property names one root resolves.
 	maxTokenNames = 2000
-	// maxFrameSourceBytes is the largest frame file whose text is read.
+	// maxFrameSourceBytes is the largest frame file whose text is read, and the
+	// cap on a root's frame files in the frame source.
 	maxFrameSourceBytes = 32 << 10
-	// maxLogoSourceBytes is the largest logo SVG whose text is read.
+	// maxLogoSourceBytes is the largest logo SVG whose text is read, and the cap
+	// on a root's logo in the frame source.
 	maxLogoSourceBytes = 16 << 10
 )
 

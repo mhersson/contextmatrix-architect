@@ -70,13 +70,13 @@ func TestBrief_Empty(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Empty(t, Brief(tt.m, map[string]string{briefUIDir: "S2"}))
+			assert.Empty(t, Brief(tt.m, map[string]string{briefUIDir: "S2"}, window128k))
 		})
 	}
 }
 
 func TestBrief_CarriesTheMaterial(t *testing.T) {
-	out := Brief(briefMaterial(), map[string]string{briefUIDir: "S2"})
+	out := Brief(briefMaterial(), map[string]string{briefUIDir: "S2"}, window128k)
 
 	assert.Contains(t, out, "--color-border: #ebebeb")
 	assert.Contains(t, out, "portal/frontend/src/components/Footer.tsx")
@@ -105,7 +105,7 @@ func TestBrief_TheFlagsChangeTheOutput(t *testing.T) {
 			changed := briefMaterial()
 			tt.mutate(&changed)
 
-			assert.NotEqual(t, Brief(briefMaterial(), tags), Brief(changed, tags))
+			assert.NotEqual(t, Brief(briefMaterial(), tags, window128k), Brief(changed, tags, window128k))
 		})
 	}
 }
@@ -115,7 +115,7 @@ func TestBrief_Order(t *testing.T) {
 	m.Packages = append(m.Packages, Package{Name: "@acme/loose", Version: "9.9.9", Dir: "_npm+@acme+loose@9.9.9"})
 	m.Gaps = append(m.Gaps, Gap{Root: "", Import: "@acme/orphan/x.css", Reason: "no root"})
 
-	out := Brief(m, nil)
+	out := Brief(m, nil, window128k)
 
 	// Each marker is a value from the Material, in the order the parts come.
 	markers := []string{
@@ -146,7 +146,7 @@ func TestBrief_PartPerRoot(t *testing.T) {
 		{Project: "beta", Path: "beta/ui", Frame: []Asset{{Path: "beta/ui/b.tsx"}}},
 	}}
 
-	out := Brief(m, nil)
+	out := Brief(m, nil, window128k)
 
 	alpha := strings.Index(out, "### alpha alpha/web")
 	beta := strings.Index(out, "### beta beta/ui")
@@ -179,7 +179,7 @@ func TestBrief_Cap(t *testing.T) {
 		m.Roots = append(m.Roots, root)
 	}
 
-	out := Brief(m, nil)
+	out := Brief(m, nil, window128k)
 
 	assert.LessOrEqual(t, len(out), 16<<10)
 
@@ -229,7 +229,7 @@ func TestBrief_CapHoldsWithoutTokens(t *testing.T) {
 		m.Packages[0].Files = append(m.Packages[0].Files, fmt.Sprintf("%s/style/component-%04d.css", briefUIDir, i))
 	}
 
-	out := Brief(m, nil)
+	out := Brief(m, nil, window128k)
 
 	assert.LessOrEqual(t, len(out), 16<<10)
 	assert.True(t, strings.HasPrefix(out, "## Design material"))
@@ -259,7 +259,7 @@ func TestBrief_UntrustedTextStaysOnOneLine(t *testing.T) {
 		Gaps: []Gap{{Root: "portal/frontend" + inject, Import: "@acme/x" + inject, Reason: "why" + inject}},
 	}
 
-	out := Brief(m, map[string]string{briefUIDir: "S2"})
+	out := Brief(m, map[string]string{briefUIDir: "S2"}, window128k)
 
 	var headings []string
 
@@ -295,7 +295,7 @@ func TestBrief_LongTokenValueIsCut(t *testing.T) {
 				Tokens: []Token{{Name: "--long", Value: tt.value}},
 			}}}
 
-			out := Brief(m, nil)
+			out := Brief(m, nil, window128k)
 
 			assert.True(t, utf8.ValidString(out))
 			assert.Contains(t, out, tt.wantKeep)
@@ -329,7 +329,7 @@ func TestBrief_CutKeepsTheUsefulTokens(t *testing.T) {
 	m.Roots[0].Tokens = tokens
 
 	before := slices.Clone(tokens)
-	out := Brief(m, nil)
+	out := Brief(m, nil, window128k)
 
 	assert.LessOrEqual(t, len(out), maxBriefBytes)
 	assert.Equal(t, before, m.Roots[0].Tokens)
@@ -347,7 +347,7 @@ func TestBrief_CutKeepsTheUsefulTokens(t *testing.T) {
 		{Name: "--color-ghost", Value: "var(--missing)", Unresolved: true},
 		{Name: "--color-red-500", Value: "oklch(63.7% 0.237 25.331)"},
 	}
-	list := Brief(small, nil)
+	list := Brief(small, nil, window128k)
 	assert.Less(t, strings.Index(list, "--color-red-500:"), strings.Index(list, "--color-ghost:"))
 }
 
@@ -384,7 +384,7 @@ func TestBrief_ARootGapWithoutImport(t *testing.T) {
 	m := briefMaterial()
 	m.Gaps = []Gap{{Root: m.Roots[0].Path, Reason: "x"}}
 
-	lines := strings.Split(Brief(m, nil), "\n")
+	lines := strings.Split(Brief(m, nil, window128k), "\n")
 
 	assert.Contains(t, lines, "- x")
 	assert.Empty(t, linesWith(strings.Join(lines, "\n"), ": x"))

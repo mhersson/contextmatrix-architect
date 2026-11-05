@@ -137,12 +137,14 @@ at lockfileVersion 2 or 3, yarn.lock or pnpm-lock.yaml) records from the
 registry its repository configures, else the public npm registry. Each package
 kept is a source, and the chat names it when it is first fetched.
 
-The designer rebuilds the header, navigation and footer from the frame
-source, with their own items and labels, and pastes in the logo as it is. A
-file the brief leaves out is listed by path, and the designer reads it from the
-checkout. Frame files are found by name, so a frame component with an unusual
-name is missed, and the designer translates the design-system components the
-frame source uses (a button, a dropdown) to HTML from the packages' CSS.
+The designer rebuilds the header, navigation and footer from the frame source,
+with their own items and labels, and pastes in the logo as it is. The frame
+source takes at most a quarter of the model's context window, shared among the
+frontends by need; a file it leaves out is listed by path, and the designer
+reads it from the checkout. Frame files are found by name, so a frame component
+with an unusual name is missed, and the designer translates the design-system
+components the frame source uses (a button, a dropdown) to HTML from the
+packages' CSS.
 
 ### In a question round
 

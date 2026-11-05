@@ -241,10 +241,7 @@ func (r *Runner) run(ctx context.Context, in Input, tags *returnedTags) (Output,
 		return Output{}, fmt.Errorf("stage %s: a chat run needs an interviewer", in.Stage)
 	}
 
-	window := in.ContextWindow
-	if window <= 0 {
-		window = defaultContextWindow
-	}
+	window := contextWindow(in.ContextWindow)
 
 	system := in.Persona + "\n\n" + in.Instructions
 

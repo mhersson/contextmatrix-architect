@@ -125,6 +125,25 @@ func TestPreflight(t *testing.T) {
 	}
 }
 
+func TestWindowBytes(t *testing.T) {
+	tests := []struct {
+		name   string
+		window int
+		want   int
+	}{
+		{"128k", 128_000, 320_000},
+		{"64k", 64_000, 160_000},
+		{"unknown runs on the default", 0, 320_000},
+		{"negative is unknown", -1, 320_000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, WindowBytes(tt.window))
+		})
+	}
+}
+
 func TestRun_TheModelsWindowSizesCompaction(t *testing.T) {
 	tests := []struct {
 		name     string
