@@ -423,3 +423,90 @@ func TestImageSpecs(t *testing.T) {
 		})
 	}
 }
+
+func TestNamedImports(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []namedImport
+	}{
+		{
+			name: "named",
+			src:  `import { heart, newspaper } from '@acme/ui/icons'`,
+			want: []namedImport{{Spec: "@acme/ui/icons", Names: []string{"heart", "newspaper"}}},
+		},
+		{
+			name: "multi-line with a trailing comma and a line comment",
+			src:  "import {\n  heart, // like\n  play,\n} from \"@acme/ui\"",
+			want: []namedImport{{Spec: "@acme/ui", Names: []string{"heart", "play"}}},
+		},
+		{
+			name: "alias keeps the imported name",
+			src:  `import { loupe as Search } from 'x'`,
+			want: []namedImport{{Spec: "x", Names: []string{"loupe"}}},
+		},
+		{
+			name: "default and named",
+			src:  `import Theme, { Logo } from '@acme/ui'`,
+			want: []namedImport{{Spec: "@acme/ui", Names: []string{"Logo"}}},
+		},
+		{
+			name: "inline type entry dropped",
+			src:  `import { type Props, Button } from '@acme/ui'`,
+			want: []namedImport{{Spec: "@acme/ui", Names: []string{"Button"}}},
+		},
+		{name: "type-only statement", src: `import type { Props } from '@acme/ui'`},
+		{name: "minified type-only statement", src: `import type{Props}from'@acme/ui'`},
+		{
+			name: "a default binding named type",
+			src:  `import type, { heart } from 'x'`,
+			want: []namedImport{{Spec: "x", Names: []string{"heart"}}},
+		},
+		{name: "not an import keyword", src: `reimport { heart } from 'x'; importFoo, { heart } from 'x'`},
+		{name: "default import", src: `import Logo from '@acme/ui/Logo'`},
+		{name: "namespace import", src: `import * as icons from 'x'`},
+		{name: "default and namespace", src: `import Theme, * as icons from 'x'`},
+		{name: "side effect", src: `import '@acme/ui/style.css'`},
+		{name: "dynamic import", src: `const m = await import('@acme/ui')`},
+		{name: "block comment", src: `/* import { heart } from 'x' */`},
+		{name: "line comment", src: "// import { heart } from 'x'\n"},
+		{
+			name: "default entry dropped",
+			src:  `import { default as Logo, heart } from 'x'`,
+			want: []namedImport{{Spec: "x", Names: []string{"heart"}}},
+		},
+		{name: "only a default entry", src: `import { default as Logo } from 'x'`},
+		{name: "empty list", src: `import {} from 'x'`},
+		{
+			name: "two statements in source order",
+			src:  "import { b } from 'y'\nimport { a } from \"x\"\n",
+			want: []namedImport{{Spec: "y", Names: []string{"b"}}, {Spec: "x", Names: []string{"a"}}},
+		},
+		{
+			name: "a name once",
+			src:  `import { a, a } from 'x'`,
+			want: []namedImport{{Spec: "x", Names: []string{"a"}}},
+		},
+		{
+			name: "minified",
+			src:  `import{heart,play}from'@acme/ui';`,
+			want: []namedImport{{Spec: "@acme/ui", Names: []string{"heart", "play"}}},
+		},
+		{
+			name: "block comment inside the list",
+			src:  `import { heart, /* old, */ play } from 'x'`,
+			want: []namedImport{{Spec: "x", Names: []string{"heart", "play"}}},
+		},
+		{
+			name: "a type-only statement between two",
+			src:  "import { a } from 'x'\nimport type { T } from 'x'\nimport { b } from 'x'\n",
+			want: []namedImport{{Spec: "x", Names: []string{"a"}}, {Spec: "x", Names: []string{"b"}}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, namedImports(tt.src))
+		})
+	}
+}

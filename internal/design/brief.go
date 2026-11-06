@@ -113,6 +113,7 @@ func (b briefer) render(cut int) string {
 		list(&sb, "Frame", frameLines(r.Frame))
 		list(&sb, "Brand", b.sizedLines(r.Brand))
 		list(&sb, "Images the frame files use", b.sizedLines(r.Images))
+		list(&sb, "Package images named like the frame files' imports", b.sizedLines(r.PackageImages))
 		list(&sb, "Tokens", tokenLines(r.Tokens, keep[i]))
 		list(&sb, "Fonts", fontLines(r.Fonts))
 		list(&sb, "Package CSS", b.packageLines(pkgs))

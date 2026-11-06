@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -40,6 +42,14 @@ func acmeTarballs(t *testing.T, coreCSS, varsCSS string) map[string][]byte {
 func acmeStyleTarballs(t *testing.T, style map[string]string, varsCSS string) map[string][]byte {
 	t.Helper()
 
+	return acmeTarballsWith(t, style, varsCSS, nil)
+}
+
+// acmeTarballsWith is acmeStyleTarballs with the files of extra, keyed by
+// registry path and then archive path, added to the archives.
+func acmeTarballsWith(t *testing.T, style map[string]string, varsCSS string, extra map[string]map[string]string) map[string][]byte {
+	t.Helper()
+
 	ui := map[string]string{
 		"package/package.json": `{"name":"@acme/ui","version":"1.2.3",` +
 			`"dependencies":{"@acme/tokens":"^2.0.0"},` +
@@ -50,21 +60,48 @@ func acmeStyleTarballs(t *testing.T, style map[string]string, varsCSS string) ma
 		ui["package/style/"+name] = css
 	}
 
-	return map[string][]byte{
-		uiPath: tgz(t, ui),
-		tokensPath: tgz(t, map[string]string{
-			"package/package.json": `{"name":"@acme/tokens","version":"2.0.1"}`,
-			"package/vars.css":     varsCSS,
-		}),
+	tokens := map[string]string{
+		"package/package.json": `{"name":"@acme/tokens","version":"2.0.1"}`,
+		"package/vars.css":     varsCSS,
 	}
+
+	maps.Copy(ui, extra[uiPath])
+	maps.Copy(tokens, extra[tokensPath])
+
+	return map[string][]byte{uiPath: tgz(t, ui), tokensPath: tgz(t, tokens)}
 }
+
+const (
+	defaultCoreCSS = "@import './theme.css';\n@import '@acme/tokens/vars.css';\n.btn{border:0}"
+	defaultVarsCSS = ":root{--acme-grey-8:#ebebeb}"
+)
 
 func defaultTarballs(t *testing.T) map[string][]byte {
 	t.Helper()
 
-	return acmeTarballs(t,
-		"@import './theme.css';\n@import '@acme/tokens/vars.css';\n.btn{border:0}",
-		":root{--acme-grey-8:#ebebeb}")
+	return acmeTarballs(t, defaultCoreCSS, defaultVarsCSS)
+}
+
+// acmeUIImages are image files of @acme/ui's archive, keyed by archive path:
+// icons named heart, heart_medium and play, a logo, a heart under
+// node_modules and a heart_large over testImageCap.
+func acmeUIImages() map[string]string {
+	return map[string]string{
+		"package/assets/icons/heart.svg":        `<svg id="heart"/>`,
+		"package/assets/icons/heart_medium.svg": `<svg id="heart-medium"/>`,
+		"package/assets/icons/heart_large.svg":  "<svg>" + strings.Repeat(" ", testImageCap) + "</svg>",
+		"package/assets/icons/play.svg":         `<svg id="play"/>`,
+		"package/assets/images/acme-logo.png":   "\x89PNG\r\n\x1a\nlogo",
+		"package/node_modules/x/heart.svg":      `<svg id="nested"/>`,
+	}
+}
+
+// acmeImageTarballs is defaultTarballs with acmeUIImages in @acme/ui.
+func acmeImageTarballs(t *testing.T) map[string][]byte {
+	t.Helper()
+
+	return acmeTarballsWith(t, map[string]string{"core.css": defaultCoreCSS}, defaultVarsCSS,
+		map[string]map[string]string{uiPath: acmeUIImages()})
 }
 
 // registryServer serves tarballs by path, or answers status to everything
@@ -127,9 +164,20 @@ func portalRequest(root string) Request {
 func gatherPortal(t *testing.T, srv *httptest.Server, root string, files map[string]string) (Material, error) {
 	t.Helper()
 
+	return gatherPortalImages(t, srv, root, files, 0)
+}
+
+// gatherPortalImages is gatherPortal keeping package images of up to imageCap
+// bytes.
+func gatherPortalImages(t *testing.T, srv *httptest.Server, root string, files map[string]string, imageCap int) (Material, error) {
+	t.Helper()
+
 	writeTree(t, filepath.Join(root, "portal"), files)
 
-	return NewGatherer(t.TempDir(), srv.Client().Transport).Gather(t.Context(), portalRequest(root))
+	req := portalRequest(root)
+	req.ImageCap = imageCap
+
+	return NewGatherer(t.TempDir(), srv.Client().Transport).Gather(t.Context(), req)
 }
 
 func tokenValue(t *testing.T, r Root, name string) string {
@@ -389,6 +437,457 @@ func TestGather_ImagesOfAFrameFileWithoutText(t *testing.T) {
 
 	assert.NotContains(t, assetPaths(m.Roots[0].Images), "portal/frontend/src/components/SiteHeader/logo.svg", "its text was not read")
 	assert.Contains(t, assetPaths(m.Roots[0].Images), "portal/frontend/src/img/hero.svg")
+}
+
+// portalRoots is portalTree with its frontend root copied to each of dirs,
+// each holding the files of frame, keyed by path under the root.
+func portalRoots(t *testing.T, srvURL string, tarballs map[string][]byte, dirs []string, frame map[string]string) map[string]string {
+	t.Helper()
+
+	files := map[string]string{}
+
+	for name, content := range portalTree(t, srvURL, tarballs) {
+		rel, ok := strings.CutPrefix(name, "frontend/")
+		if !ok {
+			files[name] = content
+
+			continue
+		}
+
+		for _, dir := range dirs {
+			files[dir+"/"+rel] = strings.Replace(content, `"name":"frontend"`, `"name":"`+dir+`"`, 1)
+		}
+	}
+
+	for _, dir := range dirs {
+		for rel, content := range frame {
+			files[dir+"/"+rel] = content
+		}
+	}
+
+	return files
+}
+
+// imageFilesUnder lists the files under dir with an image's extension, as
+// slash paths relative to dir.
+func imageFilesUnder(t *testing.T, dir string) []string {
+	t.Helper()
+
+	var out []string
+
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !imageExts[strings.ToLower(filepath.Ext(p))] {
+			return err
+		}
+
+		rel, err := filepath.Rel(dir, p)
+		out = append(out, filepath.ToSlash(rel))
+
+		return err
+	})
+	require.NoError(t, err)
+
+	return out
+}
+
+func TestGather_PackageImagesTheFrameImports(t *testing.T) {
+	tarballs := acmeImageTarballs(t)
+	srv := registryServer(t, tarballs, 0)
+	root := t.TempDir()
+
+	files := portalRoots(t, srv.URL, tarballs, []string{"frontend"}, map[string]string{
+		"src/components/Header/index.tsx": "import { heart, play as Play } from '@acme/ui/icons'\n",
+		"src/components/Footer/index.tsx": "import { Logo } from '@acme/ui'\n",
+	})
+
+	m, err := gatherPortalImages(t, srv, root, files, testImageCap)
+	require.NoError(t, err)
+	assert.Empty(t, m.Gaps)
+	require.Len(t, m.Roots, 1)
+
+	// The Header ranks before the Footer; each name's exact match leads.
+	rels := []string{
+		"assets/icons/heart.svg", "assets/icons/heart_medium.svg", "assets/icons/play.svg", "assets/images/acme-logo.png",
+	}
+	images := acmeUIImages()
+
+	want := make([]Asset, len(rels))
+	for i, rel := range rels {
+		want[i] = Asset{Path: uiDir + "/" + rel, Size: int64(len(images["package/"+rel]))}
+	}
+
+	assert.Equal(t, want, m.Roots[0].PackageImages)
+
+	for _, rel := range rels {
+		data, err := os.ReadFile(filepath.Join(root, uiDir, filepath.FromSlash(rel)))
+		require.NoError(t, err)
+		assert.Equal(t, images["package/"+rel], string(data), rel)
+	}
+
+	assert.ElementsMatch(t, rels, imageFilesUnder(t, filepath.Join(root, uiDir)),
+		"heart_large is over the cap and the node_modules copy is not kept")
+}
+
+func TestGather_PackageImagesNeedAKeptPackage(t *testing.T) {
+	const iconsPath = "/@acme/icons/-/icons-1.0.0.tgz"
+
+	tarballs := acmeImageTarballs(t)
+	tarballs[iconsPath] = tgz(t, map[string]string{
+		"package/package.json": `{"name":"@acme/icons","version":"1.0.0"}`,
+		"package/star.svg":     `<svg id="star"/>`,
+	})
+
+	tests := []struct {
+		name     string
+		imageCap int
+		deps     string // frontend/package.json's dependencies
+		header   string
+	}{
+		{
+			name:   "no image cap keeps none",
+			deps:   `{"@acme/ui":"^1.2.0"}`,
+			header: "import { heart } from '@acme/ui/icons'\n",
+		},
+		{
+			name:     "a package no CSS imports is not fetched",
+			imageCap: testImageCap,
+			deps:     `{"@acme/ui":"^1.2.0","@acme/icons":"^1.0.0"}`,
+			header:   "import { star } from '@acme/icons'\n",
+		},
+		{
+			name:     "an undeclared package is passed over",
+			imageCap: testImageCap,
+			deps:     `{"@acme/ui":"^1.2.0"}`,
+			header:   "import { heart } from '@acme/other'\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var iconRequests atomic.Int32
+
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == iconsPath {
+					iconRequests.Add(1)
+				}
+
+				body, ok := tarballs[r.URL.Path]
+				if !ok {
+					http.NotFound(w, r)
+
+					return
+				}
+
+				_, _ = w.Write(body)
+			}))
+			t.Cleanup(srv.Close)
+
+			files := portalTree(t, srv.URL, tarballs)
+			files["frontend/package.json"] = `{"name":"frontend","dependencies":` + tc.deps + `}`
+			files["frontend/src/components/Header/index.tsx"] = tc.header
+			files["package-lock.json"] = npmLockJSON(t, map[string]map[string]any{
+				"node_modules/@acme/ui": {
+					"version": "1.2.3", "resolved": srv.URL + uiPath, "integrity": integrity(tarballs[uiPath]),
+				},
+				"node_modules/@acme/tokens": {"version": "2.0.1", "resolved": srv.URL + tokensPath},
+				"node_modules/@acme/icons":  {"version": "1.0.0", "resolved": srv.URL + iconsPath},
+			})
+
+			root := t.TempDir()
+
+			m, err := gatherPortalImages(t, srv, root, files, tc.imageCap)
+			require.NoError(t, err)
+
+			assert.Empty(t, m.Gaps)
+			assert.Len(t, m.Packages, 2, "the CSS's packages are still kept")
+			require.Len(t, m.Roots, 1)
+			assert.Empty(t, m.Roots[0].PackageImages)
+			assert.Empty(t, imageFilesUnder(t, filepath.Join(root, uiDir)))
+			assert.Zero(t, iconRequests.Load())
+		})
+	}
+}
+
+func TestGather_PackageImagesCap(t *testing.T) {
+	const (
+		logo        = uiDir + "/assets/images/acme-logo.png"
+		arrowImport = "import { arrow } from '@acme/ui/icons'\n"
+		logoImport  = "import { Logo } from '@acme/ui'\n"
+	)
+
+	images := map[string]string{"package/assets/images/acme-logo.png": "\x89PNG\r\n\x1a\nlogo"}
+	for i := 1; i <= 30; i++ {
+		images[fmt.Sprintf("package/assets/icons/arrow_%d.svg", i)] = "<svg/>"
+	}
+
+	tarballs := acmeTarballsWith(t, map[string]string{"core.css": defaultCoreCSS}, defaultVarsCSS,
+		map[string]map[string]string{uiPath: images})
+
+	// listing is what a root lists: its arrows and whether the logo is among them.
+	type listing struct {
+		arrows int
+		logo   bool
+	}
+
+	tests := []struct {
+		name    string
+		imports map[string][]string // each root's frame files' imports, one file each
+		want    map[string]listing
+		onDisk  int
+	}{
+		{
+			name:    "one root",
+			imports: map[string][]string{"frontend": {arrowImport, logoImport}},
+			want:    map[string]listing{"frontend": {maxPackageImages - 1, true}},
+			onDisk:  maxPackageImages,
+		},
+		{
+			name: "two roots naming the same images count them once",
+			imports: map[string][]string{
+				"frontend": {arrowImport, logoImport},
+				"admin":    {arrowImport, logoImport},
+			},
+			want: map[string]listing{
+				"frontend": {maxPackageImages - 1, true},
+				"admin":    {maxPackageImages - 1, true},
+			},
+			onDisk: maxPackageImages,
+		},
+		{
+			name: "a root naming only the logo is not crowded out by another's arrows",
+			imports: map[string][]string{
+				"admin":    {arrowImport},
+				"frontend": {logoImport},
+			},
+			want: map[string]listing{
+				"admin":    {maxPackageImages, false},
+				"frontend": {0, true},
+			},
+			onDisk: maxPackageImages + 1,
+		},
+		{
+			name: "a root naming arrows keeps its own cap of them beside another's logo",
+			imports: map[string][]string{
+				"admin":    {arrowImport, logoImport},
+				"frontend": {arrowImport},
+			},
+			want: map[string]listing{
+				"admin":    {maxPackageImages - 1, true},
+				"frontend": {maxPackageImages, false},
+			},
+			onDisk: maxPackageImages + 1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := registryServer(t, tarballs, 0)
+			root := t.TempDir()
+
+			var dirs []string
+			for dir := range tc.imports {
+				dirs = append(dirs, dir)
+			}
+
+			files := portalRoots(t, srv.URL, tarballs, dirs, nil)
+
+			for dir, imports := range tc.imports {
+				for i, imp := range imports {
+					files[fmt.Sprintf("%s/src/components/%s/index.tsx", dir, []string{"Header", "Footer"}[i])] = imp
+				}
+			}
+
+			m, err := gatherPortalImages(t, srv, root, files, testImageCap)
+			require.NoError(t, err)
+			require.Len(t, m.Roots, len(tc.imports))
+
+			for _, r := range m.Roots {
+				want, ok := tc.want[strings.TrimPrefix(r.Path, "portal/")]
+				require.True(t, ok, r.Path)
+
+				var got listing
+
+				for _, p := range assetPaths(r.PackageImages) {
+					switch {
+					case p == logo:
+						got.logo = true
+					case strings.HasPrefix(p, uiDir+"/assets/icons/arrow_"):
+						got.arrows++
+					default:
+						assert.Failf(t, "unexpected package image", "%s lists %s", r.Path, p)
+					}
+				}
+
+				assert.Equal(t, want, got, r.Path)
+			}
+
+			assert.Len(t, imageFilesUnder(t, filepath.Join(root, uiDir)), tc.onDisk)
+		})
+	}
+}
+
+func TestGather_PackageImagesOfTwoRoots(t *testing.T) {
+	const heart = "assets/icons/heart.svg"
+
+	tarballs := acmeImageTarballs(t)
+	srv := registryServer(t, tarballs, 0)
+	root := t.TempDir()
+
+	files := portalRoots(t, srv.URL, tarballs, []string{"frontend", "admin"}, map[string]string{
+		"src/components/Header/index.tsx": "import { heart } from '@acme/ui'\n",
+	})
+
+	m, err := gatherPortalImages(t, srv, root, files, testImageCap)
+	require.NoError(t, err)
+	assert.Empty(t, m.Gaps)
+	require.Len(t, m.Roots, 2)
+
+	for _, r := range m.Roots {
+		assert.Contains(t, assetPaths(r.PackageImages), uiDir+"/"+heart, r.Path)
+	}
+
+	require.Len(t, m.Packages, 2)
+	assert.Equal(t, uiDir, m.Packages[1].Dir)
+
+	data, err := os.ReadFile(filepath.Join(root, uiDir, filepath.FromSlash(heart)))
+	require.NoError(t, err)
+	assert.Equal(t, acmeUIImages()["package/"+heart], string(data))
+	assert.ElementsMatch(t, []string{heart, "assets/icons/heart_medium.svg"}, imageFilesUnder(t, filepath.Join(root, uiDir)))
+}
+
+func TestGather_PackageImagesOfAPackageOverTheCSSCap(t *testing.T) {
+	// As in TestGather_KeptCSSCap, @acme/tokens would take the kept CSS past
+	// the cap.
+	filler := strings.Repeat("a;", 7<<18)
+	heart := map[string]string{"package/assets/heart.svg": `<svg id="heart"/>`}
+	tarballs := acmeTarballsWith(t,
+		map[string]string{"core.css": "@import '@acme/tokens/vars.css';\n" + filler},
+		":root{--acme-grey-8:#ebebeb}\n"+filler,
+		map[string]map[string]string{uiPath: heart, tokensPath: heart})
+	srv := registryServer(t, tarballs, 0)
+	root := t.TempDir()
+
+	files := portalTree(t, srv.URL, tarballs)
+	files["frontend/package.json"] = `{"name":"frontend","dependencies":{"@acme/ui":"^1.2.0","@acme/tokens":"^2.0.0"}}`
+	files["frontend/src/components/Header/index.tsx"] = "import { heart } from '@acme/ui'\n" +
+		"import { heart as tokenHeart } from '@acme/tokens'\n"
+
+	m, err := gatherPortalImages(t, srv, root, files, testImageCap)
+	require.NoError(t, err)
+
+	require.Len(t, m.Packages, 1)
+	assert.Equal(t, uiDir, m.Packages[0].Dir)
+	assert.NoDirExists(t, filepath.Join(root, tokensDir))
+
+	require.Len(t, m.Roots, 1)
+	assert.Equal(t, []string{uiDir + "/assets/heart.svg"}, assetPaths(m.Roots[0].PackageImages))
+}
+
+// TestGather_APackageImageThatCannotBeWrittenIsSkipped covers archives whose
+// paths the file system refuses: such an image is dropped, not the Gather.
+func TestGather_APackageImageThatCannotBeWrittenIsSkipped(t *testing.T) {
+	longName := strings.Repeat("a", 250) + "-heart.svg" // over 255 bytes
+
+	tests := []struct {
+		name    string
+		images  map[string]string // archive path to body
+		header  string
+		listed  []string // package-relative paths the brief lists
+		dropped []string // package-relative paths neither listed nor on disk
+	}{
+		{
+			name: "an image and a directory of one name",
+			images: map[string]string{
+				"package/assets/heart.svg":          `<svg id="heart"/>`,
+				"package/assets/heart.svg/play.svg": `<svg id="play"/>`,
+				"package/assets/star.svg":           `<svg id="star"/>`,
+			},
+			header: "import { heart, play, star } from '@acme/ui'\n",
+			listed: []string{"assets/star.svg"},
+		},
+		{
+			name: "a file name too long for the file system",
+			images: map[string]string{
+				"package/assets/" + longName: `<svg id="long"/>`,
+				"package/assets/star.svg":    `<svg id="star"/>`,
+			},
+			header:  "import { heart, star } from '@acme/ui'\n",
+			listed:  []string{"assets/star.svg"},
+			dropped: []string{"assets/" + longName},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tarballs := acmeTarballsWith(t, map[string]string{"core.css": defaultCoreCSS}, defaultVarsCSS,
+				map[string]map[string]string{uiPath: tc.images})
+			srv := registryServer(t, tarballs, 0)
+			root := t.TempDir()
+
+			files := portalTree(t, srv.URL, tarballs)
+			files["frontend/src/components/Header/index.tsx"] = tc.header
+
+			m, err := gatherPortalImages(t, srv, root, files, testImageCap)
+			require.NoError(t, err)
+			require.Len(t, m.Roots, 1)
+
+			require.Len(t, m.Packages, 2, "the CSS is kept")
+			assert.Equal(t, uiDir, m.Packages[1].Dir)
+			assert.Contains(t, m.Packages[1].Files, uiDir+"/style/core.css")
+			assert.FileExists(t, filepath.Join(root, uiDir, "style", "core.css"))
+
+			listed := assetPaths(m.Roots[0].PackageImages)
+			for _, rel := range tc.listed {
+				assert.Contains(t, listed, uiDir+"/"+rel)
+			}
+
+			for _, rel := range tc.dropped {
+				assert.NotContains(t, listed, uiDir+"/"+rel)
+				assert.NoFileExists(t, filepath.Join(root, uiDir, filepath.FromSlash(rel)))
+			}
+
+			// Whichever of two clashing paths was written first is the one
+			// listed: the brief lists what is on disk, with its size.
+			onDisk := imageFilesUnder(t, filepath.Join(root, uiDir))
+
+			want := make([]string, len(listed))
+			for i, p := range listed {
+				want[i] = strings.TrimPrefix(p, uiDir+"/")
+			}
+
+			assert.ElementsMatch(t, want, onDisk)
+
+			for _, a := range m.Roots[0].PackageImages {
+				info, err := os.Stat(filepath.Join(root, filepath.FromSlash(a.Path)))
+				require.NoError(t, err, a.Path)
+				assert.Equal(t, a.Size, info.Size(), a.Path)
+			}
+		})
+	}
+}
+
+func TestGather_PackageImagesDifferingOnlyInCaseAreListedOnce(t *testing.T) {
+	tarballs := acmeTarballsWith(t, map[string]string{"core.css": defaultCoreCSS}, defaultVarsCSS,
+		map[string]map[string]string{uiPath: {
+			"package/assets/Heart.svg": `<svg id="Heart"/>`,
+			"package/assets/heart.svg": `<svg id="heart-in-lower-case"/>`,
+		}})
+	srv := registryServer(t, tarballs, 0)
+	root := t.TempDir()
+
+	files := portalTree(t, srv.URL, tarballs)
+	files["frontend/src/components/Header/index.tsx"] = "import { heart } from '@acme/ui'\n"
+
+	m, err := gatherPortalImages(t, srv, root, files, testImageCap)
+	require.NoError(t, err)
+	require.Len(t, m.Roots, 1)
+
+	require.Len(t, m.Roots[0].PackageImages, 1)
+
+	a := m.Roots[0].PackageImages[0]
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(a.Path)))
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(data)), a.Size)
 }
 
 func TestGather_TokensInImportOrder(t *testing.T) {

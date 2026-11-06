@@ -320,10 +320,11 @@ project that already has screens, the mockup shows them with the change in
 place, in their own look, unless the need asks for a new look. The designer
 takes that look from the project's own files: it rebuilds the page frame
 (header, navigation, sidebar and footer) from the source of the frame files,
-references the logo and the images those files use, which the architect
-replaces with the exact image files, and uses the project's design tokens and
-fonts and the CSS of the design-system packages its styles import; the chat
-names each package it fetches, and the package is listed as a source.
+references the logo, the images those files use and the design system's icons
+and images they import by name, which the architect replaces with the exact
+image files, and uses the project's design tokens and fonts and the CSS of the
+design-system packages its styles import; the chat names each package it
+fetches, and the package is listed as a source.
 
 ![The designer's three suggestions under the mockup: Ticked lines switched to Move to bottom, Show recipes behind each line and Show why a recipe matched both off, and the buttons Use this design and Skip mockups](images/11-mockup-suggestions.png)
 

@@ -36,10 +36,12 @@ type Images interface {
 	DataURI(ctx context.Context, path string) (string, error)
 }
 
-// ImageFiles is the image files of the blueprint's checked-out trees under Root.
+// ImageFiles is the image files of the blueprint's checked-out trees and of
+// the packages its design gather kept, under Root.
 type ImageFiles struct {
-	Root  string
-	Trees []string // each tree's top-level directory under Root
+	Root     string
+	Trees    []string // each tree's top-level directory under Root
+	Packages []string // each kept package's top-level directory under Root
 }
 
 // imageType is the media type of a lower-cased extension; "" for one no
@@ -95,7 +97,7 @@ func (f ImageFiles) checkPath(rel string) ([]string, string, error) {
 	case strings.Contains(rel, `\`):
 		return nil, "", fmt.Errorf("%s holds a backslash: separate its segments with /", rel)
 	case strings.HasPrefix(rel, "/"):
-		return nil, "", fmt.Errorf("%s is absolute: give the path relative to the tool root, starting with a tree's directory", rel)
+		return nil, "", fmt.Errorf("%s is absolute: give the path relative to the tool root, starting with a tree's or a kept package's directory", rel)
 	}
 
 	segs := strings.Split(rel, "/")
@@ -111,8 +113,9 @@ func (f ImageFiles) checkPath(rel string) ([]string, string, error) {
 		}
 	}
 
-	if !slices.Contains(f.Trees, segs[0]) {
-		return nil, "", fmt.Errorf("%s does not start with a checked-out tree's directory: %s", rel, strings.Join(f.Trees, ", "))
+	if !slices.Contains(f.Trees, segs[0]) && !slices.Contains(f.Packages, segs[0]) {
+		return nil, "", fmt.Errorf("%s does not start with a checked-out tree's directory or a kept package's: %s",
+			rel, strings.Join(slices.Concat(f.Trees, f.Packages), ", "))
 	}
 
 	// Folded, as a case-insensitive file system opens .GIT as .git.
@@ -235,7 +238,7 @@ func inlineImages(ctx context.Context, src string, img Images) (string, error) {
 
 		uri, err := img.DataURI(ctx, path)
 		if err != nil {
-			return "", fmt.Errorf("the source's %s%s cannot be inserted: %w; reference an image file of a checked-out tree, as the brief or the code tools show its path", assetPrefix, path, err)
+			return "", fmt.Errorf("the source's %s%s cannot be inserted: %w; reference an image file of a checked-out tree, or a kept package image the brief lists, as the brief or the code tools show its path", assetPrefix, path, err)
 		}
 
 		uris[path] = uri
@@ -416,8 +419,9 @@ func replaceReferences(s string, resolve func(string) (string, error)) (string, 
 		end := start + pathRun(s[start:])
 		from = start
 
-		// A tree's directory leads every path, so a run without a slash, such
-		// as CSS's .asset:hover or a script's {asset:src}, is no reference.
+		// A tree's or kept package's directory leads every path, so a run
+		// without a slash, such as CSS's .asset:hover or a script's
+		// {asset:src}, is no reference.
 		if !strings.Contains(s[start:end], "/") || !referenceStart(s[:at]) {
 			continue
 		}

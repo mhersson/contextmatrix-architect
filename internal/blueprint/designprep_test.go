@@ -148,7 +148,7 @@ func TestDesign_TheDesignerGetsTheBrief(t *testing.T) {
 	assert.Contains(t, task, designTokenValue)
 	assert.Contains(t, task, "sha-alpha", "the checkout lines follow it")
 
-	assert.Equal(t, []designpkg.Request{{Root: ws.TreeRoot("BP1"), Trees: []designpkg.Tree{{Project: "alpha", Dir: "alpha"}}}}, d.requests())
+	assert.Equal(t, []designpkg.Request{{Root: ws.TreeRoot("BP1"), Trees: []designpkg.Tree{{Project: "alpha", Dir: "alpha"}}, ImageCap: stage.MaxImageBytes}}, d.requests())
 
 	require.Contains(t, stagesRun(runner), "solution_design")
 
@@ -304,8 +304,8 @@ func TestDesign_CodeStagesTagThePackage(t *testing.T) {
 }
 
 // Every designer run, its chat runs too, inserts images from the checked-out
-// trees alone: the kept package beside them is no tree.
-func TestDesign_EveryDesignerRunTakesTheTreesImages(t *testing.T) {
+// trees and from the package dirs this run's gather kept.
+func TestDesign_EveryDesignerRunTakesTheTreesAndKeptPackagesImages(t *testing.T) {
 	c, _, runner, _, ws := newDesign(t, &fakeDesigner{material: designMaterial()})
 	drive(t, c, "BP1")
 	takeOffer(t, c)
@@ -316,7 +316,38 @@ func TestDesign_EveryDesignerRunTakesTheTreesImages(t *testing.T) {
 	assert.True(t, runs[1].Chat)
 
 	for _, in := range runs {
+		assert.Equal(t, stage.ImageFiles{Root: ws.TreeRoot("BP1"), Trees: []string{"alpha"}, Packages: []string{designPkgDir}}, in.Images)
+	}
+}
+
+// A code stage without the design key gathers nothing, so the kept package
+// beside the checkouts is no image source for it.
+func TestDesign_ACodeStageWithoutTheDesignKeyTakesNoPackageImages(t *testing.T) {
+	c, _, runner, _, ws := newDesign(t, &fakeDesigner{material: designMaterial()})
+	drive(t, c, "BP1")
+	takeOffer(t, c)
+	useMockup(t, c, nil)
+
+	runs := inputsOf(runner, "solution_design")
+	require.NotEmpty(t, runs)
+
+	for _, in := range runs {
 		assert.Equal(t, stage.ImageFiles{Root: ws.TreeRoot("BP1"), Trees: []string{"alpha"}}, in.Images)
+	}
+}
+
+// The gather keeps package images no larger than a mockup can insert.
+func TestDesign_TheGatherAsksForImagesUnderTheMockupsCap(t *testing.T) {
+	d := &fakeDesigner{material: designMaterial()}
+	c, _, _, _, _ := newDesign(t, d)
+	drive(t, c, "BP1")
+	takeOffer(t, c)
+
+	reqs := d.requests()
+	require.NotEmpty(t, reqs)
+
+	for _, req := range reqs {
+		assert.Equal(t, stage.MaxImageBytes, req.ImageCap)
 	}
 }
 

@@ -33,8 +33,9 @@ type Tree struct{ Project, Dir string }
 // Request names the trees to gather from. Root is the blueprint's tool root;
 // kept packages are written directly under it.
 type Request struct {
-	Root  string
-	Trees []Tree
+	Root     string
+	Trees    []Tree
+	ImageCap int // the largest package image kept, in bytes; 0 keeps none
 }
 
 // Material is the design material of the requested trees. Every path in it is
@@ -51,6 +52,9 @@ type Root struct {
 	Frame         []Asset
 	Brand         []Asset
 	Images        []Asset // the images the frame files with text use, each once
+	// PackageImages are the images of kept packages named like the frame files'
+	// imports; Path is tool-root-relative under the package's Dir, Size in bytes.
+	PackageImages []Asset
 	Tokens        []Token
 	Fonts         []Font
 	Packages      []string // Dir of each package this root's CSS reaches
@@ -80,11 +84,20 @@ type gathering struct {
 	g        *Gatherer
 	fetchBy  time.Time // downloads stop here; Gather's own ctx is not wrapped
 	root     string
+	imageCap int
 	pkgs     map[string]*keptPkg // by dir
 	order    []*keptPkg          // in the order first reached
 	gaps     []Gap
 	seenGaps map[Gap]bool
 	treePkgs map[string]map[string][]treePackage // by tree dir, then package name
+	wants    []imageWant
+}
+
+// imageWant is the names a frame file of the root at root imports from the
+// package whose kept files go under dir.
+type imageWant struct {
+	root, dir string
+	names     []string
 }
 
 // rootWalk is one frontend root's walk through the packages its CSS imports.
@@ -108,11 +121,12 @@ type rootWalk struct {
 }
 
 // Gather collects the design material of every frontend root in req.Trees and
-// writes the package CSS those roots import under req.Root. What cannot be had
-// is a Gap; only a local read or write failure or a cancelled ctx is an error.
+// writes the package CSS those roots import, and the images of those packages
+// their frame files name, under req.Root. What cannot be had is a Gap; only a
+// local read or write failure or a cancelled ctx is an error.
 func (g *Gatherer) Gather(ctx context.Context, req Request) (Material, error) {
 	s := &gathering{
-		g: g, fetchBy: time.Now().Add(g.fetchFor), root: req.Root, pkgs: map[string]*keptPkg{}, seenGaps: map[Gap]bool{},
+		g: g, fetchBy: time.Now().Add(g.fetchFor), root: req.Root, imageCap: req.ImageCap, pkgs: map[string]*keptPkg{}, seenGaps: map[Gap]bool{},
 		treePkgs: map[string]map[string][]treePackage{},
 	}
 
@@ -127,6 +141,11 @@ func (g *Gatherer) Gather(ctx context.Context, req Request) (Material, error) {
 		m.Roots = append(m.Roots, roots...)
 	}
 
+	images := s.pickPackageImages()
+	for i := range m.Roots {
+		m.Roots[i].PackageImages = images[m.Roots[i].Path]
+	}
+
 	pkgs, err := s.write(ctx)
 	if err != nil {
 		return Material{}, err
@@ -139,6 +158,11 @@ func (g *Gatherer) Gather(ctx context.Context, req Request) (Material, error) {
 
 	for i := range m.Roots {
 		m.Roots[i].Packages = slices.DeleteFunc(m.Roots[i].Packages, func(dir string) bool { return !kept[dir] })
+		m.Roots[i].PackageImages = slices.DeleteFunc(m.Roots[i].PackageImages, func(a Asset) bool {
+			dir, rel, _ := strings.Cut(a.Path, "/")
+
+			return !kept[dir] || !s.pkgs[dir].written[rel]
+		})
 	}
 
 	slices.SortFunc(m.Roots, func(a, b Root) int {
@@ -335,6 +359,8 @@ func (s *gathering) frontend(ctx context.Context, tree Tree, treeDir string, w *
 		}
 	}
 
+	s.wantImages(w, imageSources)
+
 	if len(f.Styles) > 0 {
 		s.gap(w.path, "", "the root's styles in "+strings.Join(f.Styles, ", ")+
 			" are not read, so its tokens and fonts leave them out")
@@ -382,6 +408,40 @@ func frameImages(treeDir, rootDir, treePrefix string, sources []imageSource) []A
 	}
 
 	return images
+}
+
+// wantImages adds a want for each named import of the script sources from a
+// package the root declares and the lockfile resolves. Nothing is fetched for
+// it, and an import that does not resolve is passed over.
+func (s *gathering) wantImages(w *rootWalk, sources []imageSource) {
+	if w.lockGap != "" {
+		return
+	}
+
+	for _, src := range sources {
+		if !imageSyntaxes[strings.ToLower(path.Ext(src.file))].script {
+			continue
+		}
+
+		for _, imp := range namedImports(src.text) {
+			name, _, ok := splitBare(imp.Spec)
+			if !ok {
+				continue
+			}
+
+			rangeSpec, ok := w.deps[name]
+			if !ok {
+				continue
+			}
+
+			l, ok := w.lock.fromRoot(w.lockRoot, name, rangeSpec)
+			if !ok || l.Local || !pkgNameRE.MatchString(l.Name) || !pkgVersionRE.MatchString(l.Version) {
+				continue
+			}
+
+			s.wants = append(s.wants, imageWant{root: w.path, dir: PackageDir(l.Name, l.Version), names: imp.Names})
+		}
+	}
 }
 
 // imageTarget resolves an image spec of the tree-relative file from: ./ and

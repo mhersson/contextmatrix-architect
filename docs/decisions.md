@@ -329,12 +329,20 @@ HEAD.
   unlike web research, and fetches https only, with at most 5 redirects and
   100 MiB per archive. Why: the url is the project's own, like a repository
   url, never a model's.
-- Of a package only the CSS the project imports, and what that imports, is
-  kept, reflowed with a line break after every brace and semicolon, under a
+- Of a package the CSS the project imports, and what that imports, is kept,
+  reflowed with a line break after every brace and semicolon, under a
   directory such as `_npm+@acme+ui@1.2.3` at the blueprint's tool root, at
-  most 8 MiB per gather, and each kept package is a source of kind `package`.
-  Why: the designer needs only the styles, a grep match on a minified
-  stylesheet would return the whole file, and `_` starts no project name.
+  most 8 MiB of CSS per gather, and beside it the image files named like the
+  named imports a frame file takes from that package (`Heart` matches
+  `heart.svg`), matched by the words of a name, at most 24 per package for
+  each frontend root and 32 KiB each. No package is fetched for its images,
+  and each kept package is a source of kind `package`. Why: the designer needs
+  the styles and the icons a frame file names, not the rest of a package, a
+  grep match on a minified stylesheet would return the whole file, an image
+  over a mockup's 32 KiB cannot be inserted, a package is downloaded only for
+  the styles the project imports, a root's cap of its own keeps a root that
+  names many icons from taking another root's share, and `_` starts no
+  project name.
 - A package is checked against its npm integrity when its lock entry records
   one, and a mismatch is a gap; a package-lock or classic yarn.lock entry
   without one, and a Yarn Berry package, is kept unverified. Why: Berry's
@@ -369,13 +377,14 @@ HEAD.
   `data:` URI before the frame check, in attribute values, styles and
   scripts, never in markup text or HTML comments. A path with no `/` is no
   reference, so CSS such as `.asset:hover` and script such as `{asset:src}`
-  stay as written. Only an image file of a checked-out tree is taken: no
-  symlink, `.git`, `node_modules` or kept package on its path, at most
-  32 KiB, its content matching its extension. The source stored, posted and
-  baked into cards is the substituted one, and the designer's own
-  conversation keeps the reference. Why: models do not copy long image data
-  reliably, and a logo the designer copied came out as hand-rounded path
-  data, broken.
+  stay as written. Only an image file of a checked-out tree or of a kept
+  package's directory from the run's design gather is taken: no symlink,
+  `.git` or `node_modules` on its path, at most 32 KiB, its content matching
+  its extension. The source stored, posted and baked into cards is the
+  substituted one, and the designer's own conversation keeps the reference.
+  Why: models do not copy long image data reliably, a logo the designer
+  copied came out as hand-rounded path data, broken, and a package the gather
+  did not keep this run is one the brief does not list.
 - No mockup source line, trimmed, starts with `## `, and a screen's or a
   suggestion's title and an option's label are one line not starting with
   `#`. Why: the agent's section parser trims lines and does not track fences.

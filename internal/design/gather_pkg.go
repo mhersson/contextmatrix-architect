@@ -32,6 +32,8 @@ type keptPkg struct {
 	files                        *pkgFiles
 	failed                       string            // gap reason when it could not be fetched or read
 	keep                         map[string]bool   // files reached by any root
+	images                       []string          // picked image files, written beside the kept CSS
+	written                      map[string]bool   // the picked images that were written
 	decls                        map[string][]decl // rootDecls by file
 	firstRoot, firstImport       string
 }
@@ -231,7 +233,7 @@ func (s *gathering) pkg(ctx context.Context, w *rootWalk, l locked, spec string)
 
 	p.verified = verified
 
-	p.files, err = readPackage(ctx, tgz)
+	p.files, err = readPackage(ctx, tgz, int64(s.imageCap))
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, "", fmt.Errorf("design: gather: %w", ctx.Err())
@@ -253,8 +255,9 @@ func isHTTPURL(s string) bool {
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https")
 }
 
-// write keeps the reached files of each package, in the order the packages
-// were first reached, while the kept CSS stays within maxKeptCSSBytes.
+// write keeps the reached files and the picked images of each package, in the
+// order the packages were first reached, while the kept CSS stays within
+// maxKeptCSSBytes; images do not count toward it.
 func (s *gathering) write(ctx context.Context) ([]Package, error) {
 	var (
 		out   []Package
@@ -310,7 +313,9 @@ func (s *gathering) write(ctx context.Context) ([]Package, error) {
 	return out, nil
 }
 
-// writePkg replaces the package's directory under the tool root with files.
+// writePkg replaces the package's directory under the tool root with files and
+// the package's picked images. An image the file system refuses, as a package
+// archive can name a path it cannot hold, is skipped and left out of p.written.
 func (s *gathering) writePkg(p *keptPkg, files, contents []string) error {
 	dst := filepath.Join(s.root, p.dir)
 	if filepath.Dir(dst) != filepath.Clean(s.root) || filepath.Base(dst) != p.dir {
@@ -321,16 +326,32 @@ func (s *gathering) writePkg(p *keptPkg, files, contents []string) error {
 		return fmt.Errorf("design: gather: replace %s: %w", p.dir, err)
 	}
 
-	for i, f := range files {
-		file := filepath.Join(dst, filepath.FromSlash(f))
+	put := func(rel string, data []byte) error {
+		file := filepath.Join(dst, filepath.FromSlash(rel))
 
 		if err := os.MkdirAll(filepath.Dir(file), 0o750); err != nil {
-			return fmt.Errorf("design: gather: write %s: %w", p.dir, err)
+			return err
 		}
 
-		if err := os.WriteFile(file, []byte(contents[i]), 0o600); err != nil {
+		return os.WriteFile(file, data, 0o600)
+	}
+
+	for i, f := range files {
+		if err := put(f, []byte(contents[i])); err != nil {
 			return fmt.Errorf("design: gather: write %s: %w", p.dir, err)
 		}
+	}
+
+	p.written = map[string]bool{}
+
+	for _, rel := range p.images {
+		if err := put(rel, p.files.images[rel]); err != nil {
+			slog.Warn("design: skip package image", "package", p.dir, "image", rel, "error", err)
+
+			continue
+		}
+
+		p.written[rel] = true
 	}
 
 	return nil

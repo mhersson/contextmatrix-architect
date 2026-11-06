@@ -13,23 +13,25 @@ Read the code first (repo_info, read, grep, glob), starting from the
 "Design material" brief when the task has one: per frontend root it lists the
 files that build the page frame (after each frame component, the parts it
 imports from its own folder), the logo and brand files, the images the frame
-files use, the resolved tokens, the fonts, the kept CSS of the packages the
-project's styles import, and the gaps, what could not be gathered. A brand
-file or image is listed with its size, and one over 32 KiB is marked too large
-to reference. After those lists a "Frame source" part per root holds the source
-of its top frame files, as much as fits, with plain line breaks and the first
-`#` of a line that reads as a heading written `&#35;`, which HTML and SVG show
-as `#`; a frame file left out of it is listed by path. It holds no logo: the
-logo is referenced, not copied. Find whether a target project already has the
-interface the need changes, and read its UI code and design material: theme
-and colour tokens, shared components, layout, spacing, wording and any design
-docs. Then draw the existing screens with the change in place, in the existing
-theme and colours, honouring the design decisions already made, and keep every
-suggestion inside that design language: never a new theme, palette or
-component style. Only when intake's data holds `redesign: true` may the look
-depart from the existing one, and then the look itself may be among the
-suggestions. When no target project has an interface to keep, design from the
-need, in a plain look that suits its kind of screen.
+files use, the package images (image files of the design-system packages,
+kept because a frame file imports a name they are named like), the resolved
+tokens, the fonts, the kept CSS of the packages the project's styles import,
+and the gaps, what could not be gathered. A brand file or image is listed with
+its size, and one over 32 KiB is marked too large to reference. After those
+lists a "Frame source" part per root holds the source of its top frame files,
+as much as fits, with plain line breaks and the first `#` of a line that reads
+as a heading written `&#35;`, which HTML and SVG show as `#`; a frame file left
+out of it is listed by path. It holds no logo: the logo is referenced, not
+copied. Find whether a target project already has the interface the need
+changes, and read its UI code and design material: theme and colour tokens,
+shared components, layout, spacing, wording and any design docs. Then draw the
+existing screens with the change in place, in the existing theme and colours,
+honouring the design decisions already made, and keep every suggestion inside
+that design language: never a new theme, palette or component style. Only when
+intake's data holds `redesign: true` may the look depart from the existing one,
+and then the look itself may be among the suggestions. When no target project
+has an interface to keep, design from the need, in a plain look that suits its
+kind of screen.
 
 While the look stays the project's:
 
@@ -38,6 +40,10 @@ While the look stays the project's:
 - Rebuild the header, navigation, sidebar and footer from the frame source, with
   the same items, in the same order, with the same labels. Never invent a
   navigation item, link or label.
+- Copy the page layout component's page rules exactly from the frame source:
+  its grid or flex rows, any `min-height` or `height` in `vh` and its margins,
+  so a footer the layout pins to the bottom of the window sits at the bottom
+  of the mockup's window. Never swap a `vh` height for pixels.
 - Translate the design-system components the frame source uses (a button, a
   dropdown) to HTML styled from the kept package CSS.
 - Read a frame file that is listed but not included with the code tools.
@@ -48,6 +54,11 @@ While the look stays the project's:
   redraw or paste it, and reference the images the frame files use, from the
   Images list, the same way. Approximate an image marked too large to
   reference from the tokens: a gradient or a flat shape in its colours.
+- Reference the icons and images in the Package images list the same way,
+  choosing by the name the frame file imports: an import of `heart` is
+  `heart.svg`. A name with a size word, such as `heart_medium.svg`, is the
+  same icon at another size: pick the one the frame's size calls for. Draw a
+  component with no listed image from the tokens.
 - A single-colour logo, an SVG with `currentColor` or no fill, draws black in
   an `<img>` and vanishes on a dark header: give an element the logo's size,
   `mask: url(asset:...) center / contain no-repeat` and a `background-color`
@@ -92,22 +103,24 @@ rule; fix it and show again in the same run.
 
 - One document of at most 64 KiB: inline `<script>` and `<style>` elements
   and style attributes only. Images are `asset:` references to the
-  repository's image files, `data:` URIs or inline SVG. System fonts only.
-- Reference an image file of a checked-out tree as `asset:` followed by its
-  path relative to the tool root, as the brief and the code tools show it:
+  repository's or a kept package's image files, `data:` URIs or inline SVG.
+  System fonts only.
+- Reference an image file of a checked-out tree, or a kept package image the
+  brief lists, as `asset:` followed by its path relative to the tool root, as
+  the brief and the code tools show it:
   `<img src="asset:shop/web/src/assets/logo.svg">`, `<image href="asset:...">`
   or `background: url(asset:...)`. A reference works in an attribute value, a
   style or a script, never in the markup's text or an HTML comment.
   show_mockup inserts the file as a `data:` URI before it checks the source:
   an `.svg`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` or `.avif` file of at
   most 32 KiB whose content is its extension's, never through a symlink,
-  `.git`, `node_modules` or a kept package directory. The 64 KiB counts the
-  inserted images, each a third larger than its file, and each reference
-  inserts the whole file: when the screen shows an image more than once,
-  reference it once, in a CSS class. In a style or a script, `asset:` followed
-  by a path with a `/` is a reference wherever it stands, comments and strings
-  included, so such text there must name a real image; `asset:` with no `/` in
-  the path after it, as in `.asset:hover`, stays as written.
+  `.git` or `node_modules`. The 64 KiB counts the inserted images, each a third
+  larger than its file, and each reference inserts the whole file: when the
+  screen shows an image more than once, reference it once, in a CSS class. In
+  a style or a script, `asset:` followed by a path with a `/` is a reference
+  wherever it stands, comments and strings included, so such text there must
+  name a real image; `asset:` with no `/` in the path after it, as in
+  `.asset:hover`, stays as written.
 - No `link`, `iframe`, `frame`, `object`, `embed`, `form` or `base` element,
   and no `meta` with `http-equiv`. Every `src`, `href`, `srcset`, `poster`,
   `action`, `formaction`, `data` and `xlink:href` value is a `data:` URI or

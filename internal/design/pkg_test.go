@@ -85,7 +85,7 @@ func TestReadPackage(t *testing.T) {
 	})
 	tarball := writeFile(t, in, "pkg.tgz", archive)
 
-	p, err := readPackage(t.Context(), tarball)
+	p, err := readPackage(t.Context(), tarball, 0)
 	require.NoError(t, err)
 
 	assert.Equal(t, map[string]string{"style/core.css": `a{b:c}`}, p.css)
@@ -143,20 +143,20 @@ func TestReadPackage_Errors(t *testing.T) {
 				data = tt.raw
 			}
 
-			p, err := readPackage(t.Context(), writeFile(t, t.TempDir(), "pkg.tgz", data))
+			p, err := readPackage(t.Context(), writeFile(t, t.TempDir(), "pkg.tgz", data), 0)
 			require.Error(t, err)
 			assert.Nil(t, p)
 		})
 	}
 
 	t.Run("missing file", func(t *testing.T) {
-		_, err := readPackage(t.Context(), filepath.Join(t.TempDir(), "absent.tgz"))
+		_, err := readPackage(t.Context(), filepath.Join(t.TempDir(), "absent.tgz"), 0)
 		require.Error(t, err)
 	})
 }
 
 func TestReadPackage_NoManifest(t *testing.T) {
-	p, err := readPackage(t.Context(), writeFile(t, t.TempDir(), "pkg.tgz", tgz(t, map[string]string{"package/a.css": `a{}`})))
+	p, err := readPackage(t.Context(), writeFile(t, t.TempDir(), "pkg.tgz", tgz(t, map[string]string{"package/a.css": `a{}`})), 0)
 	require.NoError(t, err)
 
 	assert.Equal(t, map[string]string{"a.css": `a{}`}, p.css)
@@ -171,19 +171,21 @@ func TestReadPackage_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	p, err := readPackage(ctx, path)
+	p, err := readPackage(ctx, path, 0)
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Nil(t, p)
 }
 
 func TestReadPackageLimits(t *testing.T) {
-	limits := readLimits{file: 16, total: 8 << 10, css: 24}
+	limits := readLimits{file: 16, total: 8 << 10, css: 24, imageFile: 8, images: 12}
 
 	tests := []struct {
-		name    string
-		files   map[string]string
-		wantCSS map[string]string
-		wantErr bool
+		name        string
+		files       map[string]string
+		noImageFile bool // runs the row with imageFile 0
+		wantCSS     map[string]string
+		wantImages  map[string]string
+		wantErr     bool
 	}{
 		{
 			name:    "within every bound",
@@ -215,13 +217,69 @@ func TestReadPackageLimits(t *testing.T) {
 			files:   map[string]string{"package/blob.css": strings.Repeat("z", 16<<10)},
 			wantErr: true,
 		},
+		{
+			name:       "image kept beside css",
+			files:      map[string]string{"package/icons/heart.svg": "<svg/>", "package/a.css": "a{}"},
+			wantCSS:    map[string]string{"a.css": "a{}"},
+			wantImages: map[string]string{"icons/heart.svg": "<svg/>"},
+		},
+		{
+			name:       "image extension is matched without case and the path keeps its case",
+			files:      map[string]string{"package/icons/Heart.SVG": "<svg/>"},
+			wantCSS:    map[string]string{},
+			wantImages: map[string]string{"icons/Heart.SVG": "<svg/>"},
+		},
+		{
+			name:       "image over the per-image bound is skipped",
+			files:      map[string]string{"package/big.png": strings.Repeat("x", 9)},
+			wantCSS:    map[string]string{},
+			wantImages: map[string]string{},
+		},
+		{
+			name:       "image over the held total is skipped and the read goes on",
+			files:      map[string]string{"package/a.png": strings.Repeat("a", 8), "package/b.png": strings.Repeat("b", 8), "package/c.svg": "<s/>"},
+			wantCSS:    map[string]string{},
+			wantImages: map[string]string{"a.png": strings.Repeat("a", 8), "c.svg": "<s/>"},
+		},
+		{
+			name: "image under node_modules or .git is skipped",
+			files: map[string]string{
+				"package/node_modules/x/heart.svg": "<svg/>", "package/.git/heart.svg": "<svg/>", "package/Node_Modules/y.svg": "<svg/>",
+			},
+			wantCSS:    map[string]string{},
+			wantImages: map[string]string{},
+		},
+		{
+			name:       "empty image is not held",
+			files:      map[string]string{"package/empty.svg": "", "package/heart.svg": "<svg/>"},
+			wantCSS:    map[string]string{},
+			wantImages: map[string]string{"heart.svg": "<svg/>"},
+		},
+		{
+			name:       "file that is not an image is not held",
+			files:      map[string]string{"package/notes.txt": "hello"},
+			wantCSS:    map[string]string{},
+			wantImages: map[string]string{},
+		},
+		{
+			name:        "no image is held without a per-image bound",
+			files:       map[string]string{"package/heart.svg": "<svg/>"},
+			noImageFile: true,
+			wantCSS:     map[string]string{},
+			wantImages:  map[string]string{},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			path := writeFile(t, t.TempDir(), "pkg.tgz", tgz(t, tt.files))
 
-			p, err := readPackageLimited(t.Context(), path, limits)
+			lim := limits
+			if tt.noImageFile {
+				lim.imageFile = 0
+			}
+
+			p, err := readPackageLimited(t.Context(), path, lim)
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Nil(t, p)
@@ -231,8 +289,32 @@ func TestReadPackageLimits(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantCSS, p.css)
+
+			got := map[string]string{}
+			for rel, body := range p.images {
+				got[rel] = string(body)
+			}
+
+			assert.Equal(t, valueOrEmpty(tt.wantImages), got)
 		})
 	}
+}
+
+func valueOrEmpty(m map[string]string) map[string]string {
+	if m == nil {
+		return map[string]string{}
+	}
+
+	return m
+}
+
+func TestReadPackage_ImageCap(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "pkg.tgz", tgz(t, map[string]string{"package/a.svg": "1234", "package/b.svg": "12345"}))
+
+	p, err := readPackage(t.Context(), path, 4)
+	require.NoError(t, err)
+
+	assert.Equal(t, map[string][]byte{"a.svg": []byte("1234")}, p.images)
 }
 
 func TestResolve(t *testing.T) {

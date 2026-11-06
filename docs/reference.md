@@ -135,24 +135,27 @@ files and the images those frame files use, each listed with its size in bytes,
 its design tokens and fonts, and the CSS of the design-system packages its
 styles import, downloaded at the version its lockfile (package-lock.json at
 lockfileVersion 2 or 3, yarn.lock or pnpm-lock.yaml) records from the registry
-its repository configures, else the public npm registry. Each package kept is a
-source, and the chat names it when it is first fetched.
+its repository configures, else the public npm registry. Of those packages it
+also lists the image files named like the names the frame files import from
+them (`Heart` from `@acme/ui` matches `heart.svg`), at most 24 per package for
+each frontend root and 32 KiB each; no package is downloaded for its images.
+Each package kept is a source, and the chat names it when it is first fetched.
 
 The designer rebuilds the header, navigation, sidebar and footer from the frame
 source, with their own items and labels. It references the logo, the images the
-frame files use and the project's other images by path, and the architect
-inserts the exact files into the mockup; an image over 32 KiB cannot be inserted
-(the brief marks those it lists), and the designer approximates it from the
-tokens. The frame source takes at most a quarter of the model's context window
-and at most 48 KiB per frontend, shared among the frontends by need; a file it
-leaves out is listed by path, and the designer reads it from the checkout. A
-frame component that is its own folder brings the files it imports from that
-folder along, ahead of lesser frame files. Frame files are found by name, so a
-frame component with an unusual name is missed, and the designer translates the
-design-system components the frame source uses (a button, a dropdown) to HTML
-from the packages' CSS. The designer declares the screen's width (1280 pixels
-for a desktop web page, for example), and ContextMatrix scales a mockup wider
-than its pane down to fit.
+frame files use, the package images the brief lists and the project's other
+images by path, and the architect inserts the exact files into the mockup; an
+image over 32 KiB cannot be inserted (the brief marks those it lists), and the
+designer approximates it from the tokens. The frame source takes at most a
+quarter of the model's context window and at most 48 KiB per frontend, shared
+among the frontends by need; a file it leaves out is listed by path, and the
+designer reads it from the checkout. A frame component that is its own folder
+brings the files it imports from that folder along, ahead of lesser frame files.
+Frame files are found by name, so a frame component with an unusual name is
+missed, and the designer translates the design-system components the frame
+source uses (a button, a dropdown) to HTML from the packages' CSS. The designer
+declares the screen's width (1280 pixels for a desktop web page, for example),
+and ContextMatrix scales a mockup wider than its pane down to fit.
 
 ### In a question round
 
