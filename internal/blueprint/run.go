@@ -669,24 +669,25 @@ func (c *Controller) stageInput(ctx context.Context, sess *session, bp store.Blu
 
 		brief := ""
 
-		if st.Design {
-			var tags map[string]keptPackage
+		var kept map[string]keptPackage
 
-			brief, tags = c.prepareDesign(ctx, sess, bp, st.ID, facts, c.modelFor(sess, st.Persona).window)
-			maps.Copy(facts.packages, tags)
+		if st.Design {
+			brief, kept = c.prepareDesign(ctx, sess, bp, st.ID, facts, c.modelFor(sess, st.Persona).window)
+			maps.Copy(facts.packages, kept)
 		}
 
 		in.Tools = append(in.Tools, stage.CodeTools(facts.root, facts.repos, tagsByDir(facts.packages))...)
 		in.Task = brief + checkoutLines(facts) + in.Task
 
-		// A kept package sits under the root too, and is no tree.
 		if len(facts.repos) > 0 {
 			trees := make([]string, 0, len(facts.repos))
 			for _, r := range facts.repos {
 				trees = append(trees, r.Dir)
 			}
 
-			in.Images = stage.ImageFiles{Root: facts.root, Trees: trees}
+			// Only the packages this run's gather kept: its brief lists their
+			// images, and one an earlier run kept is not listed.
+			in.Images = stage.ImageFiles{Root: facts.root, Trees: trees, Packages: slices.Sorted(maps.Keys(kept))}
 		}
 	}
 

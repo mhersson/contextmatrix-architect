@@ -52,7 +52,7 @@ func (c *Controller) prepareDesign(ctx context.Context, sess *session, bp store.
 		return "", nil
 	}
 
-	req := designpkg.Request{Root: facts.root}
+	req := designpkg.Request{Root: facts.root, ImageCap: stage.MaxImageBytes}
 
 	for _, r := range facts.repos {
 		if !r.Empty {

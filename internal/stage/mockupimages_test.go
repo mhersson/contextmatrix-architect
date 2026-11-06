@@ -41,33 +41,40 @@ func pngOfSize(t *testing.T, n int) []byte {
 	return append(data, make([]byte, n-len(data))...)
 }
 
-// imageRoot is a tool root with the trees shop and shop@api, a kept package
-// dir beside them and a directory that is no tree, holding valid images
+// keptPackageDir is the kept package imageRoot lists; the old one beside it
+// is a kept package no longer in the run's gather.
+const keptPackageDir = "_npm+@acme+ui@1.2.3"
+
+// imageRoot is a tool root with the trees shop and shop@api, two kept package
+// dirs beside them and a directory that is no tree, holding valid images
 // where only the rule a case breaks keeps a file out.
 func imageRoot(t *testing.T) (string, map[string][]byte) {
 	t.Helper()
 
 	root := t.TempDir()
 	files := map[string][]byte{
-		"shop/web/src/assets/logo.svg":           []byte(logoSVG),
-		"shop/web/public/hero.png":               pngBytes(t),
-		"shop/web/public/LOUD.PNG":               pngBytes(t),
-		"shop@api/static/badge.avif":             avifBytes("avif"),
-		"shop@api/static/sequence.avif":          avifBytes("avis"),
-		"shop/web/exact.png":                     pngOfSize(t, MaxImageBytes),
-		"shop/web/big.png":                       pngOfSize(t, MaxImageBytes+1),
-		"shop/web/drawn.png":                     []byte(logoSVG),
-		"shop/web/still.avif":                    pngBytes(t),
-		"shop/web/heic.avif":                     avifBytes("heic"),
-		"shop/web/latin1.svg":                    []byte("<svg>\xe6\xf8\xe5</svg>"),
-		"shop/web/page.svg":                      []byte("<html><body>no drawing</body></html>"),
-		"shop/web/src/assets/logo.txt":           []byte(logoSVG),
-		"shop/.git/logo.svg":                     []byte(logoSVG),
-		"shop/web/node_modules/pkg/logo.svg":     []byte(logoSVG),
-		"shop/web/NODE_MODULES/pkg/logo.svg":     []byte(logoSVG),
-		"_npm+x@1/logo.svg":                      []byte(logoSVG),
-		"elsewhere/logo.svg":                     []byte(logoSVG),
-		"shop/web/src/dir.svg/inside/marker.svg": []byte(logoSVG),
+		"shop/web/src/assets/logo.svg":                []byte(logoSVG),
+		"shop/web/public/hero.png":                    pngBytes(t),
+		"shop/web/public/LOUD.PNG":                    pngBytes(t),
+		"shop@api/static/badge.avif":                  avifBytes("avif"),
+		"shop@api/static/sequence.avif":               avifBytes("avis"),
+		"shop/web/exact.png":                          pngOfSize(t, MaxImageBytes),
+		"shop/web/big.png":                            pngOfSize(t, MaxImageBytes+1),
+		"shop/web/drawn.png":                          []byte(logoSVG),
+		"shop/web/still.avif":                         pngBytes(t),
+		"shop/web/heic.avif":                          avifBytes("heic"),
+		"shop/web/latin1.svg":                         []byte("<svg>\xe6\xf8\xe5</svg>"),
+		"shop/web/page.svg":                           []byte("<html><body>no drawing</body></html>"),
+		"shop/web/src/assets/logo.txt":                []byte(logoSVG),
+		"shop/.git/logo.svg":                          []byte(logoSVG),
+		"shop/web/node_modules/pkg/logo.svg":          []byte(logoSVG),
+		"shop/web/NODE_MODULES/pkg/logo.svg":          []byte(logoSVG),
+		"_npm+x@1/logo.svg":                           []byte(logoSVG),
+		keptPackageDir + "/assets/icons/heart.svg":    []byte(logoSVG),
+		keptPackageDir + "/node_modules/pkg/logo.svg": []byte(logoSVG),
+		"_npm+@acme+old@0.1.0/x.svg":                  []byte(logoSVG),
+		"elsewhere/logo.svg":                          []byte(logoSVG),
+		"shop/web/src/dir.svg/inside/marker.svg":      []byte(logoSVG),
 	}
 
 	for rel, data := range files {
@@ -78,15 +85,17 @@ func imageRoot(t *testing.T) (string, map[string][]byte) {
 
 	require.NoError(t, os.Symlink(filepath.Join(root, "shop/web/src/assets"), filepath.Join(root, "shop/web/linked")))
 	require.NoError(t, os.Symlink(filepath.Join(root, "shop/web/src/assets/logo.svg"), filepath.Join(root, "shop/web/src/assets/alias.svg")))
+	require.NoError(t, os.Symlink(filepath.Join(root, keptPackageDir, "assets/icons/heart.svg"), filepath.Join(root, keptPackageDir, "assets/icons/alias.svg")))
 
 	return root, files
 }
 
 func TestImageFiles_DataURI(t *testing.T) {
 	root, files := imageRoot(t)
-	img := ImageFiles{Root: root, Trees: []string{"shop", "shop@api"}}
+	img := ImageFiles{Root: root, Trees: []string{"shop", "shop@api"}, Packages: []string{keptPackageDir}}
 
 	taken := []struct{ path, mime string }{
+		{keptPackageDir + "/assets/icons/heart.svg", "image/svg+xml"},
 		{"shop/web/src/assets/logo.svg", "image/svg+xml"},
 		{"shop/web/public/hero.png", "image/png"},
 		{"shop/web/public/LOUD.PNG", "image/png"},
@@ -119,7 +128,10 @@ func TestImageFiles_DataURI(t *testing.T) {
 		{"a dot-dot segment", "shop/web/../web/src/assets/logo.svg"},
 		{"a dot-dot out of the trees", "shop/../elsewhere/logo.svg"},
 		{"a directory that is no tree", "elsewhere/logo.svg"},
-		{"a kept package", "_npm+x@1/logo.svg"},
+		{"a kept package the run did not keep", "_npm+x@1/logo.svg"},
+		{"a kept package the gather no longer lists", "_npm+@acme+old@0.1.0/x.svg"},
+		{"a node_modules directory in a kept package", keptPackageDir + "/node_modules/pkg/logo.svg"},
+		{"a symlinked file inside a kept package", keptPackageDir + "/assets/icons/alias.svg"},
 		{"a tree named in another case", "Shop/web/src/assets/logo.svg"},
 		{"a git directory", "shop/.git/logo.svg"},
 		{"a node_modules directory", "shop/web/node_modules/pkg/logo.svg"},
@@ -146,6 +158,17 @@ func TestImageFiles_DataURI(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.path, "the refusal names the path")
 		})
 	}
+}
+
+// The refusal of a first segment the run does not hold lists what it does:
+// the trees, then the kept packages.
+func TestImageFiles_AnUnknownDirectoryNamesTheTreesAndTheKeptPackages(t *testing.T) {
+	root, _ := imageRoot(t)
+	img := ImageFiles{Root: root, Trees: []string{"shop", "shop@api"}, Packages: []string{keptPackageDir}}
+
+	_, err := img.DataURI(context.Background(), "_npm+@acme+old@0.1.0/x.svg")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "shop, shop@api, "+keptPackageDir)
 }
 
 func TestImageFiles_DataURIStopsWithTheContext(t *testing.T) {
