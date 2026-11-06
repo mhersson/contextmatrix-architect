@@ -609,7 +609,11 @@ func TestGather_PackageImagesNeedAKeptPackage(t *testing.T) {
 }
 
 func TestGather_PackageImagesCap(t *testing.T) {
-	const logo = uiDir + "/assets/images/acme-logo.png"
+	const (
+		logo        = uiDir + "/assets/images/acme-logo.png"
+		arrowImport = "import { arrow } from '@acme/ui/icons'\n"
+		logoImport  = "import { Logo } from '@acme/ui'\n"
+	)
 
 	images := map[string]string{"package/assets/images/acme-logo.png": "\x89PNG\r\n\x1a\nlogo"}
 	for i := 1; i <= 30; i++ {
@@ -619,12 +623,60 @@ func TestGather_PackageImagesCap(t *testing.T) {
 	tarballs := acmeTarballsWith(t, map[string]string{"core.css": defaultCoreCSS}, defaultVarsCSS,
 		map[string]map[string]string{uiPath: images})
 
+	// listing is what a root lists: its arrows and whether the logo is among them.
+	type listing struct {
+		arrows int
+		logo   bool
+	}
+
 	tests := []struct {
-		name string
-		dirs []string
+		name    string
+		imports map[string][]string // each root's frame files' imports, one file each
+		want    map[string]listing
+		onDisk  int
 	}{
-		{name: "one root", dirs: []string{"frontend"}},
-		{name: "two roots naming the same images count them once", dirs: []string{"frontend", "admin"}},
+		{
+			name:    "one root",
+			imports: map[string][]string{"frontend": {arrowImport, logoImport}},
+			want:    map[string]listing{"frontend": {maxPackageImages - 1, true}},
+			onDisk:  maxPackageImages,
+		},
+		{
+			name: "two roots naming the same images count them once",
+			imports: map[string][]string{
+				"frontend": {arrowImport, logoImport},
+				"admin":    {arrowImport, logoImport},
+			},
+			want: map[string]listing{
+				"frontend": {maxPackageImages - 1, true},
+				"admin":    {maxPackageImages - 1, true},
+			},
+			onDisk: maxPackageImages,
+		},
+		{
+			name: "a root naming only the logo is not crowded out by another's arrows",
+			imports: map[string][]string{
+				"admin":    {arrowImport},
+				"frontend": {logoImport},
+			},
+			want: map[string]listing{
+				"admin":    {maxPackageImages, false},
+				"frontend": {0, true},
+			},
+			onDisk: maxPackageImages + 1,
+		},
+		{
+			name: "a root naming arrows keeps its own cap of them beside another's logo",
+			imports: map[string][]string{
+				"admin":    {arrowImport, logoImport},
+				"frontend": {arrowImport},
+			},
+			want: map[string]listing{
+				"admin":    {maxPackageImages - 1, true},
+				"frontend": {maxPackageImages, false},
+			},
+			onDisk: maxPackageImages + 1,
+		},
 	}
 
 	for _, tc := range tests {
@@ -632,22 +684,44 @@ func TestGather_PackageImagesCap(t *testing.T) {
 			srv := registryServer(t, tarballs, 0)
 			root := t.TempDir()
 
-			files := portalRoots(t, srv.URL, tarballs, tc.dirs, map[string]string{
-				"src/components/Header/index.tsx": "import { arrow } from '@acme/ui/icons'\n",
-				"src/components/Footer/index.tsx": "import { Logo } from '@acme/ui'\n",
-			})
+			var dirs []string
+			for dir := range tc.imports {
+				dirs = append(dirs, dir)
+			}
+
+			files := portalRoots(t, srv.URL, tarballs, dirs, nil)
+
+			for dir, imports := range tc.imports {
+				for i, imp := range imports {
+					files[fmt.Sprintf("%s/src/components/%s/index.tsx", dir, []string{"Header", "Footer"}[i])] = imp
+				}
+			}
 
 			m, err := gatherPortalImages(t, srv, root, files, testImageCap)
 			require.NoError(t, err)
-			require.Len(t, m.Roots, len(tc.dirs))
+			require.Len(t, m.Roots, len(tc.imports))
 
 			for _, r := range m.Roots {
-				listed := assetPaths(r.PackageImages)
-				assert.Len(t, listed, maxPackageImages, r.Path)
-				assert.Contains(t, listed, logo, r.Path)
+				want, ok := tc.want[strings.TrimPrefix(r.Path, "portal/")]
+				require.True(t, ok, r.Path)
+
+				var got listing
+
+				for _, p := range assetPaths(r.PackageImages) {
+					switch {
+					case p == logo:
+						got.logo = true
+					case strings.HasPrefix(p, uiDir+"/assets/icons/arrow_"):
+						got.arrows++
+					default:
+						assert.Failf(t, "unexpected package image", "%s lists %s", r.Path, p)
+					}
+				}
+
+				assert.Equal(t, want, got, r.Path)
 			}
 
-			assert.Len(t, imageFilesUnder(t, filepath.Join(root, uiDir)), maxPackageImages)
+			assert.Len(t, imageFilesUnder(t, filepath.Join(root, uiDir)), tc.onDisk)
 		})
 	}
 }

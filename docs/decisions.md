@@ -334,13 +334,15 @@ HEAD.
   directory such as `_npm+@acme+ui@1.2.3` at the blueprint's tool root, at
   most 8 MiB of CSS per gather, and beside it the image files named like the
   named imports a frame file takes from that package (`Heart` matches
-  `heart.svg`), matched by the words of a name, at most 24 per package and
-  32 KiB each. No package is fetched for its images, and each kept package is
-  a source of kind `package`. Why: the designer needs the styles and the icons
-  a frame file names, not the rest of a package, a grep match on a minified
-  stylesheet would return the whole file, an image over a mockup's 32 KiB
-  cannot be inserted, a package is downloaded only for the styles the project
-  imports, and `_` starts no project name.
+  `heart.svg`), matched by the words of a name, at most 24 per package for
+  each frontend root and 32 KiB each. No package is fetched for its images,
+  and each kept package is a source of kind `package`. Why: the designer needs
+  the styles and the icons a frame file names, not the rest of a package, a
+  grep match on a minified stylesheet would return the whole file, an image
+  over a mockup's 32 KiB cannot be inserted, a package is downloaded only for
+  the styles the project imports, a root's cap of its own keeps a root that
+  names many icons from taking another root's share, and `_` starts no
+  project name.
 - A package is checked against its npm integrity when its lock entry records
   one, and a mismatch is a gap; a package-lock or classic yarn.lock entry
   without one, and a Yarn Berry package, is kept unverified. Why: Berry's

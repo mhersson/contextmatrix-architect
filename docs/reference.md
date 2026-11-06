@@ -137,9 +137,9 @@ styles import, downloaded at the version its lockfile (package-lock.json at
 lockfileVersion 2 or 3, yarn.lock or pnpm-lock.yaml) records from the registry
 its repository configures, else the public npm registry. Of those packages it
 also lists the image files named like the names the frame files import from
-them (`Heart` from `@acme/ui` matches `heart.svg`), at most 24 per package and
-32 KiB each; no package is downloaded for its images. Each package kept is a
-source, and the chat names it when it is first fetched.
+them (`Heart` from `@acme/ui` matches `heart.svg`), at most 24 per package for
+each frontend root and 32 KiB each; no package is downloaded for its images.
+Each package kept is a source, and the chat names it when it is first fetched.
 
 The designer rebuilds the header, navigation, sidebar and footer from the frame
 source, with their own items and labels. It references the logo, the images the
