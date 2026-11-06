@@ -28,6 +28,14 @@ var (
 	// which leaves out a dynamic import.
 	staticImportRE = regexp.MustCompile(`\b(?:import|export)\b(?:[^;'"]*?\bfrom\s*)?\s*(?:"([^"\n]*)"|'([^'\n]*)')`)
 
+	// Groups: 1 `type` for a type-only statement; 2 the braced list; 3-4 the
+	// specifier as double-quoted, single-quoted.
+	namedImportRE = regexp.MustCompile(`\bimport\b\s*(type\b\s*)?(?:[\p{L}_$][\p{L}\p{N}_$]*\s*,\s*)?\{([^{}]*)\}\s*from\s*(?:"([^"\n]+)"|'([^'\n]+)')`)
+
+	// A trailing line comment. Only used inside a braced list, where no string
+	// can hold a `//`; jsCommentRE leaves these alone because a url holds one.
+	trailingCommentRE = regexp.MustCompile(`//[^\n]*`)
+
 	schemeRE = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
 
 	htmlCommentRE = regexp.MustCompile(`(?s)<!--.*?-->`)
@@ -104,6 +112,48 @@ func localImports(src string) []string {
 	}
 
 	return specs
+}
+
+// namedImport is one static `import { ... } from 'Spec'` statement and the
+// names it imports.
+type namedImport struct {
+	Spec  string
+	Names []string
+}
+
+// namedImports returns, in source order, a namedImport for each static import
+// in src that lists at least one name, ignoring comments. The name of `a as b`
+// is `a`; `default` and `type x` entries and type-only statements are left out,
+// and each name is listed once.
+func namedImports(src string) []namedImport {
+	src = blank(jsCommentRE, src)
+
+	var imports []namedImport
+
+	for _, m := range namedImportRE.FindAllStringSubmatch(src, -1) {
+		if m[1] != "" {
+			continue
+		}
+
+		var names []string
+
+		for _, entry := range strings.Split(trailingCommentRE.ReplaceAllString(m[2], ""), ",") {
+			fields := strings.Fields(entry)
+			if len(fields) == 0 || fields[0] == "default" ||
+				len(fields) > 1 && fields[0] == "type" && fields[1] != "as" ||
+				slices.Contains(names, fields[0]) {
+				continue
+			}
+
+			names = append(names, fields[0])
+		}
+
+		if len(names) > 0 {
+			imports = append(imports, namedImport{Spec: firstNonEmpty(m[3:]...), Names: names})
+		}
+	}
+
+	return imports
 }
 
 // htmlStylesheets returns the href of each <link> in src whose rel holds the
