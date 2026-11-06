@@ -151,7 +151,7 @@ func (showMockupTool) Schema() llm.Tool {
 			"source":{"type":"string","description":"the screen people will use, imitated in one HTML document: a phone or tablet app, a desktop window, a full-screen terminal interface, a web page, whatever the need has. ` +
 			`At most 64 KiB and self-contained, as it runs sealed in a frame: inline script and style elements and style attributes only, images as data: URIs or inline SVG, system fonts only; ` +
 			`no network calls, form submission, popups, alert, confirm or prompt, nested frames, navigating links (switch views in script), localStorage, sessionStorage or cookies. ` +
-			`Reference a repository image file as asset:<path relative to the tool root> in an attribute, a style or a script; the architect inserts the file. ` +
+			`Reference a repository image file, or a package image the brief lists, as asset:<path relative to the tool root> in an attribute, a style or a script; the architect inserts the file. ` +
 			`With suggestions it renders from window.mockupSettings (each suggestion id to its value) at load, and again on every window mockup:settings event, whose detail is the settings, without resetting the screen or tab the person is on."},
 			"screens":{"type":"array","items":{"type":"object","properties":{
 				"id":{"type":"string","description":"lower case letters, digits and _, starting with a letter"},
