@@ -2,10 +2,14 @@ package design
 
 import (
 	"cmp"
+	"maps"
 	"path"
 	"slices"
 	"strings"
 )
+
+// maxPackageImages bounds the images one Gather keeps of a package.
+const maxPackageImages = 24
 
 // imageIndex holds image paths and, for each, the words of its file name less
 // the extension.
@@ -95,6 +99,77 @@ func pickImages(ranked [][]string, limit int) []string {
 
 		if !more {
 			break
+		}
+	}
+
+	return out
+}
+
+// pickPackageImages sets the images each wanted package keeps, from every name
+// the wants give it, and returns each root's images by Root.Path: the matches
+// of its wants' names a package keeps, in want order, once each. Only a package
+// the CSS walk fetched and reached gives images; none is fetched for them.
+func (s *gathering) pickPackageImages() map[string][]Asset {
+	var dirs []string
+
+	names := map[string][]string{} // by dir
+
+	for _, w := range s.wants {
+		list, seen := names[w.dir]
+		if !seen {
+			dirs = append(dirs, w.dir)
+		}
+
+		for _, n := range w.names {
+			if !slices.Contains(list, n) {
+				list = append(list, n)
+			}
+		}
+
+		names[w.dir] = list
+	}
+
+	ranked := map[string]map[string][]string{} // by dir, then name
+
+	for _, dir := range dirs {
+		p := s.pkgs[dir]
+		if p == nil || p.files == nil || len(p.keep) == 0 || len(p.files.images) == 0 {
+			continue
+		}
+
+		x := newImageIndex(slices.Sorted(maps.Keys(p.files.images)))
+		byName := make(map[string][]string, len(names[dir]))
+		lists := make([][]string, len(names[dir]))
+
+		for i, n := range names[dir] {
+			lists[i] = x.matches(n)
+			byName[n] = lists[i]
+		}
+
+		p.images = pickImages(lists, maxPackageImages)
+		ranked[dir] = byName
+	}
+
+	type rootImage struct{ root, path string }
+
+	out := map[string][]Asset{}
+	listed := map[rootImage]bool{}
+
+	for _, w := range s.wants {
+		p := s.pkgs[w.dir]
+
+		for _, n := range w.names {
+			// ranked holds w.dir only when p was picked from, so p is set here.
+			for _, rel := range ranked[w.dir][n] {
+				key := rootImage{w.root, path.Join(w.dir, rel)}
+
+				if !slices.Contains(p.images, rel) || listed[key] {
+					continue
+				}
+
+				listed[key] = true
+				out[w.root] = append(out[w.root], Asset{Path: key.path, Size: int64(len(p.files.images[rel]))})
+			}
 		}
 	}
 

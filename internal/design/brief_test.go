@@ -210,6 +210,26 @@ func TestBrief_ImagesCountInTheCap(t *testing.T) {
 	assert.True(t, strings.HasSuffix(out, cutNote), "the part is cut at a line end like any other")
 }
 
+func TestBrief_PackageImages(t *testing.T) {
+	const label = "Package images named like the frame files' imports:"
+
+	m := briefMaterial()
+	m.Roots[0].PackageImages = []Asset{{Path: briefUIDir + "/assets/icons/heart.svg", Size: 440}}
+
+	lines := strings.Split(Brief(m, nil, window128k, testImageCap), "\n")
+
+	at := slices.Index(lines, label)
+	require.NotEqual(t, -1, at)
+	require.Less(t, at+1, len(lines))
+	assert.Equal(t, "- _npm+@acme+ui@1.2.3/assets/icons/heart.svg (440 bytes)", lines[at+1])
+
+	images := slices.Index(lines, "Images the frame files use:")
+	require.NotEqual(t, -1, images)
+	assert.Less(t, images, at)
+
+	assert.NotContains(t, Brief(briefMaterial(), nil, window128k, testImageCap), label)
+}
+
 func TestBrief_PartPerRoot(t *testing.T) {
 	m := Material{Roots: []Root{
 		{Project: "alpha", Path: "alpha/web", Frame: []Asset{{Path: "alpha/web/a.tsx"}}},
