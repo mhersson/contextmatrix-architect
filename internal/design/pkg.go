@@ -123,7 +123,7 @@ func readPackageLimited(ctx context.Context, tgzPath string, lim readLimits) (*p
 
 		if isImagePath(rel) {
 			// A skipped image is not an error: the read goes on.
-			if lim.imageFile > 0 && hdr.Size <= lim.imageFile && imageBytes+hdr.Size <= lim.images {
+			if lim.imageFile > 0 && hdr.Size > 0 && hdr.Size <= lim.imageFile && imageBytes+hdr.Size <= lim.images {
 				body := make([]byte, hdr.Size)
 				if _, err := io.ReadFull(tr, body); err != nil {
 					return nil, src.wrap(lim, err)

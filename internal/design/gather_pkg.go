@@ -33,6 +33,7 @@ type keptPkg struct {
 	failed                       string            // gap reason when it could not be fetched or read
 	keep                         map[string]bool   // files reached by any root
 	images                       []string          // picked image files, written beside the kept CSS
+	written                      map[string]bool   // the picked images that were written
 	decls                        map[string][]decl // rootDecls by file
 	firstRoot, firstImport       string
 }
@@ -313,7 +314,8 @@ func (s *gathering) write(ctx context.Context) ([]Package, error) {
 }
 
 // writePkg replaces the package's directory under the tool root with files and
-// the package's picked images.
+// the package's picked images. An image the file system refuses, as a package
+// archive can name a path it cannot hold, is skipped and left out of p.written.
 func (s *gathering) writePkg(p *keptPkg, files, contents []string) error {
 	dst := filepath.Join(s.root, p.dir)
 	if filepath.Dir(dst) != filepath.Clean(s.root) || filepath.Base(dst) != p.dir {
@@ -328,26 +330,28 @@ func (s *gathering) writePkg(p *keptPkg, files, contents []string) error {
 		file := filepath.Join(dst, filepath.FromSlash(rel))
 
 		if err := os.MkdirAll(filepath.Dir(file), 0o750); err != nil {
-			return fmt.Errorf("design: gather: write %s: %w", p.dir, err)
+			return err
 		}
 
-		if err := os.WriteFile(file, data, 0o600); err != nil {
-			return fmt.Errorf("design: gather: write %s: %w", p.dir, err)
-		}
-
-		return nil
+		return os.WriteFile(file, data, 0o600)
 	}
 
 	for i, f := range files {
 		if err := put(f, []byte(contents[i])); err != nil {
-			return err
+			return fmt.Errorf("design: gather: write %s: %w", p.dir, err)
 		}
 	}
 
+	p.written = map[string]bool{}
+
 	for _, rel := range p.images {
 		if err := put(rel, p.files.images[rel]); err != nil {
-			return err
+			slog.Warn("design: skip package image", "package", p.dir, "image", rel, "error", err)
+
+			continue
 		}
+
+		p.written[rel] = true
 	}
 
 	return nil

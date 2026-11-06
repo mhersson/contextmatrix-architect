@@ -783,6 +783,113 @@ func TestGather_PackageImagesOfAPackageOverTheCSSCap(t *testing.T) {
 	assert.Equal(t, []string{uiDir + "/assets/heart.svg"}, assetPaths(m.Roots[0].PackageImages))
 }
 
+// TestGather_APackageImageThatCannotBeWrittenIsSkipped covers archives whose
+// paths the file system refuses: such an image is dropped, not the Gather.
+func TestGather_APackageImageThatCannotBeWrittenIsSkipped(t *testing.T) {
+	longName := strings.Repeat("a", 250) + "-heart.svg" // over 255 bytes
+
+	tests := []struct {
+		name    string
+		images  map[string]string // archive path to body
+		header  string
+		listed  []string // package-relative paths the brief lists
+		dropped []string // package-relative paths neither listed nor on disk
+	}{
+		{
+			name: "an image and a directory of one name",
+			images: map[string]string{
+				"package/assets/heart.svg":          `<svg id="heart"/>`,
+				"package/assets/heart.svg/play.svg": `<svg id="play"/>`,
+				"package/assets/star.svg":           `<svg id="star"/>`,
+			},
+			header: "import { heart, play, star } from '@acme/ui'\n",
+			listed: []string{"assets/star.svg"},
+		},
+		{
+			name: "a file name too long for the file system",
+			images: map[string]string{
+				"package/assets/" + longName: `<svg id="long"/>`,
+				"package/assets/star.svg":    `<svg id="star"/>`,
+			},
+			header:  "import { heart, star } from '@acme/ui'\n",
+			listed:  []string{"assets/star.svg"},
+			dropped: []string{"assets/" + longName},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tarballs := acmeTarballsWith(t, map[string]string{"core.css": defaultCoreCSS}, defaultVarsCSS,
+				map[string]map[string]string{uiPath: tc.images})
+			srv := registryServer(t, tarballs, 0)
+			root := t.TempDir()
+
+			files := portalTree(t, srv.URL, tarballs)
+			files["frontend/src/components/Header/index.tsx"] = tc.header
+
+			m, err := gatherPortalImages(t, srv, root, files, testImageCap)
+			require.NoError(t, err)
+			require.Len(t, m.Roots, 1)
+
+			require.Len(t, m.Packages, 2, "the CSS is kept")
+			assert.Equal(t, uiDir, m.Packages[1].Dir)
+			assert.Contains(t, m.Packages[1].Files, uiDir+"/style/core.css")
+			assert.FileExists(t, filepath.Join(root, uiDir, "style", "core.css"))
+
+			listed := assetPaths(m.Roots[0].PackageImages)
+			for _, rel := range tc.listed {
+				assert.Contains(t, listed, uiDir+"/"+rel)
+			}
+
+			for _, rel := range tc.dropped {
+				assert.NotContains(t, listed, uiDir+"/"+rel)
+				assert.NoFileExists(t, filepath.Join(root, uiDir, filepath.FromSlash(rel)))
+			}
+
+			// Whichever of two clashing paths was written first is the one
+			// listed: the brief lists what is on disk, with its size.
+			onDisk := imageFilesUnder(t, filepath.Join(root, uiDir))
+
+			want := make([]string, len(listed))
+			for i, p := range listed {
+				want[i] = strings.TrimPrefix(p, uiDir+"/")
+			}
+
+			assert.ElementsMatch(t, want, onDisk)
+
+			for _, a := range m.Roots[0].PackageImages {
+				info, err := os.Stat(filepath.Join(root, filepath.FromSlash(a.Path)))
+				require.NoError(t, err, a.Path)
+				assert.Equal(t, a.Size, info.Size(), a.Path)
+			}
+		})
+	}
+}
+
+func TestGather_PackageImagesDifferingOnlyInCaseAreListedOnce(t *testing.T) {
+	tarballs := acmeTarballsWith(t, map[string]string{"core.css": defaultCoreCSS}, defaultVarsCSS,
+		map[string]map[string]string{uiPath: {
+			"package/assets/Heart.svg": `<svg id="Heart"/>`,
+			"package/assets/heart.svg": `<svg id="heart-in-lower-case"/>`,
+		}})
+	srv := registryServer(t, tarballs, 0)
+	root := t.TempDir()
+
+	files := portalTree(t, srv.URL, tarballs)
+	files["frontend/src/components/Header/index.tsx"] = "import { heart } from '@acme/ui'\n"
+
+	m, err := gatherPortalImages(t, srv, root, files, testImageCap)
+	require.NoError(t, err)
+	require.Len(t, m.Roots, 1)
+
+	require.Len(t, m.Roots[0].PackageImages, 1)
+
+	a := m.Roots[0].PackageImages[0]
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(a.Path)))
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(data)), a.Size)
+}
+
 func TestGather_TokensInImportOrder(t *testing.T) {
 	const grey = ":root{--acme-grey-8:#ebebeb}"
 

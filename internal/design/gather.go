@@ -159,9 +159,9 @@ func (g *Gatherer) Gather(ctx context.Context, req Request) (Material, error) {
 	for i := range m.Roots {
 		m.Roots[i].Packages = slices.DeleteFunc(m.Roots[i].Packages, func(dir string) bool { return !kept[dir] })
 		m.Roots[i].PackageImages = slices.DeleteFunc(m.Roots[i].PackageImages, func(a Asset) bool {
-			dir, _, _ := strings.Cut(a.Path, "/")
+			dir, rel, _ := strings.Cut(a.Path, "/")
 
-			return !kept[dir]
+			return !kept[dir] || !s.pkgs[dir].written[rel]
 		})
 	}
 

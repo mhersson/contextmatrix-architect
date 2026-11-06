@@ -29,6 +29,26 @@ func newImageIndex(paths []string) imageIndex {
 	return x
 }
 
+// foldCaseDuplicates drops from sorted every path equal to an earlier one when
+// lower-cased: on a case-insensitive file system they are one file.
+func foldCaseDuplicates(sorted []string) []string {
+	seen := make(map[string]bool, len(sorted))
+	out := make([]string, 0, len(sorted))
+
+	for _, p := range sorted {
+		folded := strings.ToLower(p)
+		if seen[folded] {
+			continue
+		}
+
+		seen[folded] = true
+
+		out = append(out, p)
+	}
+
+	return out
+}
+
 // matches returns the paths whose file name holds the words of name as a
 // contiguous run, fewest words first so that an exact name leads, then by
 // comparePaths. It returns nil when name has no words.
@@ -146,7 +166,7 @@ func (s *gathering) pickPackageImages() map[string][]Asset {
 
 		x, ok := indexes[k.dir]
 		if !ok {
-			x = newImageIndex(slices.Sorted(maps.Keys(p.files.images)))
+			x = newImageIndex(foldCaseDuplicates(slices.Sorted(maps.Keys(p.files.images))))
 			indexes[k.dir] = x
 		}
 

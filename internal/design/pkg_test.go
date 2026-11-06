@@ -250,6 +250,12 @@ func TestReadPackageLimits(t *testing.T) {
 			wantImages: map[string]string{},
 		},
 		{
+			name:       "empty image is not held",
+			files:      map[string]string{"package/empty.svg": "", "package/heart.svg": "<svg/>"},
+			wantCSS:    map[string]string{},
+			wantImages: map[string]string{"heart.svg": "<svg/>"},
+		},
+		{
 			name:       "file that is not an image is not held",
 			files:      map[string]string{"package/notes.txt": "hello"},
 			wantCSS:    map[string]string{},

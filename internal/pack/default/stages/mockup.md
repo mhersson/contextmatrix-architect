@@ -56,8 +56,9 @@ While the look stays the project's:
   reference from the tokens: a gradient or a flat shape in its colours.
 - Reference the icons and images in the Package images list the same way,
   choosing by the name the frame file imports: an import of `heart` is
-  `heart.svg`, and a size variant such as `heart_medium.svg` is the larger
-  size. Draw a component with no listed image from the tokens.
+  `heart.svg`. A name with a size word, such as `heart_medium.svg`, is the
+  same icon at another size: pick the one the frame's size calls for. Draw a
+  component with no listed image from the tokens.
 - A single-colour logo, an SVG with `currentColor` or no fill, draws black in
   an `<img>` and vanishes on a dark header: give an element the logo's size,
   `mask: url(asset:...) center / contain no-repeat` and a `background-color`
@@ -102,7 +103,8 @@ rule; fix it and show again in the same run.
 
 - One document of at most 64 KiB: inline `<script>` and `<style>` elements
   and style attributes only. Images are `asset:` references to the
-  repository's image files, `data:` URIs or inline SVG. System fonts only.
+  repository's or a kept package's image files, `data:` URIs or inline SVG.
+  System fonts only.
 - Reference an image file of a checked-out tree, or a kept package image the
   brief lists, as `asset:` followed by its path relative to the tool root, as
   the brief and the code tools show it:
@@ -114,10 +116,11 @@ rule; fix it and show again in the same run.
   most 32 KiB whose content is its extension's, never through a symlink,
   `.git` or `node_modules`. The 64 KiB counts the inserted images, each a third
   larger than its file, and each reference inserts the whole file: when the
-  screen shows an image more than once, reference it once, in a CSS class. In a style or a script, `asset:` followed
-  by a path with a `/` is a reference wherever it stands, comments and strings
-  included, so such text there must name a real image; `asset:` with no `/` in
-  the path after it, as in `.asset:hover`, stays as written.
+  screen shows an image more than once, reference it once, in a CSS class. In
+  a style or a script, `asset:` followed by a path with a `/` is a reference
+  wherever it stands, comments and strings included, so such text there must
+  name a real image; `asset:` with no `/` in the path after it, as in
+  `.asset:hover`, stays as written.
 - No `link`, `iframe`, `frame`, `object`, `embed`, `form` or `base` element,
   and no `meta` with `http-equiv`. Every `src`, `href`, `srcset`, `poster`,
   `action`, `formaction`, `data` and `xlink:href` value is a `data:` URI or
