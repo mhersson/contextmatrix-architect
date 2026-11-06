@@ -231,7 +231,7 @@ func (s *gathering) pkg(ctx context.Context, w *rootWalk, l locked, spec string)
 
 	p.verified = verified
 
-	p.files, err = readPackage(ctx, tgz)
+	p.files, err = readPackage(ctx, tgz, int64(s.imageCap))
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, "", fmt.Errorf("design: gather: %w", ctx.Err())

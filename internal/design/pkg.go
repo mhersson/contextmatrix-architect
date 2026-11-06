@@ -23,17 +23,21 @@ const (
 	maxArchiveBytes = 1 << 30
 	// maxPackageCSSBytes bounds the CSS one package holds in memory.
 	maxPackageCSSBytes = 128 << 20
+	// maxPackageImageBytes bounds the image bytes one package holds in memory.
+	maxPackageImageBytes = 16 << 20
 )
 
 // exportConditions are the export conditions searched, in order.
 var exportConditions = []string{"style", "default", "import", "browser", "require"}
 
-// pkgFiles is the part of a package that design gathering reads: its manifest
-// and its CSS files, keyed by slash path relative to the package root.
-// onDisk, when set, finds a CSS file of a package read in the tree.
+// pkgFiles is the part of a package that design gathering reads: its manifest,
+// its CSS files and its image files, keyed by slash path relative to the
+// package root. onDisk, when set, finds a CSS file of a package read in the
+// tree.
 type pkgFiles struct {
 	manifest map[string]any
 	css      map[string]string
+	images   map[string][]byte
 	onDisk   func(rel string) bool
 }
 
@@ -47,20 +51,24 @@ func (p *pkgFiles) has(rel string) bool {
 }
 
 type readLimits struct {
-	file  int64 // largest package.json or CSS file kept
-	total int64 // decompressed bytes read from the archive, kept or not
-	css   int64 // CSS held in memory
+	file      int64 // largest package.json or CSS file kept
+	total     int64 // decompressed bytes read from the archive, kept or not
+	css       int64 // CSS held in memory
+	imageFile int64 // largest image held; 0 holds none
+	images    int64 // image bytes held in total
 }
 
-// readPackage reads the package.json and the CSS files from the npm tarball at
-// tgzPath. The archive is untrusted: nothing is written to disk, and entries
-// that are not regular files or whose path is absolute or leaves the package
-// are skipped.
-func readPackage(ctx context.Context, tgzPath string) (*pkgFiles, error) {
+// readPackage reads the package.json, the CSS files and the image files no
+// larger than imageCap bytes from the npm tarball at tgzPath. The archive is
+// untrusted: nothing is written to disk, and entries that are not regular
+// files or whose path is absolute or leaves the package are skipped.
+func readPackage(ctx context.Context, tgzPath string, imageCap int64) (*pkgFiles, error) {
 	return readPackageLimited(ctx, tgzPath, readLimits{
-		file:  maxKeptFileBytes,
-		total: maxArchiveBytes,
-		css:   maxPackageCSSBytes,
+		file:      maxKeptFileBytes,
+		total:     maxArchiveBytes,
+		css:       maxPackageCSSBytes,
+		imageFile: imageCap,
+		images:    maxPackageImageBytes,
 	})
 }
 
@@ -78,10 +86,11 @@ func readPackageLimited(ctx context.Context, tgzPath string, lim readLimits) (*p
 	defer gz.Close()
 
 	var (
-		src      = &boundedReader{r: gz, left: lim.total}
-		tr       = tar.NewReader(src)
-		p        = &pkgFiles{css: map[string]string{}}
-		cssBytes int64
+		src        = &boundedReader{r: gz, left: lim.total}
+		tr         = tar.NewReader(src)
+		p          = &pkgFiles{css: map[string]string{}, images: map[string][]byte{}}
+		cssBytes   int64
+		imageBytes int64
 	)
 
 	for {
@@ -103,7 +112,7 @@ func readPackageLimited(ctx context.Context, tgzPath string, lim readLimits) (*p
 			return nil, src.wrap(lim, err)
 		}
 
-		if hdr.Typeflag != tar.TypeReg || hdr.Size > lim.file {
+		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
 
@@ -112,8 +121,23 @@ func readPackageLimited(ctx context.Context, tgzPath string, lim readLimits) (*p
 			continue
 		}
 
+		if isImagePath(rel) {
+			// A skipped image is not an error: the read goes on.
+			if lim.imageFile > 0 && hdr.Size <= lim.imageFile && imageBytes+hdr.Size <= lim.images {
+				body := make([]byte, hdr.Size)
+				if _, err := io.ReadFull(tr, body); err != nil {
+					return nil, src.wrap(lim, err)
+				}
+
+				imageBytes += hdr.Size
+				p.images[rel] = body
+			}
+
+			continue
+		}
+
 		isCSS := path.Ext(rel) == ".css"
-		if rel != "package.json" && !isCSS {
+		if hdr.Size > lim.file || rel != "package.json" && !isCSS {
 			continue
 		}
 
@@ -137,6 +161,22 @@ func readPackageLimited(ctx context.Context, tgzPath string, lim readLimits) (*p
 		cssBytes += hdr.Size
 		p.css[rel] = string(body)
 	}
+}
+
+// isImagePath reports whether rel is an image file by extension and lies
+// outside any node_modules or .git directory.
+func isImagePath(rel string) bool {
+	if !imageExts[strings.ToLower(path.Ext(rel))] {
+		return false
+	}
+
+	for _, seg := range strings.Split(rel, "/") {
+		if strings.EqualFold(seg, "node_modules") || strings.EqualFold(seg, ".git") {
+			return false
+		}
+	}
+
+	return true
 }
 
 // boundedReader fails once more than left bytes have been read from r.

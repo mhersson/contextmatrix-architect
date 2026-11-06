@@ -33,8 +33,9 @@ type Tree struct{ Project, Dir string }
 // Request names the trees to gather from. Root is the blueprint's tool root;
 // kept packages are written directly under it.
 type Request struct {
-	Root  string
-	Trees []Tree
+	Root     string
+	Trees    []Tree
+	ImageCap int // the largest package image kept, in bytes; 0 keeps none
 }
 
 // Material is the design material of the requested trees. Every path in it is
@@ -80,6 +81,7 @@ type gathering struct {
 	g        *Gatherer
 	fetchBy  time.Time // downloads stop here; Gather's own ctx is not wrapped
 	root     string
+	imageCap int
 	pkgs     map[string]*keptPkg // by dir
 	order    []*keptPkg          // in the order first reached
 	gaps     []Gap
@@ -112,7 +114,7 @@ type rootWalk struct {
 // is a Gap; only a local read or write failure or a cancelled ctx is an error.
 func (g *Gatherer) Gather(ctx context.Context, req Request) (Material, error) {
 	s := &gathering{
-		g: g, fetchBy: time.Now().Add(g.fetchFor), root: req.Root, pkgs: map[string]*keptPkg{}, seenGaps: map[Gap]bool{},
+		g: g, fetchBy: time.Now().Add(g.fetchFor), root: req.Root, imageCap: req.ImageCap, pkgs: map[string]*keptPkg{}, seenGaps: map[Gap]bool{},
 		treePkgs: map[string]map[string][]treePackage{},
 	}
 
