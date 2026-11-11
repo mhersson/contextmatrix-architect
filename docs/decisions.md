@@ -56,6 +56,16 @@ HEAD.
 - ContextMatrix only proxies the signed view and artifact reads for the
   architect sessions a caller owns, and relays the live stream; the architect
   owns the data. Why: one source for the blueprint view.
+- On a claude_code endpoint a stage runs as one `claude` process, offered no
+  Claude Code built-in: every tool it calls is one of the run's Go tools on
+  the loopback bridge. Each run gets its own HOME and working directory, an
+  `architect-claude-*` directory under the temp directory that is removed
+  when the run ends and swept at start, also its TMPDIR; of the architect's
+  own environment the child gets only PATH. At most `claude_code_max_runs`
+  processes run at once across all blueprints, and a run waits for a slot
+  before its HOME exists. Why: on a workstation a built-in Read could read
+  the operator's home, nothing Claude Code writes outlives its run, and the
+  cap bounds their memory at 512 MiB a process.
 - Every run of a stage, a chat run included, is offered the same tool list,
   and one reasoning effort is sent on every request. Why: a resumed
   conversation keeps its prompt cache on either endpoint.
@@ -502,7 +512,9 @@ HEAD.
   cannot validate it.
 - Tool results are capped at 128 KiB with head and tail kept, and compaction
   runs at 85% of the window keeping six messages, both as in the chat
-  backend. Why: a ContextMatrix card read can carry a long activity log.
+  backend. On a claude_code run the bridged tool wrapper applies the cap,
+  and compaction is Claude Code's own. Why: a ContextMatrix card read can
+  carry a long activity log.
 - No two file names differ only by case. Why: the build works on macOS's
   case-insensitive filesystem.
 - `make test` never calls a live model, and store tests prove the

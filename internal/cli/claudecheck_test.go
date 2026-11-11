@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/mhersson/contextmatrix-vendorkit/claudecode"
@@ -66,6 +67,69 @@ func TestCheckClaudeCode(t *testing.T) {
 			for _, w := range tc.notWant {
 				assert.NotContains(t, buf.String(), w)
 			}
+		})
+	}
+}
+
+func TestWarnClaudeEffort(t *testing.T) {
+	tests := []struct {
+		effort string
+		warns  bool
+	}{
+		{"", false},
+		{"high", false},
+		{" XHigh", false},
+		{"minimal", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.effort, func(t *testing.T) {
+			var buf bytes.Buffer
+
+			warnClaudeEffort(tc.effort, slog.New(slog.NewTextHandler(&buf, nil)))
+
+			if !tc.warns {
+				assert.Empty(t, buf.String())
+
+				return
+			}
+
+			assert.Contains(t, buf.String(), "level=WARN")
+			assert.Contains(t, buf.String(), "reasoning_effort="+tc.effort, "the warning names the dropped value")
+		})
+	}
+}
+
+func TestSweepClaudeHomesLogsTheCount(t *testing.T) {
+	tests := []struct {
+		name  string
+		homes int
+		want  string
+	}{
+		{"nothing left behind", 0, ""},
+		{"two left behind", 2, "removed=2"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			for i := range tc.homes {
+				require.NoError(t, os.Mkdir(filepath.Join(dir, "architect-claude-"+strconv.Itoa(i)), 0o700))
+			}
+
+			var buf bytes.Buffer
+
+			sweepClaudeHomes(dir, slog.New(slog.NewTextHandler(&buf, nil)))
+
+			if tc.want == "" {
+				assert.Empty(t, buf.String())
+
+				return
+			}
+
+			assert.Contains(t, buf.String(), "level=INFO")
+			assert.Contains(t, buf.String(), tc.want)
 		})
 	}
 }

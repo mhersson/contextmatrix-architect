@@ -137,7 +137,7 @@ func TestRun_EffortOnTheWire(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.endpoint+"/"+tt.effort, func(t *testing.T) {
-			bodies := wireBodies(t, tt.endpoint, NewRunner(tt.effort, false, nil), baseInput(&bytes.Buffer{}))
+			bodies := wireBodies(t, tt.endpoint, NewRunner(tt.effort, false, nil, ClaudeOptions{}), baseInput(&bytes.Buffer{}))
 			require.GreaterOrEqual(t, len(bodies), 2, "the forced follow-up was sent too")
 
 			for i, b := range bodies {
@@ -1232,7 +1232,7 @@ func TestRun_ReplayOnTheWire(t *testing.T) {
 	for _, endpoint := range []string{"openrouter", "openai"} {
 		for _, replay := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/replay=%t", endpoint, replay), func(t *testing.T) {
-				bodies := wireBodies(t, endpoint, NewRunner("", replay, nil), baseInput(&bytes.Buffer{}))
+				bodies := wireBodies(t, endpoint, NewRunner("", replay, nil, ClaudeOptions{}), baseInput(&bytes.Buffer{}))
 				require.GreaterOrEqual(t, len(bodies), 2, "the forced follow-up was sent too")
 
 				var msgs []map[string]json.RawMessage

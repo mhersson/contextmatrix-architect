@@ -240,12 +240,16 @@ func runServe(ctx context.Context, cfg *config.Config, deps *runtimeDeps, logger
 
 	// The check logs; its error is why the webhook refuses claude_code starts.
 	claudeErr := checkClaudeCode(ctx, cfg.ClaudeCodeBinary, logger)
+	warnClaudeEffort(cfg.ReasoningEffort, logger)
+	sweepClaudeHomes(os.TempDir(), logger)
 
 	// Flipped by shutdownHTTP when the shutdown signal arrives; the routes'
 	// drain gate and /readyz read it.
 	var draining atomic.Bool
 
-	srv, cleanup, err := buildServer(ctx, cfg, deps, logger, stage.NewRunner(cfg.ReasoningEffort, cfg.ReplayReasoning, deps.transport), buildinfo.Info(), &draining, claudeErr)
+	runner := stage.NewRunner(cfg.ReasoningEffort, cfg.ReplayReasoning, deps.transport, stage.ClaudeOptions{Binary: cfg.ClaudeCodeBinary, MaxRuns: cfg.ClaudeCodeMaxRuns})
+
+	srv, cleanup, err := buildServer(ctx, cfg, deps, logger, runner, buildinfo.Info(), &draining, claudeErr)
 	if err != nil {
 		return err
 	}

@@ -1,5 +1,6 @@
 // Package stage runs one unit of AI work: a persona, the stage instructions,
-// the stage's tools and a terminal submit, as one harness run.
+// the stage's tools and a terminal submit, as one harness run or, on a
+// claude_code endpoint, one Claude Code run.
 package stage
 
 import (
@@ -19,6 +20,7 @@ import (
 	"github.com/mhersson/contextmatrix-harness/redact"
 	"github.com/mhersson/contextmatrix-harness/tools"
 	protocol "github.com/mhersson/contextmatrix-protocol"
+	"github.com/mhersson/contextmatrix-vendorkit/claudecode"
 )
 
 // ErrNoArtifact is returned when the run ended without submit_artifact.
@@ -129,18 +131,44 @@ type Runner struct {
 	// its conversation, a resumed one included.
 	Replay bool
 
+	// RunClaude runs a claude_code stage as one claude process; nil means
+	// claudecode.Run. Tests inject a fake.
+	RunClaude func(context.Context, claudecode.Spec) (harness.Result, error)
+
+	// claudeBinary is the claude executable, "" the one on PATH, and
+	// claudeEffort is Effort as claude takes it.
+	claudeBinary string
+	claudeEffort string
+
+	// slots holds a token per running claude process; nil, on a Runner not
+	// built by NewRunner, caps nothing.
+	slots chan struct{}
+
 	// draftNow and draftEvery replace the clock and the frame spacing in
 	// tests; the zero values mean time.Now and draftInterval.
 	draftNow   func() time.Time
 	draftEvery time.Duration
 }
 
+// ClaudeOptions configures the claude_code route.
+type ClaudeOptions struct {
+	// Binary is the claude executable; "" runs claude from PATH.
+	Binary string
+	// MaxRuns bounds the claude processes running at once across all
+	// blueprints; below 1 means 1.
+	MaxRuns int
+}
+
 // NewRunner returns a Runner that talks to the provisioned endpoint over
 // base; nil keeps the harness's own client (see ClientFor).
-func NewRunner(effort string, replay bool, base http.RoundTripper) *Runner {
+func NewRunner(effort string, replay bool, base http.RoundTripper, claude ClaudeOptions) *Runner {
 	newLLM := func(ep protocol.LLMEndpoint) llm.LLM { return ClientFor(ep, base) }
 
-	return &Runner{NewLLM: newLLM, Effort: effort, Replay: replay}
+	return &Runner{
+		NewLLM: newLLM, Effort: effort, Replay: replay,
+		claudeBinary: claude.Binary, claudeEffort: claudecode.NormalizeEffort(effort),
+		slots: make(chan struct{}, max(claude.MaxRuns, 1)),
+	}
 }
 
 // Run executes one stage and returns its artifact. On every return its
@@ -214,35 +242,15 @@ func recorded(msgs []llm.Message, ts []tools.Tool) []llm.Message {
 // run is Run before the record's view of the messages; tags collects what
 // the run's tool results led with.
 func (r *Runner) run(ctx context.Context, in Input, tags *returnedTags) (Output, error) {
-	// The registry keeps the last tool under a name, so a clash would silently
-	// replace a built-in.
-	for _, t := range in.Tools {
-		if name := t.Name(); slices.Contains([]string{askQuestionsName, AnswerChatName, submitArtifactName, ShowMockupName}, name) {
-			return Output{}, fmt.Errorf("stage %s: tool %q clashes with a built-in tool", in.Stage, name)
-		}
+	if in.Endpoint.Type == protocol.LLMEndpointTypeClaudeCode {
+		return r.runClaude(ctx, in, tags)
 	}
 
-	var drafts *draftExtractor
-
-	// A chat run's submit_artifact is refused: its body never reaches the
-	// live view.
-	if in.Draft != nil && !in.Chat {
-		now, every := r.draftNow, r.draftEvery
-		if now == nil {
-			now = time.Now
-		}
-
-		if every == 0 {
-			every = draftInterval
-		}
-
-		drafts = newDraftExtractor(in.Secrets, in.Draft, now, every)
+	if err := checkInput(in); err != nil {
+		return Output{}, err
 	}
 
-	if in.Chat && in.Interviewer == nil {
-		return Output{}, fmt.Errorf("stage %s: a chat run needs an interviewer", in.Stage)
-	}
-
+	drafts := r.newDrafts(in)
 	window := contextWindow(in.ContextWindow)
 
 	system := in.Persona + "\n\n" + in.Instructions
@@ -275,18 +283,7 @@ func (r *Runner) run(ctx context.Context, in Input, tags *returnedTags) (Output,
 
 	watch := &replyWatch{LLM: r.NewLLM(in.Endpoint), submits: !in.Chat && in.Designer == nil}
 
-	sink := in.Events
-	if sink == nil {
-		sink = io.Discard
-	}
-
-	if drafts != nil {
-		sink = draftEvents{w: sink, drafts: drafts}
-	}
-
-	sink = finalEvents{w: sink, final: watch.final.Load}
-
-	emit := events.NewEmitter(nil, sink)
+	emit := events.NewEmitter(nil, finalEvents{w: eventSink(in, drafts), final: watch.final.Load})
 
 	cfg := harness.Config{
 		Model:              in.Model,
@@ -321,14 +318,72 @@ func (r *Runner) run(ctx context.Context, in Input, tags *returnedTags) (Output,
 		res, err = forceTerminal(ctx, client, terminalTools(builtins), emit, cfg, res)
 	}
 
+	return outcome(in.Stage, res, err, mark, window)
+}
+
+// checkInput refuses an Input no run can serve.
+func checkInput(in Input) error {
+	// The registry keeps the last tool under a name, so a clash would silently
+	// replace a built-in.
+	for _, t := range in.Tools {
+		if name := t.Name(); slices.Contains([]string{askQuestionsName, AnswerChatName, submitArtifactName, ShowMockupName}, name) {
+			return fmt.Errorf("stage %s: tool %q clashes with a built-in tool", in.Stage, name)
+		}
+	}
+
+	if in.Chat && in.Interviewer == nil {
+		return fmt.Errorf("stage %s: a chat run needs an interviewer", in.Stage)
+	}
+
+	return nil
+}
+
+// newDrafts is the run's draft extractor, nil when it drafts nothing. A chat
+// run's submit_artifact is refused: its body never reaches the live view.
+func (r *Runner) newDrafts(in Input) *draftExtractor {
+	if in.Draft == nil || in.Chat {
+		return nil
+	}
+
+	now, every := r.draftNow, r.draftEvery
+	if now == nil {
+		now = time.Now
+	}
+
+	if every == 0 {
+		every = draftInterval
+	}
+
+	return newDraftExtractor(in.Secrets, in.Draft, now, every)
+}
+
+// eventSink is where a run's event lines go below the final mark: in.Events,
+// through the draft when the run drafts.
+func eventSink(in Input, drafts *draftExtractor) io.Writer {
+	sink := in.Events
+	if sink == nil {
+		sink = io.Discard
+	}
+
+	if drafts != nil {
+		sink = draftEvents{w: sink, drafts: drafts}
+	}
+
+	return sink
+}
+
+// outcome maps a finished run to its Output: the marks its terminal tools
+// left, else its artifact. Only a harness run stops at the context limit;
+// Claude Code compacts on its own.
+func outcome(stage string, res harness.Result, err error, mark *terminalMark, window int) (Output, error) {
 	if err != nil {
-		return Output{Result: res}, fmt.Errorf("stage %s: %w", in.Stage, err)
+		return Output{Result: res}, fmt.Errorf("stage %s: %w", stage, err)
 	}
 
 	if mark.fatal != nil {
 		res.Reason = ReasonFatalCheck
 
-		return Output{Result: res}, fmt.Errorf("stage %s: %w", in.Stage, mark.fatal)
+		return Output{Result: res}, fmt.Errorf("stage %s: %w", stage, mark.fatal)
 	}
 
 	if mark.asked {
@@ -337,7 +392,7 @@ func (r *Runner) run(ctx context.Context, in Input, tags *returnedTags) (Output,
 
 	if !res.Completed || res.CompletionArgs == nil {
 		if res.Reason == ReasonContextLimit {
-			return Output{Result: res}, fmt.Errorf("stage %s: %w", in.Stage, &ContextFullError{Window: window, Limit: compactionLimit(window)})
+			return Output{Result: res}, fmt.Errorf("stage %s: %w", stage, &ContextFullError{Window: window, Limit: compactionLimit(window)})
 		}
 
 		return Output{Result: res}, fmt.Errorf("%w: reason %s", ErrNoArtifact, res.Reason)
@@ -345,7 +400,7 @@ func (r *Runner) run(ctx context.Context, in Input, tags *returnedTags) (Output,
 
 	var art Artifact
 	if err := json.Unmarshal(res.CompletionArgs, &art); err != nil {
-		return Output{Result: res}, fmt.Errorf("stage %s: decode artifact: %w", in.Stage, err)
+		return Output{Result: res}, fmt.Errorf("stage %s: decode artifact: %w", stage, err)
 	}
 
 	return Output{Artifact: art, Result: res}, nil
