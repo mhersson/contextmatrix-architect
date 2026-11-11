@@ -149,16 +149,15 @@ func buildServer(ctx context.Context, cfg *config.Config, deps *runtimeDeps, log
 	stopJanitor := replay.StartJanitor()
 
 	srv := webhook.NewServer(webhook.Config{
-		APIKey:     cfg.APIKey,
-		Skew:       cfg.ReplaySkew,
-		Replay:     replay,
-		Dedup:      webhookcore.NewDedupCache(cfg.MessageDedupTTL, cfg.MessageDedupCacheSize),
-		Draining:   draining,
-		Hub:        hub,
-		Logger:     logger,
-		Controller: ctl,
-		Build:      build,
-
+		APIKey:                cfg.APIKey,
+		Skew:                  cfg.ReplaySkew,
+		Replay:                replay,
+		Dedup:                 webhookcore.NewDedupCache(cfg.MessageDedupTTL, cfg.MessageDedupCacheSize),
+		Draining:              draining,
+		Hub:                   hub,
+		Logger:                logger,
+		Controller:            ctl,
+		Build:                 build,
 		ClaudeCodeUnavailable: claudeErr,
 	})
 

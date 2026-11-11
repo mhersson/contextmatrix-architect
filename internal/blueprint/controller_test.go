@@ -2827,12 +2827,14 @@ func TestModelForClaudeCode(t *testing.T) {
 		endpoint string
 		override string
 		want     runModel
+		model    string // session model; empty is "session/model"
 	}{
-		{"mapped and in the catalog", "claude_code", "anthropic/claude-opus-5.5", runModel{name: "claude-opus-5-5", override: true}},
-		{"not a claude model", "claude_code", "openai/gpt-5.5", runModel{name: "session/model", price: testPrice(), window: 1000}},
-		{"maps but outside the catalog", "claude_code", "anthropic/claude-fable-5.2", runModel{name: "session/model", price: testPrice(), window: 1000}},
-		{"bare id", "claude_code", "claude-haiku-5-5", runModel{name: "claude-haiku-5-5", override: true}},
-		{"endpoint mode unchanged", "openrouter", "openai/gpt-5.5", runModel{name: "openai/gpt-5.5", override: true}},
+		{"maps to the session model", "claude_code", "anthropic/claude-opus-5.5", runModel{name: "claude-opus-5-5", price: testPrice(), window: 1000}, "claude-opus-5-5"},
+		{"mapped and in the catalog", "claude_code", "anthropic/claude-opus-5.5", runModel{name: "claude-opus-5-5", override: true}, ""},
+		{"not a claude model", "claude_code", "openai/gpt-5.5", runModel{name: "session/model", price: testPrice(), window: 1000}, ""},
+		{"maps but outside the catalog", "claude_code", "anthropic/claude-fable-5.2", runModel{name: "session/model", price: testPrice(), window: 1000}, ""},
+		{"bare id", "claude_code", "claude-haiku-5-5", runModel{name: "claude-haiku-5-5", override: true}, ""},
+		{"endpoint mode unchanged", "openrouter", "openai/gpt-5.5", runModel{name: "openai/gpt-5.5", override: true}, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2841,7 +2843,7 @@ func TestModelForClaudeCode(t *testing.T) {
 
 			sess := &session{
 				endpoint: protocol.LLMEndpoint{Type: tc.endpoint},
-				model:    "session/model", price: testPrice(), window: 1000,
+				model:    cmp.Or(tc.model, "session/model"), price: testPrice(), window: 1000,
 			}
 
 			assert.Equal(t, tc.want, c.modelFor(sess, "intake"))
