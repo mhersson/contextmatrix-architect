@@ -144,7 +144,9 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 	default:
 		status = store.RunFailed
 
-		if endReason == "" {
+		if why, _, ok := claudeStop(runErr); ok {
+			endReason = why
+		} else if endReason == "" {
 			endReason = "error"
 		}
 	}

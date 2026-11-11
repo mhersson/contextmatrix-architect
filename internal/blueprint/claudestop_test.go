@@ -1,0 +1,156 @@
+package blueprint
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"testing"
+	"time"
+
+	protocol "github.com/mhersson/contextmatrix-protocol"
+	"github.com/mhersson/contextmatrix-vendorkit/claudecode"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/mhersson/contextmatrix-architect/internal/stage"
+	"github.com/mhersson/contextmatrix-architect/internal/store"
+)
+
+func TestClaudeStop(t *testing.T) {
+	t0 := time.Date(2026, 11, 18, 9, 0, 0, 0, time.FixedZone("x", 2*3600))
+
+	tests := []struct {
+		name       string
+		err        error
+		reason     string
+		ok         bool
+		resetsAt   string
+		hasResetAt bool
+	}{
+		{"a usage limit with a reset", fmt.Errorf("stage x: %w", &claudecode.UsageLimitError{Window: "seven_day", ResetsAt: t0}), "usage_limit", true, t0.UTC().Format(time.RFC3339), true},
+		{"a usage limit without a reset", fmt.Errorf("stage x: %w", &claudecode.UsageLimitError{Window: "five_hour"}), "usage_limit", true, "", false},
+		{"a failed login", fmt.Errorf("x: %w", claudecode.ErrNotLoggedIn), "not_logged_in", true, "", false},
+		{"another error", errors.New("other"), "", false, "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reason, payload, ok := claudeStop(tt.err)
+			assert.Equal(t, tt.ok, ok)
+			assert.Equal(t, tt.reason, reason)
+
+			if !tt.ok {
+				return
+			}
+
+			assert.Equal(t, tt.reason, payload["reason"])
+			assert.NotEmpty(t, payload["message"])
+
+			got, has := payload["resets_at"]
+			assert.Equal(t, tt.hasResetAt, has)
+
+			if tt.hasResetAt {
+				assert.Equal(t, tt.resetsAt, got)
+			}
+		})
+	}
+}
+
+func TestStageUsageLimitStops(t *testing.T) {
+	t0 := time.Date(2026, 11, 18, 7, 0, 0, 0, time.UTC)
+	limited := true
+	script := gatedScript()
+	inner := script["intake"]
+	script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if limited {
+			return stage.Output{}, fmt.Errorf("stage %s: %w", in.Stage, &claudecode.UsageLimitError{Window: "seven_day", ResetsAt: t0})
+		}
+
+		return inner(ctx, in)
+	}
+
+	c, st, runner, rec := newGated(t, script)
+	ctx := context.Background()
+
+	in := startInput("BP1")
+	in.Mode = protocol.ArchitectModeDefault
+	require.NoError(t, c.Start(ctx, in))
+	require.NoError(t, c.Message(ctx, "BP1", "the need", "m1"))
+	c.Wait("BP1")
+
+	stop := lastError(t, rec)
+	assert.Equal(t, "usage_limit", stop.Payload["reason"])
+	assert.Equal(t, "seven_day", stop.Payload["window"])
+	assert.Equal(t, t0.Format(time.RFC3339), stop.Payload["resets_at"])
+
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, string(StateIdle), bp.State)
+
+	runs, err := st.ListRuns(ctx, "BP1")
+	require.NoError(t, err)
+	require.NotEmpty(t, runs)
+	assert.Equal(t, store.RunFailed, runs[len(runs)-1].Status)
+	assert.Equal(t, "usage_limit", runs[len(runs)-1].Reason)
+
+	before := runner.calls()
+	limited = false
+
+	require.NoError(t, c.Message(ctx, "BP1", "continue", "m2"))
+	c.Wait("BP1")
+	assert.Greater(t, runner.calls(), before, "continue runs the stage again")
+}
+
+func TestSideRunUsageLimitReason(t *testing.T) {
+	script := gatedScript()
+	script["shape.review"] = refusedWith("error", &claudecode.UsageLimitError{Window: "five_hour"})
+
+	c, st, _, _ := newGated(t, script)
+	startGated(t, c, protocol.ArchitectModeDefault)
+
+	runs, err := st.ListRuns(context.Background(), "BP1")
+	require.NoError(t, err)
+
+	var reviews int
+
+	for _, r := range runs {
+		if r.Kind != store.RunKindReviewer {
+			continue
+		}
+
+		reviews++
+
+		assert.Equal(t, store.RunFailed, r.Status)
+		assert.Equal(t, "usage_limit", r.Reason)
+	}
+
+	assert.Positive(t, reviews)
+}
+
+func TestHarnessLineNotionalCost(t *testing.T) {
+	line := []byte(`{"kind":"usage","data":{"prompt_tokens":10,"notional_cost_usd":0.5,"cost_basis":"subscription"}}`)
+	l, ok := parseHarnessLine(line)
+	require.True(t, ok)
+
+	u, ok := l.usage(nil)
+	require.True(t, ok)
+	assert.InDelta(t, 0.5, u.CostUSD, 1e-9)
+
+	p := &protocol.ModelPrice{PromptUSDPerMTok: 70_000}
+	u, ok = l.usage(p)
+	require.True(t, ok)
+	assert.InDelta(t, 0.7, u.CostUSD, 1e-9, "the priced cost wins when it is higher")
+}
+
+func TestSinkForwardsUsageLimit(t *testing.T) {
+	c, _, _, rec := newGated(t, gatedScript())
+	s := &harnessSink{audit: c.newAudit(), id: "BP1", runID: 1}
+
+	_, err := s.Write([]byte(`{"kind":"usage_limit","data":{"window":"seven_day"}}` + "\n"))
+	require.NoError(t, err)
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+
+	assert.NotEmpty(t, rec.lines, "the panel bridges the usage limit")
+}
