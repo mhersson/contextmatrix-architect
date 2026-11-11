@@ -49,6 +49,10 @@ type Config struct {
 	// reported and priced cost. Zero disables the cap.
 	MaxRunCostUSD float64
 	MaxTurns      int
+	// ClaudeCodeBinary is the claude executable claude_code sessions run.
+	ClaudeCodeBinary string
+	// ClaudeCodeMaxRuns bounds concurrent claude processes.
+	ClaudeCodeMaxRuns int
 	// WorkspaceMaxAgeDays is how long a blueprint's code trees are kept
 	// after they were last written.
 	WorkspaceMaxAgeDays int
@@ -87,6 +91,8 @@ type raw struct {
 	Models                 map[string]string `koanf:"models"`
 	MaxRunCostUSD          float64           `koanf:"max_run_cost_usd"`
 	MaxTurns               int               `koanf:"max_turns"`
+	ClaudeCodeBinary       string            `koanf:"claude_code_binary"`
+	ClaudeCodeMaxRuns      int               `koanf:"claude_code_max_runs"`
 	ReplaySkewSeconds      int               `koanf:"webhook_replay_skew_seconds"`
 	ReplayCacheSize        int               `koanf:"webhook_replay_cache_size"`
 	MessageDedupTTLSeconds int               `koanf:"message_dedup_ttl_seconds"`
@@ -106,6 +112,8 @@ func defaults() raw {
 		Models:                 map[string]string{},
 		MaxRunCostUSD:          5,
 		MaxTurns:               80,
+		ClaudeCodeBinary:       "claude",
+		ClaudeCodeMaxRuns:      4,
 		ReplaySkewSeconds:      330,
 		ReplayCacheSize:        10000,
 		MessageDedupTTLSeconds: 600,
@@ -130,6 +138,8 @@ func (r raw) toConfig() *Config {
 		Models:                r.Models,
 		MaxRunCostUSD:         r.MaxRunCostUSD,
 		MaxTurns:              r.MaxTurns,
+		ClaudeCodeBinary:      r.ClaudeCodeBinary,
+		ClaudeCodeMaxRuns:     r.ClaudeCodeMaxRuns,
 		ReplaySkew:            time.Duration(r.ReplaySkewSeconds) * time.Second,
 		ReplayCacheSize:       r.ReplayCacheSize,
 		MessageDedupTTL:       time.Duration(r.MessageDedupTTLSeconds) * time.Second,
@@ -285,6 +295,10 @@ func (c *Config) Validate() error {
 
 	if c.MaxTurns <= 0 {
 		return errors.New("max_turns must be positive")
+	}
+
+	if c.ClaudeCodeMaxRuns < 1 {
+		return errors.New("claude_code_max_runs must be at least 1")
 	}
 
 	if c.WorkspaceMaxAgeDays < 1 {

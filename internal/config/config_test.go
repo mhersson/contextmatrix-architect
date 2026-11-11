@@ -57,6 +57,8 @@ func TestLoad_MissingFileIsDefaultsPlusEnv(t *testing.T) {
 	assert.Equal(t, 9095, cfg.Port)
 	assert.InDelta(t, 5, cfg.MaxRunCostUSD, 1e-9)
 	assert.Equal(t, 80, cfg.MaxTurns)
+	assert.Equal(t, "claude", cfg.ClaudeCodeBinary)
+	assert.Equal(t, 4, cfg.ClaudeCodeMaxRuns)
 	require.NoError(t, cfg.Validate())
 }
 
@@ -64,7 +66,7 @@ func TestValidate(t *testing.T) {
 	valid := func() *Config {
 		return &Config{
 			ContextMatrixURL: "http://cm:8080", APIKey: strings.Repeat("k", 32), CallerIdentity: "human:architect", Port: 9095,
-			LogLevel: "info", StateDir: "/tmp/x", MaxRunCostUSD: 5, MaxTurns: 80, WorkspaceMaxAgeDays: 7, WatchInterval: time.Minute, ReasoningEffort: "high",
+			LogLevel: "info", StateDir: "/tmp/x", MaxRunCostUSD: 5, MaxTurns: 80, ClaudeCodeMaxRuns: 4, WorkspaceMaxAgeDays: 7, WatchInterval: time.Minute, ReasoningEffort: "high",
 		}
 	}
 
@@ -93,6 +95,7 @@ func TestValidate(t *testing.T) {
 		{"port above the range", func(c *Config) { c.Port = 65536 }, "port"},
 		{"negative cost cap", func(c *Config) { c.MaxRunCostUSD = -1 }, "max_run_cost_usd"},
 		{"zero turns", func(c *Config) { c.MaxTurns = 0 }, "max_turns"},
+		{"zero claude code runs", func(c *Config) { c.ClaudeCodeMaxRuns = 0 }, "claude_code_max_runs must be at least 1"},
 		{"zero workspace age", func(c *Config) { c.WorkspaceMaxAgeDays = 0 }, "workspace_max_age_days"},
 		{"zero watch interval", func(c *Config) { c.WatchInterval = 0 }, "watch_interval_seconds"},
 		{"bad level", func(c *Config) { c.LogLevel = "loud" }, "log_level"},
@@ -276,4 +279,14 @@ func TestLoad_StateDirResolution(t *testing.T) {
 			require.NoError(t, cfg.Validate())
 		})
 	}
+}
+
+func TestLoad_ClaudeCodeMaxRunsFromEnv(t *testing.T) {
+	t.Setenv("CONTEXTMATRIX_ARCHITECT_CONTEXTMATRIX_URL", "http://cm:8080")
+	t.Setenv("CONTEXTMATRIX_ARCHITECT_API_KEY", strings.Repeat("k", 32))
+	t.Setenv("CONTEXTMATRIX_ARCHITECT_CLAUDE_CODE_MAX_RUNS", "2")
+
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, 2, cfg.ClaudeCodeMaxRuns)
 }

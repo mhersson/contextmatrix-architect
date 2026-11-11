@@ -237,6 +237,9 @@ func cmKnowledgeTools(baseURL string, base http.RoundTripper) func(ctx context.C
 func runServe(ctx context.Context, cfg *config.Config, deps *runtimeDeps, logger *slog.Logger) error {
 	warnMissingSearchTools(logger, exec.LookPath)
 
+	// The check logs; its error is the reason claude_code sessions are refused.
+	_ = checkClaudeCode(ctx, cfg.ClaudeCodeBinary, logger)
+
 	// Flipped by shutdownHTTP when the shutdown signal arrives; the routes'
 	// drain gate and /readyz read it.
 	var draining atomic.Bool
