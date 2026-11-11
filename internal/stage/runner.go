@@ -284,7 +284,7 @@ func (r *Runner) run(ctx context.Context, in Input, tags *returnedTags) (Output,
 		sink = draftEvents{w: sink, drafts: drafts}
 	}
 
-	sink = finalEvents{w: sink, watch: watch}
+	sink = finalEvents{w: sink, final: watch.final.Load}
 
 	emit := events.NewEmitter(nil, sink)
 
