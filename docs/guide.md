@@ -63,6 +63,31 @@ offered when you start a new chat (chapter 3), the architect is not set up yet.
 [Installing the architect](installing.md) says what you need and how to get it
 running.
 
+### Claude Code subscription mode
+
+When ContextMatrix is set to run its backends on your Claude Code subscription,
+every run the architect makes (stages, reviewers, responders, the mockup and
+the retrospective) goes through your own Claude Code instead of an API
+endpoint. The switch is in ContextMatrix; the architect needs a working `claude`
+on its machine ([Installing](installing.md)), and a session is refused
+otherwise. What you see differs a little:
+
+- **Drafts stream as before.** An artifact's draft fills in on the sheet while
+  the stage writes it.
+- **The cost is an estimate.** The subscription is never billed per token.
+  The figure in the panel and on the scale bar is Claude Code's own estimate
+  of what the same tokens would cost at list prices, so it shows what a run
+  would have cost on the API, and the cost cap
+  ([cost cap](reference.md#the-cost-cap)) counts it the same way. The panel
+  labels it "cost" or "reported cost", as for any endpoint.
+- **A usage limit stops the stage until it resets.** The panel names the limit
+  and, when Claude Code says, the time it resets; the blueprint stays idle.
+  Reply `continue` after the reset and the stage runs again. A token Claude
+  Code does not accept stops the stage the same way until you fix it in
+  ContextMatrix. See [When a blueprint
+  stops](reference.md#when-a-blueprint-stops).
+- **Models are Claude Code's.** See [Models](reference.md#models).
+
 ## 3. Starting a blueprint
 
 This step creates the blueprint and sets how it runs.

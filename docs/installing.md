@@ -50,6 +50,12 @@ warning when it differs from the tested 2.1.322; the Docker image ships that
 version. With the user service, `./svc.sh install` puts the directory of the
 `claude` on your PATH into the unit, so rerun it after moving `claude`.
 
+Two settings in the architect's config file apply: `claude_code_binary` (default
+`claude`) names the binary, and `claude_code_max_runs` (default 4) bounds the
+`claude` runs holding a slot at once, at 512 MiB per slot. A slot holds one
+`claude` run and, at most, the responder run nested in its round. See [what you
+see in this mode](guide.md#claude-code-subscription-mode).
+
 ## The manual way
 
 Do this if you run ContextMatrix yourself and want to add the architect. You

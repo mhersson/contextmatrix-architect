@@ -101,6 +101,19 @@ installs or changes Claude Code. Rerun `./svc.sh install` after moving it. The
 unit's `MemoryMax=4G` covers serve plus the default four concurrent `claude`
 processes.
 
+## Claude Code subscription mode
+
+When ContextMatrix starts a session with a `claude_code` endpoint, every run
+goes through `claude -p` on the operator's Claude subscription instead of an
+API endpoint. The session carries the OAuth token, which stays in memory.
+`serve` logs the `claude` version at start and warns when it is not the tested
+one; a `claude_code` session is refused when no `claude` can run or the token
+is missing. `claude_code_binary` names the binary and `claude_code_max_runs`
+(default 4) bounds the runs holding a slot at once, at 512 MiB per slot. Cost
+is Claude Code's list-price estimate, and a usage limit stops the stage until
+its reset. See the [guide](docs/guide.md#claude-code-subscription-mode) and
+the [reference](docs/reference.md#models).
+
 ## Code checkouts
 
 Code lives under `<state_dir>/workspaces`: `mirrors/` holds one bare mirror per
@@ -163,9 +176,10 @@ bind mount must be chowned by hand. The mounted `config.yaml`, and a
 
 The image is built on a glibc distroless base because the `claude` binary
 needs libc, and ships the tested Claude Code (version 2.1.322, sha512-verified
-at build) at `/usr/local/bin/claude`. It also ships ripgrep for the read tools. A local run or the user service
-needs `rg` on its PATH for grep (glob also takes `fd`); `serve` logs a warning
-at startup when it is missing and runs anyway.
+at build) at `/usr/local/bin/claude`. It also ships ripgrep for the read tools.
+A local run or the user service needs `rg` on its PATH for grep (glob also
+takes `fd`); `serve` logs a warning at startup when it is missing and runs
+anyway.
 
 On Kubernetes, a Service named `contextmatrix-architect` makes the kubelet set
 `CONTEXTMATRIX_ARCHITECT_PORT=tcp://<ip>:<port>` in pods of its namespace,

@@ -540,6 +540,14 @@ blueprint uses it, unless whoever runs the architect has set a model for a
 particular role. A blueprint with a cost cap needs a model ContextMatrix has a
 price for.
 
+In Claude Code subscription mode the model is a Claude Code model ID, such as
+`claude-sonnet-5-5`. A per-role override in `models` is mapped to the Anthropic
+slug of the same model and kept only when it is `claude-opus-5-5`,
+`claude-sonnet-5-5` or `claude-haiku-5-5`; one equal to the blueprint's model
+changes nothing. Any other override is ignored with a warning in the log, and
+the blueprint's model runs that role. A kept override differing from the
+blueprint's model runs unpriced, as an override does elsewhere.
+
 ## The sheet's marks
 
 A blueprint's pane shows the scale bar across the top and the sheet, drawn
