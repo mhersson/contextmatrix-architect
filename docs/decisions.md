@@ -56,11 +56,14 @@ HEAD.
 - ContextMatrix only proxies the signed view and artifact reads for the
   architect sessions a caller owns, and relays the live stream; the architect
   owns the data. Why: one source for the blueprint view.
-- On a claude_code endpoint a stage runs as one `claude` process, offered no
+- On a claude_code endpoint a stage runs as a `claude` process, offered no
   Claude Code built-in: every tool it calls is one of the run's Go tools on
   the loopback bridge. Each run gets a temporary `architect-claude-*`
   directory as its HOME, working directory and TMPDIR. The directory is
-  removed when the run ends, and any left behind are swept at start. From
+  removed when the run ends, and any left behind are swept at start. A run
+  that ends with text and no terminal call is asked once more by a second
+  process that resumes the same session, in the same directory and slot,
+  offered only the terminal tools. From
   the architect's own environment the child gets only PATH. At most
   `claude_code_max_runs` runs hold a slot at once across all blueprints, and
   a run takes its slot before its directory exists. A responder run inside

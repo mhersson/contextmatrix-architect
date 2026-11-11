@@ -315,7 +315,16 @@ func (r *Runner) run(ctx context.Context, in Input, tags *returnedTags) (Output,
 
 	res, err := harness.Run(ctx, client, reg, emit, in.Task, cfg)
 	if err == nil && res.Completed && res.CompletionArgs == nil {
-		res, err = forceTerminal(ctx, client, terminalTools(builtins), emit, cfg, res)
+		first := res
+		follow := func(ctx context.Context, terminals []tools.Tool, reprompt string, maxTurns int, maxCostUSD float64) (harness.Result, error) {
+			c := cfg
+			c.History = WithoutSystem(first.Messages)
+			c.MaxTurns, c.MaxCostUSD = maxTurns, maxCostUSD
+
+			return harness.Run(ctx, forcedChoice{LLM: client}, tools.NewRegistry(terminals...), emit, reprompt, c)
+		}
+
+		res, err = forceTerminal(ctx, terminalTools(builtins), cfg.MaxCostUSD, first, follow)
 	}
 
 	return outcome(in.Stage, res, err, mark, window)

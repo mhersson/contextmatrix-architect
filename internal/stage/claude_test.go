@@ -30,7 +30,7 @@ import (
 const dummyToken = "dummy-oauth-token-0000"
 
 // fakeClaude stands in for claudecode.Run: it records each Spec and runs
-// script on it.
+// script on it. A nil script ends each run on an accepted submit.
 type fakeClaude struct {
 	script func(ctx context.Context, spec claudecode.Spec) (harness.Result, error)
 
@@ -44,7 +44,7 @@ func (f *fakeClaude) run(ctx context.Context, spec claudecode.Spec) (harness.Res
 	f.mu.Unlock()
 
 	if f.script == nil {
-		return harness.Result{Completed: true, Reason: "done"}, nil
+		return harness.Result{Completed: true, Reason: "done", CompletionArgs: json.RawMessage(`{"body":"B"}`)}, nil
 	}
 
 	return f.script(ctx, spec)
@@ -302,15 +302,153 @@ func TestClaudeFatalCheck(t *testing.T) {
 	assert.Empty(t, out.Artifact.Body)
 }
 
-func TestClaudeNoArtifact(t *testing.T) {
-	f := &fakeClaude{script: func(context.Context, claudecode.Spec) (harness.Result, error) {
-		return harness.Result{Completed: true, Reason: "done", Output: "Here is the need."}, nil
+// textStop is a first run that ended with text and no terminal call.
+func textStop(cost float64) harness.Result {
+	return harness.Result{Completed: true, Reason: "done", Turns: 2, TotalCostUSD: cost, Messages: []llm.Message{
+		{Role: "system", Content: "S"},
+		{Role: "user", Content: "containerise this project"},
+		{Role: "assistant", Content: "Here is the need."},
+	}}
+}
+
+// submitted calls submit_artifact on spec's bridge with body and returns the
+// messages a resumed run records for it: the call's result or its refusal.
+func submitted(ctx context.Context, t *testing.T, spec claudecode.Spec, body string) []llm.Message {
+	t.Helper()
+
+	args := map[string]any{"body": body}
+
+	raw, err := json.Marshal(args)
+	require.NoError(t, err)
+
+	res, err := execute(ctx, t, spec, submitArtifactName, args)
+
+	result := res.Text
+	if err != nil {
+		result = err.Error()
+	}
+
+	return []llm.Message{
+		{Role: "system", Content: spec.SystemPrompt},
+		{Role: "user", Content: spec.Task},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{toolCall("toolu_2", submitArtifactName, string(raw))}},
+		{Role: "tool", ToolCallID: "toolu_2", Content: result},
+	}
+}
+
+func TestClaudeForcedFollowUp(t *testing.T) {
+	tests := []struct {
+		name          string
+		interviewer   Interviewer
+		wantTerminals []string
+	}{
+		{"a stage without an interviewer", nil, []string{submitArtifactName}},
+		{"an off-mode tool is not terminal", &stubInterviewer{}, []string{askQuestionsName, submitArtifactName}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			first := textStop(0.1)
+
+			var (
+				r                    *Runner
+				second               []llm.Message
+				homeDuring, slotHeld bool
+			)
+
+			f := &fakeClaude{script: func(ctx context.Context, spec claudecode.Spec) (harness.Result, error) {
+				if spec.Resume == "" {
+					return first, nil
+				}
+
+				_, err := os.Stat(spec.Home)
+				homeDuring = err == nil
+				slotHeld = len(r.slots) == 1
+
+				second = submitted(ctx, t, spec, "B")
+
+				res := acceptedWith(t, map[string]any{"body": "B"})
+				res.Turns, res.TotalCostUSD, res.Messages = 3, 0.05, second
+
+				return res, nil
+			}}
+
+			in := claudeInput(&bytes.Buffer{})
+			in.Interviewer = tt.interviewer
+			in.Tools = []tools.Tool{echoTool{}}
+
+			r = claudeRunner(t, f, "high", ClaudeOptions{MaxRuns: 1})
+
+			out, err := r.Run(context.Background(), in)
+			require.NoError(t, err)
+			assert.Equal(t, "B", out.Artifact.Body)
+
+			calls := f.calls()
+			require.Len(t, calls, 2)
+
+			run, follow := calls[0], calls[1]
+
+			assert.Empty(t, follow.SessionID)
+			assert.Equal(t, run.SessionID, follow.Resume, "the follow-up resumes the run's session")
+			assert.Equal(t, fmt.Sprintf(forcedReprompt, strings.Join(tt.wantTerminals, " or ")), follow.Task)
+			assert.Equal(t, forcedTurns, follow.MaxTurns)
+			assert.InDelta(t, in.MaxCostUSD-0.1, follow.MaxBudgetUSD, 1e-9, "the follow-up gets what the run left of the cap")
+			assert.Equal(t, tt.wantTerminals, schemaNames(follow.Tools.Schemas()), "only the terminal tools are offered")
+
+			assert.Equal(t, run.Home, follow.Home)
+			assert.Equal(t, run.Dir, follow.Dir)
+			assert.True(t, homeDuring, "the follow-up runs before the home is removed")
+			assert.True(t, slotHeld, "the follow-up runs in the run's slot")
+			assert.NoDirExists(t, follow.Home)
+			assert.Equal(t, run.Env, follow.Env)
+			assert.Equal(t, run.SystemPrompt, follow.SystemPrompt)
+			assert.Equal(t, run.Model, follow.Model)
+			assert.Equal(t, run.Effort, follow.Effort)
+			assert.Equal(t, run.OAuthToken, follow.OAuthToken)
+			assert.Same(t, run.Emitter, follow.Emitter)
+
+			assert.Equal(t, 5, out.Result.Turns, "both runs count")
+			assert.InDelta(t, 0.15, out.Result.TotalCostUSD, 1e-9)
+			assert.Equal(t, append(slices.Clone(first.Messages), WithoutSystem(second)...), out.Result.Messages)
+		})
+	}
+}
+
+func TestClaudeForcedRefused(t *testing.T) {
+	f := &fakeClaude{script: func(ctx context.Context, spec claudecode.Spec) (harness.Result, error) {
+		if spec.Resume == "" {
+			return textStop(0.1), nil
+		}
+
+		return harness.Result{Completed: true, Reason: "done", Messages: submitted(ctx, t, spec, "x")}, nil
 	}}
 
-	out, err := claudeRunner(t, f, "", ClaudeOptions{}).Run(context.Background(), claudeInput(&bytes.Buffer{}))
+	in := claudeInput(&bytes.Buffer{})
+	in.Validate = func(context.Context, Artifact) error { return errors.New("x") }
+
+	out, err := claudeRunner(t, f, "", ClaudeOptions{}).Run(context.Background(), in)
 	require.ErrorIs(t, err, ErrNoArtifact)
-	assert.Equal(t, "done", out.Result.Reason)
-	assert.Len(t, f.calls(), 1)
+
+	var refused *RefusedError
+	require.ErrorAs(t, err, &refused)
+	assert.Equal(t, "submit_artifact rejected: x", refused.Last)
+	assert.Equal(t, []string{submitArtifactName}, refused.Tools)
+	assert.Equal(t, ReasonTerminalRefused, out.Result.Reason)
+	assert.Len(t, f.calls(), 2, "one follow-up, never a loop")
+}
+
+func TestClaudeForcedSpentCap(t *testing.T) {
+	f := &fakeClaude{script: func(context.Context, claudecode.Spec) (harness.Result, error) {
+		return textStop(0.1), nil
+	}}
+
+	in := claudeInput(&bytes.Buffer{})
+	in.MaxCostUSD = 0.1
+
+	out, err := claudeRunner(t, f, "", ClaudeOptions{}).Run(context.Background(), in)
+	require.ErrorIs(t, err, ErrNoArtifact)
+	assert.Equal(t, "max_cost", out.Result.Reason)
+	assert.Len(t, f.calls(), 1, "a spent cap gets no follow-up")
 }
 
 func TestClaudeFinalMark(t *testing.T) {
@@ -332,7 +470,7 @@ func TestClaudeFinalMark(t *testing.T) {
 					spec.Emitter.Emit(events.ModelResponse, map[string]any{"tool_calls": 1})
 				}
 
-				return harness.Result{Completed: true, Reason: "done"}, nil
+				return harness.Result{Reason: "max_turns"}, nil
 			}}
 
 			var events bytes.Buffer
@@ -383,7 +521,7 @@ func TestClaudeHistoryPrimer(t *testing.T) {
 			in.Task = "the person answered the round"
 
 			_, err := claudeRunner(t, f, "", ClaudeOptions{}).Run(context.Background(), in)
-			require.ErrorIs(t, err, ErrNoArtifact)
+			require.NoError(t, err)
 
 			calls := f.calls()
 			require.Len(t, calls, 1)

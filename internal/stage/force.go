@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mhersson/contextmatrix-harness/events"
 	"github.com/mhersson/contextmatrix-harness/harness"
 	"github.com/mhersson/contextmatrix-harness/llm"
 	"github.com/mhersson/contextmatrix-harness/tools"
@@ -53,25 +52,30 @@ func toolChoice(offered []llm.Tool) json.RawMessage {
 	return json.RawMessage(`"required"`)
 }
 
+// followUp continues the first run's conversation with reprompt, offered
+// only terminals, within maxTurns and maxCostUSD (0 caps nothing). Its
+// result's messages are the whole conversation.
+type followUp func(ctx context.Context, terminals []tools.Tool, reprompt string, maxTurns int, maxCostUSD float64) (harness.Result, error)
+
 // forceTerminal follows a run that stopped with text and no terminal call:
-// one more run on its conversation, offered only the terminal tools and
-// forced to call one. The result carries both runs' usage and the whole
-// conversation. A cost cap the first run spent gets no follow-up: the first
-// result is returned with reason max_cost, as a run the cap stopped.
-func forceTerminal(ctx context.Context, client llm.LLM, terminals []tools.Tool, emit *events.Emitter, cfg harness.Config, first harness.Result) (harness.Result, error) {
+// one follow-up, offered only the terminal tools. The result carries both
+// runs' usage and the whole conversation. A cost cap the first run spent
+// gets no follow-up: the first result is returned with reason max_cost, as a
+// run the cap stopped.
+func forceTerminal(ctx context.Context, terminals []tools.Tool, maxCostUSD float64, first harness.Result, follow followUp) (harness.Result, error) {
 	if len(terminals) == 0 {
 		return first, nil
 	}
 
-	if cfg.MaxCostUSD > 0 {
-		left := cfg.MaxCostUSD - first.TotalCostUSD
+	if maxCostUSD > 0 {
+		left := maxCostUSD - first.TotalCostUSD
 		if left <= 0 {
 			first.Reason = "max_cost"
 
 			return first, nil
 		}
 
-		cfg.MaxCostUSD = left
+		maxCostUSD = left
 	}
 
 	names := make([]string, 0, len(terminals))
@@ -79,12 +83,9 @@ func forceTerminal(ctx context.Context, client llm.LLM, terminals []tools.Tool, 
 		names = append(names, t.Name())
 	}
 
-	cfg.History = WithoutSystem(first.Messages)
-	cfg.MaxTurns = forcedTurns
-
 	reprompt := fmt.Sprintf(forcedReprompt, strings.Join(names, " or "))
 
-	second, err := harness.Run(ctx, forcedChoice{LLM: client}, tools.NewRegistry(terminals...), emit, reprompt, cfg)
+	second, err := follow(ctx, terminals, reprompt, forcedTurns, maxCostUSD)
 
 	out := merged(first, second)
 

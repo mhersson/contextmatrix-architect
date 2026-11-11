@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/mhersson/contextmatrix-harness/events"
@@ -29,7 +30,7 @@ const claudeHomePattern = "architect-claude-*"
 // shares the slot: waiting for another would deadlock once the slots are full.
 type slotKey struct{}
 
-// runClaude is run on a claude_code endpoint: one claude process offered no
+// runClaude is run on a claude_code endpoint: a claude process offered no
 // built-in, only the run's Go tools on vendorkit's loopback bridge, since on
 // a workstation a Read built-in could read the operator's home.
 func (r *Runner) runClaude(ctx context.Context, in Input, tags *returnedTags) (out Output, err error) {
@@ -118,6 +119,25 @@ func (r *Runner) runClaude(ctx context.Context, in Input, tags *returnedTags) (o
 	}
 
 	res, err := start(ctx, spec)
+	if err == nil && res.Completed && res.CompletionArgs == nil {
+		first := res
+		// The resume reads the session vendorkit stored under this Home, so it
+		// runs here, before the home is removed and in the same slot.
+		follow := func(ctx context.Context, terminals []tools.Tool, reprompt string, maxTurns int, maxCostUSD float64) (harness.Result, error) {
+			resumed := spec
+			resumed.SessionID, resumed.Resume = "", spec.SessionID
+			resumed.Task = reprompt
+			resumed.Tools = tools.NewRegistry(terminals...)
+			resumed.MaxTurns, resumed.MaxBudgetUSD = maxTurns, maxCostUSD
+
+			second, err := start(ctx, resumed)
+			second.Messages = append(slices.Clone(first.Messages), WithoutSystem(second.Messages)...)
+
+			return second, err
+		}
+
+		res, err = forceTerminal(ctx, terminalTools(onBridge), spec.MaxBudgetUSD, first, follow)
+	}
 
 	return outcome(in.Stage, res, err, mark, window)
 }
