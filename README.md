@@ -92,8 +92,14 @@ starts, and pins `XDG_STATE_HOME` in the unit so the service resolves the same
 default as the script. It warns about a missing config, an explicit
 `/var/lib/contextmatrix-architect` (the image's volume), a `state_dir` that is
 not absolute, contains whitespace or is not writable, a directory it could not
-create and a missing `rg`, and installs anyway. Rerun `./svc.sh install` after
-changing `state_dir` or `XDG_STATE_HOME`.
+create, a missing `rg` and a missing `claude`, and installs anyway. Rerun
+`./svc.sh install` after changing `state_dir` or `XDG_STATE_HOME`.
+
+For subscription mode, install Claude Code yourself. `svc.sh install` puts the
+directory of the `claude` on your PATH first on the unit's PATH and never
+installs or changes Claude Code. Rerun `./svc.sh install` after moving it. The
+unit's `MemoryMax=4G` covers serve plus the default four concurrent `claude`
+processes.
 
 ## Code checkouts
 
@@ -155,7 +161,9 @@ bind mount must be chowned by hand. The mounted `config.yaml`, and a
 `ca_cert_file` when one is set, must be readable by uid 65532.
 `config.yaml.example` documents every key.
 
-The image ships ripgrep for the read tools. A local run or the user service
+The image is built on a glibc distroless base because the `claude` binary
+needs libc, and ships the tested Claude Code (version 2.1.322, sha512-verified
+at build) at `/usr/local/bin/claude`. It also ships ripgrep for the read tools. A local run or the user service
 needs `rg` on its PATH for grep (glob also takes `fd`); `serve` logs a warning
 at startup when it is missing and runs anyway.
 

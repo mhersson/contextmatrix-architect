@@ -43,6 +43,13 @@ which the installer does not install: get it from your package manager, for
 example `brew install ripgrep`. If you installed ContextMatrix with the setup
 tool before the architect existed, `contextmatrix-setup update` adds it.
 
+Subscription mode, where stages run on a Claude Code subscription, needs your
+own Claude Code installed on the machine that runs the architect. The architect
+uses whatever `claude` you installed and logs its version at start, with a
+warning when it differs from the tested 2.1.322; the Docker image ships that
+version. With the user service, `./svc.sh install` puts the directory of the
+`claude` on your PATH into the unit, so rerun it after moving `claude`.
+
 ## The manual way
 
 Do this if you run ContextMatrix yourself and want to add the architect. You

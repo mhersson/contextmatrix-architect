@@ -20,6 +20,21 @@ RUN set -eu; \
     echo "${sum}  /tmp/rg.tgz" | sha256sum -c -; \
     tar -xzf /tmp/rg.tgz -C /tmp; \
     install -m 0755 "/tmp/ripgrep-${RIPGREP_VERSION}-${arch}-unknown-linux-musl/rg" /usr/local/bin/rg
+# Claude Code's native binary comes from the npm registry tarball, verified
+# against the sha512 in claude-code.pin. Above the sources for the same reason.
+COPY claude-code.pin /tmp/claude-code.pin
+RUN set -eu; \
+    . /tmp/claude-code.pin; \
+    case "${TARGETARCH}" in \
+      amd64) pkg=linux-x64; sum="${CLAUDE_CODE_SHA512_AMD64}" ;; \
+      arm64) pkg=linux-arm64; sum="${CLAUDE_CODE_SHA512_ARM64}" ;; \
+      *) echo "unsupported TARGETARCH ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/claude.tgz "https://registry.npmjs.org/@anthropic-ai/claude-code-${pkg}/-/claude-code-${pkg}-${CLAUDE_CODE_VERSION}.tgz"; \
+    echo "${sum}  /tmp/claude.tgz" | sha512sum -c -; \
+    tar -xzf /tmp/claude.tgz -C /tmp package/claude; \
+    install -m 0755 /tmp/package/claude /usr/local/bin/claude; \
+    /usr/local/bin/claude --version | grep -q "^${CLAUDE_CODE_VERSION} "
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
@@ -32,12 +47,14 @@ RUN CGO_ENABLED=0 go build -trimpath \
       -ldflags="-X github.com/mhersson/contextmatrix-architect/internal/buildinfo.version=${VERSION} -X github.com/mhersson/contextmatrix-architect/internal/buildinfo.commit=${GIT_COMMIT} -X github.com/mhersson/contextmatrix-architect/internal/buildinfo.buildTime=${BUILD_TIME}" \
       -o /contextmatrix-architect ./cmd/contextmatrix-architect
 
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
+# glibc base: the claude binary links libc; the Go binary stays static.
+FROM gcr.io/distroless/base-debian13:nonroot@sha256:7fe4df6a4413adf5889960d345a28b4574aea0872ea47684c7244c8d88027dca
 # The default state_dir is $XDG_STATE_HOME/contextmatrix-architect; this keeps
 # it on the volume below.
 ENV XDG_STATE_HOME=/var/lib
 COPY --from=build /contextmatrix-architect /contextmatrix-architect
 COPY --from=build /usr/local/bin/rg /usr/local/bin/rg
+COPY --from=build /usr/local/bin/claude /usr/local/bin/claude
 COPY --from=build --chown=65532:65532 /state /var/lib/contextmatrix-architect
 VOLUME ["/var/lib/contextmatrix-architect"]
 EXPOSE 9095

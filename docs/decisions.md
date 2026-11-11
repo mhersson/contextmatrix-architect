@@ -521,6 +521,22 @@ HEAD.
   backend. On a claude_code run the bridged tool wrapper applies the cap,
   and compaction is Claude Code's own. Why: a ContextMatrix card read can
   carry a long activity log.
+- The image installs the tested Claude Code native binary from the npm
+  registry tarball, verified by sha512 from `claude-code.pin`, which only the
+  image build reads. Why: the image runs exactly the version the integration
+  was tested on.
+- A host install uses the operator's own `claude`; `svc.sh` never downloads,
+  installs, pins or changes it, and only puts its directory first on the
+  unit's PATH. Why: the operator owns that installation and its updates.
+- The image's runtime base is glibc distroless, not static. Why: the native
+  `claude` binary links libc; the Go binary stays static and unaffected.
+- The workstation unit keeps `MemoryDenyWriteExecute=yes`; Claude Code's
+  JavaScriptCore then runs interpreter-only, at about twice the CPU and
+  without a crash. Why: the sandbox stays as tight as the sibling backends'.
+- The unit's `MemoryMax=4G` is 2G for serve plus 512M for each of
+  `claude_code_max_runs`' default 4 slots; a responder nested in its asker's
+  round shares the asker's slot. Why: the cap bounds the processes, so it
+  sizes the memory.
 - No two file names differ only by case. Why: the build works on macOS's
   case-insensitive filesystem.
 - `make test` never calls a live model, and store tests prove the

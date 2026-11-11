@@ -35,6 +35,14 @@
 # which can differ from this shell's. The architect logs a warning at
 # startup when rg is missing and runs anyway.
 #
+# Claude Code.
+# ------------
+# claude_code sessions run the operator's own `claude`. install puts the
+# directory of the `claude` on the installer's PATH first on the unit's PATH,
+# without resolving symlinks so the operator's own updates reach the service,
+# and never downloads, installs or changes Claude Code. Rerun install after
+# moving it.
+#
 # Hardening.
 # ----------
 # The generated [Service] section applies a baseline sandbox + resource
@@ -56,8 +64,8 @@
 #   install [--dry-run]  Write the unit file (or print to stdout), reload
 #                        daemon, enable, and restart if already running.
 #                        Both forms warn on stderr about a missing config,
-#                        a state_dir the service cannot write and a missing
-#                        rg; install creates state_dir first and goes ahead
+#                        a state_dir the service cannot write, a missing
+#                        rg and a missing claude; install creates state_dir first and goes ahead
 #                        anyway, with a warning if it cannot.
 #   uninstall            Stop, disable, and remove the service file.
 #   start / stop / status
@@ -138,6 +146,15 @@ read_state_dir() {
     ' "${CONFIG}"
 }
 
+# claude_dir prints the directory of the claude on this shell's PATH, or
+# nothing. Symlinks stay unresolved so the operator's updates reach the unit.
+claude_dir() {
+    local c
+    c="$(command -v claude 2>/dev/null)" || return 0
+    [ -n "${c}" ] || return 0
+    dirname "${c}"
+}
+
 # warn_preflight reports what would keep the unit from working, without
 # stopping the install.
 warn_preflight() {
@@ -176,6 +193,10 @@ warn_preflight() {
     if ! command -v rg >/dev/null 2>&1; then
         echo "warning: rg not found on this shell's PATH; the architect's grep tool fails without ripgrep, the service still starts" >&2
     fi
+
+    if [ -z "$(claude_dir)" ]; then
+        echo "warning: claude not found on PATH; claude_code sessions will be refused until Claude Code is installed and ./svc.sh install is rerun" >&2
+    fi
 }
 
 # generate_unit emits the systemd unit file contents to stdout.
@@ -194,6 +215,15 @@ generate_unit() {
     env_line="XDG_STATE_HOME=${state_base//[%]/%%}"
     env_line="\"${env_line}\""
 
+    # The first element is the installer's claude directory, when found.
+    local path_val path_line cdir
+    cdir="$(claude_dir)"
+    path_val="/usr/local/bin:/usr/bin:/bin"
+    if [ -n "${cdir}" ]; then
+        path_val="${cdir}:${path_val}"
+    fi
+    path_line="\"PATH=${path_val//[%]/%%}\""
+
     cat <<EOF
 [Unit]
 Description=ContextMatrix Architect (blueprint backend)
@@ -202,6 +232,7 @@ Description=ContextMatrix Architect (blueprint backend)
 Type=simple
 WorkingDirectory=${SCRIPT_DIR}
 Environment=${env_line}
+Environment=${path_line}
 ExecStart=${BINARY} serve --config ${CONFIG}
 KillMode=mixed
 TimeoutStopSec=60
@@ -229,7 +260,8 @@ SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
 
 # --- Resource limits ---
-MemoryMax=2G
+# 2G for serve plus 512M for each of claude_code_max_runs' default 4 slots.
+MemoryMax=4G
 TasksMax=1024
 LimitNOFILE=65536
 
@@ -265,7 +297,7 @@ EXPECTED_DIRECTIVES=(
     "SystemCallArchitectures=native"
     "SystemCallFilter=@system-service"
     "SystemCallFilter=~@privileged @resources"
-    "MemoryMax=2G"
+    "MemoryMax=4G"
     "TasksMax=1024"
     "LimitNOFILE=65536"
     "Restart=on-failure"
@@ -274,6 +306,7 @@ EXPECTED_DIRECTIVES=(
     "RestartMaxDelaySec=300"
     "ReadWritePaths=-/"
     'Environment="XDG_STATE_HOME='
+    'Environment="PATH='
 )
 
 cmd_install() {
