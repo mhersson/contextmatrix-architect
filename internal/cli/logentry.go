@@ -1258,11 +1258,16 @@ func abortedText(p map[string]any, sliced bool) string {
 // continue runs again: it names the stage and why the run ended, and is
 // neither a cap stop, whose message says to raise the cap, nor a responder
 // refused inside a run that goes on, nor a mockup responder that failed,
-// whose revision is used.
+// whose revision is used, nor a Claude Code stop, whose message already says
+// how to go on.
 func stopsStage(p map[string]any) bool {
 	reason := str(p["reason"])
 
-	return str(p["stage"]) != "" && reason != "" && !goesOn(reason) && str(p["cap"]) == ""
+	return str(p["stage"]) != "" && reason != "" && !goesOn(reason) && !claudeStopReason(reason) && str(p["cap"]) == ""
+}
+
+func claudeStopReason(reason string) bool {
+	return reason == "usage_limit" || reason == "not_logged_in"
 }
 
 // goesOn reports an error reason after which the pipeline goes on by

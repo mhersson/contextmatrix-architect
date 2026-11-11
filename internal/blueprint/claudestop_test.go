@@ -149,8 +149,7 @@ func TestSinkForwardsUsageLimit(t *testing.T) {
 	_, err := s.Write([]byte(`{"kind":"usage_limit","data":{"window":"seven_day"}}` + "\n"))
 	require.NoError(t, err)
 
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-
-	assert.NotEmpty(t, rec.lines, "the panel bridges the usage limit")
+	shown := rec.shown()
+	require.Len(t, shown, 1, "the panel bridges the usage limit")
+	assert.Contains(t, shown[0], `"kind":"usage_limit"`)
 }
