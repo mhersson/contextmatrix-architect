@@ -108,11 +108,11 @@ goes through `claude -p` on the operator's Claude subscription instead of an
 API endpoint. The session carries the OAuth token, which stays in memory.
 `serve` logs the `claude` version at start and warns when it is not the tested
 one; a `claude_code` session is refused when no `claude` can run or the token
-is missing. `claude_code_binary` names the binary and `claude_code_max_runs`
-(default 4) bounds the runs holding a slot at once, at 512 MiB per slot. Cost
-is Claude Code's list-price estimate, and a usage limit stops the stage until
-its reset. See the [guide](docs/guide.md#claude-code-subscription-mode) and
-the [reference](docs/reference.md#models).
+is missing. The cost counted is an estimate, never a per-token bill, and a
+usage limit stops the stage until its reset. The config keys and slot budget
+are in [Installing](docs/installing.md); see also the
+[guide](docs/guide.md#claude-code-subscription-mode) and the
+[reference](docs/reference.md#models).
 
 ## Code checkouts
 

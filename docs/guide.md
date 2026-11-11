@@ -74,12 +74,12 @@ otherwise. What you see differs a little:
 
 - **Drafts stream as before.** An artifact's draft fills in on the sheet while
   the stage writes it.
-- **The cost is an estimate.** The subscription is never billed per token.
-  The figure in the panel and on the scale bar is Claude Code's own estimate
-  of what the same tokens would cost at list prices, so it shows what a run
-  would have cost on the API, and the cost cap
-  ([cost cap](reference.md#the-cost-cap)) counts it the same way. The panel
-  labels it "cost" or "reported cost", as for any endpoint.
+- **The cost is an estimate.** The subscription is not billed per token.
+  Each run's cost is the higher of Claude Code's list-price estimate for its
+  tokens and ContextMatrix's price for them, when it has one. That figure is
+  what the panel, the scale bar and the [cost cap](reference.md#the-cost-cap)
+  count. The panel says "cost" when ContextMatrix has a price for the model
+  and "reported cost" when it does not.
 - **A usage limit stops the stage until it resets.** The panel names the limit
   and, when Claude Code says, the time it resets; the blueprint stays idle.
   Reply `continue` after the reset and the stage runs again. A token Claude
