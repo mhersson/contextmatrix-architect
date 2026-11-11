@@ -37,6 +37,20 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if p.LLMEndpoint.Type == protocol.LLMEndpointTypeClaudeCode {
+		if p.LLMEndpoint.OAuthToken == "" {
+			webhookcore.WriteError(w, http.StatusBadRequest, protocol.CodeInvalidField, "llm_endpoint.oauth_token is required for claude_code")
+
+			return
+		}
+
+		if s.claudeCodeUnavailable != nil {
+			webhookcore.WriteError(w, http.StatusInternalServerError, protocol.CodeInternal, "claude_code mode is unavailable: "+s.claudeCodeUnavailable.Error())
+
+			return
+		}
+	}
+
 	if p.Architect == nil {
 		webhookcore.WriteError(w, http.StatusBadRequest, protocol.CodeInvalidField, "architect block required")
 

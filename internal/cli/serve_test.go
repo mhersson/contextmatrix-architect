@@ -115,7 +115,7 @@ func TestServe_EndToEnd(t *testing.T) {
 	deps, err := loadRuntime(cfg)
 	require.NoError(t, err)
 
-	srv, cleanup, err := buildServer(context.Background(), cfg, deps, testLogger(t), runner, build, &atomic.Bool{})
+	srv, cleanup, err := buildServer(context.Background(), cfg, deps, testLogger(t), runner, build, &atomic.Bool{}, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cleanup(context.Background()) })
 

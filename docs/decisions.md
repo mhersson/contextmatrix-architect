@@ -15,7 +15,10 @@ HEAD.
   acceptance-criteria text. Why: the core encodes no one team's process.
 - A session start without an LLM endpoint is refused, and there is no local
   fallback. Why: ContextMatrix provisions everything per session, so the
-  architect fails closed.
+  architect fails closed. A claude_code start without a token, or with no
+  runnable `claude` binary, is refused; a version other than the tested one
+  only warns. Why: the subscription token is the only credential such a
+  session can run on, and a binary that cannot run fails every stage.
 
 ## Architecture
 
@@ -485,7 +488,7 @@ HEAD.
   recorded without their userinfo. Why: ContextMatrix returns project config as
   stored, and the record is append-only.
 - Every tool result passes the redactor for every secret the session holds
-  (the LLM key, MCP key, git token and search key), and live drafts are
+  (the LLM key, Claude Code token, MCP key, git token and search key), and live drafts are
   redacted with a held-back tail. Why: a secret never reaches a
   model-visible or stored text.
 

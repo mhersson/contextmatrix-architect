@@ -11,6 +11,7 @@ import (
 	"maps"
 	"math"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/mhersson/contextmatrix-harness/tools"
 	protocol "github.com/mhersson/contextmatrix-protocol"
+	"github.com/mhersson/contextmatrix-protocol/selection"
 
 	"github.com/mhersson/contextmatrix-architect/internal/cm"
 	"github.com/mhersson/contextmatrix-architect/internal/code"
@@ -223,7 +225,7 @@ type session struct {
 
 // secrets are the session's secrets, masked in every record and tool result.
 func (s *session) secrets() []string {
-	return []string{s.endpoint.APIKey, s.mcpKey, s.gitToken, s.searchKey}
+	return []string{s.endpoint.APIKey, s.endpoint.OAuthToken, s.mcpKey, s.gitToken, s.searchKey}
 }
 
 // run holds a blueprint's run slot: a run in flight, or a caller deciding
@@ -823,8 +825,25 @@ type runModel struct {
 
 // modelFor resolves the model a run of persona uses. CM prices only the
 // session model, so an override naming another model runs unpriced.
+// claudeCodeCatalog is the same set as CM's Claude Code catalog. Fable is left
+// out because in -p it spends usage credits once half the weekly limit is used.
+var claudeCodeCatalog = []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"}
+
 func (c *Controller) modelFor(sess *session, persona string) runModel {
-	if o := c.opts.Models[persona]; o != "" && o != sess.model {
+	o := c.opts.Models[persona]
+
+	if sess.endpoint.Type == protocol.LLMEndpointTypeClaudeCode && o != "" {
+		id, ok := selection.ClaudeCodeModelID(o)
+		if ok && slices.Contains(claudeCodeCatalog, id) {
+			return runModel{name: id, override: true}
+		}
+
+		c.opts.Logger.Warn("model override ignored in claude_code mode", "persona", persona, "model", o)
+
+		return runModel{name: sess.model, price: sess.price, window: sess.window}
+	}
+
+	if o != "" && o != sess.model {
 		return runModel{name: o, override: true}
 	}
 

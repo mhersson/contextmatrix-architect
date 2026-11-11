@@ -93,7 +93,7 @@ func newLogger(level string) *slog.Logger {
 // the build so a test can tell a wired build from an unstamped test binary's.
 // The returned cleanup stops the replay janitor and the controller's runs,
 // then closes the store.
-func buildServer(ctx context.Context, cfg *config.Config, deps *runtimeDeps, logger *slog.Logger, runner blueprint.Runner, build protocol.BuildInfo, draining *atomic.Bool) (*webhook.Server, func(context.Context) error, error) {
+func buildServer(ctx context.Context, cfg *config.Config, deps *runtimeDeps, logger *slog.Logger, runner blueprint.Runner, build protocol.BuildInfo, draining *atomic.Bool, claudeErr error) (*webhook.Server, func(context.Context) error, error) {
 	if err := os.MkdirAll(cfg.StateDir, 0o750); err != nil {
 		return nil, nil, fmt.Errorf("state dir: %w", err)
 	}
@@ -158,6 +158,8 @@ func buildServer(ctx context.Context, cfg *config.Config, deps *runtimeDeps, log
 		Logger:     logger,
 		Controller: ctl,
 		Build:      build,
+
+		ClaudeCodeUnavailable: claudeErr,
 	})
 
 	// Stops the runs before closing the store, so no run writes to a closed DB.
@@ -237,14 +239,14 @@ func cmKnowledgeTools(baseURL string, base http.RoundTripper) func(ctx context.C
 func runServe(ctx context.Context, cfg *config.Config, deps *runtimeDeps, logger *slog.Logger) error {
 	warnMissingSearchTools(logger, exec.LookPath)
 
-	// The check logs; its error is the reason claude_code sessions are refused.
-	_ = checkClaudeCode(ctx, cfg.ClaudeCodeBinary, logger)
+	// The check logs; its error is why the webhook refuses claude_code starts.
+	claudeErr := checkClaudeCode(ctx, cfg.ClaudeCodeBinary, logger)
 
 	// Flipped by shutdownHTTP when the shutdown signal arrives; the routes'
 	// drain gate and /readyz read it.
 	var draining atomic.Bool
 
-	srv, cleanup, err := buildServer(ctx, cfg, deps, logger, stage.NewRunner(cfg.ReasoningEffort, cfg.ReplayReasoning, deps.transport), buildinfo.Info(), &draining)
+	srv, cleanup, err := buildServer(ctx, cfg, deps, logger, stage.NewRunner(cfg.ReasoningEffort, cfg.ReplayReasoning, deps.transport), buildinfo.Info(), &draining, claudeErr)
 	if err != nil {
 		return err
 	}

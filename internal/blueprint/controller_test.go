@@ -2806,3 +2806,45 @@ func TestRun_TheReplyARunEndsOnIsRecordedButNotShown(t *testing.T) {
 	assert.True(t, slices.ContainsFunc(stored, func(e store.Event) bool { return strings.Contains(string(e.Payload), "# Need restated") }),
 		"the record keeps it")
 }
+
+func TestSessionSecretsIncludeOAuthToken(t *testing.T) {
+	const tok = "sk-oauth-secret"
+
+	s := session{endpoint: protocol.LLMEndpoint{Type: "claude_code", OAuthToken: tok}}
+	require.Contains(t, s.secrets(), tok)
+
+	c, _, _, _ := newController(t, nil)
+	au := c.newAudit(s.secrets()...)
+
+	raw, err := au.maskJSON([]byte(`{"text":"token ` + tok + `"}`))
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), tok)
+}
+
+func TestModelForClaudeCode(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		override string
+		want     runModel
+	}{
+		{"mapped and in the catalog", "claude_code", "anthropic/claude-opus-5.5", runModel{name: "claude-opus-5-5", override: true}},
+		{"not a claude model", "claude_code", "openai/gpt-5.5", runModel{name: "session/model", price: testPrice(), window: 1000}},
+		{"maps but outside the catalog", "claude_code", "anthropic/claude-fable-5.2", runModel{name: "session/model", price: testPrice(), window: 1000}},
+		{"bare id", "claude_code", "claude-haiku-5-5", runModel{name: "claude-haiku-5-5", override: true}},
+		{"endpoint mode unchanged", "openrouter", "openai/gpt-5.5", runModel{name: "openai/gpt-5.5", override: true}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _, _, _ := newController(t, nil)
+			c.opts.Models = map[string]string{"intake": tc.override}
+
+			sess := &session{
+				endpoint: protocol.LLMEndpoint{Type: tc.endpoint},
+				model:    "session/model", price: testPrice(), window: 1000,
+			}
+
+			assert.Equal(t, tc.want, c.modelFor(sess, "intake"))
+		})
+	}
+}

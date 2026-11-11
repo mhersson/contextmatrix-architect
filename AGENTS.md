@@ -14,8 +14,9 @@ decisions the code keeps and why, and must stay true at HEAD.
 - Never runs cards, never writes code. Reads code through disposable
   read-only checkouts.
 - Holds no secret but the backend HMAC key. The LLM endpoint, MCP key,
-  git-credentials token and search key arrive in every session start from CM
-  and live in memory only. There is no CM-less mode.
+  git-credentials token, search key and Claude Code token arrive in every
+  session start from CM and live in memory only; the Claude Code token goes
+  to the `claude` child process env only. There is no CM-less mode.
 - Every action is logged: full transcripts (less web search result lists and artifact reads, and reasoning details that redaction would change, dropped whole) and an append-only event log.
   The append-only tables (events, transcripts, artifacts, gates, emissions, questions) are never updated
   or deleted.
