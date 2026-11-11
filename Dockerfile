@@ -1,4 +1,4 @@
-FROM golang:1.27.3-trixie@sha256:604106102d33b1084e37ca08adf98ac0813624ae8595bd0d7f3965ecebded09c AS build
+FROM golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9 AS build
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 WORKDIR /src
 # An empty state dir owned by the nonroot user, so a fresh volume mounted over
