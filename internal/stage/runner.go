@@ -140,8 +140,8 @@ type Runner struct {
 	claudeBinary string
 	claudeEffort string
 
-	// slots holds a token per running claude process; nil, on a Runner not
-	// built by NewRunner, caps nothing.
+	// slots holds a token per claude run holding a slot; nil, on a Runner
+	// not built by NewRunner, caps nothing.
 	slots chan struct{}
 
 	// draftNow and draftEvery replace the clock and the frame spacing in
@@ -154,8 +154,8 @@ type Runner struct {
 type ClaudeOptions struct {
 	// Binary is the claude executable; "" runs claude from PATH.
 	Binary string
-	// MaxRuns bounds the claude processes running at once across all
-	// blueprints; below 1 means 1.
+	// MaxRuns bounds the claude runs holding a slot at once across all
+	// blueprints; below 1 means 1. A responder shares its asker's slot.
 	MaxRuns int
 }
 

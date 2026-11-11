@@ -61,7 +61,8 @@ max_turns: 80
 # Env: CONTEXTMATRIX_ARCHITECT_CLAUDE_CODE_BINARY
 claude_code_binary: claude
 
-# Bounds concurrent claude processes, 512 MiB each. Default: 4.
+# Bounds the claude runs holding a slot at once, 512 MiB per slot; a
+# responder shares its asker's slot. Default: 4.
 # Env: CONTEXTMATRIX_ARCHITECT_CLAUDE_CODE_MAX_RUNS
 claude_code_max_runs: 4
 

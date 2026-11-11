@@ -58,14 +58,17 @@ HEAD.
   owns the data. Why: one source for the blueprint view.
 - On a claude_code endpoint a stage runs as one `claude` process, offered no
   Claude Code built-in: every tool it calls is one of the run's Go tools on
-  the loopback bridge. Each run gets its own HOME and working directory, an
-  `architect-claude-*` directory under the temp directory that is removed
-  when the run ends and swept at start, also its TMPDIR; of the architect's
-  own environment the child gets only PATH. At most `claude_code_max_runs`
-  processes run at once across all blueprints, and a run waits for a slot
-  before its HOME exists. Why: on a workstation a built-in Read could read
-  the operator's home, nothing Claude Code writes outlives its run, and the
-  cap bounds their memory at 512 MiB a process.
+  the loopback bridge. Each run gets a temporary `architect-claude-*`
+  directory as its HOME, working directory and TMPDIR. The directory is
+  removed when the run ends, and any left behind are swept at start. From
+  the architect's own environment the child gets only PATH. At most
+  `claude_code_max_runs` runs hold a slot at once across all blueprints, and
+  a run takes its slot before its directory exists. A responder run inside
+  its asker's round shares the asker's slot, so a slot holds at most two
+  processes. Why: on a workstation a built-in Read could read the operator's
+  home, nothing Claude Code writes outlives its run, and the cap is sized
+  from a 512 MiB budget per slot, which two processes at their measured peak
+  of 180-230 MB stay under.
 - Every run of a stage, a chat run included, is offered the same tool list,
   and one reasoning effort is sent on every request. Why: a resumed
   conversation keeps its prompt cache on either endpoint.

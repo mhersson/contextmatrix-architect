@@ -481,8 +481,8 @@ func TestClaudeSlotWaitCancel(t *testing.T) {
 
 			<-startedA
 
-			ctxB, cancelB := context.WithCancel(context.Background())
-			defer cancelB()
+			ctxB, cancelB := context.WithCancelCause(context.Background())
+			defer cancelB(nil)
 
 			doneB := make(chan error, 1)
 
@@ -498,8 +498,12 @@ func TestClaudeSlotWaitCancel(t *testing.T) {
 			require.NoError(t, err)
 			assert.Len(t, homes, 1, "a waiting run has no home yet")
 
-			cancelB()
-			require.ErrorIs(t, <-doneB, context.Canceled)
+			errCap := errors.New("blueprint cost cap reached")
+			cancelB(errCap)
+
+			errB := <-doneB
+			require.ErrorIs(t, errB, context.Canceled)
+			require.ErrorIs(t, errB, errCap, "the cause stays matchable")
 			assert.Len(t, f.calls(), 1, "the canceled run never started")
 
 			close(release)
@@ -515,6 +519,86 @@ func TestClaudeSlotWaitCancel(t *testing.T) {
 			assert.Equal(t, "C", calls[1].Task)
 		})
 	}
+}
+
+// nestedRun is a tool whose call runs another stage on the call's context,
+// as a responder runs inside its asker's round.
+type nestedRun struct {
+	run func(ctx context.Context) error
+}
+
+func (nestedRun) Name() string { return "respond" }
+
+func (nestedRun) Schema() llm.Tool {
+	return llm.Tool{Type: "function", Function: llm.ToolFunction{Name: "respond", Parameters: json.RawMessage(`{"type":"object"}`)}}
+}
+
+func (n nestedRun) Execute(ctx context.Context, _ map[string]any) (tools.Result, error) {
+	return tools.Result{Text: "answered"}, n.run(ctx)
+}
+
+func TestClaudeNestedRunSharesTheSlot(t *testing.T) {
+	body := json.RawMessage(`{"body":"B"}`)
+
+	var r *Runner
+
+	var (
+		homes               = map[string]string{}
+		nestedErr, freshErr error
+		nestedOut           Output
+	)
+
+	f := &fakeClaude{script: func(ctx context.Context, spec claudecode.Spec) (harness.Result, error) {
+		homes[spec.Task] = spec.Home
+
+		if spec.Task == "asker" {
+			_, err := execute(ctx, t, spec, "respond", nil)
+			require.NoError(t, err)
+
+			// A run from a fresh context is not nested: it waits for the
+			// slot the asker holds.
+			fresh, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+
+			in := claudeInput(&bytes.Buffer{})
+			in.Task = "unrelated"
+			_, freshErr = r.Run(fresh, in)
+		}
+
+		return harness.Result{Completed: true, Reason: "done", CompletionArgs: body}, nil
+	}}
+
+	r = claudeRunner(t, f, "", ClaudeOptions{MaxRuns: 1})
+
+	// A regression waits for the slot until this deadline and fails, rather
+	// than hanging.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	in := claudeInput(&bytes.Buffer{})
+	in.Task = "asker"
+	in.Tools = []tools.Tool{nestedRun{run: func(ctx context.Context) error {
+		responder := claudeInput(&bytes.Buffer{})
+		responder.Task = "responder"
+		nestedOut, nestedErr = r.Run(ctx, responder)
+
+		return nil
+	}}}
+
+	out, err := r.Run(ctx, in)
+	require.NoError(t, err)
+	assert.Equal(t, "B", out.Artifact.Body)
+
+	require.NoError(t, nestedErr, "the nested run takes no second slot")
+	assert.Equal(t, "B", nestedOut.Artifact.Body)
+
+	require.ErrorIs(t, freshErr, context.DeadlineExceeded, "a run from a fresh context still waits for the slot")
+	assert.NotContains(t, homes, "unrelated", "the waiting run never started")
+
+	require.Contains(t, homes, "responder")
+	assert.NotEqual(t, homes["asker"], homes["responder"], "the nested run has its own home")
+	assert.NoDirExists(t, homes["responder"])
+	assert.NoDirExists(t, homes["asker"])
 }
 
 func TestSweepClaudeHomes(t *testing.T) {

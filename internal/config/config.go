@@ -51,7 +51,8 @@ type Config struct {
 	MaxTurns      int
 	// ClaudeCodeBinary is the claude executable claude_code sessions run.
 	ClaudeCodeBinary string
-	// ClaudeCodeMaxRuns bounds concurrent claude processes.
+	// ClaudeCodeMaxRuns bounds the claude runs holding a slot at once; a
+	// responder shares its asker's slot.
 	ClaudeCodeMaxRuns int
 	// WorkspaceMaxAgeDays is how long a blueprint's code trees are kept
 	// after they were last written.

@@ -24,6 +24,11 @@ const resumedTaskFormat = "This run continues an earlier conversation, given her
 // os.TempDir().
 const claudeHomePattern = "architect-claude-*"
 
+// slotKey keys the slots channel whose slot the ctx's run holds. A run
+// started from a tool call of that run, a responder inside its asker's round,
+// shares the slot: waiting for another would deadlock once the slots are full.
+type slotKey struct{}
+
 // runClaude is run on a claude_code endpoint: one claude process offered no
 // built-in, only the run's Go tools on vendorkit's loopback bridge, since on
 // a workstation a Read built-in could read the operator's home.
@@ -45,13 +50,15 @@ func (r *Runner) runClaude(ctx context.Context, in Input, tags *returnedTags) (o
 		return Output{Result: harness.Result{Reason: ReasonTooBig}}, fmt.Errorf("stage %s: %w", in.Stage, err)
 	}
 
-	if r.slots != nil {
+	if held, _ := ctx.Value(slotKey{}).(chan struct{}); r.slots != nil && held != r.slots {
 		select {
 		case r.slots <- struct{}{}:
 			defer func() { <-r.slots }()
 		case <-ctx.Done():
-			return Output{Result: harness.Result{Reason: "canceled"}}, fmt.Errorf("stage %s: wait for a claude slot: %w", in.Stage, ctx.Err())
+			return Output{Result: harness.Result{Reason: "canceled"}}, fmt.Errorf("stage %s: wait for a claude slot: %w", in.Stage, canceled(ctx))
 		}
+
+		ctx = context.WithValue(ctx, slotKey{}, r.slots)
 	}
 
 	home, err := os.MkdirTemp("", claudeHomePattern)
@@ -105,14 +112,24 @@ func (r *Runner) runClaude(ctx context.Context, in Input, tags *returnedTags) (o
 		OnDelta:      onDelta,
 	}
 
-	runClaude := r.RunClaude
-	if runClaude == nil {
-		runClaude = claudecode.Run
+	start := r.RunClaude
+	if start == nil {
+		start = claudecode.Run
 	}
 
-	res, err := runClaude(ctx, spec)
+	res, err := start(ctx, spec)
 
 	return outcome(in.Stage, res, err, mark, window)
+}
+
+// canceled is ctx's error with the cause it was canceled for, so a cost cap
+// stays matchable.
+func canceled(ctx context.Context) error {
+	if cause := context.Cause(ctx); cause != ctx.Err() {
+		return fmt.Errorf("%w: %w", ctx.Err(), cause)
+	}
+
+	return ctx.Err()
 }
 
 // SweepClaudeHomes removes the run homes under dir that a stopped process
