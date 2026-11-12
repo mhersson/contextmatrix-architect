@@ -178,13 +178,15 @@ func (c *Controller) runSide(ctx context.Context, r *run, sess *session, bp stor
 }
 
 // sideFailed reports a reviewer run that did not complete, as a stage run's
-// end is reported: a cap stop or the per-run cap reached leaves the
-// blueprint idle with an error, a cancel leaves it idle, and anything else
-// fails it. A run Shutdown cut short reports nothing.
+// end is reported: a cap stop, the per-run cap reached or a Claude Code stop
+// leaves the blueprint idle with an error, a cancel leaves it idle, and
+// anything else fails it. A run Shutdown cut short reports nothing.
 func (c *Controller) sideFailed(ctx context.Context, r *run, au audit, id, stageID string, err error) {
 	bg := context.Background()
 
 	var stop *capStop
+
+	_, claude, stopped := claudeStop(err)
 
 	switch {
 	case c.shuttingDown(r):
@@ -196,6 +198,11 @@ func (c *Controller) sideFailed(ctx context.Context, r *run, au audit, id, stage
 		c.setState(bg, id, StateIdle)
 	case ctx.Err() != nil:
 		c.setState(bg, id, StateIdle)
+	case stopped:
+		c.setState(bg, id, StateIdle)
+
+		claude["stage"] = stageID
+		au.event(bg, Event{Kind: EventError, BlueprintID: id, Payload: claude})
 	default:
 		if !c.contextStop(bg, au, id, 0, store.RunKindReviewer, stageID, err) {
 			c.fail(bg, au, id, 0, err.Error())

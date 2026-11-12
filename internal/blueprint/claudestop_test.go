@@ -128,6 +128,45 @@ func TestSideRunUsageLimitReason(t *testing.T) {
 	assert.Positive(t, reviews)
 }
 
+func TestReviewerClaudeStopLeavesTheBlueprintIdle(t *testing.T) {
+	var limited atomic.Bool
+
+	limited.Store(true)
+
+	script := gatedScript()
+	review := script["shape.review"]
+	script["shape.review"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if limited.Load() {
+			return stage.Output{}, fmt.Errorf("stage %s: %w", in.Stage, &claudecode.UsageLimitError{Window: "five_hour"})
+		}
+
+		return review(ctx, in)
+	}
+
+	c, st, runner, rec := newGated(t, script)
+	startGated(t, c, protocol.ArchitectModeDefault)
+
+	stop := lastError(t, rec)
+	assert.Equal(t, "usage_limit", stop.Payload["reason"])
+	assert.Equal(t, "five_hour", stop.Payload["window"])
+	assert.Equal(t, "shape", stop.Payload["stage"])
+
+	ctx := context.Background()
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, string(StateIdle), bp.State)
+
+	limited.Store(false)
+
+	require.NoError(t, c.Message(ctx, "BP1", "continue", "m2"))
+	c.Wait("BP1")
+
+	assert.Len(t, inputsOf(runner, "shape.review"), 2, "continue runs the review again")
+
+	_, err = st.LatestArtifact(ctx, "BP1", "shape.review")
+	require.NoError(t, err, "the review is stored after the reset")
+}
+
 func TestResponderClaudeStopLeavesTheRoundOpen(t *testing.T) {
 	tests := []struct {
 		name string
