@@ -47,8 +47,8 @@ Subscription mode, where stages run on a Claude Code subscription, needs your
 own Claude Code installed on the machine that runs the architect. The architect
 uses whatever `claude` you installed and logs its version at start, with a
 warning when it differs from the tested 2.1.322; the Docker image ships that
-version. With the user service, `./svc.sh install` puts the directory of the
-`claude` on your PATH into the unit, so rerun it after moving `claude`.
+version. The setup tool appends the directory of a native `claude` install to
+the architect unit's PATH when no `claude` is on the service PATH.
 
 Two settings in the architect's config file apply: `claude_code_binary` (default
 `claude`) names the binary, and `claude_code_max_runs` (default 4) bounds the
@@ -116,7 +116,9 @@ need to build the architect from this repository (see
    `./contextmatrix-architect serve --config ~/.config/contextmatrix-architect/config.yaml`.
    To keep it
    running in the background, the architect's [README](../README.md) shows how
-   to run it as a service or in Docker.
+   to run it as a service or in Docker. With the user service,
+   `./svc.sh install` puts the directory of the `claude` on your PATH into the
+   unit, so rerun it after moving `claude`.
    [config.yaml.example](../config.yaml.example) documents every other setting.
 
 ## Check that it works
