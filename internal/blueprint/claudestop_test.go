@@ -173,21 +173,6 @@ func TestResponderClaudeStopLeavesTheRoundOpen(t *testing.T) {
 	}
 }
 
-func TestHarnessLineNotionalCost(t *testing.T) {
-	line := []byte(`{"kind":"usage","data":{"prompt_tokens":10,"notional_cost_usd":0.5,"cost_basis":"subscription"}}`)
-	l, ok := parseHarnessLine(line)
-	require.True(t, ok)
-
-	u, ok := l.usage(nil)
-	require.True(t, ok)
-	assert.InDelta(t, 0.5, u.CostUSD, 1e-9)
-
-	p := &protocol.ModelPrice{PromptUSDPerMTok: 70_000}
-	u, ok = l.usage(p)
-	require.True(t, ok)
-	assert.InDelta(t, 0.7, u.CostUSD, 1e-9, "the priced cost wins when it is higher")
-}
-
 func TestSinkForwardsUsageLimit(t *testing.T) {
 	c, _, _, rec := newGated(t, gatedScript())
 	s := &harnessSink{audit: c.newAudit(), id: "BP1", runID: 1}

@@ -63,8 +63,6 @@ type harnessLine struct {
 		CacheRead  int64   `json:"cache_read_tokens"`
 		CacheWrite int64   `json:"cache_creation_tokens"`
 		Cost       float64 `json:"cost_usd"`
-		// Notional is Claude Code's list-price estimate; never billed money.
-		Notional float64 `json:"notional_cost_usd"`
 	} `json:"data"`
 }
 
@@ -75,8 +73,8 @@ func parseHarnessLine(line []byte) (harnessLine, bool) {
 	return l, json.Unmarshal(line, &l) == nil
 }
 
-// usage is a usage line's token buckets, costed at the highest of its
-// reported, notional and priced cost under p; ok is false for any other line.
+// usage is a usage line's token buckets, costed at the higher of its
+// reported and priced cost under p; ok is false for any other line.
 func (l harnessLine) usage(p *protocol.ModelPrice) (store.RunUsage, bool) {
 	if l.Kind != "usage" {
 		return store.RunUsage{}, false
@@ -86,7 +84,7 @@ func (l harnessLine) usage(p *protocol.ModelPrice) (store.RunUsage, bool) {
 		PromptTokens: l.Data.Prompt, CompletionTokens: l.Data.Completion,
 		CacheReadTokens: l.Data.CacheRead, CacheWriteTokens: l.Data.CacheWrite,
 	}
-	u.CostUSD = max(l.Data.Cost, l.Data.Notional, priced(p, u))
+	u.CostUSD = max(l.Data.Cost, priced(p, u))
 
 	return u, true
 }
