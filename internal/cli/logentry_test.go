@@ -2163,8 +2163,8 @@ func TestLogEntryFor_AClaudeCodeStopRendersItsOwnMessageOnce(t *testing.T) {
 		}, "Claude Code stopped on its five_hour usage limit. Reply `continue` after the reset to run the stage again."},
 		{"a failed login", map[string]any{
 			"stage": "shape", "reason": "not_logged_in",
-			"message": "Claude Code did not authenticate with the configured token. Fix the token in ContextMatrix, then reply `continue` to run the stage again.",
-		}, "Claude Code did not authenticate with the configured token. Fix the token in ContextMatrix, then reply `continue` to run the stage again."},
+			"message": "Claude Code did not authenticate with the configured token. Fix the token in ContextMatrix, end this session and reopen the blueprint (a session keeps the token it started with), then reply `continue` to run the stage again.",
+		}, "Claude Code did not authenticate with the configured token. Fix the token in ContextMatrix, end this session and reopen the blueprint (a session keeps the token it started with), then reply `continue` to run the stage again."},
 	}
 
 	for _, tc := range cases {

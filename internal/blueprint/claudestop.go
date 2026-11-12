@@ -31,7 +31,7 @@ func claudeStop(err error) (reason string, payload map[string]any, ok bool) {
 	case errors.Is(err, claudecode.ErrNotLoggedIn):
 		return "not_logged_in", map[string]any{
 			"reason":  "not_logged_in",
-			"message": "Claude Code did not authenticate with the configured token. Fix the token in ContextMatrix, then reply `continue` to run the stage again.",
+			"message": "Claude Code did not authenticate with the configured token. Fix the token in ContextMatrix, end this session and reopen the blueprint (a session keeps the token it started with), then reply `continue` to run the stage again.",
 		}, true
 	}
 

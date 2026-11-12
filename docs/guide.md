@@ -83,8 +83,9 @@ otherwise. What you see differs a little:
 - **A usage limit stops the stage until it resets.** The panel names the limit
   and, when Claude Code says, the time it resets; the blueprint stays idle.
   Reply `continue` after the reset and the stage runs again. A token Claude
-  Code does not accept stops the stage the same way until you fix it in
-  ContextMatrix. See [When a blueprint
+  Code does not accept stops the stage the same way. A session keeps the token
+  it started with, so fix the token in ContextMatrix, end the session and
+  reopen the blueprint, then reply `continue`. See [When a blueprint
   stops](reference.md#when-a-blueprint-stops).
 - **Models are Claude Code's.** See [Models](reference.md#models).
 
