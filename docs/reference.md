@@ -543,13 +543,15 @@ price for.
 In Claude Code subscription mode the model is a Claude Code model ID, such as
 `claude-sonnet-5-5`. A per-role override in `models` is written as an
 Anthropic slug (`anthropic/claude-opus-5.5`) or a Claude Code ID, and becomes
-the Claude Code ID (`claude-opus-5-5`). It is kept only when that ID is in
-ContextMatrix's Claude Code catalog (the list the shared protocol module
-holds), today `claude-opus-5-5`, `claude-sonnet-5-5` and `claude-haiku-5-5`;
-one equal to the blueprint's model changes nothing. Any other override is
-ignored with a warning in the log, and the blueprint's model runs that role.
-A kept override differing from the blueprint's model runs unpriced, as an
-override does elsewhere.
+the Claude Code ID (`claude-opus-5-5`). The architect has no list of the
+models Claude Code serves, so it keeps every override that maps to a Claude
+Code ID, and one that Claude Code or the subscription does not accept fails
+that role's runs. Under `claude -p`, Fable can spend paid usage credits
+without asking. An override equal to the blueprint's model
+changes nothing. One that maps to no Claude Code ID (`openai/gpt-5.5`, for
+example) is ignored with a warning in the log, and the blueprint's model runs
+that role. A kept override differing from the blueprint's model runs
+unpriced, as an override does elsewhere.
 
 ## The sheet's marks
 
