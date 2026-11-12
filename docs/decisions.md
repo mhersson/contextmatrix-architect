@@ -86,8 +86,13 @@ HEAD.
   inside its process, never what a run returns, and a flat record keeps the
   original task first however often a run is resumed.
 - Every run of a stage, a chat run included, is offered the same tool list,
-  and one reasoning effort is sent on every request. Why: a resumed
-  conversation keeps its prompt cache on either endpoint.
+  and one reasoning effort is sent on every request: the configured
+  `reasoning_effort` on an API endpoint, and on a claude_code endpoint the
+  effort ContextMatrix sends with the session, as Claude Code's `--effort`
+  (none when it sends none; a level Claude Code does not take is logged once
+  per session and dropped). Why: a resumed conversation keeps its prompt
+  cache on either endpoint, and one ContextMatrix setting sets Claude Code's
+  effort, in Claude Code's own levels, for every backend.
 - A button click sends its reply as an ordinary message, and a round or
   mockup reply's content is never parsed as a command. Why: a click and a
   typed reply parse the same way, and a structured reply's content is only a

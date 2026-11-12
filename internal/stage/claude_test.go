@@ -126,12 +126,14 @@ func clearProxyEnv(t *testing.T) {
 func TestClaudeSpec(t *testing.T) {
 	clearProxyEnv(t)
 
+	// configEffort is reasoning_effort, which an API endpoint sends; a claude
+	// run takes only its endpoint's effort.
 	tests := []struct {
-		name, effort, want string
+		name, configEffort, endpointEffort, want string
 	}{
-		{"an effort claude takes is normalized", " XHigh", "xhigh"},
-		{"an effort claude does not take is dropped", "minimal", ""},
-		{"no effort", "", ""},
+		{"the endpoint's effort, normalized", "low", " XHigh", "xhigh"},
+		{"an endpoint effort claude does not take is dropped", "", "minimal", ""},
+		{"no endpoint effort sends none", "max", "", ""},
 	}
 
 	for _, tt := range tests {
@@ -157,9 +159,10 @@ func TestClaudeSpec(t *testing.T) {
 				return acceptedWith(t, args), nil
 			}}
 
-			r := claudeRunner(t, f, tt.effort, ClaudeOptions{Binary: "/opt/claude/bin/claude", MaxRuns: 2})
+			r := claudeRunner(t, f, tt.configEffort, ClaudeOptions{Binary: "/opt/claude/bin/claude", MaxRuns: 2})
 
 			in := claudeInput(&bytes.Buffer{})
+			in.Endpoint.Effort = tt.endpointEffort
 			in.Interviewer = &stubInterviewer{}
 			in.Tools = []tools.Tool{echoTool{}}
 
@@ -428,10 +431,11 @@ func TestClaudeForcedFollowUp(t *testing.T) {
 			}}
 
 			in := claudeInput(&bytes.Buffer{})
+			in.Endpoint.Effort = "high"
 			in.Interviewer = tt.interviewer
 			in.Tools = []tools.Tool{echoTool{}}
 
-			r = claudeRunner(t, f, "high", ClaudeOptions{MaxRuns: 1})
+			r = claudeRunner(t, f, "low", ClaudeOptions{MaxRuns: 1})
 
 			out, err := r.Run(context.Background(), in)
 			require.NoError(t, err)
@@ -457,7 +461,7 @@ func TestClaudeForcedFollowUp(t *testing.T) {
 			assert.Equal(t, run.Env, follow.Env)
 			assert.Equal(t, run.SystemPrompt, follow.SystemPrompt)
 			assert.Equal(t, run.Model, follow.Model)
-			assert.Equal(t, run.Effort, follow.Effort)
+			assert.Equal(t, "high", follow.Effort, "the follow-up keeps the endpoint's effort")
 			assert.Equal(t, run.OAuthToken, follow.OAuthToken)
 			assert.Same(t, run.Emitter, follow.Emitter)
 

@@ -113,9 +113,11 @@ API endpoint. The session carries the OAuth token, which stays in memory.
 `serve` logs the `claude` version at start and warns when it is not the tested
 one; a `claude_code` session is refused when no `claude` can run or the token
 is missing. The cost counted is an estimate, never a per-token bill, and a
-usage limit stops the stage, and `continue` after the reset runs it again. The
-config keys and slot budget are in [Installing](docs/installing.md); see also
-the [guide](docs/guide.md#claude-code-subscription-mode) and the
+usage limit stops the stage, and `continue` after the reset runs it again.
+Claude Code's effort is ContextMatrix's `claude_code.effort`, sent with each
+session; `reasoning_effort` applies to API endpoints only. The config keys and
+slot budget are in [Installing](docs/installing.md); see also the
+[guide](docs/guide.md#claude-code-subscription-mode) and the
 [reference](docs/reference.md#models).
 
 ## Code checkouts

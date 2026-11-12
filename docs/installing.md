@@ -53,8 +53,10 @@ the architect unit's PATH when no `claude` is on the service PATH.
 Two settings in the architect's config file apply: `claude_code_binary` (default
 `claude`) names the binary, and `claude_code_max_runs` (default 4) bounds the
 `claude` runs holding a slot at once, at 512 MiB per slot. A slot holds one
-`claude` run and, at most, the responder run nested in its round. See [what you
-see in this mode](guide.md#claude-code-subscription-mode).
+`claude` run and, at most, the responder run nested in its round.
+`reasoning_effort` does not apply in this mode: Claude Code's effort is set in
+ContextMatrix (`claude_code.effort`), and empty leaves Claude Code its default.
+See [what you see in this mode](guide.md#claude-code-subscription-mode).
 
 ## The manual way
 

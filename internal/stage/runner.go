@@ -122,8 +122,9 @@ type Transient interface {
 type Runner struct {
 	NewLLM func(protocol.LLMEndpoint) llm.LLM
 
-	// Effort is sent on every request of every run, so a conversation keeps
-	// one effort and its prompt cache; "" sends none.
+	// Effort is sent on every request of every run on an API endpoint, so a
+	// conversation keeps one effort and its prompt cache; "" sends none. A
+	// claude_code run takes its effort from its endpoint instead.
 	Effort string
 
 	// Replay sends each reply's reasoning back with every later request of
@@ -134,10 +135,8 @@ type Runner struct {
 	// claudecode.Run. Tests inject a fake.
 	RunClaude func(context.Context, claudecode.Spec) (harness.Result, error)
 
-	// claudeBinary is the claude executable, "" the one on PATH, and
-	// claudeEffort is Effort as claude takes it.
+	// claudeBinary is the claude executable, "" the one on PATH.
 	claudeBinary string
-	claudeEffort string
 
 	// slots holds a token per claude run holding a slot; nil, on a Runner
 	// not built by NewRunner, caps nothing.
@@ -165,8 +164,8 @@ func NewRunner(effort string, replay bool, base http.RoundTripper, claude Claude
 
 	return &Runner{
 		NewLLM: newLLM, Effort: effort, Replay: replay,
-		claudeBinary: claude.Binary, claudeEffort: claudecode.NormalizeEffort(effort),
-		slots: make(chan struct{}, max(claude.MaxRuns, 1)),
+		claudeBinary: claude.Binary,
+		slots:        make(chan struct{}, max(claude.MaxRuns, 1)),
 	}
 }
 
