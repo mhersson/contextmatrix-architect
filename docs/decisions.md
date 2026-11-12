@@ -533,9 +533,9 @@ HEAD.
   and compaction is Claude Code's own. Why: a ContextMatrix card read can
   carry a long activity log.
 - The image installs the tested Claude Code native binary from the npm
-  registry tarball, verified by sha512 from `claude-code.pin`, which only the
-  image build reads. Why: the image runs exactly the version the integration
-  was tested on.
+  registry tarball, verified by sha512 from `claude-code.pin`, which the image
+  build and the pin test in `internal/cli` read. Why: the image runs exactly
+  the version the integration was tested on.
 - A host install uses the operator's own `claude`; `svc.sh` never downloads,
   installs, pins or changes it, and only puts its directory first on the
   unit's PATH. Why: the operator owns that installation and its updates.
