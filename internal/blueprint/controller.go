@@ -11,7 +11,6 @@ import (
 	"maps"
 	"math"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -824,13 +823,14 @@ type runModel struct {
 }
 
 // modelFor resolves the model a run of persona uses. CM prices only the
-// session model, so an override naming another model runs unpriced.
+// session model, so an override naming another model runs unpriced. A
+// claude_code override is checked for form only: no Claude Code catalog
+// reaches the architect, and a model Claude Code does not serve fails its runs.
 func (c *Controller) modelFor(sess *session, persona string) runModel {
 	o := c.opts.Models[persona]
 
 	if sess.endpoint.Type == protocol.LLMEndpointTypeClaudeCode && o != "" {
-		id, ok := selection.ClaudeCodeModelID(o)
-		if ok && slices.ContainsFunc(selection.ClaudeCodeModels(), func(m selection.ClaudeCodeModel) bool { return m.ID == id }) {
+		if id, ok := selection.ClaudeCodeModelID(o); ok {
 			if id == sess.model {
 				return runModel{name: sess.model, price: sess.price, window: sess.window}
 			}
