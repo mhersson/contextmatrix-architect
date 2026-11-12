@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/mhersson/contextmatrix-harness/events"
@@ -46,7 +47,7 @@ func (r *Runner) runClaude(ctx context.Context, in Input, tags *returnedTags) (o
 	window := contextWindow(in.ContextWindow)
 	system := in.Persona + "\n\n" + in.Instructions
 
-	task, err := claudeTask(system, in, window)
+	task, kept, err := claudeTask(system, in, window)
 	if err != nil {
 		return Output{Result: harness.Result{Reason: ReasonTooBig}}, fmt.Errorf("stage %s: %w", in.Stage, err)
 	}
@@ -119,6 +120,8 @@ func (r *Runner) runClaude(ctx context.Context, in Input, tags *returnedTags) (o
 	}
 
 	res, err := start(ctx, spec)
+	res.Messages = flat(res.Messages, kept, red(in.Task))
+
 	if err == nil && res.Completed && res.CompletionArgs == nil {
 		first := res
 		// The resume reads the session vendorkit stored under this Home, so it
@@ -143,49 +146,85 @@ func (r *Runner) runClaude(ctx context.Context, in Input, tags *returnedTags) (o
 }
 
 // claudeTask is in.Task, or on a resume a primer carrying in.History as a
-// transcript. Claude Code never compacts what a run returns, so a primer past
-// the limit keeps the first user message and the newest messages that fit.
-func claudeTask(system string, in Input, window int) (string, error) {
+// transcript, and the messages it carried. Claude Code never compacts what a
+// run returns, so past the limit they are the first user message and the
+// newest turns that fit.
+func claudeTask(system string, in Input, window int) (string, []llm.Message, error) {
 	if len(in.History) == 0 {
-		return in.Task, preflight(system, in.Task, nil, window)
+		return in.Task, nil, preflight(system, in.Task, nil, window)
 	}
 
-	msgs := WithoutSystem(in.History)
-	whole := fmt.Sprintf(resumedTaskFormat, claudecode.RenderTranscript(msgs), in.Task)
+	primer := func(msgs []llm.Message) string {
+		return fmt.Sprintf(resumedTaskFormat, claudecode.RenderTranscript(msgs), in.Task)
+	}
 
-	refused := preflight(system, whole, nil, window)
+	// The claude run never sees the reasoning, so its record does not carry it.
+	msgs := withoutReasoning(WithoutSystem(in.History))
+
+	refused := preflight(system, primer(msgs), nil, window)
 	if refused == nil {
-		return whole, nil
+		return primer(msgs), msgs, nil
 	}
 
 	first := slices.IndexFunc(msgs, func(m llm.Message) bool { return m.Role == "user" })
-	if first < 0 || first == len(msgs)-1 {
-		return "", refused
+	if first < 0 {
+		return "", nil, refused
 	}
 
-	head := claudecode.RenderTranscript(msgs[first : first+1])
-	trimmed := func(from int) string {
-		transcript := head + "\n\n" + omittedTurns + "\n\n" + claudecode.RenderTranscript(msgs[from:])
+	// The kept turns open on a user or assistant message, so each tool result
+	// stays with the call it answers.
+	var starts []int
 
-		return fmt.Sprintf(resumedTaskFormat, transcript, in.Task)
+	for i := first + 1; i < len(msgs); i++ {
+		if msgs[i].Role != "tool" {
+			starts = append(starts, i)
+		}
 	}
 
-	// Fewer messages only shrink the primer, so the first start that fits
-	// keeps the most.
-	tail := msgs[first+1:]
-	n := sort.Search(len(tail), func(i int) bool { return preflight(system, trimmed(first+1+i), nil, window) == nil })
-
-	if n == len(tail) {
-		return "", refused
+	// A later start only shrinks the primer, so the first that fits keeps most.
+	n := sort.Search(len(starts), func(i int) bool {
+		return preflight(system, primer(trimmed(msgs, first, starts[i])), nil, window) == nil
+	})
+	if n == len(starts) {
+		return "", nil, refused
 	}
 
-	// A tool result whose call was left out opens no turn.
-	from := first + 1 + n
-	for from < len(msgs)-1 && msgs[from].Role == "tool" {
-		from++
+	kept := trimmed(msgs, first, starts[n])
+
+	return primer(kept), kept, nil
+}
+
+// trimmed is msgs' first user message, at first, and msgs from from on, with
+// omittedTurns at the gap. It joins the first message, or a kept user message
+// opening the turns, so no user message is added between them; a first
+// message that already ends on it from an earlier trim gets no second.
+func trimmed(msgs []llm.Message, first, from int) []llm.Message {
+	head, turns := msgs[first], slices.Clone(msgs[from:])
+
+	switch {
+	case strings.HasSuffix(head.Content, omittedTurns):
+	case turns[0].Role == "user":
+		turns[0].Content = omittedTurns + "\n\n" + turns[0].Content
+	default:
+		head.Content += "\n\n" + omittedTurns
 	}
 
-	return trimmed(from), nil
+	return append([]llm.Message{head}, turns...)
+}
+
+// flat is a resumed run's messages as a harness resume stores them: the
+// primer claudecode seeded becomes the messages it carried and then task. nil
+// kept is a run that resumed nothing.
+func flat(msgs, kept []llm.Message, task string) []llm.Message {
+	at := slices.IndexFunc(msgs, func(m llm.Message) bool { return m.Role == "user" })
+	if kept == nil || at < 0 {
+		return msgs
+	}
+
+	out := append(slices.Clone(msgs[:at]), kept...)
+	out = append(out, llm.Message{Role: "user", Content: task})
+
+	return append(out, msgs[at+1:]...)
 }
 
 // canceled is ctx's error with the cause it was canceled for, so a cost cap

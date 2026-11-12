@@ -487,6 +487,38 @@ func TestClaudeFinalMark(t *testing.T) {
 	}
 }
 
+// seedingClaude answers each run as claudecode.Run seeds a result's
+// messages: the system prompt and the task, then turns.
+func seedingClaude(turns ...llm.Message) *fakeClaude {
+	return &fakeClaude{script: func(_ context.Context, spec claudecode.Spec) (harness.Result, error) {
+		msgs := append([]llm.Message{{Role: "system", Content: spec.SystemPrompt}, {Role: "user", Content: spec.Task}}, turns...)
+
+		return harness.Result{Completed: true, Reason: "done", CompletionArgs: json.RawMessage(`{"body":"B"}`), Messages: msgs}, nil
+	}}
+}
+
+// assertWellFormed checks that every tool message answers a call of the
+// assistant message its run of tool messages follows.
+func assertWellFormed(t *testing.T, msgs []llm.Message) {
+	t.Helper()
+
+	for i, m := range msgs {
+		if m.Role != "tool" {
+			continue
+		}
+
+		j := i - 1
+		for j >= 0 && msgs[j].Role == "tool" {
+			j--
+		}
+
+		require.GreaterOrEqual(t, j, 0, "tool message %d follows no assistant", i)
+		assert.Equal(t, "assistant", msgs[j].Role, "tool message %d", i)
+		assert.True(t, slices.ContainsFunc(msgs[j].ToolCalls, func(tc llm.ToolCall) bool { return tc.ID == m.ToolCallID }),
+			"tool message %d answers a call of its assistant", i)
+	}
+}
+
 func TestClaudeHistoryPrimer(t *testing.T) {
 	const system = "SYSTEM PROMPT OF THE EARLIER RUN"
 
@@ -512,15 +544,17 @@ func TestClaudeHistoryPrimer(t *testing.T) {
 		}},
 	}
 
+	reply := llm.Message{Role: "assistant", Content: "Answered."}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &fakeClaude{}
+			f := seedingClaude(reply)
 
 			in := claudeInput(&bytes.Buffer{})
 			in.History = tt.history
 			in.Task = "the person answered the round"
 
-			_, err := claudeRunner(t, f, "", ClaudeOptions{}).Run(context.Background(), in)
+			out, err := claudeRunner(t, f, "", ClaudeOptions{}).Run(context.Background(), in)
 			require.NoError(t, err)
 
 			calls := f.calls()
@@ -529,29 +563,41 @@ func TestClaudeHistoryPrimer(t *testing.T) {
 			assert.Equal(t, fmt.Sprintf(resumedTaskFormat, claudecode.RenderTranscript(WithoutSystem(tt.history)), in.Task), calls[0].Task)
 			assert.NotContains(t, calls[0].Task, system, "the transcript holds no system text")
 			assert.Equal(t, in.Persona+"\n\n"+in.Instructions, calls[0].SystemPrompt)
+
+			// Stored flat, as a harness resume is; the reasoning the claude run
+			// never saw is not attributed to it.
+			want := append([]llm.Message{{Role: "system", Content: calls[0].SystemPrompt}}, WithoutSystem(tt.history)...)
+			want = append(want, llm.Message{Role: "user", Content: in.Task}, reply)
+			assert.Equal(t, withoutReasoning(want), out.Result.Messages)
 		})
 	}
 }
 
-// turnsHistory is a conversation of the original task and n tool turns, each
-// about 2*size bytes, marked turn-NN and result-NN.
-func turnsHistory(task string, n, size int) []llm.Message {
-	h := []llm.Message{{Role: "system", Content: "SYSTEM"}, {Role: "user", Content: task}}
+// toolTurns are tool turns from to to, each about 2*size bytes, marked
+// turn-NN and result-NN.
+func toolTurns(from, to, size int) []llm.Message {
+	var msgs []llm.Message
 
-	for i := 1; i <= n; i++ {
+	for i := from; i <= to; i++ {
 		id := fmt.Sprintf("c%02d", i)
-		h = append(h,
+		msgs = append(msgs,
 			llm.Message{Role: "assistant", Content: fmt.Sprintf("turn-%02d ", i) + strings.Repeat("a", size), ToolCalls: []llm.ToolCall{toolCall(id, "echo", `{"text":"x"}`)}},
 			llm.Message{Role: "tool", ToolCallID: id, Content: fmt.Sprintf("result-%02d ", i) + strings.Repeat("r", size)},
 		)
 	}
 
-	return h
+	return msgs
 }
 
-func TestClaudeTrimmedPrimer(t *testing.T) {
-	const window = 10000 // a compaction limit of 8500 tokens, about 21 kB
+// turnsHistory is a stored conversation of task and n tool turns.
+func turnsHistory(task string, n, size int) []llm.Message {
+	return append([]llm.Message{{Role: "system", Content: "SYSTEM"}, {Role: "user", Content: task}}, toolTurns(1, n, size)...)
+}
 
+// trimWindow gives a compaction limit of 8500 tokens, about 21 kB.
+const trimWindow = 10000
+
+func TestClaudeTrimmedPrimer(t *testing.T) {
 	tests := []struct {
 		name     string
 		history  []llm.Message
@@ -568,12 +614,14 @@ func TestClaudeTrimmedPrimer(t *testing.T) {
 		},
 	}
 
+	reply := llm.Message{Role: "assistant", Content: "Answered."}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &fakeClaude{}
+			f := seedingClaude(reply)
 
 			in := claudeInput(&bytes.Buffer{})
-			in.ContextWindow = window
+			in.ContextWindow = trimWindow
 			in.History = tt.history
 			in.Task = "the person answered the round"
 
@@ -594,12 +642,13 @@ func TestClaudeTrimmedPrimer(t *testing.T) {
 			require.Len(t, calls, 1)
 
 			task := calls[0].Task
-			require.NoError(t, preflight(calls[0].SystemPrompt, task, nil, window), "the trimmed primer fits")
+			require.NoError(t, preflight(calls[0].SystemPrompt, task, nil, trimWindow), "the trimmed primer fits")
 			assert.Contains(t, task, "ORIGINAL TASK")
 			assert.True(t, strings.HasSuffix(task, in.Task), "the run's own task comes last")
+			assert.Equal(t, 1, strings.Count(task, omittedTurns), "one line says earlier turns were left out")
 
 			_, tail, found := strings.Cut(task, omittedTurns+"\n\n")
-			require.True(t, found, "the transcript says earlier turns were left out")
+			require.True(t, found)
 			assert.True(t, strings.HasPrefix(tail, "[assistant"), "the kept turns open on an assistant, not an orphaned tool result")
 
 			for _, s := range tt.dropped {
@@ -609,8 +658,96 @@ func TestClaudeTrimmedPrimer(t *testing.T) {
 			for _, s := range tt.keptTail {
 				assert.Contains(t, tail, s)
 			}
+
+			// The stored transcript is flat: the kept conversation, the task as
+			// its own user message, then the run's own messages.
+			msgs := out.Result.Messages
+			require.GreaterOrEqual(t, len(msgs), 5)
+			assert.Equal(t, "system", msgs[0].Role)
+			assert.Equal(t, "user", msgs[1].Role)
+			assert.True(t, strings.HasPrefix(msgs[1].Content, "ORIGINAL TASK"), "the original task comes first")
+			assert.Equal(t, "assistant", msgs[2].Role, "the marker adds no user message")
+			assert.Equal(t, llm.Message{Role: "user", Content: in.Task}, msgs[len(msgs)-2])
+			assert.Equal(t, reply, msgs[len(msgs)-1])
+			assert.Equal(t, task, fmt.Sprintf(resumedTaskFormat, claudecode.RenderTranscript(msgs[1:len(msgs)-2]), in.Task),
+				"the stored conversation is what the primer carried")
+			assertWellFormed(t, msgs)
+
+			for _, m := range msgs {
+				assert.NotContains(t, m.Content, "<transcript>", "no primer is stored")
+			}
 		})
 	}
+}
+
+func TestTrimmedMarksTheGapWithoutAddingAUserMessage(t *testing.T) {
+	marked := "the need\n\n" + omittedTurns
+	call := []llm.ToolCall{toolCall("c1", "echo", `{}`)}
+
+	tests := []struct {
+		name string
+		msgs []llm.Message
+		want []llm.Message
+	}{
+		{
+			"turns opening on an assistant",
+			[]llm.Message{{Role: "user", Content: "the need"}, {Role: "assistant", Content: "old"}, {Role: "assistant", Content: "new", ToolCalls: call}, {Role: "tool", ToolCallID: "c1"}},
+			[]llm.Message{{Role: "user", Content: marked}, {Role: "assistant", Content: "new", ToolCalls: call}, {Role: "tool", ToolCallID: "c1"}},
+		},
+		{
+			"turns opening on a user message",
+			[]llm.Message{{Role: "user", Content: "the need"}, {Role: "assistant", Content: "old"}, {Role: "user", Content: "round 1"}, {Role: "assistant", Content: "new"}},
+			[]llm.Message{{Role: "user", Content: "the need"}, {Role: "user", Content: omittedTurns + "\n\nround 1"}, {Role: "assistant", Content: "new"}},
+		},
+		{
+			"a first message marked by an earlier trim",
+			[]llm.Message{{Role: "user", Content: marked}, {Role: "assistant", Content: "old"}, {Role: "user", Content: "round 1"}, {Role: "assistant", Content: "new"}},
+			[]llm.Message{{Role: "user", Content: marked}, {Role: "user", Content: "round 1"}, {Role: "assistant", Content: "new"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := slices.Clone(tt.msgs)
+
+			assert.Equal(t, tt.want, trimmed(tt.msgs, 0, 2))
+			assert.Equal(t, before, tt.msgs, "the history is not changed")
+		})
+	}
+}
+
+func TestClaudeResumeOfATrimmedRunFits(t *testing.T) {
+	in := claudeInput(&bytes.Buffer{})
+	in.ContextWindow = trimWindow
+	in.History = turnsHistory("ORIGINAL TASK", 20, 1000)
+	in.Task = "the person answered round 1"
+
+	first, err := claudeRunner(t, seedingClaude(toolTurns(21, 24, 1000)...), "", ClaudeOptions{}).Run(context.Background(), in)
+	require.NoError(t, err)
+
+	// The second resume reads the first's stored transcript, as a critique
+	// or answered round does, past the limit again.
+	f := seedingClaude(llm.Message{Role: "assistant", Content: "Answered."})
+	in.History = first.Result.Messages
+	in.Task = "the person answered round 2"
+
+	out, err := claudeRunner(t, f, "", ClaudeOptions{}).Run(context.Background(), in)
+	require.NoError(t, err)
+
+	calls := f.calls()
+	require.Len(t, calls, 1)
+
+	task := calls[0].Task
+	require.NoError(t, preflight(calls[0].SystemPrompt, task, nil, trimWindow), "the second trimmed primer fits")
+	assert.Equal(t, 1, strings.Count(task, "<transcript>"), "no primer nests inside it")
+	assert.Equal(t, 1, strings.Count(task, omittedTurns))
+	assert.Contains(t, task, "ORIGINAL TASK")
+	assert.Contains(t, task, "result-24", "the first resume's newest turn is kept")
+
+	msgs := out.Result.Messages
+	require.GreaterOrEqual(t, len(msgs), 2)
+	assert.True(t, strings.HasPrefix(msgs[1].Content, "ORIGINAL TASK"), "the original task still comes first")
+	assertWellFormed(t, msgs)
 }
 
 func TestClaudeTooBig(t *testing.T) {
