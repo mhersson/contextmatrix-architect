@@ -15,8 +15,8 @@ import (
 )
 
 // bridged wraps a tool served over the loopback MCP bridge, where the
-// harness's own redaction and output cap do not run. Terminal and ReadOnly
-// are the inner tool's, so offMode stays non-terminal.
+// harness's own redaction and output cap do not run. Terminal is the
+// inner tool's, so offMode stays non-terminal.
 func bridged(t tools.Tool, redact func(string) string) tools.Tool {
 	return bridgedTool{Tool: t, redact: redact}
 }
@@ -41,12 +41,6 @@ func (b bridgedTool) Execute(ctx context.Context, args map[string]any) (tools.Re
 	return res, err
 }
 
-func (b bridgedTool) ReadOnly() bool {
-	ro, ok := b.Tool.(tools.ReadOnly)
-
-	return ok && ro.ReadOnly()
-}
-
 func (b bridgedTool) Terminal() bool {
 	term, ok := b.Tool.(tools.Terminal)
 
@@ -69,10 +63,6 @@ type callWatch struct {
 func (w *callWatch) delta(d llm.Delta) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-
-	if d.Reset {
-		w.names = nil
-	}
 
 	if d.ToolCall != nil && d.ToolCall.Name != "" {
 		w.names = append(w.names, d.ToolCall.Name)

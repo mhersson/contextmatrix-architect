@@ -26,10 +26,6 @@ func (s stubTool) Schema() llm.Tool { return llm.Tool{} }
 
 func (s stubTool) Execute(context.Context, map[string]any) (tools.Result, error) { return s.res, s.err }
 
-type roStub struct{ stubTool }
-
-func (roStub) ReadOnly() bool { return true }
-
 func TestBridgedRedactsResultAndError(t *testing.T) {
 	apply := redact.New([]string{"s3cr3t"}).Apply
 
@@ -58,15 +54,10 @@ func TestBridgedKeepsMarkers(t *testing.T) {
 	id := func(s string) string { return s }
 	submit := bridged(submitArtifactTool{}, id)
 	off := bridged(offMode{Tool: submitArtifactTool{}}, id)
-	ro := bridged(tagWatch{Tool: roStub{stubTool{name: "r"}}, tags: &returnedTags{}}, id)
 
-	_ = tools.NewRegistry(submit, off, ro)
+	_ = tools.NewRegistry(submit, off)
 	assert.True(t, isTerminal(submit))
 	assert.False(t, isTerminal(off))
-
-	_, isRO := ro.(tools.ReadOnly)
-	assert.True(t, isRO)
-	assert.True(t, ro.(tools.ReadOnly).ReadOnly())
 }
 
 func isTerminal(t tools.Tool) bool {

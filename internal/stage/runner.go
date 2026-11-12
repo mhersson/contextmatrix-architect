@@ -31,10 +31,9 @@ var ErrNoArtifact = errors.New("stage: run ended without an artifact")
 // matches the chat backend's.
 const ToolOutputMaxBytes = 128 << 10
 
-// A run whose prompt reaches 85% of its model's window summarizes its older
-// turns and goes on, keeping the last six messages verbatim: the chat
-// backend's bounds. CM sends the window with the session start; a model it
-// does not know gets 128000.
+// The harness route's compaction: a prompt reaching 85% of the model's window
+// summarizes older turns, keeping the last six verbatim. A claude_code run
+// compacts on Claude Code's own terms. An unknown window gets 128000.
 const (
 	defaultContextWindow = 128000
 	compactionThreshold  = 0.85
