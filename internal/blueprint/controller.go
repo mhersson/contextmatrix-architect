@@ -823,10 +823,6 @@ type runModel struct {
 	override bool
 }
 
-// claudeCodeCatalog is the same set as CM's Claude Code catalog. Fable is left
-// out because in -p it spends usage credits once half the weekly limit is used.
-var claudeCodeCatalog = []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"}
-
 // modelFor resolves the model a run of persona uses. CM prices only the
 // session model, so an override naming another model runs unpriced.
 func (c *Controller) modelFor(sess *session, persona string) runModel {
@@ -834,7 +830,7 @@ func (c *Controller) modelFor(sess *session, persona string) runModel {
 
 	if sess.endpoint.Type == protocol.LLMEndpointTypeClaudeCode && o != "" {
 		id, ok := selection.ClaudeCodeModelID(o)
-		if ok && slices.Contains(claudeCodeCatalog, id) {
+		if ok && slices.ContainsFunc(selection.ClaudeCodeModels(), func(m selection.ClaudeCodeModel) bool { return m.ID == id }) {
 			if id == sess.model {
 				return runModel{name: sess.model, price: sess.price, window: sess.window}
 			}

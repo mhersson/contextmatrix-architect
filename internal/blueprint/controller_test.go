@@ -21,6 +21,7 @@ import (
 	"github.com/mhersson/contextmatrix-harness/harness"
 	"github.com/mhersson/contextmatrix-harness/llm"
 	protocol "github.com/mhersson/contextmatrix-protocol"
+	"github.com/mhersson/contextmatrix-protocol/selection"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -2819,6 +2820,28 @@ func TestSessionSecretsIncludeOAuthToken(t *testing.T) {
 	raw, err := au.maskJSON([]byte(`{"text":"token ` + tok + `"}`))
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), tok)
+}
+
+func TestModelForClaudeCodeCatalog(t *testing.T) {
+	for _, m := range selection.ClaudeCodeModels() {
+		t.Run(m.ID, func(t *testing.T) {
+			c, _, _, _ := newController(t, nil)
+			c.opts.Models = map[string]string{"intake": m.ID}
+
+			sess := &session{endpoint: protocol.LLMEndpoint{Type: "claude_code"}, model: "session/model", price: testPrice(), window: 1000}
+
+			assert.Equal(t, runModel{name: m.ID, override: true}, c.modelFor(sess, "intake"))
+		})
+	}
+
+	t.Run("outside the catalog", func(t *testing.T) {
+		c, _, _, _ := newController(t, nil)
+		c.opts.Models = map[string]string{"intake": "claude-fixture-0-0"}
+
+		sess := &session{endpoint: protocol.LLMEndpoint{Type: "claude_code"}, model: "session/model", price: testPrice(), window: 1000}
+
+		assert.Equal(t, runModel{name: "session/model", price: testPrice(), window: 1000}, c.modelFor(sess, "intake"))
+	})
 }
 
 func TestModelForClaudeCode(t *testing.T) {

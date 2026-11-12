@@ -543,11 +543,13 @@ price for.
 In Claude Code subscription mode the model is a Claude Code model ID, such as
 `claude-sonnet-5-5`. A per-role override in `models` is written as an
 Anthropic slug (`anthropic/claude-opus-5.5`) or a Claude Code ID, and becomes
-the Claude Code ID (`claude-opus-5-5`). It is kept only when that ID is
-`claude-opus-5-5`, `claude-sonnet-5-5` or `claude-haiku-5-5`; one equal to the
-blueprint's model changes nothing. Any other override is ignored with a
-warning in the log, and the blueprint's model runs that role. A kept override differing from the
-blueprint's model runs unpriced, as an override does elsewhere.
+the Claude Code ID (`claude-opus-5-5`). It is kept only when that ID is in
+ContextMatrix's Claude Code catalog (the list the shared protocol module
+holds), today `claude-opus-5-5`, `claude-sonnet-5-5` and `claude-haiku-5-5`;
+one equal to the blueprint's model changes nothing. Any other override is
+ignored with a warning in the log, and the blueprint's model runs that role.
+A kept override differing from the blueprint's model runs unpriced, as an
+override does elsewhere.
 
 ## The sheet's marks
 
