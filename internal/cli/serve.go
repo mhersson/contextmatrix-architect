@@ -240,7 +240,6 @@ func runServe(ctx context.Context, cfg *config.Config, deps *runtimeDeps, logger
 
 	// The check logs; its error is why the webhook refuses claude_code starts.
 	claudeErr := checkClaudeCode(ctx, cfg.ClaudeCodeBinary, logger)
-	warnClaudeEffort(cfg.ReasoningEffort, logger)
 	sweepClaudeHomes(os.TempDir(), logger)
 
 	// Flipped by shutdownHTTP when the shutdown signal arrives; the routes'

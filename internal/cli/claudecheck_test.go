@@ -71,35 +71,6 @@ func TestCheckClaudeCode(t *testing.T) {
 	}
 }
 
-func TestWarnClaudeEffort(t *testing.T) {
-	tests := []struct {
-		effort string
-		warns  bool
-	}{
-		{"", false},
-		{"high", false},
-		{" XHigh", false},
-		{"minimal", true},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.effort, func(t *testing.T) {
-			var buf bytes.Buffer
-
-			warnClaudeEffort(tc.effort, slog.New(slog.NewTextHandler(&buf, nil)))
-
-			if !tc.warns {
-				assert.Empty(t, buf.String())
-
-				return
-			}
-
-			assert.Contains(t, buf.String(), "level=WARN")
-			assert.Contains(t, buf.String(), "reasoning_effort="+tc.effort, "the warning names the dropped value")
-		})
-	}
-}
-
 func TestSweepClaudeHomesLogsTheCount(t *testing.T) {
 	tests := []struct {
 		name  string
