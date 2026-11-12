@@ -342,13 +342,6 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 		return nil
 	}
 
-	// Every run of the session drops a level Claude Code does not take; say so
-	// once, here, not per run.
-	if e := in.Endpoint.Effort; in.Endpoint.Type == protocol.LLMEndpointTypeClaudeCode &&
-		e != "" && claudecode.NormalizeEffort(e) == "" {
-		c.opts.Logger.Warn("claude_code effort not accepted by Claude Code; using its default", "session_id", in.ID, "effort", e)
-	}
-
 	sess := &session{
 		endpoint: in.Endpoint, model: in.Model, price: in.Price, window: in.ContextWindow,
 		mcpKey: in.MCPAPIKey, gitToken: in.GitCredentialsToken, searchKey: in.SearchAPIKey,
@@ -393,6 +386,13 @@ func (c *Controller) Start(ctx context.Context, in StartInput) error {
 	prev := c.runs[in.ID]
 	ended := !claimed && prev.ended
 	c.mu.Unlock()
+
+	// Every run of the session drops a level Claude Code does not take; say so
+	// once, as the session attaches, not per run.
+	if e := in.Endpoint.Effort; in.Endpoint.Type == protocol.LLMEndpointTypeClaudeCode &&
+		e != "" && claudecode.NormalizeEffort(e) == "" {
+		c.opts.Logger.Warn("claude_code effort not accepted by Claude Code; using its default", "session_id", in.ID, "effort", e)
+	}
 
 	if !claimed {
 		if !ended {
