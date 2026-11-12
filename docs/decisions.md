@@ -72,6 +72,17 @@ HEAD.
   home, nothing Claude Code writes outlives its run, and the cap is sized
   from a 512 MiB budget per slot, which two processes at their measured peak
   of 180-230 MB stay under.
+- A resumed claude_code run gets the earlier conversation as one transcript
+  in its task. A transcript past the compaction limit keeps the first user
+  message and the newest messages that fit, with a line saying earlier turns
+  were left out. That first message is the original task, or for a run that
+  was itself resumed the transcript it opened with, so after one trim a
+  further resume past the limit can still be refused as too big. A cold
+  reopen that moves a blueprint from claude_code to an endpoint seeds the
+  harness with the stored claude transcript, and one past the model's whole
+  window is refused as too big. Why: a new `claude` process cannot be seeded
+  with another run's messages, and Claude Code compacts only inside its
+  process, never what a run returns.
 - Every run of a stage, a chat run included, is offered the same tool list,
   and one reasoning effort is sent on every request. Why: a resumed
   conversation keeps its prompt cache on either endpoint.

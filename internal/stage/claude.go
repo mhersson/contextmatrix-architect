@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 
 	"github.com/google/uuid"
 	"github.com/mhersson/contextmatrix-harness/events"
@@ -20,6 +21,9 @@ import (
 // resumedTaskFormat opens a resumed claude_code run: a fresh claude process
 // cannot be seeded with another run's messages, so they go in as text.
 const resumedTaskFormat = "This run continues an earlier conversation, given here as a transcript.\n\n<transcript>\n%s\n</transcript>\n\n%s"
+
+// omittedTurns marks where a trimmed transcript left out earlier turns.
+const omittedTurns = "[earlier turns omitted to fit the context window]"
 
 // claudeHomePattern names a run's HOME and working directory under
 // os.TempDir().
@@ -42,12 +46,8 @@ func (r *Runner) runClaude(ctx context.Context, in Input, tags *returnedTags) (o
 	window := contextWindow(in.ContextWindow)
 	system := in.Persona + "\n\n" + in.Instructions
 
-	task := in.Task
-	if len(in.History) > 0 {
-		task = fmt.Sprintf(resumedTaskFormat, claudecode.RenderTranscript(WithoutSystem(in.History)), in.Task)
-	}
-
-	if err = preflight(system, task, nil, window); err != nil {
+	task, err := claudeTask(system, in, window)
+	if err != nil {
 		return Output{Result: harness.Result{Reason: ReasonTooBig}}, fmt.Errorf("stage %s: %w", in.Stage, err)
 	}
 
@@ -140,6 +140,52 @@ func (r *Runner) runClaude(ctx context.Context, in Input, tags *returnedTags) (o
 	}
 
 	return outcome(in.Stage, res, err, mark, window)
+}
+
+// claudeTask is in.Task, or on a resume a primer carrying in.History as a
+// transcript. Claude Code never compacts what a run returns, so a primer past
+// the limit keeps the first user message and the newest messages that fit.
+func claudeTask(system string, in Input, window int) (string, error) {
+	if len(in.History) == 0 {
+		return in.Task, preflight(system, in.Task, nil, window)
+	}
+
+	msgs := WithoutSystem(in.History)
+	whole := fmt.Sprintf(resumedTaskFormat, claudecode.RenderTranscript(msgs), in.Task)
+
+	refused := preflight(system, whole, nil, window)
+	if refused == nil {
+		return whole, nil
+	}
+
+	first := slices.IndexFunc(msgs, func(m llm.Message) bool { return m.Role == "user" })
+	if first < 0 || first == len(msgs)-1 {
+		return "", refused
+	}
+
+	head := claudecode.RenderTranscript(msgs[first : first+1])
+	trimmed := func(from int) string {
+		transcript := head + "\n\n" + omittedTurns + "\n\n" + claudecode.RenderTranscript(msgs[from:])
+
+		return fmt.Sprintf(resumedTaskFormat, transcript, in.Task)
+	}
+
+	// Fewer messages only shrink the primer, so the first start that fits
+	// keeps the most.
+	tail := msgs[first+1:]
+	n := sort.Search(len(tail), func(i int) bool { return preflight(system, trimmed(first+1+i), nil, window) == nil })
+
+	if n == len(tail) {
+		return "", refused
+	}
+
+	// A tool result whose call was left out opens no turn.
+	from := first + 1 + n
+	for from < len(msgs)-1 && msgs[from].Role == "tool" {
+		from++
+	}
+
+	return trimmed(from), nil
 }
 
 // canceled is ctx's error with the cause it was canceled for, so a cost cap

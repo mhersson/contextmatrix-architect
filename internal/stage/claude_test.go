@@ -533,6 +533,86 @@ func TestClaudeHistoryPrimer(t *testing.T) {
 	}
 }
 
+// turnsHistory is a conversation of the original task and n tool turns, each
+// about 2*size bytes, marked turn-NN and result-NN.
+func turnsHistory(task string, n, size int) []llm.Message {
+	h := []llm.Message{{Role: "system", Content: "SYSTEM"}, {Role: "user", Content: task}}
+
+	for i := 1; i <= n; i++ {
+		id := fmt.Sprintf("c%02d", i)
+		h = append(h,
+			llm.Message{Role: "assistant", Content: fmt.Sprintf("turn-%02d ", i) + strings.Repeat("a", size), ToolCalls: []llm.ToolCall{toolCall(id, "echo", `{"text":"x"}`)}},
+			llm.Message{Role: "tool", ToolCallID: id, Content: fmt.Sprintf("result-%02d ", i) + strings.Repeat("r", size)},
+		)
+	}
+
+	return h
+}
+
+func TestClaudeTrimmedPrimer(t *testing.T) {
+	const window = 10000 // a compaction limit of 8500 tokens, about 21 kB
+
+	tests := []struct {
+		name     string
+		history  []llm.Message
+		trimmed  bool
+		dropped  []string
+		keptTail []string
+	}{
+		{
+			name: "a history past the limit keeps the task and the newest turns", history: turnsHistory("ORIGINAL TASK", 20, 1000),
+			trimmed: true, dropped: []string{"turn-01", "result-01", "turn-05"}, keptTail: []string{"turn-19", "result-19", "turn-20", "result-20"},
+		},
+		{
+			name: "a task and newest turn past the limit is refused", history: turnsHistory(strings.Repeat("t", 20000), 3, 6000),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeClaude{}
+
+			in := claudeInput(&bytes.Buffer{})
+			in.ContextWindow = window
+			in.History = tt.history
+			in.Task = "the person answered the round"
+
+			out, err := claudeRunner(t, f, "", ClaudeOptions{}).Run(context.Background(), in)
+
+			if !tt.trimmed {
+				var tooBig *TooBigError
+				require.ErrorAs(t, err, &tooBig)
+				assert.Equal(t, ReasonTooBig, out.Result.Reason)
+				assert.Empty(t, f.calls(), "a refused run starts no process")
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			calls := f.calls()
+			require.Len(t, calls, 1)
+
+			task := calls[0].Task
+			require.NoError(t, preflight(calls[0].SystemPrompt, task, nil, window), "the trimmed primer fits")
+			assert.Contains(t, task, "ORIGINAL TASK")
+			assert.True(t, strings.HasSuffix(task, in.Task), "the run's own task comes last")
+
+			_, tail, found := strings.Cut(task, omittedTurns+"\n\n")
+			require.True(t, found, "the transcript says earlier turns were left out")
+			assert.True(t, strings.HasPrefix(tail, "[assistant"), "the kept turns open on an assistant, not an orphaned tool result")
+
+			for _, s := range tt.dropped {
+				assert.NotContains(t, task, s)
+			}
+
+			for _, s := range tt.keptTail {
+				assert.Contains(t, tail, s)
+			}
+		})
+	}
+}
+
 func TestClaudeTooBig(t *testing.T) {
 	f := &fakeClaude{}
 
