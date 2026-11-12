@@ -63,8 +63,10 @@ HEAD.
   removed when the run ends, and any left behind are swept at start. A run
   that ends with text and no terminal call is asked once more by a second
   process that resumes the same session, in the same directory and slot,
-  offered only the terminal tools. From
-  the architect's own environment the child gets only PATH. At most
+  offered only the terminal tools. From the architect's own environment the
+  child gets PATH and the proxy variables that are set (`HTTP_PROXY`,
+  `HTTPS_PROXY` and `NO_PROXY`, either case), so claude reaches the API
+  through the same egress proxy as the architect's own clients. At most
   `claude_code_max_runs` runs hold a slot at once across all blueprints, and
   a run takes its slot before its directory exists. A responder run inside
   its asker's round shares the asker's slot, so a slot holds at most two

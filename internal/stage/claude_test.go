@@ -113,7 +113,19 @@ func schemaNames(ts []llm.Tool) []string {
 	return names
 }
 
+// clearProxyEnv unsets every proxy variable for the test and restores them after.
+func clearProxyEnv(t *testing.T) {
+	t.Helper()
+
+	for _, k := range claudeProxyEnv {
+		t.Setenv(k, "")
+		require.NoError(t, os.Unsetenv(k))
+	}
+}
+
 func TestClaudeSpec(t *testing.T) {
+	clearProxyEnv(t)
+
 	tests := []struct {
 		name, effort, want string
 	}{
@@ -201,6 +213,43 @@ func TestClaudeSpec(t *testing.T) {
 			require.NotEmpty(t, fl.requests)
 			assert.Equal(t, schemaNames(fl.requests[0].Tools), schemaNames(spec.Tools.Schemas()), "the bridge offers the harness path's tools")
 		})
+	}
+}
+
+func TestClaudeForwardsProxyEnv(t *testing.T) {
+	clearProxyEnv(t)
+	t.Setenv("HTTPS_PROXY", "http://proxy.fixture:3128")
+	t.Setenv("no_proxy", "internal.fixture")
+
+	f := &fakeClaude{script: func(ctx context.Context, spec claudecode.Spec) (harness.Result, error) {
+		args := map[string]any{"body": "B"}
+		_, err := execute(ctx, t, spec, submitArtifactName, args)
+		require.NoError(t, err)
+
+		return acceptedWith(t, args), nil
+	}}
+
+	r := claudeRunner(t, f, "", ClaudeOptions{Binary: "/opt/claude/bin/claude", MaxRuns: 2})
+
+	in := claudeInput(&bytes.Buffer{})
+	in.Interviewer = &stubInterviewer{}
+
+	_, err := r.Run(context.Background(), in)
+	require.NoError(t, err)
+
+	calls := f.calls()
+	require.Len(t, calls, 1)
+
+	env := calls[0].Env
+	assert.Contains(t, env, "HTTPS_PROXY=http://proxy.fixture:3128")
+	assert.Contains(t, env, "no_proxy=internal.fixture")
+	assert.Contains(t, env, "PATH="+os.Getenv("PATH"))
+	assert.Contains(t, env, "TMPDIR="+calls[0].Home)
+
+	for _, name := range []string{"HTTP_PROXY", "NO_PROXY", "http_proxy", "https_proxy"} {
+		for _, kv := range env {
+			assert.False(t, strings.HasPrefix(kv, name+"="), "%s is unset so it is not forwarded", name)
+		}
 	}
 }
 

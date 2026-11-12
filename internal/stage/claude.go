@@ -99,7 +99,7 @@ func (r *Runner) runClaude(ctx context.Context, in Input, tags *returnedTags) (o
 		Binary:       r.claudeBinary,
 		Home:         home,
 		Dir:          home,
-		Env:          []string{"PATH=" + os.Getenv("PATH"), "TMPDIR=" + home},
+		Env:          claudeEnv(home),
 		OAuthToken:   in.Endpoint.OAuthToken,
 		Model:        in.Model,
 		SystemPrompt: system,
@@ -262,4 +262,21 @@ func SweepClaudeHomes(dir string) (int, error) {
 	}
 
 	return removed, errors.Join(errs...)
+}
+
+// claudeProxyEnv are the proxy variables the child inherits, so claude reaches
+// the API through the same egress proxy as the architect's Go clients.
+var claudeProxyEnv = []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"}
+
+// claudeEnv is the child's base env: PATH, its TMPDIR and the proxy variables set here.
+func claudeEnv(home string) []string {
+	env := []string{"PATH=" + os.Getenv("PATH"), "TMPDIR=" + home}
+
+	for _, k := range claudeProxyEnv {
+		if v, ok := os.LookupEnv(k); ok {
+			env = append(env, k+"="+v)
+		}
+	}
+
+	return env
 }
