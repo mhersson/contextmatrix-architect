@@ -519,6 +519,15 @@ func assertWellFormed(t *testing.T, msgs []llm.Message) {
 	}
 }
 
+// assertNoUserPairs checks that no two adjacent messages are both the user's.
+func assertNoUserPairs(t *testing.T, msgs []llm.Message) {
+	t.Helper()
+
+	for i := 1; i < len(msgs); i++ {
+		assert.False(t, msgs[i-1].Role == "user" && msgs[i].Role == "user", "messages %d and %d are both the user's", i-1, i)
+	}
+}
+
 func TestClaudeHistoryPrimer(t *testing.T) {
 	const system = "SYSTEM PROMPT OF THE EARLIER RUN"
 
@@ -672,6 +681,7 @@ func TestClaudeTrimmedPrimer(t *testing.T) {
 			assert.Equal(t, task, fmt.Sprintf(resumedTaskFormat, claudecode.RenderTranscript(msgs[1:len(msgs)-2]), in.Task),
 				"the stored conversation is what the primer carried")
 			assertWellFormed(t, msgs)
+			assertNoUserPairs(t, msgs)
 
 			for _, m := range msgs {
 				assert.NotContains(t, m.Content, "<transcript>", "no primer is stored")
@@ -697,12 +707,12 @@ func TestTrimmedMarksTheGapWithoutAddingAUserMessage(t *testing.T) {
 		{
 			"turns opening on a user message",
 			[]llm.Message{{Role: "user", Content: "the need"}, {Role: "assistant", Content: "old"}, {Role: "user", Content: "round 1"}, {Role: "assistant", Content: "new"}},
-			[]llm.Message{{Role: "user", Content: "the need"}, {Role: "user", Content: omittedTurns + "\n\nround 1"}, {Role: "assistant", Content: "new"}},
+			[]llm.Message{{Role: "user", Content: marked + "\n\nround 1"}, {Role: "assistant", Content: "new"}},
 		},
 		{
 			"a first message marked by an earlier trim",
 			[]llm.Message{{Role: "user", Content: marked}, {Role: "assistant", Content: "old"}, {Role: "user", Content: "round 1"}, {Role: "assistant", Content: "new"}},
-			[]llm.Message{{Role: "user", Content: marked}, {Role: "user", Content: "round 1"}, {Role: "assistant", Content: "new"}},
+			[]llm.Message{{Role: "user", Content: marked + "\n\nround 1"}, {Role: "assistant", Content: "new"}},
 		},
 	}
 
@@ -710,8 +720,10 @@ func TestTrimmedMarksTheGapWithoutAddingAUserMessage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			before := slices.Clone(tt.msgs)
 
-			assert.Equal(t, tt.want, trimmed(tt.msgs, 0, 2))
+			got := trimmed(tt.msgs, 0, 2)
+			assert.Equal(t, tt.want, got)
 			assert.Equal(t, before, tt.msgs, "the history is not changed")
+			assertNoUserPairs(t, got)
 		})
 	}
 }
@@ -748,6 +760,7 @@ func TestClaudeResumeOfATrimmedRunFits(t *testing.T) {
 	require.GreaterOrEqual(t, len(msgs), 2)
 	assert.True(t, strings.HasPrefix(msgs[1].Content, "ORIGINAL TASK"), "the original task still comes first")
 	assertWellFormed(t, msgs)
+	assertNoUserPairs(t, msgs)
 }
 
 func TestClaudeTooBig(t *testing.T) {

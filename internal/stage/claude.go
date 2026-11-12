@@ -195,18 +195,19 @@ func claudeTask(system string, in Input, window int) (string, []llm.Message, err
 }
 
 // trimmed is msgs' first user message, at first, and msgs from from on, with
-// omittedTurns at the gap. It joins the first message, or a kept user message
-// opening the turns, so no user message is added between them; a first
-// message that already ends on it from an earlier trim gets no second.
+// omittedTurns at the gap, ending the first message unless an earlier trim
+// left it there. A kept user message opening the turns joins the first, so
+// no two user messages follow each other.
 func trimmed(msgs []llm.Message, first, from int) []llm.Message {
 	head, turns := msgs[first], slices.Clone(msgs[from:])
 
-	switch {
-	case strings.HasSuffix(head.Content, omittedTurns):
-	case turns[0].Role == "user":
-		turns[0].Content = omittedTurns + "\n\n" + turns[0].Content
-	default:
+	if !strings.HasSuffix(head.Content, omittedTurns) {
 		head.Content += "\n\n" + omittedTurns
+	}
+
+	if turns[0].Role == "user" {
+		head.Content += "\n\n" + turns[0].Content
+		turns = turns[1:]
 	}
 
 	return append([]llm.Message{head}, turns...)
