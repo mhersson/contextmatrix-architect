@@ -235,7 +235,6 @@ func cmKnowledgeTools(baseURL string, base http.RoundTripper) func(ctx context.C
 	}
 }
 
-// claudeOptions is the claude_code route's options from cfg.
 func claudeOptions(cfg *config.Config) stage.ClaudeOptions {
 	return stage.ClaudeOptions{Binary: cfg.ClaudeCodeBinary, MaxRuns: cfg.ClaudeCodeMaxRuns}
 }
