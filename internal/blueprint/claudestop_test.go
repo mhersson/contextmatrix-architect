@@ -27,11 +27,14 @@ func TestClaudeStop(t *testing.T) {
 		ok         bool
 		resetsAt   string
 		hasResetAt bool
+		window     string
 	}{
-		{"a usage limit with a reset", fmt.Errorf("stage x: %w", &claudecode.UsageLimitError{Window: "seven_day", ResetsAt: t0}), "usage_limit", true, t0.UTC().Format(time.RFC3339), true},
-		{"a usage limit without a reset", fmt.Errorf("stage x: %w", &claudecode.UsageLimitError{Window: "five_hour"}), "usage_limit", true, "", false},
-		{"a failed login", fmt.Errorf("x: %w", claudecode.ErrNotLoggedIn), "not_logged_in", true, "", false},
-		{"another error", errors.New("other"), "", false, "", false},
+		{"a usage limit with a reset", fmt.Errorf("stage x: %w", &claudecode.UsageLimitError{Window: "seven_day", ResetsAt: t0}), "usage_limit", true, t0.UTC().Format(time.RFC3339), true, "seven_day"},
+		{"a usage limit without a reset", fmt.Errorf("stage x: %w", &claudecode.UsageLimitError{Window: "five_hour"}), "usage_limit", true, "", false, "five_hour"},
+		{"a usage limit with no window", &claudecode.UsageLimitError{}, "usage_limit", true, "", false, ""},
+		{"a usage limit with an unknown window", &claudecode.UsageLimitError{Window: "monthly"}, "usage_limit", true, "", false, "monthly"},
+		{"a failed login", fmt.Errorf("x: %w", claudecode.ErrNotLoggedIn), "not_logged_in", true, "", false, ""},
+		{"another error", errors.New("other"), "", false, "", false, ""},
 	}
 
 	for _, tt := range tests {
@@ -46,6 +49,10 @@ func TestClaudeStop(t *testing.T) {
 
 			assert.Equal(t, tt.reason, payload["reason"])
 			assert.NotEmpty(t, payload["message"])
+
+			if tt.reason == "usage_limit" {
+				assert.Equal(t, tt.window, payload["window"])
+			}
 
 			got, has := payload["resets_at"]
 			assert.Equal(t, tt.hasResetAt, has)

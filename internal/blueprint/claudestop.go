@@ -2,11 +2,19 @@ package blueprint
 
 import (
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/mhersson/contextmatrix-vendorkit/claudecode"
 )
+
+// usageWindows words the limit windows Claude Code names; any other window
+// is left out of the message.
+var usageWindows = map[string]string{
+	"five_hour":        "5-hour",
+	"seven_day":        "weekly",
+	"seven_day_opus":   "weekly Opus",
+	"seven_day_sonnet": "weekly Sonnet",
+}
 
 // claudeStop reports the two Claude Code errors that stop a stage until
 // something outside the architect changes: a subscription usage limit and a
@@ -17,7 +25,11 @@ func claudeStop(err error) (reason string, payload map[string]any, ok bool) {
 	switch {
 	case errors.As(err, &limit):
 		payload = map[string]any{"reason": "usage_limit", "window": limit.Window}
-		message := fmt.Sprintf("Claude Code stopped on its %s usage limit", limit.Window)
+		message := "Claude Code stopped on a usage limit"
+
+		if name, known := usageWindows[limit.Window]; known {
+			message = "Claude Code stopped on its " + name + " usage limit"
+		}
 
 		if !limit.ResetsAt.IsZero() {
 			resets := limit.ResetsAt.UTC()
