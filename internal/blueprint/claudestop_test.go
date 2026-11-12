@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -169,6 +170,64 @@ func TestResponderClaudeStopLeavesTheRoundOpen(t *testing.T) {
 			bp, err := st.GetBlueprint(ctx, "BP1")
 			require.NoError(t, err)
 			assert.Equal(t, string(StateIdle), bp.State)
+		})
+	}
+}
+
+func TestHandoverClaudeStopStopsAndContinueRetries(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"a usage limit", &claudecode.UsageLimitError{Window: "five_hour"}},
+		{"a failed login", claudecode.ErrNotLoggedIn},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var limited atomic.Bool
+
+			runs := atomic.Int32{}
+			script := handoverScript()
+			script["intake.responder"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+				if runs.Add(1) == 2 && limited.Load() {
+					return stage.Output{}, fmt.Errorf("stage %s: %w", in.Stage, tt.err)
+				}
+
+				return answering("operators", in), nil
+			}
+
+			limited.Store(true)
+
+			c, st, _, rec, _ := newPipeline(t, script)
+			ctx := context.Background()
+
+			drive(t, c, "BP1")
+
+			require.NoError(t, c.SetMode(ctx, "BP1", protocol.ArchitectModeAuto, "m-mode"))
+			c.Wait("BP1")
+
+			round := latestRound(t, c, "BP1", 1)
+			require.False(t, round.Frame.Closed, "the stop closes nothing")
+			assert.Equal(t, []protocol.RoundAnswer{{Number: 1, Text: "operators"}}, round.Frame.Answers,
+				"the answer given before the stop is kept and no degraded one is stored")
+
+			wantReason, _, _ := claudeStop(tt.err)
+			stop := lastError(t, rec)
+			assert.Equal(t, wantReason, stop.Payload["reason"])
+			assert.Equal(t, "intake", stop.Payload["stage"])
+
+			bp, err := st.GetBlueprint(ctx, "BP1")
+			require.NoError(t, err)
+			assert.Equal(t, string(StateIdle), bp.State)
+
+			limited.Store(false)
+
+			require.NoError(t, c.Resume(ctx, "BP1", "m-continue"))
+			c.Wait("BP1")
+
+			assert.Equal(t, []int{1, 2, 2}, responderRounds(t, st), "continue answers only the open question")
+			assert.True(t, latestRound(t, c, "BP1", 1).Frame.Closed)
 		})
 	}
 }
