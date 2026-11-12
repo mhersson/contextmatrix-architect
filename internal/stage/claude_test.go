@@ -431,10 +431,11 @@ func TestClaudeForcedFollowUp(t *testing.T) {
 			}}
 
 			in := claudeInput(&bytes.Buffer{})
+			in.Endpoint.Effort = "high"
 			in.Interviewer = tt.interviewer
 			in.Tools = []tools.Tool{echoTool{}}
 
-			r = claudeRunner(t, f, "high", ClaudeOptions{MaxRuns: 1})
+			r = claudeRunner(t, f, "low", ClaudeOptions{MaxRuns: 1})
 
 			out, err := r.Run(context.Background(), in)
 			require.NoError(t, err)
@@ -460,7 +461,7 @@ func TestClaudeForcedFollowUp(t *testing.T) {
 			assert.Equal(t, run.Env, follow.Env)
 			assert.Equal(t, run.SystemPrompt, follow.SystemPrompt)
 			assert.Equal(t, run.Model, follow.Model)
-			assert.Equal(t, run.Effort, follow.Effort)
+			assert.Equal(t, "high", follow.Effort, "the follow-up keeps the endpoint's effort")
 			assert.Equal(t, run.OAuthToken, follow.OAuthToken)
 			assert.Same(t, run.Emitter, follow.Emitter)
 
