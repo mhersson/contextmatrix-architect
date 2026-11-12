@@ -31,10 +31,11 @@
 # ripgrep.
 # --------
 # The grep tool in code stages execs rg; glob takes fd, fdfind or rg. The
-# unit's PATH is fixed at install: the directories where this shell found
-# claude, rg and fd (or fdfind), then /usr/local/bin:/usr/bin:/bin. Rerun
-# install after moving any of them. The architect logs a warning at startup
-# when rg is missing and runs anyway.
+# unit's PATH is fixed at install: the directory where this shell found
+# claude, then those of rg and fd (or fdfind) outside the system directories,
+# then /usr/local/bin:/usr/bin:/bin, each once. Rerun install after moving any
+# of them. The architect logs a warning at startup when rg is missing and runs
+# anyway.
 #
 # Claude Code.
 # ------------
@@ -161,21 +162,31 @@ claude_dir() {
     tool_dir claude
 }
 
-# unit_path is the unit's PATH: the directories of this shell's claude, rg
-# and fd (or fdfind), in that order and once each, then the system ones.
+# unit_path is the unit's PATH: this shell's claude directory first, even a
+# system one, so the service runs that claude; then the directories of rg and
+# fd (or fdfind) the system ones lack; then the system ones; each once.
 unit_path() {
     local system="/usr/local/bin:/usr/bin:/bin"
-    local found="" fd d
+    local cdir found="" fd d
+    cdir="$(claude_dir)"
     fd="$(tool_dir fd)"
     [ -n "${fd}" ] || fd="$(tool_dir fdfind)"
-    for d in "$(claude_dir)" "$(tool_dir rg)" "${fd}"; do
+    [ -z "${cdir}" ] || found="${cdir}:"
+    for d in "$(tool_dir rg)" "${fd}"; do
         [ -n "${d}" ] || continue
         case ":${found}${system}:" in
             *":${d}:"*) continue ;;
         esac
         found="${found}${d}:"
     done
-    printf '%s%s' "${found}" "${system}"
+    local IFS=:
+    for d in ${system}; do
+        case ":${found}" in
+            *":${d}:"*) continue ;;
+        esac
+        found="${found}${d}:"
+    done
+    printf '%s' "${found%:}"
 }
 
 # warn_preflight reports what would keep the unit from working, without

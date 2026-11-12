@@ -94,9 +94,10 @@ default as the script. It warns about a missing config, an explicit
 not absolute, contains whitespace or is not writable, a directory it could not
 create, a missing `rg` and a missing `claude`, and installs anyway. Rerun
 `./svc.sh install` after changing `state_dir` or `XDG_STATE_HOME`. The unit's
-PATH is set at install from where your shell finds `claude`, `rg` and `fd` (or
-`fdfind`), then `/usr/local/bin:/usr/bin:/bin`, so rerun `./svc.sh install`
-after moving `claude`, `rg` or `fd`.
+PATH is set at install: the directory where your shell finds `claude` first,
+then those of `rg` and `fd` (or `fdfind`) outside the system directories, then
+`/usr/local/bin:/usr/bin:/bin`, each once. Rerun `./svc.sh install` after
+moving `claude`, `rg` or `fd`.
 
 For subscription mode, install Claude Code yourself. `svc.sh install` puts the
 directory of the `claude` on your PATH first on the unit's PATH and never
