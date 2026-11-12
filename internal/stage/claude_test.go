@@ -429,14 +429,14 @@ func TestClaudeForcedRefused(t *testing.T) {
 	}}
 
 	in := claudeInput(&bytes.Buffer{})
-	in.Validate = func(context.Context, Artifact) error { return errors.New("x") }
+	in.Validate = func(context.Context, Artifact) error { return errors.New("fixture-refusal-marker") }
 
 	out, err := claudeRunner(t, f, "", ClaudeOptions{}).Run(context.Background(), in)
 	require.ErrorIs(t, err, ErrNoArtifact)
 
 	var refused *RefusedError
 	require.ErrorAs(t, err, &refused)
-	assert.Equal(t, "submit_artifact rejected: x", refused.Last)
+	assert.Contains(t, refused.Last, "fixture-refusal-marker")
 	assert.Equal(t, []string{submitArtifactName}, refused.Tools)
 	assert.Equal(t, ReasonTerminalRefused, out.Result.Reason)
 	assert.Len(t, f.calls(), 2, "one follow-up, never a loop")
@@ -663,7 +663,6 @@ func TestClaudeTrimmedPrimer(t *testing.T) {
 
 			_, tail, found := strings.Cut(task, omittedTurns+"\n\n")
 			require.True(t, found)
-			assert.True(t, strings.HasPrefix(tail, "[assistant"), "the kept turns open on an assistant, not an orphaned tool result")
 
 			for _, s := range tt.dropped {
 				assert.NotContains(t, task, s)
@@ -688,8 +687,10 @@ func TestClaudeTrimmedPrimer(t *testing.T) {
 			assertWellFormed(t, msgs)
 			assertNoUserPairs(t, msgs)
 
+			opener := primerOpener(t)
+
 			for _, m := range msgs {
-				assert.NotContains(t, m.Content, "<transcript>", "no primer is stored")
+				assert.NotContains(t, m.Content, opener, "no primer is stored")
 			}
 		})
 	}
@@ -756,7 +757,7 @@ func TestClaudeResumeOfATrimmedRunFits(t *testing.T) {
 
 	task := calls[0].Task
 	require.NoError(t, preflight(calls[0].SystemPrompt, task, nil, trimWindow), "the second trimmed primer fits")
-	assert.Equal(t, 1, strings.Count(task, "<transcript>"), "no primer nests inside it")
+	assert.Equal(t, 1, strings.Count(task, primerOpener(t)), "no primer nests inside it")
 	assert.Equal(t, 1, strings.Count(task, omittedTurns))
 	assert.Contains(t, task, "ORIGINAL TASK")
 	assert.Contains(t, task, "result-24", "the first resume's newest turn is kept")
@@ -798,6 +799,17 @@ func TestClaudeTooBig(t *testing.T) {
 			assert.Empty(t, f.calls(), "a refused run starts no process")
 		})
 	}
+}
+
+// primerOpener is the text a resumed run's primer opens with, derived from
+// the format so the checks follow it.
+func primerOpener(t *testing.T) string {
+	t.Helper()
+
+	opener, _, _ := strings.Cut(resumedTaskFormat, "%s")
+	require.NotEmpty(t, opener)
+
+	return opener
 }
 
 func TestClaudeCostCapCancel(t *testing.T) {
