@@ -2823,7 +2823,10 @@ func TestSessionSecretsIncludeOAuthToken(t *testing.T) {
 }
 
 func TestModelForClaudeCodeCatalog(t *testing.T) {
-	for _, m := range selection.ClaudeCodeModels() {
+	catalog := selection.ClaudeCodeModels()
+	require.NotEmpty(t, catalog)
+
+	for _, m := range catalog {
 		t.Run(m.ID, func(t *testing.T) {
 			c, _, _, _ := newController(t, nil)
 			c.opts.Models = map[string]string{"intake": m.ID}
