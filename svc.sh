@@ -31,9 +31,10 @@
 # ripgrep.
 # --------
 # The grep tool in code stages execs rg; glob takes fd, fdfind or rg. The
-# unit inherits the user manager's PATH (systemctl --user show-environment),
-# which can differ from this shell's. The architect logs a warning at
-# startup when rg is missing and runs anyway.
+# unit's PATH is fixed at install: the directories where this shell found
+# claude, rg and fd (or fdfind), then /usr/local/bin:/usr/bin:/bin. Rerun
+# install after moving any of them. The architect logs a warning at startup
+# when rg is missing and runs anyway.
 #
 # Claude Code.
 # ------------
@@ -146,13 +147,35 @@ read_state_dir() {
     ' "${CONFIG}"
 }
 
-# claude_dir prints the directory of the claude on this shell's PATH, or
+# tool_dir prints the directory of command $1 on this shell's PATH, or
 # nothing. Symlinks stay unresolved so the operator's updates reach the unit.
-claude_dir() {
+tool_dir() {
     local c
-    c="$(command -v claude 2>/dev/null)" || return 0
-    [ -n "${c}" ] || return 0
-    dirname "${c}"
+    c="$(command -v "$1" 2>/dev/null)" || return 0
+    case "${c}" in
+        /*) dirname "${c}" ;;
+    esac
+}
+
+claude_dir() {
+    tool_dir claude
+}
+
+# unit_path is the unit's PATH: the directories of this shell's claude, rg
+# and fd (or fdfind), in that order and once each, then the system ones.
+unit_path() {
+    local system="/usr/local/bin:/usr/bin:/bin"
+    local found="" fd d
+    fd="$(tool_dir fd)"
+    [ -n "${fd}" ] || fd="$(tool_dir fdfind)"
+    for d in "$(claude_dir)" "$(tool_dir rg)" "${fd}"; do
+        [ -n "${d}" ] || continue
+        case ":${found}${system}:" in
+            *":${d}:"*) continue ;;
+        esac
+        found="${found}${d}:"
+    done
+    printf '%s%s' "${found}" "${system}"
 }
 
 # warn_preflight reports what would keep the unit from working, without
@@ -191,7 +214,7 @@ warn_preflight() {
     esac
 
     if ! command -v rg >/dev/null 2>&1; then
-        echo "warning: rg not found on this shell's PATH; the architect's grep tool fails without ripgrep, the service still starts" >&2
+        echo "warning: rg not found on this shell's PATH; the architect's grep tool fails without ripgrep until it is installed and ./svc.sh install is rerun, the service still starts" >&2
     fi
 
     if [ -z "$(claude_dir)" ]; then
@@ -215,13 +238,8 @@ generate_unit() {
     env_line="XDG_STATE_HOME=${state_base//[%]/%%}"
     env_line="\"${env_line}\""
 
-    # The first element is the installer's claude directory, when found.
-    local path_val path_line cdir
-    cdir="$(claude_dir)"
-    path_val="/usr/local/bin:/usr/bin:/bin"
-    if [ -n "${cdir}" ]; then
-        path_val="${cdir}:${path_val}"
-    fi
+    local path_val path_line
+    path_val="$(unit_path)"
     path_line="\"PATH=${path_val//[%]/%%}\""
 
     cat <<EOF

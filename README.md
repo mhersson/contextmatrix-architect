@@ -93,11 +93,14 @@ default as the script. It warns about a missing config, an explicit
 `/var/lib/contextmatrix-architect` (the image's volume), a `state_dir` that is
 not absolute, contains whitespace or is not writable, a directory it could not
 create, a missing `rg` and a missing `claude`, and installs anyway. Rerun
-`./svc.sh install` after changing `state_dir` or `XDG_STATE_HOME`.
+`./svc.sh install` after changing `state_dir` or `XDG_STATE_HOME`. The unit's
+PATH is set at install from where your shell finds `claude`, `rg` and `fd` (or
+`fdfind`), then `/usr/local/bin:/usr/bin:/bin`, so rerun `./svc.sh install`
+after moving `claude`, `rg` or `fd`.
 
 For subscription mode, install Claude Code yourself. `svc.sh install` puts the
 directory of the `claude` on your PATH first on the unit's PATH and never
-installs or changes Claude Code. Rerun `./svc.sh install` after moving it. The
+installs or changes Claude Code. The
 unit's `MemoryMax=4G` covers serve plus the default four concurrent `claude`
 processes.
 
