@@ -535,8 +535,8 @@ HEAD.
   without a crash. Why: the sandbox stays as tight as the sibling backends'.
 - The unit's `MemoryMax=4G` is 2G for serve plus 512M for each of
   `claude_code_max_runs`' default 4 slots; a responder nested in its asker's
-  round shares the asker's slot. Why: the cap bounds the processes, so it
-  sizes the memory.
+  round shares the asker's slot. Why: the cap bounds the slots, not the
+  processes, so the slots size the memory.
 - No two file names differ only by case. Why: the build works on macOS's
   case-insensitive filesystem.
 - `make test` never calls a live model, and store tests prove the

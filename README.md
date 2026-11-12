@@ -100,9 +100,9 @@ after moving `claude`, `rg` or `fd`.
 
 For subscription mode, install Claude Code yourself. `svc.sh install` puts the
 directory of the `claude` on your PATH first on the unit's PATH and never
-installs or changes Claude Code. The
-unit's `MemoryMax=4G` covers serve plus the default four concurrent `claude`
-processes.
+installs or changes Claude Code. The unit's `MemoryMax=4G` covers serve plus
+512M for each of `claude_code_max_runs`' default four slots; a slot holds one
+`claude` run and, at most, the responder nested in its round.
 
 ## Claude Code subscription mode
 
@@ -187,4 +187,6 @@ anyway.
 On Kubernetes, a Service named `contextmatrix-architect` makes the kubelet set
 `CONTEXTMATRIX_ARCHITECT_PORT=tcp://<ip>:<port>` in pods of its namespace,
 which the architect reads as its `port` and fails to start on. Set
-`enableServiceLinks: false` on the architect's pod.
+`enableServiceLinks: false` on the architect's pod. Give the pod memory for
+serve plus 512 MiB per `claude_code_max_runs` slot; a 3Gi limit covers the
+default 4.
