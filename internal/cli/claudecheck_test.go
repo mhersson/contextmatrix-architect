@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -19,23 +20,24 @@ func TestCheckClaudeCode(t *testing.T) {
 		name    string
 		version string // empty: no binary
 		wantErr bool
-		want    []string
-		notWant []string
+		// wantAttrs holds, per expected record in order, its level and the
+		// attrs it must carry.
+		wantAttrs []wantRecord
 	}{
 		{
 			name: "no runnable binary", wantErr: true,
-			want:    []string{"claude_code sessions are refused"},
-			notWant: []string{"claude_code available"},
+			wantAttrs: []wantRecord{{level: "WARN", present: []string{"error"}}},
 		},
 		{
 			name: "tested version", version: claudecode.Version,
-			want:    []string{"claude_code available"},
-			notWant: []string{"differs", "refused"},
+			wantAttrs: []wantRecord{{level: "INFO", attrs: map[string]any{"version": claudecode.Version}}},
 		},
 		{
 			name: "other version", version: "0.0.1",
-			want:    []string{"claude_code available", "claude_code version differs from the tested version"},
-			notWant: []string{"refused"},
+			wantAttrs: []wantRecord{
+				{level: "INFO", attrs: map[string]any{"version": "0.0.1"}},
+				{level: "WARN", attrs: map[string]any{"version": "0.0.1", "tested": claudecode.Version}},
+			},
 		},
 	}
 	for _, tc := range tests {
@@ -51,7 +53,7 @@ func TestCheckClaudeCode(t *testing.T) {
 
 			var buf bytes.Buffer
 
-			logger := slog.New(slog.NewTextHandler(&buf, nil))
+			logger := slog.New(slog.NewJSONHandler(&buf, nil))
 			err := checkClaudeCode(context.Background(), bin, logger)
 
 			if tc.wantErr {
@@ -60,15 +62,51 @@ func TestCheckClaudeCode(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			for _, w := range tc.want {
-				assert.Contains(t, buf.String(), w)
+			records := decodeRecords(t, &buf)
+			require.Len(t, records, len(tc.wantAttrs))
+
+			for i, want := range tc.wantAttrs {
+				assert.Equal(t, want.level, records[i]["level"])
+
+				for _, key := range want.present {
+					assert.Contains(t, records[i], key)
+				}
+
+				for key, val := range want.attrs {
+					assert.Equal(t, val, records[i][key])
+				}
 			}
 
-			for _, w := range tc.notWant {
-				assert.NotContains(t, buf.String(), w)
+			if tc.version == "" {
+				for _, rec := range records {
+					assert.NotContains(t, rec, "version")
+				}
 			}
 		})
 	}
+}
+
+type wantRecord struct {
+	level   string
+	present []string
+	attrs   map[string]any
+}
+
+func decodeRecords(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+
+	var records []map[string]any
+
+	dec := json.NewDecoder(buf)
+	for dec.More() {
+		var rec map[string]any
+
+		require.NoError(t, dec.Decode(&rec))
+
+		records = append(records, rec)
+	}
+
+	return records
 }
 
 func TestSweepClaudeHomesLogsTheCount(t *testing.T) {
