@@ -96,6 +96,9 @@ port: 9095
 # the gateway decides what it becomes for the model behind it.
 # Empty sends none and leaves the model its own default: the setting for a
 # model that does not reason and whose endpoint refuses the field.
+# It applies on an API endpoint only. In claude_code mode Claude Code's --effort
+# is the effort ContextMatrix sends with the session (its claude_code.effort),
+# and none when it sends none.
 # Env: CONTEXTMATRIX_ARCHITECT_REASONING_EFFORT
 reasoning_effort: ""
 

@@ -65,8 +65,8 @@ type Config struct {
 	MessageDedupTTL       time.Duration
 	MessageDedupCacheSize int
 
-	// ReasoningEffort is the effort every run sends on every request; "" sends
-	// none and leaves the model its own default.
+	// ReasoningEffort is the effort every run on an API endpoint sends on every
+	// request; "" sends none and leaves the model its own default.
 	ReasoningEffort string
 
 	// ReplayReasoning sends each reply's reasoning back with every later request

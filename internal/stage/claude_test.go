@@ -126,12 +126,14 @@ func clearProxyEnv(t *testing.T) {
 func TestClaudeSpec(t *testing.T) {
 	clearProxyEnv(t)
 
+	// configEffort is reasoning_effort, which an API endpoint sends; a claude
+	// run takes only its endpoint's effort.
 	tests := []struct {
-		name, effort, want string
+		name, configEffort, endpointEffort, want string
 	}{
-		{"an effort claude takes is normalized", " XHigh", "xhigh"},
-		{"an effort claude does not take is dropped", "minimal", ""},
-		{"no effort", "", ""},
+		{"the endpoint's effort, normalized", "low", " XHigh", "xhigh"},
+		{"an endpoint effort claude does not take is dropped", "", "minimal", ""},
+		{"no endpoint effort sends none", "max", "", ""},
 	}
 
 	for _, tt := range tests {
@@ -157,9 +159,10 @@ func TestClaudeSpec(t *testing.T) {
 				return acceptedWith(t, args), nil
 			}}
 
-			r := claudeRunner(t, f, tt.effort, ClaudeOptions{Binary: "/opt/claude/bin/claude", MaxRuns: 2})
+			r := claudeRunner(t, f, tt.configEffort, ClaudeOptions{Binary: "/opt/claude/bin/claude", MaxRuns: 2})
 
 			in := claudeInput(&bytes.Buffer{})
+			in.Endpoint.Effort = tt.endpointEffort
 			in.Interviewer = &stubInterviewer{}
 			in.Tools = []tools.Tool{echoTool{}}
 

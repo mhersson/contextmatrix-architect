@@ -107,7 +107,7 @@ func (r *Runner) runClaude(ctx context.Context, in Input, tags *returnedTags) (o
 		Tools:        tools.NewRegistry(onBridge...),
 		MaxTurns:     in.MaxTurns,
 		MaxBudgetUSD: in.MaxCostUSD,
-		Effort:       r.claudeEffort,
+		Effort:       claudecode.NormalizeEffort(in.Endpoint.Effort),
 		SessionID:    uuid.NewString(),
 		Emitter:      events.NewEmitter(nil, watch),
 		Redact:       red,
