@@ -546,8 +546,8 @@ Anthropic slug (`anthropic/claude-opus-5.5`) or a Claude Code ID, and becomes
 the Claude Code ID (`claude-opus-5-5`). The architect has no list of the
 models Claude Code serves, so it keeps every override that maps to a Claude
 Code ID, and one that Claude Code or the subscription does not accept fails
-that role's runs. Under `claude -p`, Fable spends paid usage credits once
-half the weekly limit is used. An override equal to the blueprint's model
+that role's runs. Under `claude -p`, Fable can spend paid usage credits
+without asking. An override equal to the blueprint's model
 changes nothing. One that maps to no Claude Code ID (`openai/gpt-5.5`, for
 example) is ignored with a warning in the log, and the blueprint's model runs
 that role. A kept override differing from the blueprint's model runs
