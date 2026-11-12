@@ -251,14 +251,18 @@ func (b *lockedBuffer) String() string {
 }
 
 // serveConfig is a config runServe starts with on port, over a fresh state
-// directory.
+// directory. Its claude cannot exist and TMPDIR is fresh, so runServe never
+// runs the operator's claude or sweeps the real temp directory.
 func serveConfig(t *testing.T, port int) *config.Config {
 	t.Helper()
+
+	t.Setenv("TMPDIR", t.TempDir())
 
 	return &config.Config{
 		ContextMatrixURL: "http://cm.invalid", APIKey: e2eKey, Port: port, LogLevel: "info",
 		StateDir: t.TempDir(), MaxRunCostUSD: 1, MaxTurns: 5, WorkspaceMaxAgeDays: 7, WatchInterval: time.Minute,
 		ReplaySkew: 5 * time.Minute, ReplayCacheSize: 100, MessageDedupTTL: time.Minute, MessageDedupCacheSize: 100,
+		ClaudeCodeBinary: filepath.Join(t.TempDir(), "claude"),
 	}
 }
 
