@@ -239,6 +239,8 @@ func TestClaudeDraftFollowsTheStream(t *testing.T) {
 			spec.OnDelta(llm.Delta{ToolCall: &llm.ToolCallDelta{Index: 0, ID: "toolu_1", Name: submitArtifactName, ArgsFragment: frag}})
 		}
 
+		spec.Emitter.Emit(events.ErrorKind, map[string]any{"error": "stream ended"})
+
 		return harness.Result{Reason: "error"}, errors.New("claudecode: stream ended without a result")
 	}}
 
@@ -253,6 +255,9 @@ func TestClaudeDraftFollowsTheStream(t *testing.T) {
 	_, err := r.Run(context.Background(), in)
 	require.Error(t, err)
 	assert.Contains(t, drafts.seen, "# Draft", "the streamed body is drafted")
+
+	require.NotEmpty(t, drafts.frames)
+	assert.True(t, drafts.frames[len(drafts.frames)-1].Void, "an error event voids the draft")
 }
 
 func TestClaudeAsked(t *testing.T) {
@@ -764,18 +769,35 @@ func TestClaudeResumeOfATrimmedRunFits(t *testing.T) {
 }
 
 func TestClaudeTooBig(t *testing.T) {
-	f := &fakeClaude{}
+	tests := []struct {
+		name    string
+		task    string
+		history []llm.Message
+	}{
+		{name: "history past the window", history: []llm.Message{{Role: "user", Content: strings.Repeat("x", 10000)}}},
+		{name: "fresh task past the window", task: strings.Repeat("x", 10000)},
+	}
 
-	in := claudeInput(&bytes.Buffer{})
-	in.ContextWindow = 1000
-	in.History = []llm.Message{{Role: "user", Content: strings.Repeat("x", 10000)}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeClaude{}
 
-	out, err := claudeRunner(t, f, "", ClaudeOptions{}).Run(context.Background(), in)
+			in := claudeInput(&bytes.Buffer{})
+			in.ContextWindow = 1000
+			in.History = tt.history
 
-	var tooBig *TooBigError
-	require.ErrorAs(t, err, &tooBig)
-	assert.Equal(t, ReasonTooBig, out.Result.Reason)
-	assert.Empty(t, f.calls(), "a refused run starts no process")
+			if tt.task != "" {
+				in.Task = tt.task
+			}
+
+			out, err := claudeRunner(t, f, "", ClaudeOptions{}).Run(context.Background(), in)
+
+			var tooBig *TooBigError
+			require.ErrorAs(t, err, &tooBig)
+			assert.Equal(t, ReasonTooBig, out.Result.Reason)
+			assert.Empty(t, f.calls(), "a refused run starts no process")
+		})
+	}
 }
 
 func TestClaudeCostCapCancel(t *testing.T) {
