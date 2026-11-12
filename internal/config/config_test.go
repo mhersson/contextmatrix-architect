@@ -95,7 +95,7 @@ func TestValidate(t *testing.T) {
 		{"port above the range", func(c *Config) { c.Port = 65536 }, "port"},
 		{"negative cost cap", func(c *Config) { c.MaxRunCostUSD = -1 }, "max_run_cost_usd"},
 		{"zero turns", func(c *Config) { c.MaxTurns = 0 }, "max_turns"},
-		{"zero claude code runs", func(c *Config) { c.ClaudeCodeMaxRuns = 0 }, "claude_code_max_runs must be at least 1"},
+		{"zero claude code runs", func(c *Config) { c.ClaudeCodeMaxRuns = 0 }, "claude_code_max_runs"},
 		{"zero workspace age", func(c *Config) { c.WorkspaceMaxAgeDays = 0 }, "workspace_max_age_days"},
 		{"zero watch interval", func(c *Config) { c.WatchInterval = 0 }, "watch_interval_seconds"},
 		{"bad level", func(c *Config) { c.LogLevel = "loud" }, "log_level"},

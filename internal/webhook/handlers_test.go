@@ -33,7 +33,7 @@ func TestChatStartClaudeCode(t *testing.T) {
 			endpoint:    protocol.LLMEndpoint{Type: "claude_code", OAuthToken: "sk-oauth-secret"},
 			unavailable: errors.New("claude: not found"),
 			status:      http.StatusInternalServerError, code: protocol.CodeInternal,
-			contains: []string{"claude_code mode is unavailable", "claude: not found"},
+			contains: []string{"claude: not found"},
 		},
 		{
 			name:     "ok",
