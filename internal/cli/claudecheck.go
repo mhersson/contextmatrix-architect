@@ -1,0 +1,42 @@
+package cli
+
+import (
+	"context"
+	"log/slog"
+
+	"github.com/mhersson/contextmatrix-vendorkit/claudecode"
+
+	"github.com/mhersson/contextmatrix-architect/internal/stage"
+)
+
+// checkClaudeCode logs the operator's claude version and returns an error
+// only when no runnable binary was found; a version mismatch only warns.
+func checkClaudeCode(ctx context.Context, binary string, logger *slog.Logger) error {
+	found, tested, err := claudecode.CheckVersion(ctx, binary)
+	if err != nil {
+		logger.Warn("claude_code sessions are refused", "error", err)
+
+		return err
+	}
+
+	logger.Info("claude_code available", "version", found)
+
+	if !tested {
+		logger.Warn("claude_code version differs from the tested version", "version", found, "tested", claudecode.Version)
+	}
+
+	return nil
+}
+
+// sweepClaudeHomes removes the run homes a stopped process left in dir. A
+// failure only warns: each run removes its own home when it ends.
+func sweepClaudeHomes(dir string, logger *slog.Logger) {
+	removed, err := stage.SweepClaudeHomes(dir)
+	if err != nil {
+		logger.Warn("claude home sweep failed", "error", err)
+	}
+
+	if removed > 0 {
+		logger.Info("claude home sweep removed stale homes", "removed", removed)
+	}
+}

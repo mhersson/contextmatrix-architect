@@ -14,8 +14,9 @@ decisions the code keeps and why, and must stay true at HEAD.
 - Never runs cards, never writes code. Reads code through disposable
   read-only checkouts.
 - Holds no secret but the backend HMAC key. The LLM endpoint, MCP key,
-  git-credentials token and search key arrive in every session start from CM
-  and live in memory only. There is no CM-less mode.
+  git-credentials token, search key and Claude Code token arrive in every
+  session start from CM and live in memory only; the Claude Code token goes
+  to the `claude` child process env only. There is no CM-less mode.
 - Every action is logged: full transcripts (less web search result lists and artifact reads, and reasoning details that redaction would change, dropped whole) and an append-only event log.
   The append-only tables (events, transcripts, artifacts, gates, emissions, questions) are never updated
   or deleted.
@@ -23,14 +24,14 @@ decisions the code keeps and why, and must stay true at HEAD.
 ## Package map
 
 - `cmd/contextmatrix-architect` - entrypoint; `serve` is the only server command.
-- `internal/cli` - cobra commands; serve's wiring, the panel rendering of controller events, the workspace sweeper and the search-tool check.
+- `internal/cli` - cobra commands; serve's wiring, the panel rendering of controller events, the workspace sweeper, the search-tool check, and the Claude Code check and run-home sweep.
 - `internal/buildinfo` - the build's version, commit and build time, stamped by ldflags, and the merge history embedded at build.
 - `internal/config` - koanf config: file, then `CONTEXTMATRIX_ARCHITECT_*` env.
 - `internal/webhook` - CM-facing chat-backend protocol on backendkit webhookcore and logbridge; routes the abort, export, gate, cap, mode, resume, continue, retrospective, lessons and retire commands and the round and mockup replies that `internal/blueprint` recognises; serves the blueprint view, artifacts and live stream.
 - `internal/export` - renders a blueprint's stored record as a markdown bundle in the state directory.
 - `internal/blueprint` - the controller: the blueprint state machine and the pipeline of stage, reviewer and responder runs; the stage checks; question rounds, gates and their folding, assumptions, modes and plain language; the research tools; the knowledge reads' sources and caller; code stage preparation, the design material and the readiness loop; the mockup step; sign-off, emission and the run watch; the retrospective and lessons; the blueprint view and the live stream.
 - `internal/retro` - the retrospective's pure parts: a card's run signals and the struggle rules, the findings a retro run submits and their checks, the run's task and the lesson questions.
-- `internal/stage` - one harness run: persona + instructions + the round tools (ask_questions, answer_chat) and submit_artifact, `show_mockup` and the frame-contract check, plus per-run tool sets (the code tools and `repo_info`), submit validation and a check's refusal for good, which fails the run (`fatal_check`), the pre-flight size check against the model's window, the final-reply mark on the reply a run ends on, the draft of the artifact body as it streams, and transient tool results kept out of the record.
+- `internal/stage` - one harness run, or on a claude_code endpoint one Claude Code run over the bridge: persona + instructions + the round tools (ask_questions, answer_chat) and submit_artifact, `show_mockup` and the frame-contract check, plus per-run tool sets (the code tools and `repo_info`), submit validation and a check's refusal for good, which fails the run (`fatal_check`), the pre-flight size check against the model's window, the final-reply mark on the reply a run ends on, the draft of the artifact body as it streams, and transient tool results kept out of the record.
 - `internal/pack` - pipeline packs: stages (the `design` key gives a code stage the design material), personas, instructions (`plain.md` for plain-language blueprints, `unattended.md` for the Unattended overlay, the mockup responder's instructions, `retrospective.md` for the retrospective), lists.yaml and card.md and their merge with lesson overlays, and the rules a pack's screen and mockup stages keep; the default pack is embedded.
 - `internal/code` - read-only mirrors and per-blueprint trees for the code stages; repo facts; the names a checkout declares, for the leak guard.
 - `internal/design` - the mockup's design material: a target's frontend roots, frame and brand files, its lockfiles and registry config, anonymous package downloads and their archive cache, the kept package CSS and the package images the frame files import by name, the resolved tokens and fonts, and the designer's brief.

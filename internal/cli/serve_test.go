@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -115,7 +116,7 @@ func TestServe_EndToEnd(t *testing.T) {
 	deps, err := loadRuntime(cfg)
 	require.NoError(t, err)
 
-	srv, cleanup, err := buildServer(context.Background(), cfg, deps, testLogger(t), runner, build, &atomic.Bool{})
+	srv, cleanup, err := buildServer(context.Background(), cfg, deps, testLogger(t), runner, build, &atomic.Bool{}, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cleanup(context.Background()) })
 
@@ -251,14 +252,18 @@ func (b *lockedBuffer) String() string {
 }
 
 // serveConfig is a config runServe starts with on port, over a fresh state
-// directory.
+// directory. Its claude cannot exist and TMPDIR is fresh, so runServe never
+// runs the operator's claude or sweeps the real temp directory.
 func serveConfig(t *testing.T, port int) *config.Config {
 	t.Helper()
+
+	t.Setenv("TMPDIR", t.TempDir())
 
 	return &config.Config{
 		ContextMatrixURL: "http://cm.invalid", APIKey: e2eKey, Port: port, LogLevel: "info",
 		StateDir: t.TempDir(), MaxRunCostUSD: 1, MaxTurns: 5, WorkspaceMaxAgeDays: 7, WatchInterval: time.Minute,
 		ReplaySkew: 5 * time.Minute, ReplayCacheSize: 100, MessageDedupTTL: time.Minute, MessageDedupCacheSize: 100,
+		ClaudeCodeBinary: filepath.Join(t.TempDir(), "claude"),
 	}
 }
 
@@ -384,4 +389,68 @@ func testLogger(t *testing.T) *slog.Logger {
 	t.Helper()
 
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func TestClaudeOptionsCarriesBinaryAndMaxRuns(t *testing.T) {
+	cfg := &config.Config{ClaudeCodeBinary: "/opt/claude/bin/claude", ClaudeCodeMaxRuns: 3}
+
+	assert.Equal(t, stage.ClaudeOptions{Binary: "/opt/claude/bin/claude", MaxRuns: 3}, claudeOptions(cfg))
+}
+
+func TestRunServe_RefusesClaudeCodeWithoutClaudeAndSweepsStaleHomes(t *testing.T) {
+	cfg := serveConfig(t, 0)
+
+	stale := filepath.Join(os.TempDir(), "architect-claude-x")
+	require.NoError(t, os.Mkdir(stale, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(stale, "f"), []byte("x"), 0o600))
+
+	deps, err := loadRuntime(cfg)
+	require.NoError(t, err)
+
+	var logs lockedBuffer
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+
+	go func() { done <- runServe(ctx, cfg, deps, slog.New(slog.NewJSONHandler(&logs, nil))) }()
+
+	var addr string
+
+	require.Eventually(t, func() bool {
+		addr = loggedAddr(logs.String())
+
+		return addr != ""
+	}, 5*time.Second, 10*time.Millisecond)
+
+	_, port, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+
+	assert.NoDirExists(t, stale)
+
+	resp := post(t, http.DefaultClient, "http://127.0.0.1:"+port+"/chat/start", protocol.ChatStartPayload{
+		SessionID: "S1", Model: "test/model", MCPAPIKey: "mcp", GitCredentialsToken: "S1.mac",
+		LLMEndpoint: &protocol.LLMEndpoint{Type: protocol.LLMEndpointTypeClaudeCode, OAuthToken: "sk-oauth-fixture"},
+		Architect:   &protocol.ArchitectStart{Projects: []string{"alpha"}, Mode: "default"},
+	})
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	var errResp protocol.ErrorResponse
+	require.NoError(t, json.Unmarshal(body, &errResp))
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Equal(t, protocol.CodeInternal, errResp.Code)
+	assert.NotContains(t, string(body), "sk-oauth-fixture")
+
+	cancel()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("runServe did not return after its context ended")
+	}
 }

@@ -261,7 +261,8 @@ func (c *Controller) handBackIdle(ctx context.Context, au audit, bp store.Bluepr
 // already answers (a store cut short before its snapshot) takes that answer.
 // stageAsked hands the round to nextSegment, which closes it and continues
 // the stage; tools that cannot be prepared, or answers that cannot be
-// stored, fail the blueprint, and a cancel leaves it idle.
+// stored, fail the blueprint, and a cancel or a Claude Code stop leaves it
+// idle, the stop reported.
 func (c *Controller) respondHandedOver(ctx context.Context, r *run, sess *session, bp store.Blueprint) stageEnd {
 	bg := context.WithoutCancel(ctx)
 	au := sess.audit
@@ -349,6 +350,7 @@ func (c *Controller) respondHandedOver(ctx context.Context, r *run, sess *sessio
 			}
 
 			ans, err = iv.respond(ctx, q, s.Reasks[q.Number])
+			_, stop, stopped := claudeStop(err)
 
 			switch {
 			case ctx.Err() != nil:
@@ -356,6 +358,14 @@ func (c *Controller) respondHandedOver(ctx context.Context, r *run, sess *sessio
 				if !c.shuttingDown(r) {
 					c.setState(bg, bp.ID, StateIdle)
 				}
+
+				return stageStopped
+			case stopped:
+				// As a stage's stop: continue after the reset answers what is left.
+				c.setState(bg, bp.ID, StateIdle)
+
+				stop["stage"] = s.Frame.Stage
+				au.event(bg, Event{Kind: EventError, BlueprintID: bp.ID, Payload: stop})
 
 				return stageStopped
 			case err != nil:

@@ -66,7 +66,7 @@ func TestLoadRuntime_CACertFileReachesAPrivateCAHost(t *testing.T) {
 	deps, err := loadRuntime(&config.Config{CACertFile: caFile})
 	require.NoError(t, err)
 
-	resp, err := stage.NewRunner("", false, deps.transport).NewLLM(ep).Send(context.Background(), req)
+	resp, err := stage.NewRunner("", false, deps.transport, stage.ClaudeOptions{}).NewLLM(ep).Send(context.Background(), req)
 	require.NoError(t, err)
 	assert.Equal(t, "hi", resp.Content)
 
@@ -92,7 +92,7 @@ func TestLoadRuntime_CACertFileReachesAPrivateCAHost(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 
-	_, err = stage.NewRunner("", false, deps.transport).NewLLM(ep).Send(ctx, req)
+	_, err = stage.NewRunner("", false, deps.transport, stage.ClaudeOptions{}).NewLLM(ep).Send(ctx, req)
 	require.Error(t, err)
 
 	assert.Equal(t, int32(2), reached.Load(), "only the clients built with the file reached the host")

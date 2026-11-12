@@ -53,6 +53,9 @@ type Config struct {
 	// Build is the build every /health answer reports.
 	Build      protocol.BuildInfo
 	Controller Controller
+	// ClaudeCodeUnavailable is why no claude_code session can start: the
+	// startup check found no runnable claude binary. Nil when one was found.
+	ClaudeCodeUnavailable error
 }
 
 // Server mounts the protocol routes on the shared transport core.
@@ -62,6 +65,8 @@ type Server struct {
 	ctl    Controller
 	dedup  *webhookcore.DedupCache
 	logger *slog.Logger
+	// claudeCodeUnavailable refuses claude_code session starts when set.
+	claudeCodeUnavailable error
 	// keepalive spaces the live stream's heartbeat comments.
 	keepalive time.Duration
 	// liveDone closes at drain and ends every live stream.
@@ -93,7 +98,7 @@ func NewServer(cfg Config) *Server {
 		Build:           cfg.Build,
 	})
 
-	return &Server{Core: core, ctl: cfg.Controller, dedup: dedup, logger: logger, keepalive: liveKeepalive, liveDone: make(chan struct{})}
+	return &Server{Core: core, ctl: cfg.Controller, dedup: dedup, logger: logger, claudeCodeUnavailable: cfg.ClaudeCodeUnavailable, keepalive: liveKeepalive, liveDone: make(chan struct{})}
 }
 
 // Routes mounts every route. /chat/start and /message sit behind the drain

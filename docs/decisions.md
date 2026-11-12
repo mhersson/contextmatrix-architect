@@ -15,7 +15,10 @@ HEAD.
   acceptance-criteria text. Why: the core encodes no one team's process.
 - A session start without an LLM endpoint is refused, and there is no local
   fallback. Why: ContextMatrix provisions everything per session, so the
-  architect fails closed.
+  architect fails closed. A claude_code start without a token, or with no
+  runnable `claude` binary, is refused; a version other than the tested one
+  only warns. Why: the subscription token is the only credential such a
+  session can run on, and a binary that cannot run fails every stage.
 
 ## Architecture
 
@@ -53,6 +56,35 @@ HEAD.
 - ContextMatrix only proxies the signed view and artifact reads for the
   architect sessions a caller owns, and relays the live stream; the architect
   owns the data. Why: one source for the blueprint view.
+- On a claude_code endpoint a stage runs as a `claude` process, offered no
+  Claude Code built-in: every tool it calls is one of the run's Go tools on
+  the loopback bridge. Each run gets a temporary `architect-claude-*`
+  directory as its HOME, working directory and TMPDIR. The directory is
+  removed when the run ends, and any left behind are swept at start. A run
+  that ends with text and no terminal call is asked once more by a second
+  process that resumes the same session, in the same directory and slot,
+  offered only the terminal tools. From the architect's own environment the
+  child gets PATH and the proxy variables that are set (`HTTP_PROXY`,
+  `HTTPS_PROXY` and `NO_PROXY`, either case), so claude reaches the API
+  through the same egress proxy as the architect's own clients. At most
+  `claude_code_max_runs` runs hold a slot at once across all blueprints, and
+  a run takes its slot before its directory exists. A responder run inside
+  its asker's round shares the asker's slot, so a slot holds at most two
+  processes. Why: on a workstation a built-in Read could read the operator's
+  home, nothing Claude Code writes outlives its run, and the cap is sized
+  from a 512 MiB budget per slot, which two processes at their measured peak
+  of 180-230 MB stay under.
+- A resumed claude_code run sends the earlier conversation as one primer
+  message and stores it flat, as a harness resume does: the earlier messages,
+  then its task as its own user message. When the primer would not fit, both
+  are trimmed to the first user message and the newest turns that fit, cut
+  where no tool result loses its call, with a line saying earlier turns were
+  left out. A cold reopen that moves a blueprint from claude_code to an
+  endpoint seeds the harness with the stored claude transcript, and one past
+  the model's whole window is refused as too big. Why: a new `claude` process
+  cannot be seeded with another run's messages, Claude Code compacts only
+  inside its process, never what a run returns, and a flat record keeps the
+  original task first however often a run is resumed.
 - Every run of a stage, a chat run included, is offered the same tool list,
   and one reasoning effort is sent on every request. Why: a resumed
   conversation keeps its prompt cache on either endpoint.
@@ -485,7 +517,7 @@ HEAD.
   recorded without their userinfo. Why: ContextMatrix returns project config as
   stored, and the record is append-only.
 - Every tool result passes the redactor for every secret the session holds
-  (the LLM key, MCP key, git token and search key), and live drafts are
+  (the LLM key, Claude Code token, MCP key, git token and search key), and live drafts are
   redacted with a held-back tail. Why: a secret never reaches a
   model-visible or stored text.
 
@@ -499,7 +531,26 @@ HEAD.
   cannot validate it.
 - Tool results are capped at 128 KiB with head and tail kept, and compaction
   runs at 85% of the window keeping six messages, both as in the chat
-  backend. Why: a ContextMatrix card read can carry a long activity log.
+  backend. On a claude_code run the bridged tool wrapper applies the cap,
+  the bridged tools declare a result size above it so Claude Code shows a
+  capped result whole, and compaction is Claude Code's own. Why: a
+  ContextMatrix card read can carry a long activity log.
+- The image installs the tested Claude Code native binary from the npm
+  registry tarball, verified by sha512 from `claude-code.pin`, which the image
+  build and the pin test in `internal/cli` read. Why: the image runs exactly
+  the version the integration was tested on.
+- A host install uses the operator's own `claude`; `svc.sh` never downloads,
+  installs, pins or changes it, and only puts its directory first on the
+  unit's PATH. Why: the operator owns that installation and its updates.
+- The image's runtime base is glibc distroless, not static. Why: the native
+  `claude` binary links libc; the Go binary stays static and unaffected.
+- The workstation unit keeps `MemoryDenyWriteExecute=yes`; Claude Code's
+  JavaScriptCore then runs interpreter-only, at about twice the CPU and
+  without a crash. Why: the sandbox stays as tight as the sibling backends'.
+- The unit's `MemoryMax=4G` is 2G for serve plus 512M for each of
+  `claude_code_max_runs`' default 4 slots; a responder nested in its asker's
+  round shares the asker's slot. Why: the cap bounds the slots, not the
+  processes, so the slots size the memory.
 - No two file names differ only by case. Why: the build works on macOS's
   case-insensitive filesystem.
 - `make test` never calls a live model, and store tests prove the

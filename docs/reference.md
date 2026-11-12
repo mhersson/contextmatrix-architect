@@ -44,7 +44,7 @@ one has an effect.
 | What you type | What it does | When it works |
 |---|---|---|
 | `abort` | Stops the run that is working now. The blueprint is kept, and an open round stays open. | Any time. Afterwards `continue` runs a stopped stage again; if it stopped the cards going on the board or the run's start, reply `approve`, and for a retrospective, `retrospective`. |
-| `continue` or `resume` | Runs the stopped stage again, once. | After a stage failed, was aborted or was stopped by the cost cap. See [When a blueprint stops](#when-a-blueprint-stops). |
+| `continue` or `resume` | Runs the stopped stage again, once. | After a stage failed, was aborted, or was stopped by the cost cap, a usage limit or a failed Claude Code login. See [When a blueprint stops](#when-a-blueprint-stops). |
 | `export` | Writes the blueprint's whole record as a set of text files on the architect's server, and says where. | Any time. |
 | `cap <amount>`, such as `cap 5` or `cap 7.50` | Sets the cost cap, in US dollars. | Any time. The amount must be above what is spent. See [The cost cap](#the-cost-cap). |
 | `cap off` | Removes the cost cap. | Any time. |
@@ -350,6 +350,8 @@ the mode, the cap and what is spent, but there they cannot be clicked.
 | A stage failed | A message naming the stage and why, ending "Reply `continue` to run it again." The stage's segment on the scale bar gets a red outline (hovering over it shows Failed), and the line beside the bar reads "This stage failed; the transcript says why". | `continue`, or send a message: it is kept as a note, and the stage runs again with it. |
 | You sent `abort` | For a stage: "Abort requested. ... is canceled; reply `continue` to run it again." For a retrospective: "Abort requested. The retrospective is canceled; reply `retrospective` to run it again." For emission or the run start: the rows below, with "stopped by abort". | A stage: `continue`, or any message. A retrospective: `retrospective`. Emission or the run start: `approve`. |
 | Intake failed before it stored anything | As for any failed stage. | Your next message is taken as the need again; `continue` runs Intake on the need you already sent. |
+| Claude Code hit a subscription usage limit | "Claude Code stopped on its <window> usage limit" (the window in words, such as 5-hour or weekly; "Claude Code stopped on a usage limit" when Claude Code names no known window), then ", which resets at <time>" when known, then ". Reply `continue` after the reset to run the stage again." The blueprint stays idle. | `continue` after the reset. |
+| Claude Code did not log in | "Claude Code did not authenticate with the configured token. Fix the token in ContextMatrix, end this session and reopen the blueprint (a session keeps the token it started with), then reply `continue` to run the stage again." The blueprint stays idle. | Fix the token in ContextMatrix, end the session and reopen the blueprint (see [Ending and reopening a session](#ending-and-reopening-a-session)), then `continue`. |
 | The cost cap stopped a stage | See [When the cap stops a stage](#when-the-cap-stops-a-stage). | Raise the cap. |
 | Emission stopped, or ContextMatrix blocked it | "Emission stopped: ... Cards already created are kept; reply approve to resume.", which starts "Emission stopped by abort." when an abort or the session's end cut it short; or "Emission is blocked until this is fixed in ContextMatrix; then reply approve:" and what to fix. | Fix anything it names, then `approve` ("Resume emission"). |
 | Yolo found a repository with no commits | "... has no commits, so the run was not started; push an initial commit, then reply approve to start it, or start it in ContextMatrix and reply approve." | Push a first commit, then `approve` ("Start the run"). |
@@ -537,6 +539,17 @@ Pick the model in the New blueprint dialog's "Model" field. Every role in the
 blueprint uses it, unless whoever runs the architect has set a model for a
 particular role. A blueprint with a cost cap needs a model ContextMatrix has a
 price for.
+
+In Claude Code subscription mode the model is a Claude Code model ID, such as
+`claude-sonnet-5-5`. A per-role override in `models` is written as an
+Anthropic slug (`anthropic/claude-opus-5.5`) or a Claude Code ID, and becomes
+the Claude Code ID (`claude-opus-5-5`). It is kept only when that ID is in
+ContextMatrix's Claude Code catalog (the list the shared protocol module
+holds), today `claude-opus-5-5`, `claude-sonnet-5-5` and `claude-haiku-5-5`;
+one equal to the blueprint's model changes nothing. Any other override is
+ignored with a warning in the log, and the blueprint's model runs that role.
+A kept override differing from the blueprint's model runs unpriced, as an
+override does elsewhere.
 
 ## The sheet's marks
 

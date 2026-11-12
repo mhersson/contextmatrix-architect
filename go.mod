@@ -4,14 +4,16 @@ go 1.27.4
 
 require (
 	github.com/go-git/go-git/v5 v5.19.2
+	github.com/google/uuid v1.6.0
 	github.com/knadh/koanf/parsers/yaml v1.1.1
 	github.com/knadh/koanf/providers/env v1.1.0
 	github.com/knadh/koanf/providers/file v1.2.1
 	github.com/knadh/koanf/providers/structs v1.0.1
 	github.com/knadh/koanf/v2 v2.4.1
-	github.com/mhersson/contextmatrix-backendkit v0.15.1
+	github.com/mhersson/contextmatrix-backendkit v0.16.0
 	github.com/mhersson/contextmatrix-harness v0.29.0
-	github.com/mhersson/contextmatrix-protocol v0.40.0
+	github.com/mhersson/contextmatrix-protocol v0.42.0
+	github.com/mhersson/contextmatrix-vendorkit v0.1.3
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
@@ -37,7 +39,6 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect

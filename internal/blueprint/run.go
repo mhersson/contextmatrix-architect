@@ -554,6 +554,16 @@ func (c *Controller) runStage(ctx context.Context, r *run, sess *session, bp sto
 			reason = "error"
 		}
 
+		if why, stop, ok := claudeStop(runErr); ok {
+			c.endRun(bg, runID, store.RunFailed, why, usage)
+			c.setState(bg, id, StateIdle)
+
+			stop["stage"] = stageID
+			au.event(bg, Event{Kind: EventError, BlueprintID: id, RunID: runID, Payload: stop})
+
+			return stageStopped
+		}
+
 		c.endRun(bg, runID, store.RunFailed, reason, usage)
 
 		if c.contextStop(bg, au, id, runID, store.RunKindStage, stageID, runErr) {

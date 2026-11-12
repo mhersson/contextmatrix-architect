@@ -55,6 +55,17 @@ max_run_cost_usd: 5
 # Env: CONTEXTMATRIX_ARCHITECT_MAX_TURNS
 max_turns: 80
 
+# The claude binary that claude_code sessions run: the operator's own install.
+# serve logs its version at start and warns when it differs from the version
+# vendorkit was tested with. Default: claude.
+# Env: CONTEXTMATRIX_ARCHITECT_CLAUDE_CODE_BINARY
+claude_code_binary: claude
+
+# Bounds the claude runs holding a slot at once, 512 MiB per slot; a
+# responder shares its asker's slot. Default: 4.
+# Env: CONTEXTMATRIX_ARCHITECT_CLAUDE_CODE_MAX_RUNS
+claude_code_max_runs: 4
+
 # Size of the message de-duplication cache. Default: 1000.
 # Env: CONTEXTMATRIX_ARCHITECT_MESSAGE_DEDUP_CACHE_SIZE
 message_dedup_cache_size: 1000

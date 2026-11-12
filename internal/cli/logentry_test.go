@@ -2146,3 +2146,33 @@ func TestLogEntryFor_APlainUnattendedSignoffCountsItsStops(t *testing.T) {
 		assert.Equal(t, without, plain(t, []any{}))
 	})
 }
+
+func TestLogEntryFor_AClaudeCodeStopRendersItsOwnMessageOnce(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload map[string]any
+		want    string
+	}{
+		{"a usage limit with a reset", map[string]any{
+			"stage": "shape", "reason": "usage_limit", "window": "seven_day", "resets_at": "2026-11-18T07:00:00Z",
+			"message": "Claude Code stopped on its seven_day usage limit, which resets at 2026-11-18T07:00:00Z. Reply `continue` after the reset to run the stage again.",
+		}, "Claude Code stopped on its seven_day usage limit, which resets at 2026-11-18T07:00:00Z. Reply `continue` after the reset to run the stage again."},
+		{"a usage limit without a reset", map[string]any{
+			"stage": "shape", "reason": "usage_limit", "window": "five_hour",
+			"message": "Claude Code stopped on its five_hour usage limit. Reply `continue` after the reset to run the stage again.",
+		}, "Claude Code stopped on its five_hour usage limit. Reply `continue` after the reset to run the stage again."},
+		{"a failed login", map[string]any{
+			"stage": "shape", "reason": "not_logged_in",
+			"message": "Claude Code did not authenticate with the configured token. Fix the token in ContextMatrix, end this session and reopen the blueprint (a session keeps the token it started with), then reply `continue` to run the stage again.",
+		}, "Claude Code did not authenticate with the configured token. Fix the token in ContextMatrix, end this session and reopen the blueprint (a session keeps the token it started with), then reply `continue` to run the stage again."},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry, ok := logEntryFor(blueprint.Event{Kind: blueprint.EventError, BlueprintID: "S1", Payload: tc.payload})
+			require.True(t, ok)
+			assert.Equal(t, tc.want, entry.Content)
+			assert.Equal(t, 1, strings.Count(entry.Content, "`continue`"))
+		})
+	}
+}

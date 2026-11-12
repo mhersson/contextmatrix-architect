@@ -21,6 +21,7 @@ import (
 	"github.com/mhersson/contextmatrix-harness/harness"
 	"github.com/mhersson/contextmatrix-harness/llm"
 	protocol "github.com/mhersson/contextmatrix-protocol"
+	"github.com/mhersson/contextmatrix-protocol/selection"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -2805,4 +2806,73 @@ func TestRun_TheReplyARunEndsOnIsRecordedButNotShown(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, slices.ContainsFunc(stored, func(e store.Event) bool { return strings.Contains(string(e.Payload), "# Need restated") }),
 		"the record keeps it")
+}
+
+func TestSessionSecretsIncludeOAuthToken(t *testing.T) {
+	const tok = "sk-oauth-secret"
+
+	s := session{endpoint: protocol.LLMEndpoint{Type: "claude_code", OAuthToken: tok}}
+	require.Contains(t, s.secrets(), tok)
+
+	c, _, _, _ := newController(t, nil)
+	au := c.newAudit(s.secrets()...)
+
+	raw, err := au.maskJSON([]byte(`{"text":"token ` + tok + `"}`))
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), tok)
+}
+
+func TestModelForClaudeCodeCatalog(t *testing.T) {
+	catalog := selection.ClaudeCodeModels()
+	require.NotEmpty(t, catalog)
+
+	for _, m := range catalog {
+		t.Run(m.ID, func(t *testing.T) {
+			c, _, _, _ := newController(t, nil)
+			c.opts.Models = map[string]string{"intake": m.ID}
+
+			sess := &session{endpoint: protocol.LLMEndpoint{Type: "claude_code"}, model: "session/model", price: testPrice(), window: 1000}
+
+			assert.Equal(t, runModel{name: m.ID, override: true}, c.modelFor(sess, "intake"))
+		})
+	}
+
+	t.Run("outside the catalog", func(t *testing.T) {
+		c, _, _, _ := newController(t, nil)
+		c.opts.Models = map[string]string{"intake": "claude-fixture-0-0"}
+
+		sess := &session{endpoint: protocol.LLMEndpoint{Type: "claude_code"}, model: "session/model", price: testPrice(), window: 1000}
+
+		assert.Equal(t, runModel{name: "session/model", price: testPrice(), window: 1000}, c.modelFor(sess, "intake"))
+	})
+}
+
+func TestModelForClaudeCode(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		override string
+		want     runModel
+		model    string // session model; empty is "session/model"
+	}{
+		{"maps to the session model", "claude_code", "anthropic/claude-opus-5.5", runModel{name: "claude-opus-5-5", price: testPrice(), window: 1000}, "claude-opus-5-5"},
+		{"mapped and in the catalog", "claude_code", "anthropic/claude-opus-5.5", runModel{name: "claude-opus-5-5", override: true}, ""},
+		{"not a claude model", "claude_code", "openai/gpt-5.5", runModel{name: "session/model", price: testPrice(), window: 1000}, ""},
+		{"maps but outside the catalog", "claude_code", "anthropic/claude-fable-5.2", runModel{name: "session/model", price: testPrice(), window: 1000}, ""},
+		{"bare id", "claude_code", "claude-haiku-5-5", runModel{name: "claude-haiku-5-5", override: true}, ""},
+		{"endpoint mode unchanged", "openrouter", "openai/gpt-5.5", runModel{name: "openai/gpt-5.5", override: true}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _, _, _ := newController(t, nil)
+			c.opts.Models = map[string]string{"intake": tc.override}
+
+			sess := &session{
+				endpoint: protocol.LLMEndpoint{Type: tc.endpoint},
+				model:    cmp.Or(tc.model, "session/model"), price: testPrice(), window: 1000,
+			}
+
+			assert.Equal(t, tc.want, c.modelFor(sess, "intake"))
+		})
+	}
 }

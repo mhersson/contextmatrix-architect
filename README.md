@@ -92,8 +92,31 @@ starts, and pins `XDG_STATE_HOME` in the unit so the service resolves the same
 default as the script. It warns about a missing config, an explicit
 `/var/lib/contextmatrix-architect` (the image's volume), a `state_dir` that is
 not absolute, contains whitespace or is not writable, a directory it could not
-create and a missing `rg`, and installs anyway. Rerun `./svc.sh install` after
-changing `state_dir` or `XDG_STATE_HOME`.
+create, a missing `rg` and a missing `claude`, and installs anyway. Rerun
+`./svc.sh install` after changing `state_dir` or `XDG_STATE_HOME`. The unit's
+PATH is set at install: the directory where your shell finds `claude` first,
+then those of `rg` and `fd` (or `fdfind`) outside the system directories, then
+`/usr/local/bin:/usr/bin:/bin`, each once. Rerun `./svc.sh install` after
+moving `claude`, `rg` or `fd`.
+
+For subscription mode, install Claude Code yourself. `svc.sh install` puts the
+directory of the `claude` on your PATH first on the unit's PATH and never
+installs or changes Claude Code. The unit's `MemoryMax=4G` covers serve plus
+512M for each of `claude_code_max_runs`' default four slots; a slot holds one
+`claude` run and, at most, the responder nested in its round.
+
+## Claude Code subscription mode
+
+When ContextMatrix starts a session with a `claude_code` endpoint, every run
+goes through `claude -p` on the operator's Claude subscription instead of an
+API endpoint. The session carries the OAuth token, which stays in memory.
+`serve` logs the `claude` version at start and warns when it is not the tested
+one; a `claude_code` session is refused when no `claude` can run or the token
+is missing. The cost counted is an estimate, never a per-token bill, and a
+usage limit stops the stage, and `continue` after the reset runs it again. The
+config keys and slot budget are in [Installing](docs/installing.md); see also
+the [guide](docs/guide.md#claude-code-subscription-mode) and the
+[reference](docs/reference.md#models).
 
 ## Code checkouts
 
@@ -155,11 +178,19 @@ bind mount must be chowned by hand. The mounted `config.yaml`, and a
 `ca_cert_file` when one is set, must be readable by uid 65532.
 `config.yaml.example` documents every key.
 
-The image ships ripgrep for the read tools. A local run or the user service
-needs `rg` on its PATH for grep (glob also takes `fd`); `serve` logs a warning
-at startup when it is missing and runs anyway.
+The image is built on a glibc distroless base because the `claude` binary
+needs libc, and ships the tested Claude Code (version 2.1.322, sha512-verified
+at build) at `/usr/local/bin/claude`. It also ships ripgrep for the read tools.
+A local run or the user service needs `rg` on its PATH for grep (glob also
+takes `fd`); `serve` logs a warning at startup when it is missing and runs
+anyway. The image bundles Anthropic's proprietary Claude Code, so it must not
+be pushed to a public registry.
 
 On Kubernetes, a Service named `contextmatrix-architect` makes the kubelet set
 `CONTEXTMATRIX_ARCHITECT_PORT=tcp://<ip>:<port>` in pods of its namespace,
 which the architect reads as its `port` and fails to start on. Set
-`enableServiceLinks: false` on the architect's pod.
+`enableServiceLinks: false` on the architect's pod. Give the pod memory for
+serve plus 512 MiB per `claude_code_max_runs` slot; a 3Gi limit covers the
+default 4. A `claude_code` run makes its per-run home under `TMPDIR` (`/tmp`
+unless set), so a pod with a read-only root filesystem needs a writable `/tmp`,
+such as an `emptyDir` mount.

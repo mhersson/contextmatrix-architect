@@ -62,7 +62,7 @@ func (w *replyWatch) note(resp llm.Response) {
 // ends the run.
 type finalEvents struct {
 	w     io.Writer
-	watch *replyWatch
+	final func() bool
 }
 
 func (f finalEvents) Write(p []byte) (int, error) {
@@ -70,7 +70,7 @@ func (f finalEvents) Write(p []byte) (int, error) {
 
 	var ev map[string]any
 
-	if f.watch.final.Load() && json.Unmarshal(bytes.TrimSpace(p), &ev) == nil && ev["kind"] == string(events.ModelResponse) {
+	if f.final() && json.Unmarshal(bytes.TrimSpace(p), &ev) == nil && ev["kind"] == string(events.ModelResponse) {
 		if data, ok := ev["data"].(map[string]any); ok {
 			data[FinalField] = true
 

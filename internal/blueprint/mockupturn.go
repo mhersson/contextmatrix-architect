@@ -116,8 +116,9 @@ func turnDue(s roundState) bool {
 // flips the settings and asks the designer for one change, which a chat run
 // answers, or uses the revision as it set it. A responder that fails, or a
 // cost cap refuses, uses the revision with the last known settings, marked
-// failed, and the turn says so in an error event. A turn that finds the
-// person taking the steering back (handsBack) runs nothing and hands the
+// failed, and the turn says so in an error event; a Claude Code stop decides
+// nothing and leaves the blueprint idle, as a stage's does. A turn that finds
+// the person taking the steering back (handsBack) runs nothing and hands the
 // mockup back; one that finds it as it ends stores no use, its own or a
 // failure's, and hands the mockup back with the settings the responder sent,
 // while its request stands. stageAsked hands the round to nextSegment; a
@@ -175,6 +176,16 @@ func (c *Controller) mockupTurn(ctx context.Context, r *run, sess *session, bp s
 		if !c.shuttingDown(r) {
 			c.setState(bg, id, StateIdle)
 		}
+
+		return stageStopped
+	}
+
+	// Continue after the reset runs the turn again.
+	if _, stop, ok := claudeStop(err); ok {
+		c.setState(bg, id, StateIdle)
+
+		stop["stage"] = st.ID
+		au.event(bg, Event{Kind: EventError, BlueprintID: id, Payload: stop})
 
 		return stageStopped
 	}
