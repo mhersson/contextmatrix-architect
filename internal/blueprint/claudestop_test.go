@@ -271,6 +271,58 @@ func TestHandoverClaudeStopStopsAndContinueRetries(t *testing.T) {
 	}
 }
 
+func TestMockupTurnClaudeStopLeavesTheRevisionUndecided(t *testing.T) {
+	var limited atomic.Bool
+
+	limited.Store(true)
+
+	script := withScreen(dialogScript(), true)
+	script["mockup"] = showing(bookingRevision())
+	use := reacting(map[string]any{"use": true})
+	script["mockup.responder"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+		if limited.Load() {
+			return stage.Output{}, fmt.Errorf("stage %s: %w", in.Stage, &claudecode.UsageLimitError{Window: "five_hour"})
+		}
+
+		return use(ctx, in)
+	}
+
+	c, st, runner, rec, _ := newMockup(t, script)
+	driveIn(t, c, autoStart("BP1"))
+
+	s := onlyMockupRound(t, c)
+	assert.Empty(t, s.Mockup.Action, "the revision is not used as it is set")
+	assert.False(t, s.Mockup.Failed)
+	assert.Empty(t, mockupGates(t, st), "nothing is decided")
+	assert.NotContains(t, stagesRun(runner), "slicing")
+
+	for _, e := range rec.all(EventError) {
+		assert.NotEqual(t, reasonResponderFailed, e.Payload["reason"])
+	}
+
+	stop := lastError(t, rec)
+	assert.Equal(t, "usage_limit", stop.Payload["reason"])
+	assert.Equal(t, "mockup", stop.Payload["stage"])
+
+	ctx := context.Background()
+	bp, err := st.GetBlueprint(ctx, "BP1")
+	require.NoError(t, err)
+	assert.Equal(t, string(StateIdle), bp.State)
+
+	limited.Store(false)
+
+	require.NoError(t, c.Resume(ctx, "BP1", "m-continue"))
+	c.Wait("BP1")
+
+	gates := mockupGates(t, st)
+	require.Len(t, gates, 1, "continue runs the turn again")
+	assert.Equal(t, store.GateApprove, gates[0].Decision)
+	assert.Equal(t, store.ResponderAuto, gates[0].Responder)
+	assert.False(t, onlyMockupRound(t, c).Mockup.Failed, "the responder's own use")
+	assert.Len(t, inputsOf(runner, "mockup.responder"), 2)
+	assert.Contains(t, stagesRun(runner), "slicing")
+}
+
 func TestSinkForwardsUsageLimit(t *testing.T) {
 	c, _, _, rec := newGated(t, gatedScript())
 	s := &harnessSink{audit: c.newAudit(), id: "BP1", runID: 1}
