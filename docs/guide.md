@@ -80,13 +80,13 @@ otherwise. What you see differs a little:
   what the panel, the scale bar and the [cost cap](reference.md#the-cost-cap)
   count. The panel says "cost" when ContextMatrix has a price for the model
   and "reported cost" when it does not.
-- **A usage limit stops the stage.** The panel names the limit when Claude Code
-  says which one, and the time it resets when Claude Code says it; the blueprint
-  stays idle. Reply `continue` after the reset and the stage runs again. A token
-  Claude Code does not accept stops the stage the same way. A session keeps the
-  token it started with, so fix the token in ContextMatrix, end the session and
-  reopen the blueprint, then reply `continue`. See [When a blueprint
-  stops](reference.md#when-a-blueprint-stops).
+- **A usage limit stops the stage.** The panel names the limit when it is the
+  5-hour or a weekly one, and the time it resets when Claude Code says it; the
+  blueprint stays idle. Reply `continue` after the reset and the stage runs
+  again. A token Claude Code does not accept stops the stage the same way. A
+  session keeps the token it started with, so fix the token in ContextMatrix,
+  end the session and reopen the blueprint, then reply `continue`. See [When a
+  blueprint stops](reference.md#when-a-blueprint-stops).
 - **Models are Claude Code's.** See [Models](reference.md#models).
 
 ## 3. Starting a blueprint
