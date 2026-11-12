@@ -127,6 +127,52 @@ func TestSideRunUsageLimitReason(t *testing.T) {
 	assert.Positive(t, reviews)
 }
 
+func TestResponderClaudeStopLeavesTheRoundOpen(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"a usage limit", &claudecode.UsageLimitError{Window: "five_hour"}},
+		{"a failed login", claudecode.ErrNotLoggedIn},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := make(chan error, 1)
+
+			script := happyScript()
+			script["intake"] = func(ctx context.Context, in stage.Input) (stage.Output, error) {
+				_, err := in.Interviewer.Ask(ctx, stage.Round{Questions: []stage.RoundQuestion{roundQ("Deploy", "Helm or kustomize?", "helm", "kustomize")}})
+				got <- err
+
+				// The asker's next request meets the same stop.
+				return stage.Output{}, fmt.Errorf("stage %s: %w", in.Stage, tt.err)
+			}
+			script["intake.responder"] = func(_ context.Context, in stage.Input) (stage.Output, error) {
+				return stage.Output{}, fmt.Errorf("stage %s: %w", in.Stage, tt.err)
+			}
+
+			c, st, _, rec, _ := newPipeline(t, script)
+			ctx := context.Background()
+
+			driveIn(t, c, autoInput())
+
+			require.ErrorIs(t, <-got, tt.err, "the asker gets the stop, not an answer")
+
+			rounds, err := c.rounds(ctx, "BP1")
+			require.NoError(t, err)
+			assert.Empty(t, rounds, "no round is stored with a degraded answer")
+
+			wantReason, _, _ := claudeStop(tt.err)
+			assert.Equal(t, wantReason, lastError(t, rec).Payload["reason"])
+
+			bp, err := st.GetBlueprint(ctx, "BP1")
+			require.NoError(t, err)
+			assert.Equal(t, string(StateIdle), bp.State)
+		})
+	}
+}
+
 func TestHarnessLineNotionalCost(t *testing.T) {
 	line := []byte(`{"kind":"usage","data":{"prompt_tokens":10,"notional_cost_usd":0.5,"cost_basis":"subscription"}}`)
 	l, ok := parseHarnessLine(line)

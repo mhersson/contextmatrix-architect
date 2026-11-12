@@ -343,9 +343,10 @@ func (iv *interviewer) respondAll(ctx context.Context, s roundState) (string, er
 
 // respondRound has the responder answer each question of round s inside the
 // asking run, accepts every assumption on its tab, and stores the round
-// closed and read-only. A cancel leaves no round; the answers already given
-// stay recorded, and a re-run asks only what is still unanswered. A question
-// the responder cannot answer is left to the stage, which decides it.
+// closed and read-only. A cancel, or a Claude Code stop that also stops the
+// asker, leaves no round; the answers already given stay recorded, and a
+// re-run asks only what is still unanswered. A question the responder cannot
+// otherwise answer is left to the stage, which decides it.
 func (iv *interviewer) respondRound(ctx context.Context, s roundState) (roundState, error) {
 	s.Frame.Responder = true
 
@@ -355,10 +356,13 @@ func (iv *interviewer) respondRound(ctx context.Context, s roundState) (roundSta
 
 	for _, q := range s.Frame.Questions {
 		ans, err := iv.respond(ctx, q, s.Reasks[q.Number])
+		_, _, stopped := claudeStop(err)
 
 		switch {
 		case ctx.Err() != nil:
 			return roundState{}, ctx.Err()
+		case stopped:
+			return roundState{}, err
 		case err != nil:
 			ans = protocol.RoundAnswer{Number: q.Number, Text: err.Error()}
 		}
