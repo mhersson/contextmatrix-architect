@@ -113,9 +113,9 @@ API endpoint. The session carries the OAuth token, which stays in memory.
 `serve` logs the `claude` version at start and warns when it is not the tested
 one; a `claude_code` session is refused when no `claude` can run or the token
 is missing. The cost counted is an estimate, never a per-token bill, and a
-usage limit stops the stage until its reset. The config keys and slot budget
-are in [Installing](docs/installing.md); see also the
-[guide](docs/guide.md#claude-code-subscription-mode) and the
+usage limit stops the stage, and `continue` after the reset runs it again. The
+config keys and slot budget are in [Installing](docs/installing.md); see also
+the [guide](docs/guide.md#claude-code-subscription-mode) and the
 [reference](docs/reference.md#models).
 
 ## Code checkouts
@@ -183,11 +183,14 @@ needs libc, and ships the tested Claude Code (version 2.1.322, sha512-verified
 at build) at `/usr/local/bin/claude`. It also ships ripgrep for the read tools.
 A local run or the user service needs `rg` on its PATH for grep (glob also
 takes `fd`); `serve` logs a warning at startup when it is missing and runs
-anyway.
+anyway. The image bundles Anthropic's proprietary Claude Code, so it must not
+be pushed to a public registry.
 
 On Kubernetes, a Service named `contextmatrix-architect` makes the kubelet set
 `CONTEXTMATRIX_ARCHITECT_PORT=tcp://<ip>:<port>` in pods of its namespace,
 which the architect reads as its `port` and fails to start on. Set
 `enableServiceLinks: false` on the architect's pod. Give the pod memory for
 serve plus 512 MiB per `claude_code_max_runs` slot; a 3Gi limit covers the
-default 4.
+default 4. A `claude_code` run makes its per-run home under `TMPDIR` (`/tmp`
+unless set), so a pod with a read-only root filesystem needs a writable `/tmp`,
+such as an `emptyDir` mount.
