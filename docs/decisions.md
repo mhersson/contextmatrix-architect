@@ -532,8 +532,9 @@ HEAD.
 - Tool results are capped at 128 KiB with head and tail kept, and compaction
   runs at 85% of the window keeping six messages, both as in the chat
   backend. On a claude_code run the bridged tool wrapper applies the cap,
-  and compaction is Claude Code's own. Why: a ContextMatrix card read can
-  carry a long activity log.
+  the bridged tools declare a result size above it so Claude Code shows a
+  capped result whole, and compaction is Claude Code's own. Why: a
+  ContextMatrix card read can carry a long activity log.
 - The image installs the tested Claude Code native binary from the npm
   registry tarball, verified by sha512 from `claude-code.pin`, which the image
   build and the pin test in `internal/cli` read. Why: the image runs exactly
