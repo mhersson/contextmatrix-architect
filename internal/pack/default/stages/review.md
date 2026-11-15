@@ -65,7 +65,9 @@ a severity:
   ambiguity, an assumption that matters and is not stated, or a part nobody
   asked for.
 - minor: wording or structure that slows you down but changes nothing you
-  would build.
+  would build, or a further case, test or criterion for a behaviour the
+  artifact already states, such as another direction or another variant of
+  a case it covers.
 
 From an attempt's second round on, give every earlier finding exactly one
 verdict against this version: fixed when the version itself resolves it,
@@ -76,7 +78,13 @@ answer, an accepted assumption, gate feedback, an agreed rule the asked-for work
 must keep or code that exists does call for it. Then add any new findings; never
 restate an earlier one as new.
 
-Score the artifact from 1 to 5. The task says which score passes; a
+Earlier rounds judged every part of this version that no earlier finding
+asked the builder to change: a new finding on such a part is minor at most,
+unless it is critical or names a part nobody asked for. A gap in what the
+builder changed for an earlier finding keeps its real severity.
+
+Score the artifact from 1 to 5. The task says which score passes; give a
+version with no critical or major finding open at least that score. A
 critical finding left open fails the review whatever the score, and a score
 below the pass mark needs at least one finding open.
 

@@ -164,6 +164,14 @@ HEAD.
   and an open critical finding fails the review whatever the score. Why: a
   reviewer that trusts the builder's notes passes artifacts the next role
   cannot use.
+- From an attempt's second round on, a reviewer's new finding on a part no
+  earlier finding asked to change is minor at most, unless it is critical or
+  names a part nobody asked for, while a gap in what a fix changed keeps its
+  severity; a further case, test or criterion for a behaviour the artifact
+  already states is minor in any round, and a version with no critical or
+  major finding open scores at least the pass mark. Why: a fresh look at an
+  unchanged part found another case each round, so rounds did not converge,
+  and minors go to the gate's ledger, not back to the builder.
 - No version reaches a gate unreviewed, and the reviewer never gets the
   builder's transcript. Why: the review is an independent check.
 - The responder never sees the asker's transcript. Why: an asker cannot
