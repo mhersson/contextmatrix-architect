@@ -176,11 +176,11 @@ HEAD.
   converge, and minors go to the gate's ledger, not back to the builder.
 - An acceptance criterion states behaviour: the situation, the input or
   action and the result that must follow, checkable against the repository,
-  with exact values only where the need or a decision fixes them, never a
-  test's code, its fixtures or positions the need does not name; the tester
-  asks for no more. Why: the card's agent writes the tests against code
-  that does not exist yet, and assertion-level criteria drew review rounds
-  over detail nobody decided.
+  with exact values only where the need, a decision or a contract of the
+  design fixes them, never a test's code, its fixtures or positions neither
+  the need nor the design fixes; the tester asks for no more. Why: the
+  card's agent writes the tests against code that does not exist yet, and
+  assertion-level criteria drew review rounds over detail nobody decided.
 - No version reaches a gate unreviewed, and the reviewer never gets the
   builder's transcript. Why: the review is an independent check.
 - The responder never sees the asker's transcript. Why: an asker cannot

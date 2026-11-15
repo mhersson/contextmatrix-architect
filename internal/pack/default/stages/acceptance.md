@@ -13,10 +13,11 @@ criterion.
 
 Write each criterion at the level of behaviour: the situation and the input
 or action, in words, and the result that must follow, so it can be checked
-against the repository. Give an exact value only where the need or a
-decision fixes it. Never write a test's code, how to build its fixtures, or
-positions (coordinates, lines, offsets) the need does not name: the agent
-that builds the card writes its tests against the code it builds.
+against the repository. Give an exact value only where the need, a decision
+or a contract of the design fixes it. Never write a test's code, how to build
+its fixtures, or positions (coordinates, lines, offsets) that neither the
+need nor the design fixes: the agent that builds the card writes its tests
+against the code it builds.
 
 A check that inspects output states it in the form the design specifies (its
 JSON encoding, indentation, field order), or checks only the content; never a
