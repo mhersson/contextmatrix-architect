@@ -65,7 +65,10 @@ a severity:
   ambiguity, an assumption that matters and is not stated, or a part nobody
   asked for.
 - minor: wording or structure that slows you down but changes nothing you
-  would build.
+  would build, or a further case, test or criterion for a behaviour the
+  artifact already states, such as one more input to that behaviour. An edge
+  case whose handling a decision sets is a behaviour of its own, not a
+  further case.
 
 From an attempt's second round on, give every earlier finding exactly one
 verdict against this version: fixed when the version itself resolves it,
@@ -76,9 +79,16 @@ answer, an accepted assumption, gate feedback, an agreed rule the asked-for work
 must keep or code that exists does call for it. Then add any new findings; never
 restate an earlier one as new.
 
-Score the artifact from 1 to 5. The task says which score passes; a
+From an attempt's second round on, earlier rounds have judged every part of
+this version except what the builder changed for the findings the task shows
+with the builder's claim: a new finding on any other part is minor at most,
+unless it is critical or names a part nobody asked for. A gap in what the
+builder changed for such a finding keeps its real severity.
+
+Score the artifact from 1 to 5. The task says which score passes; give a
+version with no critical or major finding open at least that score. A
 critical finding left open fails the review whatever the score, and a score
-below the pass mark needs at least one finding open.
+below the pass mark needs a critical or major finding open.
 
 Submit with a short markdown summary as the body and a data object
 `{"score": <1 to 5>, "summary": "<two to four sentences: what you read and checked, and your overall judgement>", "verdicts": [{"id": "R1", "status": "fixed" or "still_open", "note": "<what this version shows>"}], "findings": [{"severity": "critical", "major" or "minor", "text": "<sentence>"}]}`.
