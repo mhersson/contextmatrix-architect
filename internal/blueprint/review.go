@@ -216,8 +216,8 @@ func (v review) passes(threshold int) bool {
 // prior finding, fixed or still_open with an optional note, and the new
 // findings, each a severity and a sentence. Re-checked findings were
 // verified in version; new ones take the ids after the attempt's highest. A
-// score below threshold sends the builder back, so it must leave a finding
-// open or still open.
+// score below threshold sends the builder back, so it must leave a critical
+// or major finding open or still open.
 func parseReview(data map[string]any, prior findingList, threshold, version int) (review, error) {
 	score, ok := data["score"].(float64)
 	if !ok || score != float64(int(score)) || score < 1 || score > 5 {
@@ -261,8 +261,8 @@ func parseReview(data map[string]any, prior findingList, threshold, version int)
 		next++
 	}
 
-	if v.Score < threshold && len(v.unresolved()) == 0 {
-		return review{}, fmt.Errorf("a score below %d sends the artifact back, so it needs at least one finding open or still open for the builder to act on", threshold)
+	if v.Score < threshold && len(v.blocking()) == 0 {
+		return review{}, fmt.Errorf("a score below %d sends the artifact back, so it needs a critical or major finding open or still open for the builder to act on; with only minor findings open, score it %d or more, and never raise a finding's severity to keep a lower score", threshold, threshold)
 	}
 
 	return v, nil

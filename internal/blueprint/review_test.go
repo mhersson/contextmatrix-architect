@@ -217,7 +217,8 @@ func TestParseReview(t *testing.T) {
 		{name: "a finding without a severity", data: map[string]any{"score": float64(3), "findings": []any{map[string]any{"text": "name the owner"}}}, wantErr: "severity"},
 		{name: "a finding as a bare sentence", data: map[string]any{"score": float64(3), "findings": []any{"name the owner"}}, wantErr: "finding 1"},
 		{name: "a blank finding", data: map[string]any{"score": float64(2), "findings": []any{newFinding(severityMajor, " ")}}, wantErr: "sentence"},
-		{name: "a low score with nothing left open", prior: prior, data: map[string]any{"score": float64(2), "verdicts": both(findingFixed, findingFixed)}, wantErr: "at least one finding"},
+		{name: "a low score with nothing left open", prior: prior, data: map[string]any{"score": float64(2), "verdicts": both(findingFixed, findingFixed)}, wantErr: "critical or major finding"},
+		{name: "a low score with only a minor open", data: map[string]any{"score": float64(3), "findings": []any{newFinding(severityMinor, "split it")}}, wantErr: "critical or major finding"},
 		{name: "no score", data: map[string]any{"findings": []any{}}, wantErr: "score"},
 		{name: "a score above five", data: map[string]any{"score": float64(6)}, wantErr: "score"},
 		{name: "a score of zero", data: map[string]any{"score": float64(0)}, wantErr: "score"},
@@ -1771,11 +1772,6 @@ func TestReview_ThePassingVerdictsSettleRule(t *testing.T) {
 				fixed(4, "R1"),
 			},
 			wantRuns: 3, version: 3,
-		},
-		{
-			name:     "low score, minors only",
-			reviews:  []map[string]any{rechecked(3, nil, newFinding(severityMinor, "a")), fixed(4, "R1")},
-			wantRuns: 2, version: 2,
 		},
 	}
 

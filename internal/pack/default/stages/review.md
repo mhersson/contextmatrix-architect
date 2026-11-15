@@ -87,7 +87,7 @@ finding keeps its real severity.
 Score the artifact from 1 to 5. The task says which score passes; give a
 version with no critical or major finding open at least that score. A
 critical finding left open fails the review whatever the score, and a score
-below the pass mark needs at least one finding open.
+below the pass mark needs a critical or major finding open.
 
 Submit with a short markdown summary as the body and a data object
 `{"score": <1 to 5>, "summary": "<two to four sentences: what you read and checked, and your overall judgement>", "verdicts": [{"id": "R1", "status": "fixed" or "still_open", "note": "<what this version shows>"}], "findings": [{"severity": "critical", "major" or "minor", "text": "<sentence>"}]}`.

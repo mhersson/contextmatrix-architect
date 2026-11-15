@@ -168,10 +168,11 @@ HEAD.
   earlier finding asked to change is minor at most, unless it is critical or
   names a part nobody asked for, while a gap in what a fix changed keeps its
   severity; a further case, test or criterion for a behaviour the artifact
-  already states is minor in any round, and a version with no critical or
-  major finding open scores at least the pass mark. Why: a fresh look at an
-  unchanged part found another case each round, so rounds did not converge,
-  and minors go to the gate's ledger, not back to the builder.
+  already states is minor in any round. A score below the pass mark needs a
+  critical or major finding open, and the review check refuses one with only
+  minors open. Why: a fresh look at an unchanged part found another case
+  each round, so rounds did not converge, and minors go to the gate's
+  ledger, not back to the builder.
 - An acceptance criterion states behaviour: the situation, the input or
   action and the result that must follow, checkable against the repository,
   with exact values only where the need or a decision fixes them, never a
