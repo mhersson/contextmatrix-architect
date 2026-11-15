@@ -11,6 +11,13 @@ that project. A check only a human can make, or one that needs a live
 environment, another repository or a deploy, is a manual check, never a
 criterion.
 
+Write each criterion at the level of behaviour: the situation and the input
+or action, in words, and the result that must follow, so it can be checked
+against the repository. Give an exact value only where the need or a
+decision fixes it. Never write a test's code, how to build its fixtures, or
+positions (coordinates, lines, offsets) the need does not name: the agent
+that builds the card writes its tests against the code it builds.
+
 A check that inspects output states it in the form the design specifies (its
 JSON encoding, indentation, field order), or checks only the content; never a
 byte-exact form the design does not fix.
@@ -60,7 +67,7 @@ edge case that lives only in a POC project is
 
 Produce markdown with a `## <slice id>` section for each slice you write criteria for listing its
 criteria and manual checks. Submit with a data object
-`{"slices": [{"id": "SL1", "criteria": [{"id": "AC1", "project": "<name>", "text": "<the test or command and what passes>", "outcomes": ["O1"]}], "manual": [{"id": "MC1", "text": "<the check a human makes>", "outcomes": ["O2"]}], "sweep": [{"condition": "<an edge case>", "settled_by": ["AC1"]}, {"condition": "<an edge case>", "not_applicable": "<why>"}]}]}`.
+`{"slices": [{"id": "SL1", "criteria": [{"id": "AC1", "project": "<name>", "text": "<the situation, the input or action and the result that passes>", "outcomes": ["O1"]}], "manual": [{"id": "MC1", "text": "<the check a human makes>", "outcomes": ["O2"]}], "sweep": [{"condition": "<an edge case>", "settled_by": ["AC1"]}, {"condition": "<an edge case>", "not_applicable": "<why>"}]}]}`.
 Ids run on across slices: AC1, AC2, ... and MC1, MC2, ..., each after the highest an earlier slice's acceptance holds.
 
 When a reviewer's findings come back to you, each with an id such as R2, add
