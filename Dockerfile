@@ -48,7 +48,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
       -o /contextmatrix-architect ./cmd/contextmatrix-architect
 
 # glibc base: the claude binary links libc; the Go binary stays static.
-FROM gcr.io/distroless/base-debian13:nonroot@sha256:7fe4df6a4413adf5889960d345a28b4574aea0872ea47684c7244c8d88027dca
+FROM gcr.io/distroless/base-debian13:nonroot@sha256:a08d9054afbaf1af9b90fd02cdc7b32236319b5376d374505a41548d42b0c5db
 # The default state_dir is $XDG_STATE_HOME/contextmatrix-architect; this keeps
 # it on the volume below.
 ENV XDG_STATE_HOME=/var/lib
