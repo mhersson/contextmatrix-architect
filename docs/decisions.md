@@ -262,6 +262,11 @@ HEAD.
 
 ## Mockups
 
+- The mockup step runs only when intake's data holds `screen: true`: the
+  need adds a view or changes a view's layout or look. A need that changes
+  only what existing views do (a selection, a key, a copy, their data or
+  logic) gets no mockup. Why: a mockup shows a layout and a look, and one
+  drawn for views that keep theirs costs a stage and steers nothing.
 - Where a UI exists the mockup keeps its look unless intake's data holds
   `redesign: true`, and an intake without the flag reads as no re-design.
   Why: a change to an existing UI fits the look people already use.

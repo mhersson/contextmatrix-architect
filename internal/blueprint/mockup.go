@@ -601,12 +601,12 @@ func (iv *interviewer) mockupRound(ctx context.Context) (roundState, error) {
 	return next, nil
 }
 
-// screenProblems checks a submit says whether the need has a screen, and
-// when it has, whether it is a re-design of an existing one.
+// screenProblems checks a submit says whether the need has a screen to draw,
+// and when it has, whether it is a re-design of an existing one.
 func screenProblems(data map[string]any) []string {
 	screen, ok := data["screen"].(bool)
 	if !ok {
-		return []string{"screen_shape: data.screen must be true when the need has a screen a person looks at, else false"}
+		return []string{"screen_shape: data.screen must be true when the need adds a screen or changes one's layout or look, else false"}
 	}
 
 	if _, ok := data["redesign"].(bool); screen && !ok {

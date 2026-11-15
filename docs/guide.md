@@ -333,9 +333,11 @@ The family clicked **Show mockup**; **Skip mockup** goes on without one. See
 [The mockup](reference.md#the-mockup).
 
 > [!NOTE]
-> **A need with no screen**, such as a command that only prints its results, a
-> service or a job that runs by itself, has no mockup step: nothing is offered,
-> nothing is asked, and the blueprint goes on to slicing.
+> **A need with no screen to draw**, such as a command that only prints its
+> results, a service, a job that runs by itself, or a change to what an
+> existing screen does that leaves its layout and look alone, has no mockup
+> step: nothing is offered, nothing is asked, and the blueprint goes on to
+> slicing.
 
 ![Revision 1 on the Mockup sheet: the designer's notes, then a working Recipe box screen with the tabs Recipes, This week and Shopping list, a search box and sample recipes with Add to week and Remove from week buttons](images/10-mockup-rev1.png)
 

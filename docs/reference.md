@@ -114,9 +114,11 @@ ContextMatrix, and the run goes on.
 
 ### The mockup
 
-When the need has a screen people will use, the architect draws a live
-**mockup**, a working sketch of the screen, before it designs the rest. In
-Default mode it asks first.
+When the need adds a screen people will use, or changes how one is laid out
+or looks, the architect draws a live **mockup**, a working sketch of the
+screen, before it designs the rest. A need that changes only what existing
+screens do, such as what a key or a selection does, gets none. In Default
+mode it asks first.
 
 | What you type | What it does | When it works |
 |---|---|---|
@@ -257,7 +259,7 @@ The policies in Default mode:
 | Stage | What it does | Its questions | Its gate |
 |---|---|---|---|
 | Intake | Works out the need | You | Auto: its reviewer decides |
-| Mockup | Draws the screen, when there is one | You: the offer, and steering the mockup | No gate |
+| Mockup | Draws the screen, when the need adds one or changes its layout or look | You: the offer, and steering the mockup | No gate |
 | Slicing | Cuts the work into slices | You | You. With one slice it is decided together with Solution design's gate |
 | Shared decisions | Settles what every slice shares | You | You. Skipped with one slice |
 | Solution design | Designs each slice | You | You |
