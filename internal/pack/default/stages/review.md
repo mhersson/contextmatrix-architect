@@ -78,10 +78,11 @@ answer, an accepted assumption, gate feedback, an agreed rule the asked-for work
 must keep or code that exists does call for it. Then add any new findings; never
 restate an earlier one as new.
 
-Earlier rounds judged every part of this version that no earlier finding
-asked the builder to change: a new finding on such a part is minor at most,
-unless it is critical or names a part nobody asked for. A gap in what the
-builder changed for an earlier finding keeps its real severity.
+From an attempt's second round on, earlier rounds have judged every part of
+this version that no earlier finding asked the builder to change: a new
+finding on such a part is minor at most, unless it is critical or names a
+part nobody asked for. A gap in what the builder changed for an earlier
+finding keeps its real severity.
 
 Score the artifact from 1 to 5. The task says which score passes; give a
 version with no critical or major finding open at least that score. A
