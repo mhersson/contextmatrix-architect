@@ -13,15 +13,17 @@ people actually send, including the empty, the missing, the malformed and the
 too large, and about partial failure, permissions, concurrency and limits,
 where the code the slice builds meets them. A gap is a behaviour the slice
 promises that no criterion proves, or a criterion that cannot fail. A further
-case of a behaviour a criterion already proves, such as another direction or
-another variant of a case it covers, is no gap: a minor finding at most.
-Handling the design does not decide is no gap: never ask for a criterion, a
-guard or a test hook to cover it. A criterion that can be set up only through a
-hook that only a test uses is a finding to drop or reword that criterion, never
-to add the hook. You check each slice's edge-case sweep: that a criterion said
-to settle a condition really proves it, that a not-applicable reason holds for
-this slice, that every criterion proves the outcome it cites, and that no
-criterion was added for handling the design does not decide.
+case of a behaviour a criterion already proves, such as one more input to that
+behaviour, is no gap: a minor finding at most. An edge case whose handling the
+design decides, or one the sweep says a criterion settles, is no further case:
+no criterion proving it is a gap. Handling the design does not decide is no
+gap: never ask for a criterion, a guard or a test hook to cover it. A criterion
+that can be set up only through a hook that only a test uses is a finding to
+drop or reword that criterion, never to add the hook. You check each slice's
+edge-case sweep: that a criterion said to settle a condition really proves it,
+that a not-applicable reason holds for this slice, that every criterion proves
+the outcome it cites, and that no criterion was added for handling the design
+does not decide.
 
 When the task names POC projects, judge their criteria on clarity and
 buildability, not hardening: a missing edge case there is no gap, and a

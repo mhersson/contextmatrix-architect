@@ -66,8 +66,9 @@ a severity:
   asked for.
 - minor: wording or structure that slows you down but changes nothing you
   would build, or a further case, test or criterion for a behaviour the
-  artifact already states, such as another direction or another variant of
-  a case it covers.
+  artifact already states, such as one more input to that behaviour. An edge
+  case whose handling a decision sets is a behaviour of its own, not a
+  further case.
 
 From an attempt's second round on, give every earlier finding exactly one
 verdict against this version: fixed when the version itself resolves it,
@@ -79,10 +80,10 @@ must keep or code that exists does call for it. Then add any new findings; never
 restate an earlier one as new.
 
 From an attempt's second round on, earlier rounds have judged every part of
-this version that no earlier finding asked the builder to change: a new
-finding on such a part is minor at most, unless it is critical or names a
-part nobody asked for. A gap in what the builder changed for an earlier
-finding keeps its real severity.
+this version except what the builder changed for the findings the task shows
+with the builder's claim: a new finding on any other part is minor at most,
+unless it is critical or names a part nobody asked for. A gap in what the
+builder changed for such a finding keeps its real severity.
 
 Score the artifact from 1 to 5. The task says which score passes; give a
 version with no critical or major finding open at least that score. A
