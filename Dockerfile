@@ -1,4 +1,4 @@
-FROM golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9 AS build
+FROM golang:1.27.4-trixie@sha256:430985542100b871e108ccc00e8dcc5eef08ca14ee5825e98ebf563d8ffec4ee AS build
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 WORKDIR /src
 # An empty state dir owned by the nonroot user, so a fresh volume mounted over
@@ -48,7 +48,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
       -o /contextmatrix-architect ./cmd/contextmatrix-architect
 
 # glibc base: the claude binary links libc; the Go binary stays static.
-FROM gcr.io/distroless/base-debian13:nonroot@sha256:7fe4df6a4413adf5889960d345a28b4574aea0872ea47684c7244c8d88027dca
+FROM gcr.io/distroless/base-debian13:nonroot@sha256:7088bf1cdc94a65af4e0d5ad94518ed489a372dec1ece38ff4411c6c15fb5864
 # The default state_dir is $XDG_STATE_HOME/contextmatrix-architect; this keeps
 # it on the volume below.
 ENV XDG_STATE_HOME=/var/lib
